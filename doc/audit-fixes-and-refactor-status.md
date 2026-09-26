@@ -32,7 +32,21 @@
   - **P1 读流终止条件写成 `> 0`**：五处（直链/分片/重封装转 188/`FileCleaner` 两处/`DownloadStore`）改为 `!= -1`——0 不是 EOF，按 `>0` 退出会把"没读完"当"读完"，随后 `.part` 照样 rename 成 `%05d.ts` 当成功。并给**分片**补上缺失的完整性校验：服务器声明长度且本次是"整段原样落盘"（未续传/未剥壳/未解密）时，实收字节必须等于声明值，否则删残片并抛错（原来只判 `exists() && length()>0`）。更正报告一处：直链路径本来就有 Content-Length 比对，缺的是分片路径。
   - **P1 中断时把未完成分片记成已完成**：`downloadSegment` 遇中断是"正常 return"（不抛异常），调用方紧接着 `doneSegments = i + 1` → 进度与磁盘不一致；调用方补中断自检后收尾返回。
   - **P2 磁盘峰值只按 1× 预检**：核实为真（分片 + `merged.tmp` + `remux_*.mp4` 会同时存在，峰值≈3×），但**按用户判断保留 1×** —— m3u8 的大小本身是估算（不准），乘倍数会误拒本来够用的机器；空间真不够时是优雅退化（合并失败保留碎片可重试、重封装失败只回退 `.ts`，成品仍可播）。想更保守只需改 `DownloadPolicy.SPACE_PEAK_FACTOR`。
-  - **仍待处理（报告已列，本轮未动）**：退避期间独占并发额度（`Thread.sleep` 时状态仍是 DOWNLOADING）；结构事件去抖无最大等待上限；`DownloadFragment.refresh()` 主线程全量 stat + `purgeOrphans` 顺带写盘；"已播放"标记被 `catch (Throwable ignored)` 吞掉；P3 若干（`DownloadStore` 锁顺序、`getPosterDir` 空 context、海报直写非原子、`break` 跳过的尾部未记死片）；以及优化项（`:download` 无自身单测目录、fMP4/`#EXT-X-BYTERANGE` 仍直接抛、分片无断点续传、磁盘被扫 3 遍、`gapSegments` 线性查、跨 DISCONTINUITY 的 PTS 钳制、前台服务异常被吞）。
+  - **仍待处理（报告已列，本轮未动）**：退避期间独占并发额度（`Thread.sleep` 时状态仍是 DOWNLOADING）；结构事件去抖无最大等待上限；`DownloadFragment.refresh()` 主线程全量 stat + `purgeOrphans` 顺带写盘；"已播放"标记被 `catch (Throwable ignored)` 吞掉；P3 若干（`DownloadStore` 锁顺序、`getPosterDir` 空 context、海报直写非原子、`break` 跳过的尾部未记死片）；以及优化项（`:download` 无自身单测目录、分片无断点续传、磁盘被扫 3 遍、`gapSegments` 线性查、跨 DISCONTINUITY 的 PTS 钳制、前台服务异常被吞）。
+  - **已支持（本次补齐）：fMP4（`#EXT-X-MAP` init 段）与字节范围分片（`#EXT-X-BYTERANGE`）不再"直接抛"** ——
+    这两类正是"整集一个大文件 + 固定区间取片"与 CMAF 源的常见形态，此前清单里出现就直接失败、整集下不了。
+    解析下沉到 `:common` 的纯逻辑类 `util/HlsMediaPlaylist`（**21 例 JVM 单测**：显式 offset、隐式 offset 接上一条
+    同资源分片末尾、按资源分别记 offset、MAP 带/不带 BYTERANGE、无 MAP 的纯 BYTERANGE 单文件 TS 切片、CRLF/BOM/
+    空行/注释/HTML 包裹行、加密属性透传、异常输入给明确原因；`SegmentListSignature` 另补 2 例"范围入指纹但
+    整表无范围时指纹与旧格式一致"），下载侧只按解析结果取片：
+    init 段落 `init.mp4`（**不占 `%05d.ts` 序号**）、**合并时先写 init 段再按序号拼分片**（产物即完整 fMP4），
+    下载后自检含 `moov`；范围分片用**固定区间** `Range: bytes=<off>-<off+len-1>`，**服务器忽略 Range 回 200（整文件）
+    判失败**（否则整个大文件会被当成"这一片"存下来），并与 `segDone` 的**续传 open-ended Range 严格区分**
+    （带区间一律整段重下，偏移坐标系不同）；**fMP4 重封装失败保留 `.mp4`**（不改名 `.ts` —— 改名是 TS 字节流才需要的
+    伪装）；跨线路补片把范围一并传下去。
+    **限制**：加密的 fMP4（SAMPLE-AES / init 段被加密）不支持（init 段自检即判失败）、`#EXT-X-MAP` 中途更换判失败、
+    fMP4 不参与跨线路补片（缺口走缺片完成）、跨 DISCONTINUITY 仍不做时间轴重排。
+    **需真机确认**：这类源下载出的成片能否被 ExoPlayer/MediaExtractor 正常识别（见 §3 第 10 条）。
 
 - **hawk 全量退役完成**：`KeyValueStore` 类及全部 legacy 迁移分支已删除，运行权威统一 `PrefsDataStore`/文件；全仓零 `com.orhanobut.hawk` 依赖（mbox 包名隔离，无 Hawk 存量升级场景）。
 - **订阅本地导入改系统 SAF**：`SubscriptionActivity` 用 `ActivityResultContracts.OpenDocument` 替代 hedzr 反射，支持 `content://` 流、`primary:`/`home:` 文档卷，复制到应用专属目录 + canonical 防穿越，按 URL 去重；移除 `MANAGE_EXTERNAL_STORAGE` 前置检查。
@@ -181,3 +195,8 @@
 7. 自签名/证书错误站点：默认无法加载/播放，开启“忽略证书错误”后可访问。
 8. 后台播放 + 通知栏控制；历史/收藏列表新增与删除后的刷新。
 9. 冷启动速度（缓存清理不再阻塞主线程）与升级后历史/收藏数据保留（Room 迁移）。
+10. **fMP4 / 字节范围源下载**（本次新增能力，必须真机确认兼容性）：找一条 `#EXT-X-MAP`（fMP4/CMAF）源与一条
+    `#EXT-X-BYTERANGE`（整集一个大文件切片）源各下一集 —— 看①任务不因清单类型失败；②下载页进度/缺片提示正常；
+    ③成品能播且**时长/拖动正确**（fMP4 拼接产物若 init 段缺失或错位，表现为"文件在、打不开"或只有开头几秒）；
+    ④日志里 `fMP4, init=…` / `字节范围分片` / `init 段下载完成` 与重封装结果（成功，或失败且**保留 `.mp4`**）；
+    ⑤暂停/继续/杀进程重启后续传不重下 init 段、不产出坏文件。

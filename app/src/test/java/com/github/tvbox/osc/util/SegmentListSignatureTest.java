@@ -55,4 +55,28 @@ public class SegmentListSignatureTest {
         assertEquals("", SegmentListSignature.of(Collections.<String>emptyList()));
         assertTrue(SegmentListSignature.of(Arrays.asList("http://cdn/1.ts")).length() > 0);
     }
+
+    @Test
+    public void byteRanges_matterAsMuchAsUrls() {
+        // 同一个大文件的不同区间是完全不同的片(切片型清单):只看 URL 会把"另一份清单的区间"当同一片复用
+        List<String> urls = Arrays.asList("http://cdn/all.ts", "http://cdn/all.ts");
+        List<HlsMediaPlaylist.ByteRange> a = Arrays.asList(
+                new HlsMediaPlaylist.ByteRange(0, 1000), new HlsMediaPlaylist.ByteRange(1000, 1000));
+        List<HlsMediaPlaylist.ByteRange> b = Arrays.asList(
+                new HlsMediaPlaylist.ByteRange(0, 1000), new HlsMediaPlaylist.ByteRange(2000, 1000));
+        assertNotEquals(SegmentListSignature.of(urls, a), SegmentListSignature.of(urls, b));
+        assertEquals(SegmentListSignature.of(urls, a),
+                SegmentListSignature.of(urls, Arrays.asList(
+                        new HlsMediaPlaylist.ByteRange(0, 1000), new HlsMediaPlaylist.ByteRange(1000, 1000))));
+    }
+
+    @Test
+    public void noRanges_keepsOldSignatureFormat() {
+        // 升级前已经在下的普通(整文件分片)任务不能因为指纹算法变化被清空重下:
+        // 整表无范围时必须与旧格式(单参数版)得到同一枚指纹
+        List<String> urls = Arrays.asList("http://cdn/1.ts", "http://cdn/2.ts");
+        List<HlsMediaPlaylist.ByteRange> nulls = Arrays.<HlsMediaPlaylist.ByteRange>asList(null, null);
+        assertEquals(SegmentListSignature.of(urls), SegmentListSignature.of(urls, nulls));
+        assertEquals(SegmentListSignature.of(urls), SegmentListSignature.of(urls, null));
+    }
 }

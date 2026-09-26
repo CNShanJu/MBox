@@ -9,6 +9,7 @@ import android.util.Log;
 
 import com.github.tvbox.osc.bean.DownloadTask;
 import com.github.tvbox.osc.download.DownloadSubType;
+import com.github.tvbox.osc.util.HlsMediaPlaylist;
 import com.github.tvbox.osc.util.HttpClient;
 import com.github.tvbox.osc.util.SegmentUnwrapper;
 import com.github.tvbox.osc.util.TsProbe;
@@ -52,10 +53,20 @@ public class DownloadExecutor {
     private static final String SEGMENTS_SIG = "segments.sig";
 
     /**
+     * fMP4 的 init 段({@code #EXT-X-MAP})在分段目录里的文件名:它<b>不是</b>一个分片,不能占
+     * {@code %05d.ts} 的序号 —— 序号承载"第 i 片"的语义(进度/缺失清单/缺片跳过都按序号走),
+     * init 段挤进去会让后面每一片的序号整体错位。
+     */
+    private static final String INIT_SEGMENT_FILE = "init.mp4";
+
+    /**
      * 分片"内容判定"需要攒够的头部字节数:够 TsProbe 按 188/192/204 对齐判真 TS,
      * 也够 SegmentUnwrapper 在容器头里(≤4KB)找到藏在后面的 TS 载荷
      */
     private static final int HEAD_PROBE_BYTES = 8192;
+
+    /** 206 响应的 Content-Range(形如 {@code bytes 0-1023/146515});静态复用,不在每片热路径上重建 */
+    private static final Pattern CONTENT_RANGE = Pattern.compile("bytes\\s+(\\d+)-(\\d+)/(\\d+|\\*)");
 
     private final DownloadManager dm;
 
@@ -297,8 +308,11 @@ public class DownloadExecutor {
         Log.i("TVBox-Download", "播放列表内容(" + playlist.length() + "B): "
                 + playlist.substring(0, Math.min(600, playlist.length())).replace("\n", "\\n"));
         // fetchPlaylist 遇到主播放列表时会切换到具体变体(t.url 已更新),分片需按实际播放列表解析
-        List<HlsKey> segKeys = new ArrayList<>();
-        List<String> segments = parseSegments(t.url, playlist, segKeys);
+        HlsPlaylistData pl = parsePlaylist(t.url, playlist);
+        List<String> segments = pl.urls;
+        List<HlsMediaPlaylist.ByteRange> segRanges = pl.ranges;
+        List<HlsKey> segKeys = pl.keys;
+        HlsMediaPlaylist.InitSegment initSeg = pl.init;
         if (segments.isEmpty()) {
             throw new IOException("m3u8 无有效分片");
         }
@@ -309,8 +323,19 @@ public class DownloadExecutor {
                 break;
             }
         }
+        // fMP4(有 init 段)与字节范围分片要留痕:取片方式、产物形态都与普通 TS 清单不同,排障第一眼就得看出来
+        boolean fmp4 = initSeg != null;
+        boolean ranged = pl.hasRanges();
+        StringBuilder layout = new StringBuilder();
+        if (fmp4) layout.append("fMP4, init=").append(initSeg);
+        if (ranged) layout.append(layout.length() > 0 ? ", " : "").append("字节范围分片");
         Log.i("TVBox-Download", "播放列表 " + segments.size() + " 片" + (encrypted ? "(AES-128 加密,分片解密后落盘)" : "")
+                + (layout.length() > 0 ? "[" + layout + "]" : "")
                 + ", 播放列表url=" + t.url + " 首片=" + segments.get(0));
+        if (fmp4) {
+            DownloadLog.LOG.info(DownloadSubType.PLAYLIST, "fMP4 清单: init 段 " + initSeg
+                    + "(合并时先写 init 段再按序号拼分片)", DownloadLog.extras(t.episodeId));
+        }
         t.totalSegments = segments.size();
         // 续传起点以磁盘实况为准(不信任 TXT/内存计数):用户可能删过部分分片文件,
         // 若仍用 t.doneSegments 会跳过缺失分片直接合并导致失败。
@@ -327,9 +352,28 @@ public class DownloadExecutor {
         t.segmentBytes = 0;
         // 换线路保护:重新解析地址后如果分片列表变了,旧碎片属于另一份播放列表,必须丢弃重下
         // (否则两份视频的碎片会被合并成一个放不了的文件);列表一致则保留进度续传
-        dropSegmentsIfPlaylistChanged(t, tmpDir, segments);
+        dropSegmentsIfPlaylistChanged(t, tmpDir, segments, segRanges);
         // 下载前记录分段信息 TXT:来源/剧名/集数/碎片数/解析地址/分片列表/已完成(断点续传同步进度)
         writeSegmentsInfo(t, tmpDir, segments, t.doneSegments);
+
+        // fMP4 的 init 段先下:它是所有分片的前置数据(ftyp/moov),缺了整集产物都解不出来 ——
+        // 一个小请求换"失败早知道"(等几百片下完再发现 init 拿不到,白白浪费整集流量)。
+        // 落 init.mp4,不占 %05d.ts 序号;续传时文件已在就复用,不重复请求。
+        File initFile = null;
+        if (fmp4) {
+            initFile = new File(tmpDir, INIT_SEGMENT_FILE);
+            if (initFile.exists() && initFile.length() > 0) {
+                Log.i("TVBox-Download", "init 段已存在,复用: " + initFile.length() + "B");
+            } else {
+                downloadInitSegment(initSeg, initFile, t);
+                if (isInterrupted(t)) {
+                    t.speed = 0;
+                    dm.persist();
+                    dm.notifyChanged();
+                    return;
+                }
+            }
+        }
 
         long speedWindowStart = System.currentTimeMillis();
         long speedWindowBytes = 0;
@@ -363,7 +407,8 @@ public class DownloadExecutor {
             }
             long segDone = 0; // 缺失分片从头下(无残留字节)
             try {
-                downloadSegment(i, segments.get(i), segFile, segDone, t, segKeys.get(i), keyCache);
+                downloadSegment(i, segments.get(i), segFile, segDone, t, segKeys.get(i), keyCache, null,
+                        segRanges.get(i));
                 if (isInterrupted(t)) {
                     // downloadSegment 遇中断是"正常 return"(不抛异常):这里必须同步收尾,
                     // 否则调用方会把这一片记成已完成(doneSegments 推进),进度与磁盘不一致
@@ -475,7 +520,7 @@ public class DownloadExecutor {
                 // 合并照旧 —— 不重下整集,也不放弃已下的其余全部内容。
                 if (!patchTried && t.altRoutes != null && !t.altRoutes.isEmpty()) {
                     patchTried = true;
-                    List<Integer> left = patchMissingFromAltRoutes(t, tmpDir, missing, primaryDurations);
+                    List<Integer> left = patchMissingFromAltRoutes(t, tmpDir, missing, primaryDurations, fmp4);
                     int patched = missing.size() - left.size();
                     if (patched > 0) {
                         patchNote = "补 " + patched + " 片(来自其它线路)";
@@ -554,7 +599,8 @@ public class DownloadExecutor {
                     }
                     attempt++;
                     try {
-                        downloadSegment(idx, segments.get(idx), segFile, 0, t, segKeys.get(idx), keyCache);
+                        downloadSegment(idx, segments.get(idx), segFile, 0, t, segKeys.get(idx), keyCache, null,
+                                segRanges.get(idx));
                         // 单项补下成功: 片i 成功 bytes
                         DownloadLog.LOG.success(DownloadSubType.REPAIR, "补片/片 " + idx + " 成功 " + segFile.length() + "B",
                                 DownloadLog.extras(t.episodeId));
@@ -619,6 +665,9 @@ public class DownloadExecutor {
             for (int i = 0; i < segments.size(); i++) {
                 mergeSize += new File(tmpDir, String.format("%05d.ts", i)).length();
             }
+            if (initFile != null && initFile.exists()) {
+                mergeSize += initFile.length(); // fMP4 的 init 段也在成品里,空间预检不能漏算它
+            }
             if (mergeSize > 0) {
                 File dir = new File(t.savePath).getParentFile();
                 if (dir != null && dir.exists()) {
@@ -642,6 +691,12 @@ public class DownloadExecutor {
             OutputStream out = new FileOutputStream(mergeTmp);
             try {
                 long mergedBytes = 0;
+                // 顺序铁律:fMP4 必须先把 init 段(ftyp/moov)写在最前面,再按序号拼分片 ——
+                // 反了的话产物开头就是 moof 片段、没有解码参数,播放器整集解不出来
+                if (initFile != null && initFile.exists() && initFile.length() > 0) {
+                    FileCleaner.copyFile(initFile, out);
+                    mergedBytes += initFile.length();
+                }
                 for (int i = 0; i < segments.size(); i++) {
                     if (t.state == DownloadTask.STATE_CANCELLED) {
                         throw new IOException("cancelled"); // Bug2: 删除记录后合并立即中止,不落最终文件
@@ -701,7 +756,10 @@ public class DownloadExecutor {
         // 用户拿到一个打不开的文件还不知道为什么。这里直接判失败,并把内容线索写进原因:
         // 调度器据此(见 shouldReResolve)自动重新解析地址换线路,提示里也能一眼看出是源的问题。
         TsProbe mergedProbe = probeHead(finalFile);
-        boolean fragmentedOnly = mergedProbe.kind == TsProbe.Kind.MP4
+        // "只有 fMP4 片段、缺 init 段"这条判据只对<b>没有</b> init 段的清单成立:我们已经把 init 段写在
+        // 最前面,且它已过"含 moov、且在 moof/mdat 之前"的自检(见 downloadInitSegment),产物不可能是
+        // "缺 moov 的裸片段" —— 不该因为某些源把 styp 也放进 init 段就误判成坏产物
+        boolean fragmentedOnly = !fmp4 && mergedProbe.kind == TsProbe.Kind.MP4
                 && ("moof".equals(mergedProbe.boxTag) || "styp".equals(mergedProbe.boxTag));
         if (!mergedProbe.isTs() && (mergedProbe.kind != TsProbe.Kind.MP4 || fragmentedOnly)) {
             String what = !mergedProbe.contentHint.isEmpty() ? mergedProbe.contentHint
@@ -722,6 +780,13 @@ public class DownloadExecutor {
         dm.notifyChanged();
         if (remuxTsToMp4(finalFile)) {
             DownloadLog.LOG.success(DownloadSubType.REMUX, "重封装完成: " + t.fileName, DownloadLog.extras(t.episodeId));
+        } else if (fmp4) {
+            // fMP4 的拼接产物本身就是合法 MP4(init 段 ftyp/moov + 一串 moof/mdat),
+            // 重封装只是锦上添花:失败就原样保留 .mp4 —— 把 .mp4 改名成 .ts 是 TS 字节流才需要的伪装,
+            // 对 MP4 产物改名只会让后缀与内容不符(播放器/文件管理器都可能误判)
+            DownloadLog.LOG.warn(DownloadSubType.REMUX,
+                    "重封装失败,保留 .mp4 成品(fMP4 产物本身即合法 MP4,不改名伪装成 .ts): " + t.fileName,
+                    DownloadLog.extras(t.episodeId));
         } else {
             if (t.savePath.toLowerCase(Locale.ROOT).endsWith(".mp4")) {
                 String tsPath = t.savePath.substring(0, t.savePath.length() - 4) + ".ts";
@@ -766,9 +831,13 @@ public class DownloadExecutor {
      * 磁盘上旧地址的碎片必须整目录丢弃重下(两份视频的碎片拼起来会得到放不了的文件);
      * 指纹一致(同一份列表,只是地址续期)则保留进度续传。<b>指纹缺失</b>(老任务/首次下载)按"无法判定"处理,
      * 保留现有碎片 —— 与改动前的行为一致,不会因为升级把在下的任务清空。
+     *
+     * <p>指纹里带上字节范围({@code #EXT-X-BYTERANGE}):同一个大文件的不同区间是完全不同的内容,
+     * 只看 URL 会把"另一份清单的区间"当成同一片复用,产物必坏。
      */
-    private void dropSegmentsIfPlaylistChanged(DownloadTask t, File tmpDir, List<String> segments) {
-        String sig = com.github.tvbox.osc.util.SegmentListSignature.of(segments);
+    private void dropSegmentsIfPlaylistChanged(DownloadTask t, File tmpDir, List<String> segments,
+            List<HlsMediaPlaylist.ByteRange> ranges) {
+        String sig = com.github.tvbox.osc.util.SegmentListSignature.of(segments, ranges);
         if (sig.isEmpty()) return;
         File sigFile = new File(tmpDir, SEGMENTS_SIG);
         try {
@@ -788,12 +857,16 @@ public class DownloadExecutor {
                 DownloadLog.LOG.warn(DownloadSubType.REPAIR, "换线路: 播放列表变化,丢弃旧碎片 " + dropped + " 片重下: "
                         + t.fileName, DownloadLog.extras(t.episodeId));
             }
-            // 整目录清碎片(含新旧数量不一致时多出来的尾巴);segments.txt/指纹/.nomedia 保留,随后会重写
+            // 整目录清碎片(含新旧数量不一致时多出来的尾巴);segments.txt/指纹/.nomedia 保留,随后会重写。
+            // init.mp4 一并删:它是旧清单的 init 段,与新清单的 fMP4 分片配不上(残留会被合并成一个坏产物)
             File[] leftovers = tmpDir.listFiles();
             if (leftovers != null) {
                 for (File f : leftovers) {
                     String n = f.getName();
-                    if (n.endsWith(".ts") || n.endsWith(".ts.part")) FileCleaner.deleteQuietly(f);
+                    if (n.endsWith(".ts") || n.endsWith(".ts.part")
+                            || n.equals(INIT_SEGMENT_FILE) || n.equals(INIT_SEGMENT_FILE + ".part")) {
+                        FileCleaner.deleteQuietly(f);
+                    }
                 }
             }
             t.doneSegments = 0;
@@ -969,20 +1042,25 @@ public class DownloadExecutor {
     /**
      * 下载单个分片。
      *
-     * @param segIndex 分片序号(仅用于失败分类:404/410 抛 {@link DownloadErrors.SegmentGoneException} 时带上序号,
-     *                 让上层记住这片是"死片",不再重复请求)
-     */
-    private void downloadSegment(int segIndex, String segUrl, File segFile, long segDone, DownloadTask t,
-            HlsKey key, Map<String, byte[]> keyCache) throws IOException {
-        downloadSegment(segIndex, segUrl, segFile, segDone, t, key, keyCache, null);
-    }
-
-    /**
+     * @param segIndex     分片序号(仅用于失败分类:404/410 抛 {@link DownloadErrors.SegmentGoneException} 时带上序号,
+     *                     让上层记住这片是"死片",不再重复请求)
+     * @param segDone      续传起点(已下字节数):走"从已下字节到资源末尾"的 <b>open-ended</b> Range
+     *                     ({@code bytes=N-});与 {@code range} 的"<b>固定区间</b> Range"是两件不同的事,
+     *                     二者互斥(见方法内第一段注释)
      * @param extraHeaders 额外请求头(覆盖任务自带的):跨线路补片时用备用线路解析出来的防盗链头
      *                     (每条线路可能各有各的 Referer),为 null 时只用任务自带的头
+     * @param range        播放列表声明的固定字节范围({@code #EXT-X-BYTERANGE};null=整个资源就是这一片)。
+     *                     <b>必须</b>用固定区间请求:不带范围会把整个大文件当一个分片存下来
      */
     private void downloadSegment(int segIndex, String segUrl, File segFile, long segDone, DownloadTask t,
-            HlsKey key, Map<String, byte[]> keyCache, Map<String, String> extraHeaders) throws IOException {
+            HlsKey key, Map<String, byte[]> keyCache, Map<String, String> extraHeaders,
+            HlsMediaPlaylist.ByteRange range) throws IOException {
+        // 固定区间分片一律整段重下:续传偏移 segDone 是"相对整个资源文件"的坐标,而这一片只占
+        // [offset, offset+length) —— 两个坐标系的偏移混用会取到别的字节,产物必坏。残留 .part 一并丢掉。
+        if (range != null && segDone != 0) {
+            segDone = 0;
+            FileCleaner.deleteQuietly(new File(segFile.getAbsolutePath() + ".part"));
+        }
         // 加密分片无法断点续传(AES-CBC 需从头整段解密),一律整段下
         if (key != null)
             segDone = 0;
@@ -998,14 +1076,40 @@ public class DownloadExecutor {
                 if (e.getKey() != null && e.getValue() != null) headers.put(e.getKey(), e.getValue());
             }
         }
-        if (segDone > 0) {
+        if (range != null) {
+            headers.put("Range", range.headerValue());
+        } else if (segDone > 0) {
             headers.put("Range", "bytes=" + segDone + "-");
         }
         Response resp = getDownloadResponse(segUrl, headers);
         dm.activeResponses.put(t.id, resp);
         try {
             int code = resp.code();
-            if (code == 416) {
+            if (range != null) {
+                // 固定区间:只接受 206。服务器<strong>忽略</strong> Range 回了 200(整个资源)时必须判失败 ——
+                // 否则会把整个大文件当成"这一片"存进 %05d.ts,产物必坏,而且后面每一片都会重复整文件。
+                if (code == 200) {
+                    throw new IOException("服务器忽略 Range 返回 200(整文件),无法按字节范围 "
+                            + range.describe() + " 取分片");
+                }
+                if (code != 206) {
+                    throw segmentHttpFailure(segIndex, segUrl, code);
+                }
+                String ct = resp.header("Content-Type");
+                if (ct != null && ct.toLowerCase(Locale.ROOT).contains("multipart/byteranges")) {
+                    // 服务器把我们的单区间请求当多区间处理:响应体是 MIME 包装而不是分片字节
+                    throw new IOException("服务器按多区间响应 Range(multipart/byteranges),无法取单片");
+                }
+                long declaredRange = resp.body().contentLength();
+                if (declaredRange > 0 && declaredRange != range.length) {
+                    throw new IOException("区间长度与清单不符(清单 " + range.length + " B,服务器 "
+                            + declaredRange + " B)");
+                }
+                String mismatch = contentRangeMismatch(resp.header("Content-Range"), range);
+                if (mismatch != null) {
+                    throw new IOException(mismatch);
+                }
+            } else if (code == 416) {
                 // Range 超出文件末尾:该分段实际已完整(上次写入完成但进度未更新)。
                 // 关闭本次响应,删除残片,不带 Range 从头整段重下,避免重试死循环
                 Log.i("TVBox-Download", "分段416(Range超界),整段重下: " + segFile.getName());
@@ -1019,21 +1123,11 @@ public class DownloadExecutor {
                 dm.activeResponses.put(t.id, resp);
                 code = resp.code();
             }
-            if (code == 200 && segDone > 0) {
+            if (range == null && code == 200 && segDone > 0) {
                 segDone = 0;
                 FileCleaner.deleteQuietly(segFile);
-            } else if (code != 200 && code != 206) {
-                Log.i("TVBox-Download", "分片 HTTP " + code + " url=" + segUrl);
-                // 404/410 = 这个分片在源侧就是没有了(网盘/图床文件被删或从未上传):重新解析地址拿到的
-                // 还是同一个 URL、还是 404,重试纯属浪费。单独抛"永久失效"让上层记住死片、跳过后续请求;
-                // 其余状态码(超时/5xx/403/451/断网)仍按"可补救"处理,该换线路换线路、该重试重试。
-                if (code == 404 || code == 410) {
-                    throw new DownloadErrors.SegmentGoneException(segIndex, "分片下载失败(HTTP " + code
-                            + ",该分片在" + DownloadErrors.SEGMENT_GONE_TEXT + ",重试与换线路均无法补齐)");
-                }
-                // 文案要求:可读 + 保留 "HTTP 403" 这种状态码 —— 调度器据此判定"地址可能过期"并自动重新解析地址(换线路),
-                // 提示里也要能看出是源的分片失效而不是本机问题
-                throw new IOException("分片下载失败(HTTP " + code + ")");
+            } else if (range == null && code != 200 && code != 206) {
+                throw segmentHttpFailure(segIndex, segUrl, code);
             }
             File parent = segFile.getParentFile();
             if (parent != null && !parent.exists())
@@ -1204,6 +1298,190 @@ public class DownloadExecutor {
         }
     }
 
+    /**
+     * 校验 206 响应声明的区间与清单一致。
+     *
+     * <p>为什么光看 Content-Length 不够:长度一致但<b>起点</b>错了(CDN 缓存串了区间/服务器算错偏移)时,
+     * 存下来的字节数是对的、内容是别的片 —— 合并出的成品不会报错,只是花屏/串集,用户根本查不出原因。
+     * Content-Range 缺失或格式不认识(如多区间的 {@code * /total})时返回 null(不误伤)。
+     *
+     * @return null=一致或无法判定;非 null=失败原因
+     */
+    private static String contentRangeMismatch(String header, HlsMediaPlaylist.ByteRange range) {
+        if (header == null) return null;
+        Matcher m = CONTENT_RANGE.matcher(header.trim());
+        if (!m.matches()) return null;
+        long start;
+        long end;
+        try {
+            start = Long.parseLong(m.group(1));
+            end = Long.parseLong(m.group(2));
+        } catch (NumberFormatException e) {
+            return null;
+        }
+        if (start == range.offset && end == range.endExclusive() - 1) return null;
+        return "服务器返回的区间与清单不符(清单 " + range.describe() + ",服务器 " + start + "-" + end + ")";
+    }
+
+    /**
+     * 分片 HTTP 状态码失败的统一构造(整文件下载与固定区间下载共用,避免两处文案/分类漂移):
+     * 404/410 = 该片在源侧永久失效(死片,不再重试),其余状态码 = 可补救失败。
+     */
+    private static IOException segmentHttpFailure(int segIndex, String segUrl, int code) {
+        Log.i("TVBox-Download", "分片 HTTP " + code + " url=" + segUrl);
+        if (code == 404 || code == 410) {
+            // 404/410 = 这个分片在源侧就是没有了(网盘/图床文件被删或从未上传):重新解析地址拿到的
+            // 还是同一个 URL、还是 404,重试纯属浪费。单独抛"永久失效"让上层记住死片、跳过后续请求;
+            // 其余状态码(超时/5xx/403/451/断网)仍按"可补救"处理,该换线路换线路、该重试重试。
+            return new DownloadErrors.SegmentGoneException(segIndex, "分片下载失败(HTTP " + code
+                    + ",该分片在" + DownloadErrors.SEGMENT_GONE_TEXT + ",重试与换线路均无法补齐)");
+        }
+        // 文案要求:可读 + 保留 "HTTP 403" 这种状态码 —— 调度器据此判定"地址可能过期"并自动重新解析地址(换线路),
+        // 提示里也要能看出是源的分片失效而不是本机问题
+        return new IOException("分片下载失败(HTTP " + code + ")");
+    }
+
+    /**
+     * 下载 fMP4 的 init 段({@code #EXT-X-MAP})到 {@code initFile}(分段目录里的 init.mp4)。
+     *
+     * <p>为什么不复用 {@link #downloadSegment}:那条路的内容判定是给"分片"写的 —— 它按 TS/fMP4 片段
+     * (ftyp/styp/moof)判定,还会对"PNG 壳里藏 TS"的包裹型分片做剥壳;而 init 段是 <b>ftyp+moov</b>,
+     * 既不是分片也不该被剥壳,口径完全不同。这里单独走一条不含解密的请求:
+     * <ul>
+     *   <li>带范围时用固定区间 Range,且<b>只接受 206</b>(200 = 服务器忽略 Range,存下来的会是整个资源);</li>
+     *   <li>落盘前后做 fMP4 结构自检(必须含 moov 盒子)—— init 段拿错(错误页/加密后的密文)时,
+     *       产物是"分片正常但整集解不出来",且要到播放阶段才发现;这里就地判失败,原因写清楚;</li>
+     *   <li>中断(暂停/取消)时不留半成品:只写 .part,rename 之前先看中断标志。</li>
+     * </ul>
+     */
+    private void downloadInitSegment(HlsMediaPlaylist.InitSegment init, File initFile, DownloadTask t)
+            throws IOException {
+        Map<String, String> headers = baseHeaders(t);
+        if (init.range != null) {
+            headers.put("Range", init.range.headerValue());
+        }
+        Response resp = getDownloadResponse(init.url, headers);
+        dm.activeResponses.put(t.id, resp);
+        File partFile = new File(initFile.getAbsolutePath() + ".part");
+        try {
+            int code = resp.code();
+            if (init.range != null) {
+                if (code == 200) {
+                    // 确定性故障(每次重试都会拿到 200 整文件):带上"线路可疑"标记,让调度器直接换线路/重新解析,
+                    // 而不是把重试次数白花在同一个结果上
+                    throw new IOException("服务器忽略 Range 返回 200(整文件),无法按字节范围 "
+                            + init.range.describe() + " 取 init 段(" + DownloadErrors.ROUTE_SUSPECT_TEXT + ")");
+                }
+                if (code != 206) {
+                    throw new IOException("init 段下载失败(HTTP " + code + ")");
+                }
+            } else if (code != 200) {
+                throw new IOException("init 段下载失败(HTTP " + code + ")");
+            }
+            long declared = resp.body().contentLength();
+            File parent = initFile.getParentFile();
+            if (parent != null && !parent.exists())
+                parent.mkdirs();
+            long written = 0;
+            InputStream is = resp.body().byteStream();
+            OutputStream os = new FileOutputStream(partFile, false);
+            try {
+                byte[] buf = new byte[DownloadManager.BUFFER];
+                int n;
+                while ((n = is.read(buf)) != -1) {
+                    if (isInterrupted(t)) {
+                        os.flush();
+                        FileCleaner.deleteQuietly(partFile);
+                        dm.persist();
+                        return; // 调用方会看到"未就绪"并自行收尾(与分片下载的中断语义一致)
+                    }
+                    os.write(buf, 0, n);
+                    written += n;
+                }
+                os.flush();
+            } finally {
+                os.close();
+            }
+            if (declared > 0 && written != declared) {
+                FileCleaner.deleteQuietly(partFile);
+                throw new IOException("init 段不完整: 期望 " + declared + " B,实际 " + written + " B(连接被提前中断)");
+            }
+            if (init.range != null && written != init.range.length) {
+                FileCleaner.deleteQuietly(partFile);
+                throw new IOException("init 段区间长度不符: 清单 " + init.range.length + " B,实际 " + written + " B");
+            }
+            String problem = mp4InitProblem(partFile);
+            if (problem != null) {
+                FileCleaner.deleteQuietly(partFile);
+                // 内容不对也是确定性的(同一地址再取还是这段字节):带"线路可疑"标记 → 换线路/重新解析,
+                // 而不是把重试次数花在同一个坏 init 段上
+                throw new IOException("init 段内容不是 fMP4 初始化数据(" + problem + "),该线路的 EXT-X-MAP 可能被替换/加密("
+                        + DownloadErrors.ROUTE_SUSPECT_TEXT + ")");
+            }
+            if (!partFile.renameTo(initFile)) {
+                FileCleaner.copyFile(partFile, initFile);
+                FileCleaner.deleteQuietly(partFile);
+            }
+            Log.i("TVBox-Download", "init 段下载完成: " + initFile.length() + "B 来自 " + init.url
+                    + (init.range == null ? "" : "[" + init.range.describe() + "]"));
+            DownloadLog.LOG.success(DownloadSubType.PLAYLIST, "init 段下载完成 " + formatSize(initFile.length())
+                    + (init.range == null ? "" : "(" + init.range.describe() + ")"), DownloadLog.extras(t.episodeId));
+        } finally {
+            dm.activeResponses.remove(t.id);
+            resp.close();
+        }
+    }
+
+    /** fMP4 init 段结构自检所需的读取上限:init 段就是 ftyp+moov 的一小段,超出这个量级已不可能是它 */
+    private static final int INIT_PROBE_BYTES = 256 * 1024;
+
+    /**
+     * init 段自检:必须是 MP4 盒子流且含 {@code moov}(解码所需的轨道信息就在里面)。
+     * 不校验 moov 的话,拿回一段 HTML 错误页/图片也会被当成 init 段拼进产物 —— 那种成品"分片都对、
+     * 整集却打不开",用户只能看到一个坏文件,还不知道坏在哪。
+     *
+     * @return null=通过;非 null=拒绝原因(不引用任何原文,避免把整段错误页写进日志)
+     */
+    private static String mp4InitProblem(File f) {
+        byte[] head;
+        try (InputStream is = new FileInputStream(f)) {
+            int want = (int) Math.min(f.length(), INIT_PROBE_BYTES);
+            head = new byte[want];
+            int read = 0;
+            while (read < want) {
+                int n = is.read(head, read, want - read);
+                if (n <= 0) break;
+                read += n;
+            }
+            if (read < want) head = java.util.Arrays.copyOf(head, read);
+        } catch (Throwable th) {
+            return "读取失败: " + th;
+        }
+        if (head.length < 12) return "内容过短(" + head.length + "B)";
+        String tag = new String(head, 4, 4, java.nio.charset.StandardCharsets.US_ASCII);
+        if (!isMp4BoxTag(tag)) {
+            // 头一个盒子名不对:整段就不是 MP4 盒子流(常见:防盗链 HTML、图片、加密后的密文)
+            TsProbe probe = TsProbe.of(head);
+            return "首个盒子是 \"" + tag + "\""
+                    + (probe.contentHint.isEmpty() ? "" : ",识别为" + probe.contentHint);
+        }
+        int moov = indexOfAscii(head, "moov");
+        if (moov < 0) return "不含 moov 盒子(无解码参数)";
+        // moov 必须排在 moof/mdat 之前:MAP 指向的若是"媒体片段"(styp+moof+mdat),那段里也可能恰好
+        // 出现 "moov" 字样,只有顺序判据能把它与真正的 init 段区分开
+        int moof = indexOfAscii(head, "moof");
+        if (moof >= 0 && moof < moov) return "moov 之前先出现 moof 盒子(像是媒体片段,不是 init 段)";
+        int mdat = indexOfAscii(head, "mdat");
+        if (mdat >= 0 && mdat < moov) return "moov 之前先出现 mdat 盒子(像是媒体片段,不是 init 段)";
+        return null;
+    }
+
+    /** 合法/可容忍的 MP4 顶层盒子名(init 段一般以 ftyp 开头;部分封装直接以 moov/styp 开头) */
+    private static boolean isMp4BoxTag(String tag) {
+        return "ftyp".equals(tag) || "moov".equals(tag) || "styp".equals(tag)
+                || "moof".equals(tag) || "free".equals(tag) || "skip".equals(tag) || "sidx".equals(tag);
+    }
+
     // ------------------------------------------------------------------
     // 跨线路补片(4.8③):本线路缺的片,去这条集的另一条线路把"同一片"取回来
     // ------------------------------------------------------------------
@@ -1217,14 +1495,17 @@ public class DownloadExecutor {
     private static final class AltPlaylist {
         final com.github.tvbox.osc.bean.DownloadRoute route;
         final List<String> segments;
+        /** 与 {@link #segments} 一一对应的字节范围(null=整文件分片);切片型线路取片必须带范围 */
+        final List<HlsMediaPlaylist.ByteRange> ranges;
         final List<HlsKey> keys;
         /** 该线路解析出来的防盗链请求头(每条线路可能各有各的 Referer) */
         final Map<String, String> headers;
 
-        AltPlaylist(com.github.tvbox.osc.bean.DownloadRoute route, List<String> segments, List<HlsKey> keys,
-                Map<String, String> headers) {
+        AltPlaylist(com.github.tvbox.osc.bean.DownloadRoute route, List<String> segments,
+                List<HlsMediaPlaylist.ByteRange> ranges, List<HlsKey> keys, Map<String, String> headers) {
             this.route = route;
             this.segments = segments;
+            this.ranges = ranges;
             this.keys = keys;
             this.headers = headers;
         }
@@ -1250,9 +1531,16 @@ public class DownloadExecutor {
      * @return 仍未补齐的分片序号(补上的已不在其中)
      */
     private List<Integer> patchMissingFromAltRoutes(DownloadTask t, File tmpDir, List<Integer> missing,
-            List<Double> primaryDurations) {
+            List<Double> primaryDurations, boolean primaryFmp4) {
         List<Integer> remain = new ArrayList<>(missing);
         if (missing.isEmpty() || t.altRoutes == null || t.altRoutes.isEmpty()) return remain;
+        if (primaryFmp4) {
+            // fMP4 的替补片要能拼进去,前提是"另一条线路的 init 段与本线路完全一致"(解码参数/时间基相同),
+            // 而这无法用 TS 的 PTS 接缝校验证明(那条校验只认 188 包 TS)。宁可不补、交给"缺片完成",
+            // 也不冒着花屏/时间轴错乱的风险把别路的片段塞进我们的 init 段下。
+            Log.i("TVBox-Download", "跨线路补片跳过:本线路是 fMP4(init 段无法跨线路证明一致): " + t.fileName);
+            return remain;
+        }
         if (missing.size() > MAX_ALT_PATCH_SEGMENTS) {
             Log.i("TVBox-Download", "跨线路补片跳过:缺 " + missing.size() + " 片超过上限 "
                     + MAX_ALT_PATCH_SEGMENTS + "(接近整集重下): " + t.fileName);
@@ -1319,10 +1607,17 @@ public class DownloadExecutor {
                 return null;
             }
             String[] pl = fetchPlaylistReadOnly(rr.url, t, rr.headers);
-            List<HlsKey> keys = new ArrayList<>();
-            List<String> segs = parseSegments(pl[1], pl[0], keys);
+            HlsPlaylistData data = parsePlaylist(pl[1], pl[0]);
+            List<String> segs = data.urls;
             if (segs.isEmpty()) {
                 Log.i("TVBox-Download", "跨线路补片:线路 " + route.describe() + " 播放列表无有效分片");
+                return null;
+            }
+            if (data.init != null) {
+                // 备用线路本身是 fMP4:它的片离开它自己的 init 段没法用(主流程也因此不跨线路补 fMP4),
+                // 直接排除,不用等取片时才由 PTS 接缝校验拒掉(白下一个片)
+                Log.i("TVBox-Download", "跨线路补片:线路 " + route.describe() + " 是 fMP4(init 段 "
+                        + data.init + "),不参与补片");
                 return null;
             }
             com.github.tvbox.osc.util.HlsPlaylistLayout.Comparison cmp =
@@ -1336,7 +1631,7 @@ public class DownloadExecutor {
                 return null;
             }
             Log.i("TVBox-Download", "跨线路补片:线路 " + route.describe() + " 切分一致(" + segs.size() + " 片),可用于补片");
-            return new AltPlaylist(route, segs, keys, rr.headers);
+            return new AltPlaylist(route, segs, data.ranges, data.keys, rr.headers);
         } catch (Throwable th) {
             Log.i("TVBox-Download", "跨线路补片:线路 " + route.describe() + " 探测异常: " + DownloadErrors.reasonOf(th));
             return null;
@@ -1350,8 +1645,10 @@ public class DownloadExecutor {
         if (segFile.exists() && segFile.length() > 0) return true; // 已存在:不用补
         HlsKey key = idx < alt.keys.size() ? alt.keys.get(idx) : null;
         // 走本任务的分片下载通道:剥壳/188 包对齐/AES 解密口径与主流程完全一致;
-        // 请求头用该线路自己解析出来的(每条线路可能各有各的 Referer)
-        downloadSegment(idx, alt.segments.get(idx), segFile, 0, t, key, keyCache, alt.headers);
+        // 请求头用该线路自己解析出来的(每条线路可能各有各的 Referer);
+        // 字节范围也必须带上 —— 切片型线路(整集一个文件)不带范围取回来的是整个文件
+        HlsMediaPlaylist.ByteRange range = idx < alt.ranges.size() ? alt.ranges.get(idx) : null;
+        downloadSegment(idx, alt.segments.get(idx), segFile, 0, t, key, keyCache, alt.headers, range);
         String problem = verifyPatchedSegment(tmpDir, idx, segFile);
         if (problem != null) {
             FileCleaner.deleteQuietly(segFile);
@@ -1534,62 +1831,75 @@ public class DownloadExecutor {
     }
 
     /**
-     * 解析媒体播放列表的分片地址;keysOut 非空时按分片顺序输出解密密钥(无加密的分片为 null)。
-     * 支持 #EXT-X-KEY:METHOD=AES-128(含播放列表内多 KEY 轮换);其余加密方法(如 SAMPLE-AES)明确报错。
+     * 解析媒体播放列表的结果(下载侧形态):三张按序号并行对齐的表 + 可选 init 段。
+     *
+     * <p>为什么是并行表而不是"分片对象数组":下载循环/补片循环/校验/合并都按<b>序号</b>索引,
+     * 并行表与既有 {@code segments}/{@code segKeys} 的用法完全一致,改动面最小。
      */
-    private List<String> parseSegments(String playlistUrl, String playlist, List<HlsKey> keysOut) throws IOException {
-        List<String> segs = new ArrayList<>();
-        String base = playlistUrl.substring(0, playlistUrl.lastIndexOf('/') + 1);
-        long mediaSeq = 0;
-        String curKeyUri = null;
-        byte[] curIv = null;
-        for (String line : playlist.split("\n")) {
-            String l = line.trim();
-            if (l.isEmpty())
-                continue;
-            if (l.startsWith("#")) {
-                if (l.startsWith("#EXT-X-MEDIA-SEQUENCE:")) {
-                    try {
-                        mediaSeq = Long.parseLong(l.substring("#EXT-X-MEDIA-SEQUENCE:".length()).trim());
-                    } catch (NumberFormatException ignored) {
-                    }
-                } else if (l.startsWith("#EXT-X-KEY:")) {
-                    String method = attrValue(l, "METHOD");
-                    if (method == null || "NONE".equalsIgnoreCase(method)) {
-                        curKeyUri = null;
-                        curIv = null;
-                    } else if ("AES-128".equalsIgnoreCase(method)) {
-                        String uri = attrValue(l, "URI");
-                        if (uri == null || uri.isEmpty())
-                            throw new IOException("EXT-X-KEY 缺少 URI");
-                        curKeyUri = resolveUrl(playlistUrl, base, uri);
-                        curIv = parseHexIv(attrValue(l, "IV"));
-                    } else {
-                        throw new IOException("暂不支持的 HLS 加密方式: " + method);
-                    }
-                } else if (l.startsWith("#EXT-X-MAP:") || l.startsWith("#EXT-X-BYTERANGE:")) {
-                    // fMP4(#EXT-X-MAP 初始化段)/字节范围分片:只按整文件取分片会把 init 段丢掉
-                    // (产物缺 moov,不可播)或取到错位数据。宁可明确失败,也不要悄悄产出坏文件。
-                    throw new IOException("暂不支持 " + l.substring(0, l.indexOf(':') + 1)
-                            + " 类型的 HLS(fMP4 初始化段/字节范围分片)");
-                }
-                continue;
+    private static final class HlsPlaylistData {
+        final List<String> urls = new ArrayList<>();
+        /** 与 {@link #urls} 一一对应:null=整文件就是这一片 */
+        final List<HlsMediaPlaylist.ByteRange> ranges = new ArrayList<>();
+        /** 与 {@link #urls} 一一对应:null=未加密 */
+        final List<HlsKey> keys = new ArrayList<>();
+        /** fMP4 的 init 段(null=不是 fMP4) */
+        HlsMediaPlaylist.InitSegment init;
+
+        /** 是否存在"固定字节范围"分片(整集一个大文件切片的情形) */
+        boolean hasRanges() {
+            for (HlsMediaPlaylist.ByteRange r : ranges) {
+                if (r != null) return true;
             }
-            // 代理返回的 m3u8 可能被 HTML 包裹(如 <pre>...</pre>): 含标签的行不是分片, 跳过
-            if (l.contains("<") || l.contains(">"))
-                continue;
-            segs.add(resolveUrl(playlistUrl, base, l));
-            if (keysOut != null) {
-                if (curKeyUri == null) {
-                    keysOut.add(null);
-                } else {
-                    // 无显式 IV 时按 HLS 规范用分片媒体序列号(16字节大端)
-                    keysOut.add(new HlsKey(curKeyUri, curIv != null ? curIv : seqIv(mediaSeq)));
-                }
-            }
-            mediaSeq++;
+            return false;
         }
-        return segs;
+    }
+
+    /**
+     * 解析媒体播放列表(委托 :common 的纯逻辑解析器 {@link HlsMediaPlaylist},它带 JVM 单测),
+     * 并转成下载侧要用的"URL/字节范围/密钥"三张并行表 + init 段。
+     *
+     * <p>解析职责下沉到 :common 的原因:隐式 offset(接上一条同资源分片的末尾)、CRLF/BOM、
+     * 异常清单的失败原因都能被纯单测钉死;这里只把解析结果翻成下载执行要用的形态。
+     *
+     * @throws IOException 清单不可用(原因来自解析器,如 {@code EXT-X-BYTERANGE 非法: xxx})
+     */
+    private HlsPlaylistData parsePlaylist(String playlistUrl, String playlist) throws IOException {
+        HlsMediaPlaylist.Result r = HlsMediaPlaylist.parse(playlistUrl, playlist);
+        if (!r.ok()) {
+            // 以前这里对 fMP4/字节范围是"抱歉不支持"整集下不了;现在解析不出来必须给出具体原因,
+            // 让用户/日志能分辨"清单本身坏了"还是"我们不支持的写法"
+            throw new IOException("m3u8 解析失败: " + r.error);
+        }
+        for (String w : r.warnings) {
+            Log.i("TVBox-Download", "播放列表警告: " + w);
+        }
+        HlsPlaylistData d = new HlsPlaylistData();
+        d.init = r.init;
+        for (int i = 0; i < r.segments.size(); i++) {
+            HlsMediaPlaylist.Segment s = r.segments.get(i);
+            d.urls.add(s.url);
+            d.ranges.add(s.range);
+            // 无显式 IV 时按 HLS 规范用该片的媒体序列号(16 字节大端)推导
+            d.keys.add(toHlsKey(s.key, r.mediaSequence + i));
+        }
+        return d;
+    }
+
+    /**
+     * 把解析器透传出来的 {@code #EXT-X-KEY} 属性翻成下载侧的解密参数。
+     * 加密方式是否可解是<b>下载侧</b>的判断(解析器只管结构):AES-128 可解,
+     * 其余(SAMPLE-AES 等)明确报错而不是下出一堆解密失败的碎片。
+     */
+    private HlsKey toHlsKey(HlsMediaPlaylist.Key k, long mediaSeq) throws IOException {
+        if (k == null) return null;
+        if (!"AES-128".equalsIgnoreCase(k.method)) {
+            throw new IOException("暂不支持的 HLS 加密方式: " + k.method);
+        }
+        if (k.uri == null || k.uri.isEmpty()) {
+            throw new IOException("EXT-X-KEY 缺少 URI");
+        }
+        byte[] iv = parseHexIv(k.iv);
+        return new HlsKey(k.uri, iv != null ? iv : seqIv(mediaSeq));
     }
 
     /** HLS 分片 AES-128 解密信息:密钥地址 + IV(显式属性或由媒体序列号推导) */
@@ -1629,18 +1939,6 @@ public class DownloadExecutor {
             }
             resp.close();
         }
-    }
-
-    /** 解析 HLS 标签属性值:支持带引号(URI="...")与不带引号(METHOD=AES-128) */
-    private static String attrValue(String line, String name) {
-        Matcher m = Pattern.compile(name + "=(\"[^\"]*\"|[^,]*)").matcher(line);
-        if (!m.find())
-            return null;
-        String v = m.group(1);
-        if (v.length() >= 2 && v.startsWith("\"") && v.endsWith("\"")) {
-            v = v.substring(1, v.length() - 1);
-        }
-        return v;
     }
 
     /**
@@ -2089,15 +2387,20 @@ public class DownloadExecutor {
     }
 
     private static boolean containsAscii(byte[] head, String s) {
+        return indexOfAscii(head, s) >= 0;
+    }
+
+    /** 子串首次出现的字节下标(不存在为 -1);用于在头部窗口里按盒子名定位(moov/moof/mdat) */
+    private static int indexOfAscii(byte[] head, String s) {
         byte[] needle = s.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
         outer: for (int i = 0; i + needle.length <= head.length; i++) {
             for (int j = 0; j < needle.length; j++) {
                 if (head[i + j] != needle[j])
                     continue outer;
             }
-            return true;
+            return i;
         }
-        return false;
+        return -1;
     }
 
     private static boolean containsByte(byte[] head, byte b) {
