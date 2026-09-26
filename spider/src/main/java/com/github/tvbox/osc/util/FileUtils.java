@@ -95,17 +95,54 @@ public class FileUtils {
             JSONObject jSONObject = new JSONObject();
             jSONObject.put("expires", (int)(time + (System.currentTimeMillis() / 1000)));
             jSONObject.put("data", Base64.encodeToString(data.getBytes(), Base64.URL_SAFE));    
-            writeSimple(jSONObject.toString().getBytes(), open(name));
+            writeAtomic(jSONObject.toString().getBytes(), open(name));
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
 
+    /**
+     * 模块字节码缓存的写锁。
+     * <p>
+     * 公共模块(cheerio.min/crypto-js 等)在<b>多个源</b>的首次创建里会被并行编译,写的是同一个
+     * 缓存文件;必须串行 + 原子替换,否则并行的两个写会互相截断,读到半个文件 → 编译失败。
+     */
+    private static final Object BYTE_CACHE_LOCK = new Object();
+
     public static void setCacheByte(String name, byte[] data) {
         try {
-            writeSimple(byteMerger("//DRPY".getBytes(),Base64.encode(data, Base64.URL_SAFE)), open("B_" + name));
+            byte[] content = byteMerger("//DRPY".getBytes(), Base64.encode(data, Base64.URL_SAFE));
+            synchronized (BYTE_CACHE_LOCK) {
+                writeAtomic(content, open("B_" + name));
+            }
         } catch (Exception e) {
             e.printStackTrace();
+        }
+    }
+
+    /**
+     * 原子落盘:先写同目录临时文件再 rename 替换。
+     * <p>
+     * 原写法 {@code writeSimple} 是"先 delete 再写新文件",并发/中途失败时读方会读到空文件或半截文件
+     * (表现为"JS 源模块编译失败",且下次仍然失败,因为坏缓存被当成有效缓存留着)。
+     */
+    private static boolean writeAtomic(byte[] data, File dst) {
+        try {
+            File tmp = new File(dst.getAbsolutePath() + ".tmp");
+            if (!writeSimple(data, tmp)) return false;
+            if (dst.exists() && !dst.delete()) {
+                tmp.delete();
+                return false;
+            }
+            if (!tmp.renameTo(dst)) {
+                boolean ok = writeSimple(data, dst);
+                tmp.delete();
+                return ok;
+            }
+            return true;
+        } catch (Exception e) {
+            e.printStackTrace();
+            return false;
         }
     }
     

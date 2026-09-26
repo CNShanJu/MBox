@@ -1,6 +1,7 @@
 package com.github.tvbox.osc.util;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
@@ -53,6 +54,22 @@ public class HttpUrlsTest {
         String out = HttpUrls.buildUrl("https://x.example.com/a.php?k=1", params("pg", "2"));
         assertTrue(out.startsWith("https://x.example.com/a.php?k=1"));
         assertTrue(out.contains("&pg=2"));
+    }
+
+    /**
+     * 重复键必须覆盖(不是追加):api 自带 {@code ?ac=list&t=1} 的 CMS 源被追加成两组参数后,
+     * 站点取第一个 ac/t → 分类与翻页全失效,而且不报错(用户只看到"分类是空的")。
+     */
+    @Test
+    public void buildUrl_overridesDuplicateQueryKeys() {
+        String out = HttpUrls.buildUrl("https://x.example.com/api.php?ac=list&t=1",
+                params("ac", "detail", "t", "3", "pg", "2"));
+        assertTrue(out.contains("ac=detail"));
+        assertTrue(out.contains("t=3"));
+        assertTrue(out.contains("pg=2"));
+        assertFalse("重复键被追加了: " + out, out.contains("ac=list"));
+        assertFalse("重复键被追加了: " + out, out.contains("t=1"));
+        assertEquals(1, out.split("ac=").length - 1);
     }
 
     @Test

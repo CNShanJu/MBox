@@ -312,13 +312,15 @@ public class OkGoHelper {
     }
 
     private static OkHttpClient buildImageClient() {
-        if (defaultClient == null || appContext == null) return defaultClient;
+        if (appContext == null) return defaultClient;
         try {
             File dir = new File(appContext.getCacheDir(), "image_http_cache");
             if (!dir.exists() && !dir.mkdirs()) {
                 return defaultClient; // 缓存目录创建失败:退回默认客户端(无磁盘缓存,功能不受影响)
             }
-            return defaultClient.newBuilder()
+            // 从"静默"根起手:图片是后台链路,一个海报加载失败不该把用户弹到"网络不可用"整屏页
+            // (原来从 defaultClient.newBuilder() 派生,顺带继承了"失败即上报"的守卫拦截器)
+            return newBaseBuilder(false)
                     .cache(new Cache(dir, IMAGE_CACHE_MAX_BYTES))
                     // 兜底缓存头:仅本客户端(图片)生效——OkHttp 依据响应缓存头决定是否落盘,
                     // 很多图床不带缓存头,补一个公共 max-age 使其可被磁盘缓存
@@ -351,6 +353,11 @@ public class OkGoHelper {
      * <b>不要求</b>"已验证可联网"——网络受限/切换瞬间仍可能请求成功，宁可漏拦也不误杀。
      * 读不到（context 未注入、权限异常、系统实现差异）一律返回 true：守卫只是优化，
      * 绝不能因为它自己出问题就把请求拦死。
+     * <p>
+     * 判定口径与 {@code SystemStateMonitor.hasUsableNetwork()}（:common，页面侧"有网/没网"的唯一判定）
+     * <b>必须逐字一致</b>：两处结论相反就会出现"页面以为有网、守卫以为没网"这类诡异现象。
+     * 为什么不合成一处：模块门禁 {@code checkModuleDependencies} 明令 <b>:core-network 禁止依赖 :common</b>，
+     * 只能各留一份 —— 改判定口径时<b>两处一起改</b>（VPN/以太网/蓝牙共享算不算有网就是这条口径）。
      */
     public static boolean hasNetwork() {
         try {
@@ -374,11 +381,24 @@ public class OkGoHelper {
         }
     }
 
+    /** 常规根 Builder：失败会经网络层上报（用户可见的页面/接口/播放/爬虫链路用这个） */
     public static OkHttpClient.Builder newBaseBuilder() {
+        return newBaseBuilder(true);
+    }
+
+    /**
+     * 根 Builder。
+     *
+     * @param notifyOnIssue 请求因无网失败时是否上报（{@code OkGoHelper.notifyNetworkIssue} → "网络不可用"整屏页）。
+     *                      后台链路（图片预取/下载续传/自动检查更新）传 false：它们不是<b>用户主动发起</b>的操作，
+     *                      失败却把用户从正在看的内容上弹走，违背"没做网络操作时不弹页"的设计意图。
+     *                      传 false 仍然会快速失败（省掉一次白等的超时），只是不上报。
+     */
+    public static OkHttpClient.Builder newBaseBuilder(boolean notifyOnIssue) {
         OkHttpClient.Builder builder = new OkHttpClient.Builder();
         // 无网络快速失败:必须放在最前面(拦截器按加入顺序执行),断网时连日志拦截器都不进,
         // 直接抛出 "当前无网络,请检查网络连接"(见 NetworkGuardInterceptor 上的说明)
-        builder.addInterceptor(new NetworkGuardInterceptor());
+        builder.addInterceptor(new NetworkGuardInterceptor(notifyOnIssue));
         HttpLoggingInterceptor loggingInterceptor = new HttpLoggingInterceptor();
 
         if (SystemConfig.isDebugOpen()) {

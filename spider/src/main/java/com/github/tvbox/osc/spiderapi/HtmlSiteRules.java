@@ -37,9 +37,15 @@ public final class HtmlSiteRules {
             "<a\\s[^>]*href\\s*=\\s*[\"']([^\"']*?(?:/vod/type/id/|/vodtype/)(\\d+)(?:\\.html)?[^\"']*)[\"'][^>]*>([\\s\\S]{0,60}?)</a>",
             Pattern.CASE_INSENSITIVE);
 
-    /** 分页链接里的页码(总页数取最大值) */
+    /**
+     * 分页链接里的页码(总页数取最大值)。
+     * <p>
+     * 注意不能把 {@code /vodtype/{分类id}.html} 里的<b>分类 id</b> 当页码:原实现含 {@code vodtype/}
+     * 分支,于是 {@code /vodtype/30.html} 会命中并取到 30 → 列表页数虚高,后面十几页全是空条目,
+     * 用户会以为源坏了。伪静态站的翻页形如 {@code /vodtype/30-2.html},页码是短横后的数字。
+     */
     private static final Pattern PAGE_NUM = Pattern.compile(
-            "(?:/page/|vodtype/|/vodshow/\\d+-)(\\d+)", Pattern.CASE_INSENSITIVE);
+            "(?:/page/|/vodshow/\\d+-|/vodtype/\\d+-)(\\d+)", Pattern.CASE_INSENSITIVE);
 
     /** 站点子目录线索:形如 /jiejie/index.php/vod/… 或 /jiejie/vodshow/… */
     private static final Pattern SUBDIR = Pattern.compile(

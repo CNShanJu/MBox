@@ -78,7 +78,7 @@ public class SpiderJS extends Spider {
             });
 
             initConsole();
-            runtime.getGlobalObject().bind(new Global(executor));
+            runtime.getGlobalObject().bind(new Global(executor, Connect.JS_TAG));
 
             if(cls != null){
                 Class<?>[] classes = cls.getDeclaredClasses();
@@ -150,7 +150,7 @@ public class SpiderJS extends Spider {
     }
 
     public void cancelByTag() {
-        Connect.cancelByTag("js_okhttp_tag");
+        Connect.cancelByTag(Connect.JS_TAG);
     }
 
     @Override

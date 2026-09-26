@@ -33,7 +33,9 @@ public final class HttpUrls {
             for (Map.Entry<String, String> entry : params.entrySet()) {
                 if (entry.getKey() == null) continue;
                 if (entry.getValue() == null) continue;
-                builder.addQueryParameter(entry.getKey(), entry.getValue());
+                // setQueryParameter(而不是 add):api 自带 ?ac=list&t=1 的 CMS 源,add 会拼成
+                // ac=list&t=1&ac=detail&t=3&pg=2 —— 站点取第一个 ac/t → 分类与翻页全失效,且不报错
+                builder.setQueryParameter(entry.getKey(), entry.getValue());
             }
             return builder.build().toString();
         } catch (Throwable th) {

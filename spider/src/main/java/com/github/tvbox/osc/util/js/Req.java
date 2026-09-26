@@ -8,8 +8,8 @@ import com.google.gson.annotations.SerializedName;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
-import java.util.Objects;
 
 public class Req {
 
@@ -77,12 +77,32 @@ public class Req {
     public String getCharset() {
         Map<String, String> header = getHeader();
         List<String> keys = Arrays.asList("Content-Type", "content-type");
-        for (String key : keys) if (header.containsKey(key)) return getCharset(Objects.requireNonNull(header.get(key)));
+        for (String key : keys) {
+            String value = header.get(key);
+            if (value != null) return getCharset(value);
+        }
         return "UTF-8";
     }
 
+    /**
+     * 从 Content-Type 值里取字符集名。
+     * <p>
+     * 原实现 {@code text.split("=")[1]}:写着 {@code charset=} 而值为空时数组越界,
+     * {@code charset="gbk"} 这种带引号的写法又不是合法字符集名 —— 两种都被 Connect.success
+     * 吞成 {@code content:""},表现为"分类/首页空白且没有任何日志"。
+     */
     private String getCharset(String value) {
-        for (String text : value.split(";")) if (text.contains("charset=")) return text.split("=")[1];
+        if (value == null) return "UTF-8";
+        for (String text : value.split(";")) {
+            int idx = text.toLowerCase(Locale.ROOT).indexOf("charset=");
+            if (idx < 0) continue;
+            String charset = text.substring(idx + "charset=".length()).trim();
+            if (charset.length() >= 2 && ((charset.startsWith("\"") && charset.endsWith("\""))
+                    || (charset.startsWith("'") && charset.endsWith("'")))) {
+                charset = charset.substring(1, charset.length() - 1).trim();
+            }
+            if (!charset.isEmpty()) return charset;
+        }
         return "UTF-8";
     }
 }

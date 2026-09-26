@@ -169,6 +169,17 @@ public class HtmlSiteRulesTest {
         assertEquals(2, HtmlSiteRules.pageCount("<html>没有分页</html>", 2));
     }
 
+    /**
+     * 伪静态分类路由 {@code /vodtype/{分类id}.html} 里的数字是<b>分类 id</b>,不能当页码:
+     * 原来会把 30 当成"共 30 页"→ 列表页数虚高,后面十几页全是空条目(用户以为源坏了)。
+     */
+    @Test
+    public void pageCount_ignoresCategoryIdInPseudoStaticRoute() {
+        assertEquals(1, HtmlSiteRules.pageCount("<a href=\"/jiejie/vodtype/30.html\">最新</a>", 1));
+        // 伪静态站真正的翻页形如 /vodtype/{分类id}-{页码}.html
+        assertEquals(9, HtmlSiteRules.pageCount("<a href=\"/jiejie/vodtype/30-9.html\">尾页</a>", 1));
+    }
+
     // ------------------------------------------------------------------
     // 播放页地址
     // ------------------------------------------------------------------

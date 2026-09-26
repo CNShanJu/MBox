@@ -4,6 +4,7 @@ import android.os.Handler;
 import android.os.Looper;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -218,12 +219,18 @@ public class HttpClient {
             }
             File parent = dest.getParentFile();
             if (parent != null && !parent.exists()) parent.mkdirs();
+            // 先写同目录临时文件、成功后再整体替换:直接写目标文件时,中途失败/被并发读到就是
+            // 半个 jar(而 jar 会被当成有效缓存留着,DexClassLoader 加载失败后每次调用都重下)
+            File tmp = new File(dest.getAbsolutePath() + ".tmp");
+            if (tmp.exists() && !tmp.delete()) {
+                throw new IOException("cannot remove stale temp file: " + tmp);
+            }
             // 文件可能被置为只读(防止 dex 校验),覆盖前恢复可写
             if (dest.exists() && !dest.canWrite()) {
                 dest.setWritable(true);
             }
             InputStream is = response.body().byteStream();
-            OutputStream os = new FileOutputStream(dest);
+            OutputStream os = new FileOutputStream(tmp);
             try {
                 byte[] buffer = new byte[8192];
                 int length;
@@ -238,6 +245,22 @@ public class HttpClient {
                 try {
                     os.close();
                 } catch (IOException ignored) {
+                }
+            }
+            if (tmp.length() <= 0) {
+                tmp.delete();
+                throw new IOException("download empty body: " + url);
+            }
+            if (!tmp.renameTo(dest)) {
+                // 极端情况(rename 跨文件系统等):退化为复制,失败则保留 tmp 报错
+                try (InputStream in = new FileInputStream(tmp); OutputStream out = new FileOutputStream(dest)) {
+                    byte[] buffer = new byte[8192];
+                    int length;
+                    while ((length = in.read(buffer)) > 0) {
+                        out.write(buffer, 0, length);
+                    }
+                } finally {
+                    tmp.delete();
                 }
             }
             return dest;

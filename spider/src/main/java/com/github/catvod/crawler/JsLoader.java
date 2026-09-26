@@ -23,17 +23,31 @@ public class JsLoader {
 
     private static ConcurrentHashMap<String, Spider> spiders = new ConcurrentHashMap<>();
     private static ConcurrentHashMap<String, Class<?>> classs = new ConcurrentHashMap<>();
-    /** spider 创建串行锁:spiders/classs 为静态,首次创建(下载 jar/编译 JS 模块/写模块缓存)必须串行,
-     *  不同源并行取源时才不会相互踩踏;已创建的源走无锁快路径直接返回,调用仍并行。 */
-    private static final Object CREATE_LOCK = new Object();
+    /**
+     * 按源分把创建锁（原为一把全局 CreateLock）。
+     * <p>
+     * 首次创建要下载 jar / 编译 JS 模块 / 写模块缓存，同一源的创建必须串行；但不同源之间没有共享
+     * 写入的资源（模块缓存文件的并发写已在 FileUtils.setCacheByte 里原子化），用全局锁会让
+     * 一个卡死的源把<b>所有源</b>的首次创建一起堵死。实例化后的源走无锁快路径，调用仍并行。
+     */
+    private static final ConcurrentHashMap<String, Object> CREATE_LOCKS = new ConcurrentHashMap<>();
+
+    /** 创建失败的源（含初始化超时）：冷却期内直接返回 SpiderNull，不再每次调用都白等一个超时 */
+    private static final ConcurrentHashMap<String, Long> CREATE_FAILED_AT = new ConcurrentHashMap<>();
+    private static final long CREATE_FAIL_COOLDOWN_MS = 5 * 60 * 1000L;
 
     public static void load() {
+        // 只"退役"不硬拆：源实例可能仍被首页/详情/播放器持有，立刻 shutdownNow+ctx.destroy
+        // 会让那些调用撞 RejectedExecutionException 或踩已销毁的 QuickJS 上下文（见 JsSpider.destroy）
         for (Spider spider : spiders.values()){
             spider.cancelByTag();
+        }
+        for (Spider spider : spiders.values()){
             spider.destroy();
         }
         spiders.clear();
         classs.clear();
+        CREATE_FAILED_AT.clear();
     }
 
     public static void stopAll() {
@@ -61,7 +75,7 @@ public class JsLoader {
                 try {
                     classInit = classLoader.loadClass("com.github.catvod.js.Method");
                     if (classInit != null) {
-                        System.out.println("自定义jsapi加载成功!");
+                        LOG.i("QuJs", "自定义jsapi加载成功!");
                         success = true;
                         break;
                     }
@@ -76,27 +90,48 @@ public class JsLoader {
                 classs.put(key, classInit);
             }
         } catch (Throwable th) {
-            th.printStackTrace();
+            LOG.e("QuJs", th);
         }
         return success;
     }
 
     private Class<?> loadJarInternal(String jar, String md5, String key) {
-        if (classs.contains(key))
+        // containsKey：ConcurrentHashMap.contains 是"按值判断"，而这里存的是 Class/DexClassLoader，
+        // 键才是 String → 原写法恒 false，于是每次首次创建都重下 jar + 新建 DexClassLoader
+        // （还在创建锁里、内含最多 5×200ms 轮询；dex 不可卸载，换几次订阅就涨一块 native 内存）
+        if (classs.containsKey(key))
             return classs.get(key);
         File cache = new File(context.getFilesDir().getAbsolutePath() + "/" + key + ".jar");
-        if (!md5.isEmpty()) {
-            if (cache.exists() && MD5.getFileMd5(cache).equalsIgnoreCase(md5)) {
-                loadClassLoader(cache.getAbsolutePath(), key);
-                return classs.get(key);
-            }
+        // 缓存判定与校验语义与 JarLoader.loadJarInternal 一致(见那里的注释):
+        // 像个包 + md5 相符(有 md5 时)/ 未过期(没 md5 时)
+        boolean cacheUsable = JarLoader.isLoadableArchive(cache);
+        if (cacheUsable && !md5.isEmpty()) {
+            cacheUsable = MD5.getFileMd5(cache).equalsIgnoreCase(md5);
+        } else if (cacheUsable && System.currentTimeMillis() - cache.lastModified() > JarLoader.STALE_JAR_MS) {
+            cacheUsable = false;
+        }
+        if (cacheUsable) {
+            loadClassLoader(cache.getAbsolutePath(), key);
+            if (classs.containsKey(key)) return classs.get(key);
         }
         try {
             HttpClient.downloadSync(jar, cache);
+            if (!JarLoader.isLoadableArchive(cache)) {
+                LOG.e("QuJs", "下载到的内容不是 jar/dex 包(可能是错误页)： " + jar);
+                cache.delete();
+                return null;
+            }
+            // 下载校验：md5 是订阅里给的唯一完整性凭据，原来下完直接加载，给错了也照用
+            if (!md5.isEmpty() && !MD5.getFileMd5(cache).equalsIgnoreCase(md5)) {
+                LOG.e("QuJs", "jar 校验失败(md5 不符)： " + jar);
+                cache.delete();
+                return null;
+            }
             loadClassLoader(cache.getAbsolutePath(), key);
             return classs.get(key);
         } catch (Throwable e) {
-            e.printStackTrace();
+            LOG.e("QuJs", "jar 下载/加载失败：" + jar + " " + e);
+            // 失败不删缓存文件：文件本身可能完好，只是下载/加载这一步失败，留着下次可用
         }
         return null;
     }
@@ -110,43 +145,83 @@ public class JsLoader {
             recentJarKey = key;
             return cached;
         }
-        // 慢路径:首次创建串行化(下载 jar / new JsSpider 编译 JS 模块 / 写模块缓存 / init)
-        synchronized (CREATE_LOCK) {
+        Long failedAt = CREATE_FAILED_AT.get(key);
+        if (failedAt != null && System.currentTimeMillis() - failedAt < CREATE_FAIL_COOLDOWN_MS) {
+            // 冷却期内不再重试：坏源重复创建会每次都白等一个初始化超时，把创建/调用的道一起占住
+            return new SpiderNull();
+        }
+        // 慢路径:同一源首次创建串行化(下载 jar / new JsSpider 编译 JS 模块 / 写模块缓存 / init)
+        synchronized (CREATE_LOCKS.computeIfAbsent(key, k -> new Object())) {
             cached = spiders.get(key);
             if (cached != null) {
                 recentJarKey = key;
                 return cached;
             }
             Class<?> classLoader = null;
-            if (!jar.isEmpty()) {
-                String[] urls = jar.split(";md5;");
-                String jarUrl = urls[0];
-                String jarKey = MD5.string2MD5(jarUrl);
-                String jarMd5 = urls.length > 1 ? urls[1].trim() : "";
-                classLoader = loadJarInternal(jarUrl, jarMd5, jarKey);
-            }
-            recentJarKey = key;
             try {
-                Spider sp = new JsSpider(key, api, classLoader);
-                sp.init(context, ext);
+                if (!jar.isEmpty()) {
+                    String[] urls = jar.split(";md5;");
+                    String jarUrl = urls[0];
+                    String jarKey = MD5.string2MD5(jarUrl);
+                    String jarMd5 = urls.length > 1 ? urls[1].trim() : "";
+                    classLoader = loadJarInternal(jarUrl, jarMd5, jarKey);
+                }
+                recentJarKey = key;
+                JsSpider sp = new JsSpider(key, api, classLoader);
+                try {
+                    sp.init(context, ext);
+                } catch (Throwable th) {
+                    // init 失败/超时的实例必须销毁：它已经建好了 QuickJS 上下文与单线程 executor，
+                    // 而实例从未进 map，load() 永远遍历不到它（反复导入含坏源的订阅即累积泄漏）
+                    LOG.e("QuJs", th);
+                    sp.destroy();
+                    markCreateFailed(key, th);
+                    return new SpiderNull();
+                }
                 spiders.put(key, sp);
                 return sp;
             } catch (Throwable th) {
-                th.printStackTrace();
-                LOG.e("QuJS", th);
+                LOG.e("QuJs", th);
+                markCreateFailed(key, th);
             }
             return new SpiderNull();
         }
     }
 
+    private static void markCreateFailed(String key, Throwable th) {
+        CREATE_FAILED_AT.put(key, System.currentTimeMillis());
+        LOG.e("QuJs", "源创建失败(" + key + ")，" + (CREATE_FAIL_COOLDOWN_MS / 60000) + " 分钟内不再重试：" + th);
+    }
+
     public Object[] proxyInvoke(Map<String, String> params) {
         try {
-            Spider proxyFun = spiders.get(recentJarKey);
+            // 代理请求来自本机 HTTP 服务线程，与"最近创建过哪个源"没有任何关系。
+            // 优先按请求里的 siteKey 定位源（Global.js2Proxy 生成的地址带 siteKey），找不到再退回旧行为。
+            Spider proxyFun = spiders.get(siteKeyOfProxyParam(params == null ? null : params.get("siteKey")));
+            if (proxyFun == null) {
+                proxyFun = spiders.get(recentJarKey);
+            }
             if (proxyFun != null) {
                 return proxyFun.proxyLocal(params);
             }
+            LOG.e("proxyInvoke", "未找到可用的 JS 源：siteKey=" + (params == null ? null : params.get("siteKey")));
         } catch (Throwable th) {
             LOG.e("proxyInvoke", th);
+        }
+        return null;
+    }
+
+    /**
+     * 代理地址里的 siteKey 与内部 map 键对齐。
+     * <p>
+     * JS 源从 cfg 里拿到的是 {@code skey = "J"+MD5(siteKey)}（见 JsSpider.cfg），所以请求里
+     * 既可能是订阅里的 site.key，也可能是这个 J 前缀键，两种都要认。
+     */
+    private static String siteKeyOfProxyParam(String paramKey) {
+        if (paramKey == null || paramKey.isEmpty()) return null;
+        if (spiders.containsKey(paramKey)) return paramKey;
+        for (String siteKey : spiders.keySet()) {
+            if (paramKey.equals("J" + MD5.encode(siteKey))) return siteKey;
         }
         return null;
     }

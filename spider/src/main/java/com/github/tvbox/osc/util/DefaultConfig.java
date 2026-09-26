@@ -27,12 +27,18 @@ public class DefaultConfig {
 
     public static List<MovieSort.SortData> adjustSort(String sourceKey, List<MovieSort.SortData> list, boolean withMy) {
         List<MovieSort.SortData> data = new ArrayList<>();
+        if (list == null) list = new ArrayList<>();
         if (sourceKey != null) {
+            // 源可能已被删除/订阅刚被换掉:原来直接 sb.getCategories() 会 NPE —— 而本方法是在
+            // 主线程的 LiveData 回调里调的(HomeFragment.initViewModel),一点首页就闪退。
+            // 取不到源时按"没有自定义分类"处理(下面那支:展示全部),首页仍有内容可用。
             SourceBean sb = ApiConfig.get().getSource(sourceKey);
-            ArrayList<String> categories = sb.getCategories();
-            if (!categories.isEmpty()) {
+            ArrayList<String> categories = sb == null ? null : sb.getCategories();
+            if (categories != null && !categories.isEmpty()) {
                 for (String cate : categories) {
                     for (MovieSort.SortData sortData : list) {
+                        // type_name 缺失时 sortData.name 为 null,原写法 sortData.name.equals(cate) 同样 NPE
+                        if (sortData == null || sortData.name == null) continue;
                         if (sortData.name.equals(cate)) {
                             if (sortData.filters == null)
                                 sortData.filters = new ArrayList<>();
@@ -42,6 +48,7 @@ public class DefaultConfig {
                 }
             } else {
                 for (MovieSort.SortData sortData : list) {
+                    if (sortData == null) continue;
                     if (sortData.filters == null)
                         sortData.filters = new ArrayList<>();
                     data.add(sortData);

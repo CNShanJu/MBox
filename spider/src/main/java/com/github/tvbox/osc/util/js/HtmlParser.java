@@ -18,14 +18,35 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class HtmlParser {
-    private static String pdfh_html = "";
-    private static String pdfa_html = "";
     private static final Pattern p = Pattern.compile("url\\((.*?)\\)", Pattern.MULTILINE | Pattern.DOTALL);
     private static final Pattern NOADD_INDEX = Pattern.compile(":eq|:lt|:gt|:first|:last|^body$|^#");  // 不自动加eq下标索引
     private static final Pattern URLJOIN_ATTR = Pattern.compile("(url|src|href|-original|-src|-play|-url|style)$", Pattern.MULTILINE | Pattern.CASE_INSENSITIVE);  // 需要自动urljoin的属性
     private static final Pattern SPECIAL_URL = Pattern.compile("^(ftp|magnet|thunder|ws):", Pattern.MULTILINE | Pattern.CASE_INSENSITIVE);  // 过滤特殊链接,不走urlJoin
-    private static Document pdfh_doc = null;
-    private static Document pdfa_doc = null;
+
+    /**
+     * 解析缓存必须<b>线程私有</b>:静态缓存会被并行抓页面的其它源改写,而"判等 → 解析 → 取用"
+     * 三步非原子 → A 源可能拿到 B 源的 Document(静默解析出别的站的元素,数据错得看不出来);
+     * 且最后一个大页面的 Document 被静态强引用,永不释放。
+     * <p>
+     * 每个 JS 源有各自的单线程 executor,线程私有一份即"每源一份",命中率不变。
+     */
+    private static final ThreadLocal<DocCache> PDFH_CACHE = ThreadLocal.withInitial(DocCache::new);
+    private static final ThreadLocal<DocCache> PDFA_CACHE = ThreadLocal.withInitial(DocCache::new);
+
+    /** 单线程内的"上次 html → Document"缓存(见 PDFH_CACHE 注释) */
+    private static final class DocCache {
+        private String html = "";
+        private Document doc;
+
+        Document document(String html) {
+            String key = html == null ? "" : html;
+            if (doc == null || !key.equals(this.html)) {
+                this.html = key;
+                this.doc = Jsoup.parse(key);
+            }
+            return doc;
+        }
+    }
 
     public static String joinUrl(String parent, String child) {
         if (StringUtils.isEmpty(parent)) {
@@ -160,11 +181,7 @@ public class HtmlParser {
     }
 
     public static String parseDomForUrl(String html, String rule, String add_url) {
-        if (!pdfh_html.equals(html)) {
-            pdfh_html = html;
-            pdfh_doc = Jsoup.parse(html);
-        }
-        Document doc = pdfh_doc;
+        Document doc = PDFH_CACHE.get().document(html);
         if (rule.equals("body&&Text") || rule.equals("Text")) {
             return doc.text();
         } else if (rule.equals("body&&Html") || rule.equals("Html")) {
@@ -227,11 +244,7 @@ public class HtmlParser {
     }
 
     public static List<String> parseDomForArray(String html, String rule) {
-        if (!pdfa_html.equals(html)) {
-            pdfa_html = html;
-            pdfa_doc = Jsoup.parse(html);
-        }
-        Document doc = pdfa_doc;
+        Document doc = PDFA_CACHE.get().document(html);
         rule = parseHikerToJq(rule, false);
         String[] parses = rule.split(" ");
         Elements ret = new Elements();
@@ -275,11 +288,7 @@ public class HtmlParser {
     }
     
     public static List<String> parseDomForList(String html, String p1, String list_text, String list_url, String add_url) {
-        if (!pdfa_html.equals(html)) {
-            pdfa_html = html;
-            pdfa_doc = Jsoup.parse(html);
-        }
-        Document doc = pdfa_doc;
+        Document doc = PDFA_CACHE.get().document(html);
         p1 = parseHikerToJq(p1, false);
         String[] parses = p1.split(" ");
         Elements ret = new Elements();

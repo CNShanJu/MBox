@@ -3,8 +3,8 @@ package com.github.tvbox.osc.spiderapi;
 import com.github.tvbox.osc.bean.AbsSortJson;
 import com.github.tvbox.osc.bean.AbsSortXml;
 import com.github.tvbox.osc.bean.MovieSort;
+import com.github.tvbox.osc.util.LOG;
 import com.google.gson.Gson;
-import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -33,28 +33,40 @@ public final class SortParser {
             }.getType());
             AbsSortXml data = sortJson.toAbsSortXml();
             try {
-                if (obj.has("filters")) {
+                if (obj.has("filters") && data.classes != null && data.classes.sortList != null) {
                     LinkedHashMap<String, ArrayList<MovieSort.SortFilter>> sortFilters = new LinkedHashMap<>();
                     JsonObject filters = obj.getAsJsonObject("filters");
                     for (String key : filters.keySet()) {
-                        ArrayList<MovieSort.SortFilter> sortFilter = new ArrayList<>();
-                        JsonElement one = filters.get(key);
-                        if (one.isJsonObject()) {
-                            sortFilter.add(sortFilterFrom(one.getAsJsonObject()));
-                        } else {
-                            for (JsonElement ele : one.getAsJsonArray()) {
-                                sortFilter.add(sortFilterFrom(ele.getAsJsonObject()));
+                        // 按分类各自兜底:原来整块 catch(Throwable ignored),一个坏 filter 项
+                        // 就会让"这个源所有分类"的筛选面板一起变空(而不是只丢坏的那一项)
+                        try {
+                            ArrayList<MovieSort.SortFilter> sortFilter = new ArrayList<>();
+                            JsonElement one = filters.get(key);
+                            if (one == null || one.isJsonNull()) continue;
+                            if (one.isJsonObject()) {
+                                MovieSort.SortFilter filter = sortFilterFrom(one.getAsJsonObject());
+                                if (filter != null) sortFilter.add(filter);
+                            } else if (one.isJsonArray()) {
+                                for (JsonElement ele : one.getAsJsonArray()) {
+                                    if (ele == null || !ele.isJsonObject()) continue;
+                                    MovieSort.SortFilter filter = sortFilterFrom(ele.getAsJsonObject());
+                                    if (filter != null) sortFilter.add(filter);
+                                }
                             }
+                            if (!sortFilter.isEmpty()) sortFilters.put(key, sortFilter);
+                        } catch (Throwable th) {
+                            LOG.e("SortParser", "分类 " + key + " 的筛选条件解析失败: " + th);
                         }
-                        sortFilters.put(key, sortFilter);
                     }
                     for (MovieSort.SortData sort : data.classes.sortList) {
+                        if (sort == null) continue;
                         if (sortFilters.containsKey(sort.id) && sortFilters.get(sort.id) != null) {
                             sort.filters = sortFilters.get(sort.id);
                         }
                     }
                 }
-            } catch (Throwable ignored) {
+            } catch (Throwable th) {
+                LOG.e("SortParser", "筛选条件解析失败: " + th);
             }
             return data;
         } catch (Throwable th) {
@@ -92,21 +104,36 @@ public final class SortParser {
         }
     }
 
+    /**
+     * 单项筛选条件(key/name/value)。
+     *
+     * @return 字段缺失、类型不对或没有任何可选项时返回 null,由调用方跳过该项 ——
+     * 而不是抛异常让整个源的筛选面板全空
+     */
     private static MovieSort.SortFilter sortFilterFrom(JsonObject obj) {
-        String key = obj.get("key").getAsString();
-        String name = obj.get("name").getAsString();
-        JsonArray kv = obj.getAsJsonArray("value");
+        if (obj == null) return null;
+        JsonElement keyEl = obj.get("key");
+        JsonElement nameEl = obj.get("name");
+        if (keyEl == null || !keyEl.isJsonPrimitive() || nameEl == null || !nameEl.isJsonPrimitive()) return null;
+        String key = keyEl.getAsString();
+        String name = nameEl.getAsString();
+        if (key == null || key.isEmpty() || name == null || name.isEmpty()) return null;
         LinkedHashMap<String, String> values = new LinkedHashMap<>();
-        for (JsonElement ele : kv) {
-            JsonObject eleObj = ele.getAsJsonObject();
-            String valuesKey = eleObj.has("n") ? eleObj.get("n").getAsString() : "";
-            String valuesValue = eleObj.has("v") ? eleObj.get("v").getAsString() : "";
-            values.put(valuesKey, valuesValue);
+        JsonElement valueEl = obj.get("value");
+        if (valueEl != null && valueEl.isJsonArray()) {
+            for (JsonElement ele : valueEl.getAsJsonArray()) {
+                if (ele == null || !ele.isJsonObject()) continue;
+                JsonObject eleObj = ele.getAsJsonObject();
+                String valuesKey = eleObj.has("n") && eleObj.get("n").isJsonPrimitive() ? eleObj.get("n").getAsString() : "";
+                String valuesValue = eleObj.has("v") && eleObj.get("v").isJsonPrimitive() ? eleObj.get("v").getAsString() : "";
+                values.put(valuesKey, valuesValue);
+            }
         }
         MovieSort.SortFilter filter = new MovieSort.SortFilter();
         filter.key = key;
         filter.name = name;
         filter.values = values;
-        return filter;
+        // 一个没有任何可选项的筛选(如 value 类型写错)留着只会渲染出空下拉框,直接作废
+        return values.isEmpty() ? null : filter;
     }
 }
