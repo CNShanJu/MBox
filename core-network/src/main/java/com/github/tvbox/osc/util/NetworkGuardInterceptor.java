@@ -56,7 +56,9 @@ public final class NetworkGuardInterceptor implements Interceptor {
         try {
             return chain.proceed(request);
         } catch (IOException e) {
-            if (isNetworkDrop(e)) {
+            // 判定口径:有网时只认"典型断网异常"(请求发到一半线断了);已经没网时任何 IOException 都算 ——
+            // 后者覆盖"域名解析被拦/连接被中间设备重置/读超时"等非典型表现,避免明明断网却不弹页。
+            if (isNetworkDrop(e) || !OkGoHelper.hasNetwork()) {
                 OkGoHelper.notifyNetworkIssue(request.url().host() + " " + e.getClass().getSimpleName());
             }
             throw e;

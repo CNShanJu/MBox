@@ -6,6 +6,8 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 
+import com.github.tvbox.osc.log.Category;
+import com.github.tvbox.osc.log.LogStore;
 import com.github.tvbox.osc.state.SystemState;
 import com.github.tvbox.osc.state.SystemStateMonitor;
 import com.github.tvbox.osc.ui.activity.NoNetworkActivity;
@@ -67,27 +69,58 @@ public final class NetworkIssueRouter {
 
     /** 网络层回调（可能在任意请求线程）：切主线程再决定是否弹 */
     private static void onNetworkIssue(String reason) {
+        // 一行"网络层报了问题"的日志:排查"为什么没跳页"时先看有没有这一行 ——
+        // 没有 = 请求没走收口客户端(或不是网络类失败);有 = 再看下面"不弹页: xxx"的原因
+        android.util.Log.i(TAG, "网络层报告: " + reason);
         MAIN.post(() -> show(reason));
     }
 
     private static void show(String reason) {
         try {
-            if (dismissedForThisOutage) return;
+            if (dismissedForThisOutage) {
+                logSkip("用户点过\"我知道了\",本次断网期间不再自动弹");
+                return;
+            }
             long now = System.currentTimeMillis();
-            if (now - lastShownAt < MIN_SHOW_INTERVAL_MS) return;
+            if (now - lastShownAt < MIN_SHOW_INTERVAL_MS) {
+                logSkip("距上次弹页不足 " + MIN_SHOW_INTERVAL_MS + "ms");
+                return;
+            }
             SystemState state = SystemStateMonitor.get().getCurrentState();
-            if (state != null && !state.appForeground) return;      // 后台不弹（Android 10+ 也禁止后台起 Activity）
+            if (state != null && !state.appForeground) {
+                logSkip("应用不在前台(后台不弹,Android 10+ 也禁止后台起 Activity)");
+                return;
+            }
             Activity activity = AppManager.getInstance().isActivity()
                     ? AppManager.getInstance().currentActivity() : null;
-            if (activity == null || activity.isFinishing()) return;
-            if (activity instanceof NoNetworkActivity) return;      // 已经在无网络页
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1 && activity.isDestroyed()) return;
+            if (activity == null || activity.isFinishing()) {
+                logSkip("当前没有可用的页面");
+                return;
+            }
+            if (activity instanceof NoNetworkActivity) {
+                logSkip("已经在无网络页");
+                return;
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1 && activity.isDestroyed()) {
+                logSkip("当前页面已销毁");
+                return;
+            }
             lastShownAt = now;
             Intent intent = new Intent(activity, NoNetworkActivity.class);
             intent.putExtra(NoNetworkActivity.EXTRA_REASON, reason == null ? "" : reason);
             activity.startActivity(intent);
+            android.util.Log.i(TAG, "已拉起无网络页(原因: " + reason + ")");
+            try {
+                LogStore.log(Category.SYSTEM, "网络不可用页已拉起(原因: " + reason + ")");
+            } catch (Throwable ignored) {
+            }
         } catch (Throwable th) {
             android.util.Log.w(TAG, "拉起无网络页失败", th);
         }
+    }
+
+    /** 不弹页的原因写进日志:否则"断网了为什么没跳"只能靠猜 */
+    private static void logSkip(String why) {
+        android.util.Log.i(TAG, "不弹无网络页: " + why);
     }
 }
