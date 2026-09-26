@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 网络不可用页:整页走主题资源(text_main·text_sub 文字 / colorPrimary 主色按钮 /
-     bg_r_common_solid_primary·bg_r_common_stroke_primary 按钮底,后两者内部取 colorPrimary 与圆角),
-     **不要**在这里写死颜色与圆角 —— theme_colors.json 改色后这里必须自动跟随。
+<!-- 网络不可用页:文字/按钮全部走主题资源(text_main·text_sub 文字;按钮走全局样式
+     BtnPrimary/BtnSecondary —— 底色/文字色/圆角/描边都取自 theme_colors.json 的 btn_* 与 theme_radii.json),
+     **不要**在这里手写 android:background + textColor:Material 按钮会套主题 backgroundTint,手写背景会被盖掉
+     (实测:次按钮文字与底色同色 → "看不见字")。
      根部**不设不透明背景**:BaseActivity 的页面背景层(PageBackgroundView)是插在内容容器最底层的,
      自带底色会把用户自定义背景图盖掉(其它页面同理,底色由背景层/窗口主题给)。
      可滚动组件按 AGENTS §六保留内边距并 clipToPadding=false(TV/横屏小高度下内容不贴边、不裁死)。 -->
@@ -56,30 +57,22 @@
             android:gravity="center"
             android:orientation="horizontal">
 
-            <Button
+            <com.google.android.material.button.MaterialButton
                 android:id="@+id/btn_no_network_back"
+                style="@style/BtnSecondary"
                 android:layout_width="wrap_content"
-                android:layout_height="44dp"
-                android:background="@drawable/bg_r_common_stroke_primary"
-                android:minWidth="120dp"
-                android:paddingLeft="20dp"
-                android:paddingRight="20dp"
-                android:text="@string/no_network_back"
-                android:textColor="@color/colorPrimary"
-                android:textSize="15sp" />
+                android:layout_height="40dp"
+                android:minWidth="140dp"
+                android:text="@string/no_network_back" />
 
-            <Button
+            <com.google.android.material.button.MaterialButton
                 android:id="@+id/btn_no_network_got_it"
+                style="@style/BtnPrimary"
                 android:layout_width="wrap_content"
-                android:layout_height="44dp"
-                android:layout_marginStart="16dp"
-                android:background="@drawable/bg_r_common_solid_primary"
-                android:minWidth="120dp"
-                android:paddingLeft="20dp"
-                android:paddingRight="20dp"
-                android:text="@string/no_network_got_it"
-                android:textColor="@color/btn_confirm_text"
-                android:textSize="15sp" />
+                android:layout_height="40dp"
+                android:layout_marginStart="12dp"
+                android:minWidth="140dp"
+                android:text="@string/no_network_got_it" />
         </LinearLayout>
     </LinearLayout>
 </ScrollView>
