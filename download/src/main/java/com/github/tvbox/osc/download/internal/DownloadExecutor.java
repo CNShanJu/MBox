@@ -428,6 +428,12 @@ public class DownloadExecutor {
         int repair = 0;
         /** 缺片完成时的说明(空=没有任何缺片);完成态写进任务信息,让用户知道少了几秒 */
         String gapNote = "";
+        /** 跨线路补片说明(4.8③,空=没补过);完成态写进任务信息,让用户知道有几片来自别的线路 */
+        String patchNote = "";
+        /** 跨线路补片只做一次(补不到就退回缺片完成/失败,不反复换线路拉列表) */
+        boolean patchTried = false;
+        /** 本线路播放列表的逐片时长:判定另一条线路"切分是否一致"的基准(见 HlsPlaylistLayout) */
+        List<Double> primaryDurations = com.github.tvbox.osc.util.HlsPlaylistLayout.durations(playlist);
         /**
          * 缺片完成时"获准缺席"的分片序号。合并阶段必须跳过这些序号:
          * 磁盘上确实没有这个文件,而合并循环是逐序号拼接的,不跳过就会
@@ -439,6 +445,21 @@ public class DownloadExecutor {
             // 不能一边明知拿不到、一边把 3 轮补片跑满(实测 8 片死片被反复请求 144 次、耗时几分钟却毫无进展)
             boolean allGone = goneSegments.containsAll(missing);
             if (repair >= DownloadManager.MAX_SEGMENT_REPAIR || allGone) {
+                // 跨线路补片(4.8③):同线路补不齐(或全是死片)时,去这条集的另一条线路把"同一片"取回来。
+                // 只取能证明是同一段的(切分一致 + 取回后 PTS 接缝校验),补到的片就是本集的分片,
+                // 合并照旧 —— 不重下整集,也不放弃已下的其余全部内容。
+                if (!patchTried && t.altRoutes != null && !t.altRoutes.isEmpty()) {
+                    patchTried = true;
+                    List<Integer> left = patchMissingFromAltRoutes(t, tmpDir, missing, primaryDurations);
+                    int patched = missing.size() - left.size();
+                    if (patched > 0) {
+                        patchNote = "补 " + patched + " 片(来自其它线路)";
+                        missing = left;
+                        writeSegmentsInfo(t, tmpDir, segments, t.doneSegments);
+                        if (missing.isEmpty()) break; // 补齐了:正常合并出完整文件
+                        allGone = goneSegments.containsAll(missing);
+                    }
+                }
                 // 补片 3 轮仍缺(或剩余缺片全是死片):先看是不是"极少数分片在源侧永久失效"(CDN 上就是没有这个文件,
                 // 重试与换线路都拿不到)—— 为几秒钟画面把整集判死,对用户是净损失:
                 // 按缺片完成,但必须在任务信息/日志里写清楚缺了几片,不允许静默;
@@ -689,8 +710,15 @@ public class DownloadExecutor {
         }
         // 顺序铁律: 落盘 → 写档案 → 清理 → COMPLETED。
         // 清理(删碎片)是危险操作, 只有档案写成功后才允许; 档案写失败则保留碎片现场可重试。
-        // 缺片完成时把"缺了几片"留在任务信息里(档案/通知/日志都能看到),不允许静默完成
-        t.message = gapNote.isEmpty() ? "" : "已完成(" + gapNote + ",该分片在源侧已失效,可能少几秒画面)";
+        // 缺片完成/跨线路补片都要在任务信息里说清楚(档案/通知/日志都能看到),不允许静默完成
+        String doneNote = "";
+        if (!gapNote.isEmpty()) {
+            doneNote = gapNote + (patchNote.isEmpty() ? "" : "," + patchNote)
+                    + ",该分片在源侧已失效,可能少几秒画面";
+        } else if (!patchNote.isEmpty()) {
+            doneNote = patchNote + ",本线路缺的片已由其它线路补齐,合并为完整文件";
+        }
+        t.message = doneNote.isEmpty() ? "" : "已完成(" + doneNote + ")";
         t.state = DownloadTask.STATE_COMPLETED;
         DownloadLog.LOG.success(DownloadSubType.SAVE, "下载完成: " + t.fileName, DownloadLog.extras(t.episodeId));
         dm.archive.add(t); // 先写档案(长期)
@@ -915,6 +943,15 @@ public class DownloadExecutor {
      */
     private void downloadSegment(int segIndex, String segUrl, File segFile, long segDone, DownloadTask t,
             HlsKey key, Map<String, byte[]> keyCache) throws IOException {
+        downloadSegment(segIndex, segUrl, segFile, segDone, t, key, keyCache, null);
+    }
+
+    /**
+     * @param extraHeaders 额外请求头(覆盖任务自带的):跨线路补片时用备用线路解析出来的防盗链头
+     *                     (每条线路可能各有各的 Referer),为 null 时只用任务自带的头
+     */
+    private void downloadSegment(int segIndex, String segUrl, File segFile, long segDone, DownloadTask t,
+            HlsKey key, Map<String, byte[]> keyCache, Map<String, String> extraHeaders) throws IOException {
         // 加密分片无法断点续传(AES-CBC 需从头整段解密),一律整段下
         if (key != null)
             segDone = 0;
@@ -925,6 +962,11 @@ public class DownloadExecutor {
             FileCleaner.deleteQuietly(new File(segFile.getAbsolutePath() + ".part"));
         }
         Map<String, String> headers = baseHeaders(t);
+        if (extraHeaders != null && !extraHeaders.isEmpty()) {
+            for (Map.Entry<String, String> e : extraHeaders.entrySet()) {
+                if (e.getKey() != null && e.getValue() != null) headers.put(e.getKey(), e.getValue());
+            }
+        }
         if (segDone > 0) {
             headers.put("Range", "bytes=" + segDone + "-");
         }
@@ -1106,6 +1148,281 @@ public class DownloadExecutor {
                 FileCleaner.copyFile(partFile, segFile);
                 FileCleaner.deleteQuietly(partFile);
             }
+        } finally {
+            dm.activeResponses.remove(t.id);
+            resp.close();
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 跨线路补片(4.8③):本线路缺的片,去这条集的另一条线路把"同一片"取回来
+    // ------------------------------------------------------------------
+
+    /** 一次跨线路补片最多补几片:再多就接近"整集重下",不如走换线路/缺片完成那两条路 */
+    private static final int MAX_ALT_PATCH_SEGMENTS = 30;
+    /** PTS 探测窗口(字节):够覆盖几十个 PES 头 */
+    private static final int PTS_WINDOW_BYTES = 64 * 1024;
+
+    /** 一条可用备用线路的媒体播放列表(切分已证明与本线路一致,才允许取片) */
+    private static final class AltPlaylist {
+        final com.github.tvbox.osc.bean.DownloadRoute route;
+        final List<String> segments;
+        final List<HlsKey> keys;
+        /** 该线路解析出来的防盗链请求头(每条线路可能各有各的 Referer) */
+        final Map<String, String> headers;
+
+        AltPlaylist(com.github.tvbox.osc.bean.DownloadRoute route, List<String> segments, List<HlsKey> keys,
+                Map<String, String> headers) {
+            this.route = route;
+            this.segments = segments;
+            this.keys = keys;
+            this.headers = headers;
+        }
+    }
+
+    /**
+     * 跨线路补片:把仍然缺失的分片,从这条集的其它线路取"同一片"补上。
+     *
+     * <p>为什么不是"直接换线路整集重下":该下的大部分已经下完了,缺的往往只有几片 ——
+     * 只补这几片,流量与时间都是一个零头,而且不用把已下的全部作废。
+     *
+     * <p>安全前提(必须可证,不猜):
+     * <ol>
+     *   <li><b>切分一致</b>:候选线路的播放列表片数相同、每片 {@code #EXTINF} 时长逐个在容差内
+     *       ({@link com.github.tvbox.osc.util.HlsPlaylistLayout})—— 只有这样"第 i 片"才是同一段时间。
+     *       两条线路是不同转码/不同切分时(如 A 940 片×6s、B 470 片×12s),拿来的片拼进去文件不报错,
+     *       但时间轴错乱(花屏/音画不同步),所以宁可不补;</li>
+     *   <li><b>取回后接缝校验</b>:替补片必须是标准 188 包 TS,且首/末 PTS 与本线路相邻已下分片接得上
+     *       ({@link com.github.tvbox.osc.util.TsPtsProbe#continuityProblem})。</li>
+     * </ol>
+     * 任一校验不过 → 删掉替补片、继续试下一条线路;全部不行就退回"缺片完成/失败",绝不拼出坏文件。
+     *
+     * @return 仍未补齐的分片序号(补上的已不在其中)
+     */
+    private List<Integer> patchMissingFromAltRoutes(DownloadTask t, File tmpDir, List<Integer> missing,
+            List<Double> primaryDurations) {
+        List<Integer> remain = new ArrayList<>(missing);
+        if (missing.isEmpty() || t.altRoutes == null || t.altRoutes.isEmpty()) return remain;
+        if (missing.size() > MAX_ALT_PATCH_SEGMENTS) {
+            Log.i("TVBox-Download", "跨线路补片跳过:缺 " + missing.size() + " 片超过上限 "
+                    + MAX_ALT_PATCH_SEGMENTS + "(接近整集重下): " + t.fileName);
+            return remain;
+        }
+        if (primaryDurations.isEmpty()) {
+            Log.i("TVBox-Download", "跨线路补片跳过:本线路播放列表没有 #EXTINF 时长,无法判定切分一致: " + t.fileName);
+            return remain;
+        }
+        // 候选线路先各自探测一次(重解析地址 + 拉列表 + 比切分),能用的留着后面逐片取
+        List<AltPlaylist> alts = new ArrayList<>();
+        for (com.github.tvbox.osc.bean.DownloadRoute r : t.altRoutes) {
+            AltPlaylist a = loadAltPlaylist(t, r, primaryDurations);
+            if (a != null) alts.add(a);
+        }
+        if (alts.isEmpty()) {
+            Log.i("TVBox-Download", "跨线路补片:没有切分一致的备用线路可用: " + t.fileName);
+            DownloadLog.LOG.warn(DownloadSubType.REPAIR, "跨线路补片: 备用线路均不可用(切分不一致/解析失败/非 m3u8)",
+                    DownloadLog.extras(t.episodeId));
+            return remain;
+        }
+        List<Integer> left = new ArrayList<>();
+        int patched = 0;
+        Map<String, byte[]> keyCache = new HashMap<>();
+        for (int idx : missing) {
+            boolean ok = false;
+            for (AltPlaylist a : alts) {
+                if (idx >= a.segments.size()) continue;
+                try {
+                    if (patchOneSegment(t, tmpDir, idx, a, keyCache)) {
+                        ok = true;
+                        patched++;
+                        break;
+                    }
+                } catch (Throwable th) {
+                    Log.i("TVBox-Download", "跨线路补片失败(片" + idx + " 线路 " + a.route.describe() + "): "
+                            + DownloadErrors.reasonOf(th));
+                }
+            }
+            if (!ok) left.add(idx);
+        }
+        Log.i("TVBox-Download", "跨线路补片完成: 补上 " + patched + " 片,仍缺 " + left.size() + " 片: " + t.fileName);
+        DownloadLog.LOG.warn(DownloadSubType.REPAIR, "跨线路补片: 补上 " + patched + " 片(来自其它线路),仍缺 "
+                + left.size() + " 片" + missingList(left), DownloadLog.extras(t.episodeId));
+        return left;
+    }
+
+    /**
+     * 探测一条备用线路:重解析地址 → 拉它的播放列表(只读,不改任务字段)→ 逐片时长与本线路比对。
+     * 任一步失败/切分不一致都返回 null(这条线路的片不能用来补)。
+     */
+    private AltPlaylist loadAltPlaylist(DownloadTask t, com.github.tvbox.osc.bean.DownloadRoute route,
+            List<Double> primaryDurations) {
+        try {
+            com.github.tvbox.osc.spiderapi.ResolveResult rr =
+                    dm.urlResolverApi.resolvePlayUrl(t.sourceKey, route.playFlag, route.episodeRawUrl);
+            if (rr == null || rr.url == null || rr.url.isEmpty()) {
+                Log.i("TVBox-Download", "跨线路补片:线路 " + route.describe() + " 解析不出地址");
+                return null;
+            }
+            if (!rr.url.toLowerCase().contains(".m3u8")) {
+                // 直链线路:是另一个文件,切分无从比对(整段字节级对齐无从校验),不拿来补
+                Log.i("TVBox-Download", "跨线路补片:线路 " + route.describe() + " 不是 m3u8(直链不参与补片)");
+                return null;
+            }
+            String[] pl = fetchPlaylistReadOnly(rr.url, t, rr.headers);
+            List<HlsKey> keys = new ArrayList<>();
+            List<String> segs = parseSegments(pl[1], pl[0], keys);
+            if (segs.isEmpty()) {
+                Log.i("TVBox-Download", "跨线路补片:线路 " + route.describe() + " 播放列表无有效分片");
+                return null;
+            }
+            com.github.tvbox.osc.util.HlsPlaylistLayout.Comparison cmp =
+                    com.github.tvbox.osc.util.HlsPlaylistLayout.compare(primaryDurations,
+                            com.github.tvbox.osc.util.HlsPlaylistLayout.durations(pl[0]));
+            if (!cmp.same) {
+                // 关键拒绝:不同切分的线路拿来的"第 i 片"不是同一段,拼进去就是时间轴错乱
+                Log.i("TVBox-Download", "跨线路补片:线路 " + route.describe() + " 切分不一致(" + cmp.reason + "),不补");
+                DownloadLog.LOG.warn(DownloadSubType.REPAIR, "跨线路补片: 线路 " + route.describe()
+                        + " 切分不一致,不参与补片(" + cmp.reason + ")", DownloadLog.extras(t.episodeId));
+                return null;
+            }
+            Log.i("TVBox-Download", "跨线路补片:线路 " + route.describe() + " 切分一致(" + segs.size() + " 片),可用于补片");
+            return new AltPlaylist(route, segs, keys, rr.headers);
+        } catch (Throwable th) {
+            Log.i("TVBox-Download", "跨线路补片:线路 " + route.describe() + " 探测异常: " + DownloadErrors.reasonOf(th));
+            return null;
+        }
+    }
+
+    /** 取一片:下载 → 校验(内容 + PTS 接缝)→ 不合格就删掉;返回是否补成 */
+    private boolean patchOneSegment(DownloadTask t, File tmpDir, int idx, AltPlaylist alt,
+            Map<String, byte[]> keyCache) throws IOException {
+        File segFile = new File(tmpDir, String.format("%05d.ts", idx));
+        if (segFile.exists() && segFile.length() > 0) return true; // 已存在:不用补
+        HlsKey key = idx < alt.keys.size() ? alt.keys.get(idx) : null;
+        // 走本任务的分片下载通道:剥壳/188 包对齐/AES 解密口径与主流程完全一致;
+        // 请求头用该线路自己解析出来的(每条线路可能各有各的 Referer)
+        downloadSegment(idx, alt.segments.get(idx), segFile, 0, t, key, keyCache, alt.headers);
+        String problem = verifyPatchedSegment(tmpDir, idx, segFile);
+        if (problem != null) {
+            FileCleaner.deleteQuietly(segFile);
+            FileCleaner.deleteQuietly(new File(segFile.getAbsolutePath() + ".part"));
+            Log.i("TVBox-Download", "跨线路补片校验不过(片" + idx + " 线路 " + alt.route.describe() + "): " + problem);
+            DownloadLog.LOG.warn(DownloadSubType.REPAIR, "跨线路补片校验不过/片 " + idx + "("
+                    + alt.route.describe() + "): " + problem, DownloadLog.extras(t.episodeId));
+            return false;
+        }
+        if (t.doneSegments <= idx) t.doneSegments = idx + 1;
+        Log.i("TVBox-Download", "跨线路补片成功: 片" + idx + " 来自线路 " + alt.route.describe()
+                + " " + segFile.length() + "B");
+        DownloadLog.LOG.success(DownloadSubType.REPAIR, "跨线路补片/片 " + idx + " 来自 " + alt.route.describe()
+                + " " + segFile.length() + "B", DownloadLog.extras(t.episodeId));
+        return true;
+    }
+
+    /**
+     * 替补分片校验:内容是可解析的标准 188 包 TS,且首/末 PTS 与本线路相邻已下分片的时间轴接得上。
+     *
+     * @return null=通过;非 null=拒绝原因
+     */
+    private String verifyPatchedSegment(File tmpDir, int idx, File segFile) {
+        byte[] head = readWindow(segFile, PTS_WINDOW_BYTES, false);
+        if (head == null || head.length == 0) return "分片为空";
+        com.github.tvbox.osc.util.TsProbe probe = com.github.tvbox.osc.util.TsProbe.of(head);
+        if (!probe.isTs()) {
+            return "内容不是 TS(" + (probe.contentHint.isEmpty() ? probe.kind.name() : probe.contentHint) + ")";
+        }
+        if (probe.kind != com.github.tvbox.osc.util.TsProbe.Kind.TS_188) {
+            // 192/204 包与已下分片形态不同,MediaExtractor 侧口径也不一样,不掺进来
+            return "不是标准 188 包 TS(" + probe.kind.name() + ")";
+        }
+        double subFirst = com.github.tvbox.osc.util.TsPtsProbe.firstPtsSeconds(head, head.length);
+        byte[] tail = readWindow(segFile, PTS_WINDOW_BYTES, true);
+        double subLast = com.github.tvbox.osc.util.TsPtsProbe.lastPtsSeconds(tail, tail.length);
+        double prevLast = -1, nextFirst = -1;
+        if (idx > 0) {
+            File prev = new File(tmpDir, String.format("%05d.ts", idx - 1));
+            if (prev.exists() && prev.length() > 0) {
+                byte[] t1 = readWindow(prev, PTS_WINDOW_BYTES, true);
+                prevLast = com.github.tvbox.osc.util.TsPtsProbe.lastPtsSeconds(t1, t1.length);
+            }
+        }
+        File next = new File(tmpDir, String.format("%05d.ts", idx + 1));
+        if (next.exists() && next.length() > 0) {
+            byte[] h2 = readWindow(next, PTS_WINDOW_BYTES, false);
+            nextFirst = com.github.tvbox.osc.util.TsPtsProbe.firstPtsSeconds(h2, h2.length);
+        }
+        return com.github.tvbox.osc.util.TsPtsProbe.continuityProblem(prevLast, subFirst, subLast, nextFirst);
+    }
+
+    /** 读文件头部/尾部窗口(尾部向前对齐到 188 包边界,保证 PTS 扫描能整包对齐) */
+    private static byte[] readWindow(File f, int maxBytes, boolean tail) {
+        try (FileInputStream in = new FileInputStream(f)) {
+            long len = f.length();
+            if (len <= 0) return new byte[0];
+            int want = (int) Math.min(len, maxBytes);
+            long start = 0;
+            if (tail) {
+                start = len - want;
+                start -= start % com.github.tvbox.osc.util.TsProbe.TS_PACKET_SIZE; // 对齐到包边界
+                want = (int) Math.min(len - start, maxBytes);
+            }
+            if (start > 0) {
+                long skipped = in.skip(start);
+                if (skipped < start) return new byte[0];
+            }
+            byte[] buf = new byte[want];
+            int read = 0;
+            while (read < want) {
+                int n = in.read(buf, read, want - read);
+                if (n <= 0) break;
+                read += n;
+            }
+            return read == want ? buf : java.util.Arrays.copyOf(buf, read);
+        } catch (Throwable th) {
+            return new byte[0];
+        }
+    }
+
+    /**
+     * 只拉播放列表文本,不修改任务字段(备用线路探测用);返回 [文本, 实际使用的播放列表地址]。
+     *
+     * @param extraHeaders 该线路自己的请求头(可 null;每条线路的 Referer 可能不同)
+     */
+    private String[] fetchPlaylistReadOnly(String url, DownloadTask t, Map<String, String> extraHeaders)
+            throws IOException {
+        Map<String, String> headers = baseHeaders(t);
+        if (extraHeaders != null && !extraHeaders.isEmpty()) {
+            for (Map.Entry<String, String> e : extraHeaders.entrySet()) {
+                if (e.getKey() != null && e.getValue() != null) headers.put(e.getKey(), e.getValue());
+            }
+        }
+        Response resp = getDownloadResponse(url, headers);
+        dm.activeResponses.put(t.id, resp);
+        try {
+            if (!resp.isSuccessful())
+                throw new IOException("m3u8 HTTP " + resp.code());
+            String text = resp.body().string();
+            if (text.contains("#EXT-X-STREAM-INF")) {
+                String base = url.substring(0, url.lastIndexOf('/') + 1);
+                for (String line : text.split("\n")) {
+                    String l = line.trim();
+                    if (l.isEmpty() || l.startsWith("#"))
+                        continue;
+                    String variant = resolveUrl(url, base, l);
+                    Response resp2 = getDownloadResponse(variant, headers);
+                    dm.activeResponses.put(t.id, resp2);
+                    try {
+                        if (!resp2.isSuccessful())
+                            throw new IOException("variant HTTP " + resp2.code());
+                        return new String[] { resp2.body().string(), variant };
+                    } finally {
+                        dm.activeResponses.remove(t.id);
+                        resp2.close();
+                    }
+                }
+                throw new IOException("主播放列表无变体");
+            }
+            return new String[] { text, url };
         } finally {
             dm.activeResponses.remove(t.id);
             resp.close();
