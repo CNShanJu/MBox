@@ -27,7 +27,27 @@ public final class DownloadErrors {
      */
     public static final String ALL_SEGMENTS_GONE = "缺片均为源侧永久失效";
 
+    /**
+     * "本线路整体不可用"的失败信息标记(连续多片下载失败,见 DownloadExecutor 的
+     * {@code MAX_CONSECUTIVE_SEGMENT_FAIL} 分支)。本地重试/重新解析地址都是同一个结果,
+     * 真正能救回来的是换线路重下(4.8②);拼这条信息时请用本常量,不要另写字面量。
+     */
+    public static final String ROUTE_SUSPECT_TEXT = "该线路的分片地址可能已失效";
+
     private DownloadErrors() {
+    }
+
+    /**
+     * 本线路是否"整体不可用":连续多片下载失败,或整集缺片全是源侧永久失效(HTTP 404/410)。
+     * 调用方(调度器)据此决定换线路而不是继续原地重试。
+     */
+    public static boolean isRouteSuspect(Throwable th) {
+        return isPermanentlyGone(th) || messageContains(th, ROUTE_SUSPECT_TEXT);
+    }
+
+    private static boolean messageContains(Throwable th, String needle) {
+        String msg = th == null ? null : th.getMessage();
+        return msg != null && msg.contains(needle);
     }
 
     /** 分片在源侧永久失效(HTTP 404/410):带分片序号,便于上层记住"死片"、后续不再重复请求 */
@@ -55,8 +75,7 @@ public final class DownloadErrors {
      * 调用方据此跳过重新解析地址与整任务重试 —— 那些动作拿到的还是同一个 404。
      */
     public static boolean isPermanentlyGone(Throwable th) {
-        String msg = th == null ? null : th.getMessage();
-        return msg != null && msg.contains(ALL_SEGMENTS_GONE);
+        return messageContains(th, ALL_SEGMENTS_GONE);
     }
 
     /** 是否网络类错误(断网/超时/无法连接/服务端中途断连/SSL):由调度器按网络重试策略处理 */

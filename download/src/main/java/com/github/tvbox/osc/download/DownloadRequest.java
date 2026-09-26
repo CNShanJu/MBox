@@ -1,5 +1,8 @@
 package com.github.tvbox.osc.download;
 
+import com.github.tvbox.osc.bean.DownloadRoute;
+
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -17,10 +20,20 @@ public final class DownloadRequest {
     public final String sourceName;       // 来源名
     public final String vodName;          // 剧名
     public final String episodeName;      // 集名(文件名用)
+    /** 备用线路候选(换线路重下用,可 null):同一集在其它线路下的原始地址,见 DownloadRoutePlan */
+    public final List<DownloadRoute> altRoutes;
 
     public DownloadRequest(String url, String sourceKey, String playFlag, String episodeRawUrl,
                            String episodeId, String pic, Map<String, String> headers,
                            String sourceName, String vodName, String episodeName) {
+        this(url, sourceKey, playFlag, episodeRawUrl, episodeId, pic, headers,
+                sourceName, vodName, episodeName, null);
+    }
+
+    public DownloadRequest(String url, String sourceKey, String playFlag, String episodeRawUrl,
+                           String episodeId, String pic, Map<String, String> headers,
+                           String sourceName, String vodName, String episodeName,
+                           List<DownloadRoute> altRoutes) {
         this.url = url;
         this.sourceKey = sourceKey;
         this.playFlag = playFlag;
@@ -31,5 +44,7 @@ public final class DownloadRequest {
         this.sourceName = sourceName;
         this.vodName = vodName;
         this.episodeName = episodeName;
+        this.altRoutes = altRoutes;
     }
 }
+

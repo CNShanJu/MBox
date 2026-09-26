@@ -203,7 +203,7 @@ public final class DownloadFacade {
         if (request == null) return false;
         return DownloadManager.get().enqueue(request.url, request.sourceKey, request.playFlag,
                 request.episodeRawUrl, request.episodeId, request.pic, request.headers,
-                request.sourceName, request.vodName, request.episodeName);
+                request.sourceName, request.vodName, request.episodeName, request.altRoutes);
     }
 
     /** 按任务对象暂停 */

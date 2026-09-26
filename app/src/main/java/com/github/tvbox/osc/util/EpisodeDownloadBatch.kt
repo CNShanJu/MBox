@@ -6,6 +6,7 @@ import com.github.tvbox.osc.download.DownloadFacade
 import com.github.tvbox.osc.download.DownloadRequest
 import com.github.tvbox.osc.spiderapi.PlayUrlResolverProviders
 import com.github.tvbox.osc.spiderapi.ResolveResult
+import com.github.tvbox.osc.util.DownloadRoutePlan
 import java.util.Locale
 
 /**
@@ -89,17 +90,18 @@ object EpisodeDownloadBatch {
         episodeId: String?
     ): String {
         if (episodeId != null && episodeId.isNotEmpty()) return episodeId
-        var idx = 0
-        if (seriesList != null) {
-            for (i in seriesList.indices) {
-                val item = seriesList[i]
-                if (item != null && item.name != null && item.name == sName) {
-                    idx = i
-                    break
-                }
-            }
+        return DownloadFacade.get().buildEpisodeId(sourceKey, vodId, playFlag, indexOfEpisode(seriesList, sName))
+    }
+
+    /** 集名在全集列表中的序号(找不到按 0,与旧口径一致) */
+    @JvmStatic
+    fun indexOfEpisode(seriesList: List<VodInfo.VodSeries>?, sName: String?): Int {
+        if (seriesList == null || sName == null) return 0
+        for (i in seriesList.indices) {
+            val item = seriesList[i]
+            if (item != null && item.name != null && item.name == sName) return i
         }
-        return DownloadFacade.get().buildEpisodeId(sourceKey, vodId, playFlag, idx)
+        return 0
     }
 
     /**
@@ -187,14 +189,21 @@ object EpisodeDownloadBatch {
                     epName = s.name + "_" + resLabel
                 }
                 // 统一剧集标识(与详情页选集一一对应,精确去重)
+                val epIndex = indexOfEpisode(seriesList, s.name)
                 val episodeId = resolveEpisodeId(sourceKey, vodId, playFlag, seriesList, s.name, s.episodeId)
+                // 备用线路(换线路重下用,4.8②):同一集在其它线路下的原始地址,按集名/序号对齐;
+                // 入队时就地取材(详情页 seriesMap 已有全部线路),换线路时不必再查一次剧集详情
+                val altRoutes = DownloadRoutePlan.alternatives(
+                    vi.seriesMap, playFlag, s.url, epIndex, s.name
+                )
                 val ok = DownloadFacade.get().enqueue(
                     DownloadRequest(
                         url, sourceKey, playFlag, s.url, episodeId,
-                        vi.pic, rr?.headers, sourceName, vodName, epName
+                        vi.pic, rr?.headers, sourceName, vodName, epName, altRoutes
                     )
                 )
-                Log.i("TVBox-Download", "  - " + s.name + " enqueue=" + ok + " 文件名=" + epName + " url=" + url)
+                Log.i("TVBox-Download", "  - " + s.name + " enqueue=" + ok + " 文件名=" + epName
+                    + " 备用线路=" + altRoutes.size + " url=" + url)
                 // 归类:added / 已下载完成(状态1) / 已在任务中
                 countEnqueueOutcome(ok, DownloadFacade.get().getEpisodeState(episodeId, sourceName, vodName, s.name), out)
             } catch (th: Throwable) {

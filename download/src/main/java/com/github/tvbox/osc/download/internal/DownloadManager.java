@@ -377,32 +377,43 @@ public class DownloadManager {
 
     /** 新增下载任务(简化入口,不含重新解析信息) */
     public boolean enqueue(String url, String sourceName, String vodName, String episodeName) {
-        return scheduler.enqueueInternal(url, null, null, null, null, null, null, sourceName, vodName, episodeName);
+        return scheduler.enqueueInternal(url, null, null, null, null, null, null, sourceName, vodName, episodeName, null);
     }
 
     /** 新增下载任务(含 EpisodeId 统一剧集标识) */
     public boolean enqueue(String url, String sourceKey, String playFlag, String episodeRawUrl,
                            String episodeId, String sourceName, String vodName, String episodeName) {
-        return scheduler.enqueueInternal(url, sourceKey, playFlag, episodeRawUrl, episodeId, null, null, sourceName, vodName, episodeName);
+        return scheduler.enqueueInternal(url, sourceKey, playFlag, episodeRawUrl, episodeId, null, null, sourceName, vodName, episodeName, null);
     }
 
     /** 带 EpisodeId 与封面图 URL 的入队 */
     public boolean enqueue(String url, String sourceKey, String playFlag, String episodeRawUrl,
                            String episodeId, String pic, String sourceName, String vodName, String episodeName) {
-        return scheduler.enqueueInternal(url, sourceKey, playFlag, episodeRawUrl, episodeId, pic, null, sourceName, vodName, episodeName);
+        return scheduler.enqueueInternal(url, sourceKey, playFlag, episodeRawUrl, episodeId, pic, null, sourceName, vodName, episodeName, null);
     }
 
     /** 带 EpisodeId、封面图 URL 与解析请求头(防盗链源下载必须携带)的入队 */
     public boolean enqueue(String url, String sourceKey, String playFlag, String episodeRawUrl,
                            String episodeId, String pic, Map<String, String> headers,
                            String sourceName, String vodName, String episodeName) {
-        return scheduler.enqueueInternal(url, sourceKey, playFlag, episodeRawUrl, episodeId, pic, headers, sourceName, vodName, episodeName);
+        return scheduler.enqueueInternal(url, sourceKey, playFlag, episodeRawUrl, episodeId, pic, headers, sourceName, vodName, episodeName, null);
+    }
+
+    /**
+     * 带备用线路候选的入队(换线路重下用):候选按"同集"从其它线路收集,
+     * 本线路整体失效时按顺序切换(见 DownloadScheduler#switchRoute)。
+     */
+    public boolean enqueue(String url, String sourceKey, String playFlag, String episodeRawUrl,
+                           String episodeId, String pic, Map<String, String> headers,
+                           String sourceName, String vodName, String episodeName,
+                           java.util.List<com.github.tvbox.osc.bean.DownloadRoute> altRoutes) {
+        return scheduler.enqueueInternal(url, sourceKey, playFlag, episodeRawUrl, episodeId, pic, headers, sourceName, vodName, episodeName, altRoutes);
     }
 
     /** 新增下载任务(不含 EpisodeId) */
     public boolean enqueue(String url, String sourceKey, String playFlag, String episodeRawUrl,
                            String sourceName, String vodName, String episodeName) {
-        return scheduler.enqueueInternal(url, sourceKey, playFlag, episodeRawUrl, null, null, null, sourceName, vodName, episodeName);
+        return scheduler.enqueueInternal(url, sourceKey, playFlag, episodeRawUrl, null, null, null, sourceName, vodName, episodeName, null);
     }
 
     /** 暂停(用户手动) */

@@ -384,8 +384,8 @@ public class DownloadExecutor {
                                 DownloadLog.extras(t.episodeId));
                         break;
                     }
-                    throw new IOException("连续 " + consecutiveFail + " 片下载失败(该线路的分片地址可能已失效): 最后错误 "
-                            + DownloadErrors.reasonOf(lastSegErr), lastSegErr);
+                    throw new IOException("连续 " + consecutiveFail + " 片下载失败(" + DownloadErrors.ROUTE_SUSPECT_TEXT
+                            + "): 最后错误 " + DownloadErrors.reasonOf(lastSegErr), lastSegErr);
                 }
                 continue; // doneSegments 不推进,交给后面"校验+补片"重试
             }

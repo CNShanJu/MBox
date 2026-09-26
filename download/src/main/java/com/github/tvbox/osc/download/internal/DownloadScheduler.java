@@ -338,6 +338,15 @@ public class DownloadScheduler {
                             }
                             // 解析失败:继续走普通重试逻辑
                         }
+                        // 换线路(4.8②):同线路重解析已到上限,或本线路整体失效(整集缺片全是源侧永久失效 /
+                        // 连续多片下载失败)→ 原地怎么试都是同一个结果,改走这条集的另一条线路:
+                        // 换线路=另一份播放列表,旧碎片整份丢弃重下(见 switchRoute/clearRouteProgress)
+                        if (!netErr && canSwitchRoute(t, th)) {
+                            if (switchRoute(t)) {
+                                retries = 0; // 新线路有自己的重试预算
+                                continue;
+                            }
+                        }
                         if (retries < maxRetry) {
                             retries++;
                             long delay = netErr ? (3000L + retries * 3000L) : 3000L;
@@ -361,11 +370,15 @@ public class DownloadScheduler {
                         t.state = DownloadTask.STATE_FAILED;
                         t.message = th.getMessage() == null ? th.toString() : th.getMessage();
                         if (goneErr) {
-                            // 死片类失败:重试/换线路都拿不到,提示用户换源而不是干等
+                            // 死片类失败:本线路已经没办法了(换过线路也如此),提示用户换源而不是干等
                             t.message = t.message + "(源站该分片已失效,可换源重下)";
                         } else if (netErr) {
                             t.networkFailed = true; // 网络恢复后自动续传
                             t.message = t.message + "(网络恢复后自动继续)";
+                        }
+                        if (t.routeSwitchCount > 0) {
+                            // 换过线路说明"这条集的其它线路也试过了":让用户知道不是没尝试,而是整个源这集不行
+                            t.message = t.message + "(已换 " + t.routeSwitchCount + " 条线路)";
                         }
                         DownloadLog.LOG.fail(DownloadSubType.FAIL, "任务失败: " + t.fileName + " | " + t.message,
                                 DownloadLog.extras(t.episodeId));
@@ -472,9 +485,103 @@ public class DownloadScheduler {
         return false;
     }
 
+    /**
+     * 入队时清洗备用线路候选:丢掉不可用/与本线路相同/重复线路名,并按上限截断。
+     * 空结果返回 null(调用方只需一次判空)。
+     */
+    private static java.util.List<com.github.tvbox.osc.bean.DownloadRoute> trimRoutes(
+            java.util.List<com.github.tvbox.osc.bean.DownloadRoute> altRoutes, String currentFlag) {
+        if (altRoutes == null || altRoutes.isEmpty()) return null;
+        java.util.List<com.github.tvbox.osc.bean.DownloadRoute> out = new java.util.ArrayList<>();
+        java.util.Set<String> flags = new java.util.HashSet<>();
+        if (currentFlag != null) flags.add(currentFlag);
+        for (com.github.tvbox.osc.bean.DownloadRoute r : altRoutes) {
+            if (r == null || !r.isUsable()) continue;
+            if (!flags.add(r.playFlag)) continue; // 当前线路与重复线路都跳过
+            out.add(r);
+            if (out.size() >= com.github.tvbox.osc.util.DownloadRoutePlan.MAX_ALTERNATIVES) break;
+        }
+        return out.isEmpty() ? null : out;
+    }
+
+    /**
+     * 是否值得换线路(4.8②):还有候选,且本线路已"整体不可用"——
+     * ①整集缺片全是源侧永久失效(HTTP 404/410,本线路彻底没救);
+     * ②连续多片下载失败(该线路的分片地址整体失效);
+     * ③本线路的"地址过期"重解析已到上限(再解析还是同一个地址,原地重试没意义)。
+     */
+    private boolean canSwitchRoute(DownloadTask t, Throwable th) {
+        if (t.altRoutes == null || t.altRoutes.isEmpty()) return false;
+        if (t.sourceKey == null || t.episodeRawUrl == null) return false;
+        if (DownloadErrors.isPermanentlyGone(th)) return true;
+        if (DownloadErrors.isRouteSuspect(th)) return true;
+        return shouldReResolve(t, th) && t.reResolveCount >= DownloadManager.MAX_RE_RESOLVE;
+    }
+
+    /**
+     * 换线路重下:消费一条候选线路,改用它重新解析地址并重下整集。
+     * <p>
+     * 为什么必须丢弃旧碎片:换线路拿到的是<b>另一份播放列表</b>(分片数/切分点都不同),
+     * 两份视频的分片拼一起会得到放不了的文件 —— 与"换线路保护"(segments.sig 指纹不一致就丢弃)同理,
+     * 只是这里必然不同,所以直接清,不依赖指纹是否写得下来。
+     * <p>
+     * 候选里任何一条解析失败就继续试下一条(每条线路的解析都可能失败);
+     * 全部试完或没有候选时返回 false,由调用方走原来的重试/失败路径。
+     *
+     * @return true=已切到一条可用线路(调用方应继续下载)
+     */
+    private boolean switchRoute(DownloadTask t) {
+        if (t.altRoutes == null || t.altRoutes.isEmpty()) return false;
+        int guard = 0;
+        while (!t.altRoutes.isEmpty() && guard < com.github.tvbox.osc.util.DownloadRoutePlan.MAX_ALTERNATIVES) {
+            guard++;
+            com.github.tvbox.osc.bean.DownloadRoute next = t.altRoutes.remove(0);
+            if (next == null || !next.isUsable()) continue;
+            if (next.playFlag.equals(t.playFlag) && next.episodeRawUrl.equals(t.episodeRawUrl)) continue;
+            String from = t.playFlag;
+            t.playFlag = next.playFlag;
+            t.episodeRawUrl = next.episodeRawUrl;
+            t.routeSwitchCount++;
+            t.reResolveCount = 0;      // 新线路有自己的重解析预算
+            t.networkFailed = false;   // 旧线路的网络失败标记对新线路不成立
+            t.headers = null;          // 请求头属于旧线路,新线路按解析结果重新取
+            clearRouteProgress(t);
+            t.message = "换线路重下(" + next.playFlag + ")";
+            Log.i("TVBox-Download", "换线路重下: " + t.fileName + " " + from + " → " + next.describe());
+            DownloadLog.LOG.warn(DownloadSubType.RESOLVE,
+                    "换线路重下: 线路 " + from + " → " + next.describe() + " (原线路分片/地址整体失效,已丢弃旧碎片重下)",
+                    DownloadLog.extras(t.episodeId));
+            dm.persist();
+            dm.notifyChanged();
+            if (reResolveUrl(t)) return true;
+            Log.i("TVBox-Download", "换线路后解析失败,继续试下一条: " + t.fileName + " " + next.describe());
+        }
+        return false;
+    }
+
+    /** 换线路前清空旧线路的进度与碎片(另一份播放列表,分片拼不进去) */
+    private void clearRouteProgress(DownloadTask t) {
+        try {
+            dm.executor.deleteSegmentsDir(t);
+        } catch (Throwable th) {
+            Log.i("TVBox-Download", "清理旧线路分片失败(继续换线路): " + t.fileName);
+        }
+        if (t.partPath != null) FileCleaner.deleteQuietly(new File(t.partPath)); // 直链残片:新地址的 Range 偏移对不上
+        // 不动 t.savePath:那是用户可见的成品文件,删文件是危险操作,只允许在"确认内容无效"的路径上做
+        // (合并阶段的自检会处理),换线路不该顺手删掉可能已存在的完整文件
+        t.doneSegments = 0;
+        t.totalSegments = 0;
+        t.segmentBytes = 0;
+        t.downloadedBytes = 0;
+        t.totalBytes = 0;
+        t.estimatedBytes = 0;
+        t.probeDone = false;
+        t.mergeCount = 0;
+        t.mergeFailReason = "";
+    }
+
     /** 是否可直接下载的地址(视频格式或 m3u8;剧集页 html/空/非 http 返回 false,需嗅探) */
-    private static boolean isPlayableUrl(String url) {
-        if (url == null || url.isEmpty() || !url.startsWith("http")) return false;
+    private static boolean isPlayableUrl(String url) {        if (url == null || url.isEmpty() || !url.startsWith("http")) return false;
         String u = url.toLowerCase();
         if (u.contains(".m3u8") || u.contains(".mp4") || u.contains(".mkv") || u.contains(".flv")
                 || u.contains(".ts") || u.contains(".webm") || u.contains(".avi")) return true;
@@ -544,6 +651,17 @@ public class DownloadScheduler {
     boolean enqueueInternal(String url, String sourceKey, String playFlag, String episodeRawUrl,
                             String episodeId, String pic, java.util.Map<String, String> headers,
                             String sourceName, String vodName, String episodeName) {
+        return enqueueInternal(url, sourceKey, playFlag, episodeRawUrl, episodeId, pic, headers,
+                sourceName, vodName, episodeName, null);
+    }
+
+    /**
+     * @param altRoutes 备用线路候选(换线路重下用,可 null):本线路整体失效时按顺序切换
+     */
+    boolean enqueueInternal(String url, String sourceKey, String playFlag, String episodeRawUrl,
+                            String episodeId, String pic, java.util.Map<String, String> headers,
+                            String sourceName, String vodName, String episodeName,
+                            java.util.List<com.github.tvbox.osc.bean.DownloadRoute> altRoutes) {
         String src = dm.sanitize(sourceName);
         if (src.isEmpty()) src = "未分类";
         String vn = dm.sanitize(vodName);
@@ -631,6 +749,7 @@ public class DownloadScheduler {
         t.episodeRawUrl = episodeRawUrl;
         t.episodeId = episodeId;
         t.episodeName = episodeName;
+        t.altRoutes = trimRoutes(altRoutes, playFlag);
         t.pic = pic;
         t.headers = headers;
         t.sourceName = src;

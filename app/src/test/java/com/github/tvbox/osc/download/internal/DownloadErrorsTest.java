@@ -52,4 +52,20 @@ public class DownloadErrorsTest {
         assertFalse(DownloadErrors.isPermanentlyGone(new java.net.SocketTimeoutException("timeout")));
         assertFalse(DownloadErrors.isSegmentGone(new IOException("分片下载失败(HTTP 403)")));
     }
+
+    @Test
+    public void routeSuspect_marksLineWideFailures() {
+        // 连续多片失败=本线路整体不可用(调度器据此换线路);整集缺片全是永久失效同样算线路没救
+        IOException consecutive = new IOException("连续 8 片下载失败(" + DownloadErrors.ROUTE_SUSPECT_TEXT
+                + "): 最后错误 分片下载失败(HTTP 403)");
+        assertTrue(DownloadErrors.isRouteSuspect(consecutive));
+        assertTrue(DownloadErrors.isRouteSuspect(new IOException(DownloadErrors.ALL_SEGMENTS_GONE + "(HTTP 404):共 12 片")));
+        // 单片 404(偶尔一个死片,靠补片/放宽档吸收)与普通超时都算不上"线路整体失效",不该换线路
+        assertFalse(DownloadErrors.isRouteSuspect(new IOException(
+                "分片下载失败(HTTP 404,该分片在" + DownloadErrors.SEGMENT_GONE_TEXT + ",重试与换线路均无法补齐)")));
+        assertFalse(DownloadErrors.isRouteSuspect(new java.net.SocketTimeoutException("timeout")));
+        assertFalse(DownloadErrors.isRouteSuspect(null));
+        // 执行器拼这条信息时必须用常量,否则分类静默失效
+        assertTrue(consecutive.getMessage().contains(DownloadErrors.ROUTE_SUSPECT_TEXT));
+    }
 }

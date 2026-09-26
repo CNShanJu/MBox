@@ -88,6 +88,14 @@ public class DownloadTask {
     public transient boolean needReResolve = false;
     /** 本次任务已重新解析地址的次数(transient,限制次数避免无限重解析) */
     public transient int reResolveCount = 0;
+    /**
+     * 备用线路候选(换线路重下用,随任务持久化):入队时按"同集"从其它 playFlag 收集
+     * (见 {@code util/DownloadRoutePlan#alternatives});命中"本线路整体失效"时按顺序切换,
+     * 切一条消费一条(见 DownloadScheduler#switchRoute)。
+     */
+    public java.util.List<com.github.tvbox.osc.bean.DownloadRoute> altRoutes;
+    /** 本次任务已换过的线路条数(transient,失败提示里用来说明"换过几条线路仍失败") */
+    public transient int routeSwitchCount = 0;
     /** 是否因网络错误失败(网络恢复后自动续传,transient) */
     public transient boolean networkFailed = false;
 
