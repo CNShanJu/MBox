@@ -5,25 +5,33 @@
     android:layout_height="match_parent"
     android:gravity="center">
 
+    <!--
+      本地调整(崩溃页观感):
+      1) 底部留白(64dp)大于顶部(16dp) → 整组内容在居中基础上整体上移约 24dp;
+      2) 内边距移到 ScrollView 上并配 clipToPadding=false(AGENTS §六:可滚动组件必须保留内边距);
+      3) 图标改 wrap_content:图标画布已在 ic_crash.xml 里裁掉透明留白,不再需要 160dp 的空盒子,
+         否则"画布空白 + 文案外边距"叠一起会让文字离图标过远。
+    -->
     <ScrollView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:clipToPadding="false"
+        android:paddingLeft="@dimen/customactivityoncrash_activity_horizontal_margin"
+        android:paddingRight="@dimen/customactivityoncrash_activity_horizontal_margin"
+        android:paddingTop="16dp"
+        android:paddingBottom="64dp"
         tools:ignore="UselessParent">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:gravity="center"
-            android:orientation="vertical"
-            android:paddingBottom="@dimen/customactivityoncrash_activity_vertical_margin"
-            android:paddingLeft="@dimen/customactivityoncrash_activity_horizontal_margin"
-            android:paddingRight="@dimen/customactivityoncrash_activity_horizontal_margin"
-            android:paddingTop="@dimen/customactivityoncrash_activity_vertical_margin">
+            android:orientation="vertical">
 
             <ImageView
                     android:id="@+id/customactivityoncrash_error_activity_image"
-                    android:layout_width="160dp"
-                    android:layout_height="160dp"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
                     android:contentDescription="@null"
                     android:scaleType="fitCenter"
                     android:src="@drawable/customactivityoncrash_error_image"/>
