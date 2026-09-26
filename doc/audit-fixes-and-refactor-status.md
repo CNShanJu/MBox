@@ -17,6 +17,14 @@
   - **其它（低）**：`PlayService.sInstance` 加 `volatile` + 只清自己；`CmsApiRules` 协议相对链接 `//host/...` 按当前页协议绝对化、`siteKey` 加主机名短哈希（消除不同站点生成同名 `cms_<key>.json` 互相覆盖）、候选顺序改为站点根默认路径优先（不再被 10 条上限截掉）；`player_vod_control_view.xml` marginStart/marginLeft 统一 dp_10（原 start=30 覆盖 left=10 使改动无效）；`box_vod_control_view.xml` 两处 `textSize` 由 dp 回 sp；`DetailActivity` 无剧集时连 260dp 预览占位区一起收起；订阅地址响应"配置 vs 资源站采集接口"判定收紧（`CmsApiRules.detectKind`，避免只有 flags/ads 的最小配置被误送去嗅探）。
   - 未改（评估后风险更高，留待排期）：`Utils.getVideoList()` 的 MediaStore 主线程查询 + 新增 `File.length()` 兜底（需两页异步化重构）；跨版本续传复用旧密文分片（触发前提苛刻，强制校验有引发补片死循环风险）。
 
+- **广告过滤（净化视频）开关专项复查 + 修复（2026-09-26）**：开关链路＝`SettingActivity`→`PlayConfig.isVideoPurify()`→`PlayFragment.playUrl`（m3u8 少数派分片剔除，净化后走 `RemoteServer` 回环给播放器）。查出并修掉 6 处缺陷（门禁全绿，单测 300 例 0 失败）：
+  - **广告名单串源（中）**：`AdBlocker` 只有一份名单且以 `AdBlocker.isEmpty()` 当"只初始化一次"的开关 → 第一个源的 `ads` 永久生效、切源后新源的 `ads` 永远加不进来（`clear()` 全仓无调用点，名单无法刷新）。改为**默认名单（`ensureDefaultHosts`，幂等）+ 当前源名单（`setSourceHosts`，每次解析配置整体替换）**两层，域名统一小写归一（原来 `isAd` 把 URL 转小写却不归一 host，大写域名永不命中），默认名单用写时复制列表保证 WebView 拦截线程读写安全；`ApiConfig` 里 `getAsJsonArray("ads")` 补 null 防御（缺 `ads` 字段时原来直接 NPE 断掉整个 `parseJson`）。
+  - **带 BOM 的清单静默放弃过滤（中）**：`content.startsWith("#EXTM3U")` 对 BOM 判否 → 回退直接播原地址，过滤看不见地失效（只能靠第三方 `unBom.php` 代理兜底）。新增 `M3u8Cleaner.stripBom`，在取到清单处与净化入口统一剥 BOM/前导空白。
+  - **`#EXT-X-MAP` 未绝对化 → fMP4 放不出来（中）**：净化后的清单由回环提供，清单内相对地址会被播放器按 `127.0.0.1` 解析。原来只补 `#EXT-X-KEY`（此前修过"只补第一条"），`#EXT-X-MAP`（fMP4 init 段）、`#EXT-X-MEDIA`/`#EXT-X-I-FRAME-STREAM-INF` 的 `URI=` 仍漏；现改为**所有 `#EXT-X-*` 标签的 `URI="..."` 统一绝对化**。
+  - **净化地址被 Exo 判成 Progressive（中）**：回环路径 `/m3u8` 没有 `.m3u8` 后缀，`ExoMediaSourceHelper.inferContentType` 取的"扩展名"是 `127.0.0.1` 里最后一个点之后的内容（`1:9978/m3u8`）→ 退化成 Progressive，首播必然失败再靠 `ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED` 重试（用户看到一次黑屏）。新增规范路径 `/purify.m3u8`（`/m3u8` 保留兼容），响应改 `application/vnd.apple.mpegurl` + `Cache-Control: no-store`（名单是全局单槽，禁止播放器缓存到上一条清单）。
+  - **同 FQN 双份单测互相遮蔽（低）**：`M3u8CleanerTest` 同时存在 `.java` 与 `.kt`（同包同名），测试运行时只加载一个 → **Java 那份的 6 个用例从未执行**（跑分只有 Kotlin 的 3 例）。两份合并为一个 Kotlin 类（补 `#EXT-X-MAP`/`#EXT-X-MEDIA`/BOM 用例），删除 `.java`；顺带清掉死常量 `HawkConfig.VIDEO_PURIFY`（实际键在 `PlayConfig`）。
+  - **未改（需真机确认后再定）**：① `PlayFragment.startPlayUrl` 内 `autoRetryCount>0` 时把 m3u8 交给第三方 `http://home.jundie.top:666/unBom.php?m3u8=<未编码URL>` 去 BOM（隐私外泄 + URL 带 `&` 时被截断），本地已有剥 BOM 能力，可改本地回环兜底；② 开关**不控制** WebView 嗅探里的 `AdBlocker.isAd` 拦截（嗅探页广告/统计资源仍被拦，属另一语义）；③ 下载链路（`M3u8DownloadTask`）不做少数派分片过滤，下载成品仍可能带广告分片。
+
 - **hawk 全量退役完成**：`KeyValueStore` 类及全部 legacy 迁移分支已删除，运行权威统一 `PrefsDataStore`/文件；全仓零 `com.orhanobut.hawk` 依赖（mbox 包名隔离，无 Hawk 存量升级场景）。
 - **订阅本地导入改系统 SAF**：`SubscriptionActivity` 用 `ActivityResultContracts.OpenDocument` 替代 hedzr 反射，支持 `content://` 流、`primary:`/`home:` 文档卷，复制到应用专属目录 + canonical 防穿越，按 URL 去重；移除 `MANAGE_EXTERNAL_STORAGE` 前置检查。
 - **下载存储权限引导**：`DownloadDialogCoordinator` 无存储权限时弹 `ConfirmDialog` + `XXPermissions` 拉起系统授权（与「我的-本地视频」入口一致），不再仅 toast 提示。
@@ -30,7 +38,7 @@
 - 管理令牌：每次进程启动随机生成（`accessToken`），web 控制台经 `/token.js` 注入
   `window.TVBOX_TOKEN`，所有 AJAX 自动携带 `X-TVBox-Token`；`/token.js` 禁止缓存。
 - 鉴权范围：`/upload`、`/newFolder`、`/delFolder`、`/delFile`、`/action`、目录列表须令牌（回环放行）；
-  `/proxy`、`/m3u8`、`/dns-query` 仅本机回环。
+  `/proxy`、`/purify.m3u8`（旧路径 `/m3u8` 保留兼容）、`/dns-query` 仅本机回环。
 - 路径安全：`resolveUnderRoot()` 拒绝 `..`/绝对路径/NUL/反斜杠分隔并做 canonical 根目录包含性校验；
   拒绝删除外部存储根；ZIP 解压逐条目 canonical 包含性校验（Zip Slip），`ZipFile`/流全部 try-with-resources。
 - 越界修复：`/proxy` 返回数组按 `length>=3` 且 `rs[2] instanceof InputStream` 校验后再读。

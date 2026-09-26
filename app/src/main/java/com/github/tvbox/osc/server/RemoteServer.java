@@ -87,7 +87,7 @@ public class RemoteServer extends NanoHTTPD {
 
     /**
      * @param hostname 绑定地址:null/空=全部网卡(局域网可达);"127.0.0.1"=仅本机。
-     *                 默认走仅本机绑定(本 App 的所有 clan://localhost、/proxy、/m3u8 均在本机回环),
+     *                 默认走仅本机绑定(本 App 的所有 clan://localhost、/proxy、/purify.m3u8 均在本机回环),
      *                 局域网共享/远程管理需显式开启 HawkConfig.LAN_SERVER_ENABLE。
      */
     public RemoteServer(String hostname, int port, Context context) {
@@ -223,13 +223,19 @@ public class RemoteServer extends NanoHTTPD {
                     rs = new byte[0];
                 }
                 return NanoHTTPD.newFixedLengthResponse(NanoHTTPD.Response.Status.OK, NanoHTTPD.MIME_PLAINTEXT, new ByteArrayInputStream(rs), rs.length);
-            } else if (fileName.equals("/m3u8")) {
-                // 仅本机播放器代理使用
+            } else if (fileName.equals("/purify.m3u8") || fileName.equals("/m3u8")) {
+                // 仅本机播放器代理使用(广告过滤后的清单)。
+                // 规范路径是 /purify.m3u8:播放器按路径扩展名判定容器类型,没有 .m3u8 后缀的路径
+                // 会被 Exo 判成 Progressive 首播失败;/m3u8 保留兼容旧调用方。
                 if (!isLoopbackRequest(session)) {
                     return createPlainTextResponse(NanoHTTPD.Response.Status.FORBIDDEN, "forbidden");
                 }
                 String content = m3u8Content == null ? "" : m3u8Content;
-                return NanoHTTPD.newFixedLengthResponse(NanoHTTPD.Response.Status.OK, NanoHTTPD.MIME_PLAINTEXT, content);
+                Response purify = NanoHTTPD.newFixedLengthResponse(NanoHTTPD.Response.Status.OK,
+                        "application/vnd.apple.mpegurl", content);
+                // 名单是全局单槽(每次起播覆盖):禁止播放器缓存,避免 seek/重试拿到上一条清单
+                purify.addHeader("Cache-Control", "no-store");
+                return purify;
             } else if (fileName.startsWith("/file/")) {
                 return serveFileGet(session, fileName.substring(6));
             }

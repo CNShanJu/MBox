@@ -499,6 +499,8 @@ public class PlayFragment extends BaseLazyFragment {
         HttpClient.get(url, hheaders, "m3u8-1", new HCallBack() {
             @Override
             public void onSuccess(String content) {
+                // 先剥 BOM:带 BOM 的清单原来会被下面的 startsWith 判否 → 静默放弃广告过滤
+                content = com.github.tvbox.osc.util.player.M3u8Cleaner.stripBom(content);
                 if (!content.startsWith("#EXTM3U")) {
                     startPlayUrl(url, headers);
                     return;
@@ -541,7 +543,7 @@ public class PlayFragment extends BaseLazyFragment {
                         startPlayUrl(url, headers);
                     else {
                         // 广告过滤静默执行,不弹任何提示
-                        startPlayUrl("http://127.0.0.1:" + RemoteServer.serverPort + "/m3u8", headers);
+                        startPlayUrl(purifyUrl(), headers);
                     }
                     return;
                 }
@@ -549,6 +551,7 @@ public class PlayFragment extends BaseLazyFragment {
                 HttpClient.get(forwardurl, hheaders, "m3u8-2", new HCallBack() {
                     @Override
                     public void onSuccess(String content) {
+                        content = com.github.tvbox.osc.util.player.M3u8Cleaner.stripBom(content);
                         int ilast = finalforwardurl.lastIndexOf('/');
                         RemoteServer.m3u8Content = com.github.tvbox.osc.util.player.M3u8Cleaner
                                 .removeMinorityUrl(finalforwardurl.substring(0, ilast + 1), content);
@@ -557,7 +560,7 @@ public class PlayFragment extends BaseLazyFragment {
                             startPlayUrl(finalforwardurl, headers);
                         else {
                             // 广告过滤静默执行,不弹任何提示
-                            startPlayUrl("http://127.0.0.1:" + RemoteServer.serverPort + "/m3u8", headers);
+                            startPlayUrl(purifyUrl(), headers);
                         }
                     }
 
@@ -573,6 +576,18 @@ public class PlayFragment extends BaseLazyFragment {
                 startPlayUrl(url, headers);
             }
         });
+    }
+
+    /**
+     * 净化后清单的本机回环地址。
+     *
+     * 路径**必须以 .m3u8 结尾**:Exo 侧 {@code ExoMediaSourceHelper.inferContentType} 先按路径扩展名判定,
+     * 旧路径 {@code /m3u8} 的"扩展名"取到的是 {@code 127.0.0.1} 里的最后一个点之后的内容
+     * (`1:9978/m3u8`),既不等于 m3u8 也不等于 mpd → 退化成 Progressive,首播必然解析失败,
+     * 只能靠 ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED 重试兜底(用户看到一次黑屏/重试)。
+     */
+    private String purifyUrl() {
+        return "http://127.0.0.1:" + RemoteServer.serverPort + "/purify.m3u8";
     }
 
     /**

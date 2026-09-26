@@ -24,7 +24,6 @@ import com.github.tvbox.osc.util.SubUrlResolver;
 import com.github.tvbox.osc.util.SubUrlResolvers;
 import com.github.tvbox.osc.log.Category;
 import com.github.tvbox.osc.log.LogStore;
-import com.github.tvbox.osc.util.AppLog;
 import com.github.tvbox.osc.config.HawkConfig;
 import com.github.tvbox.osc.util.MD5;
 import com.github.tvbox.osc.config.SystemConfig;
@@ -260,12 +259,10 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
                     } catch (Throwable th) {
                         th.printStackTrace();
                     }
-                    AppLog.log("配置", "加载成功: " + apiUrl);
                     LogStore.success(Category.SUBSCRIPTION, "订阅: 加载配置成功 " + apiUrl);
                     callback.success();
                 } catch (Throwable th) {
                     th.printStackTrace();
-                    AppLog.log("配置", "解析失败: " + apiUrl + "  " + th.getMessage());
                     LogStore.fail(Category.SUBSCRIPTION, "订阅: 配置解析失败 " + apiUrl + " " + th.getMessage());
                     callback.error(parseErrorTip(th));
                 }
@@ -273,12 +270,10 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
 
             @Override
             public void onError(Throwable e) {
-                AppLog.log("配置", "拉取失败: " + apiUrl + "  " + (e != null ? e.getMessage() : ""));
                 LogStore.fail(Category.SUBSCRIPTION, "订阅: 配置拉取失败 " + apiUrl + " " + (e != null ? e.getMessage() : ""));
                 if (cache.exists()) {
                     try {
                         parseJson(apiUrl, cache);
-                        AppLog.log("配置", "使用本地缓存配置: " + apiUrl);
                         LogStore.log(Category.SUBSCRIPTION, "订阅: 拉取失败改用本地缓存配置 " + apiUrl);
                         callback.success();
                         return;
@@ -309,17 +304,14 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
         String jarUrl = urls[0];
         String md5 = urls.length > 1 ? urls[1].trim() : "";
         File cache = new File(getAppContext().getFilesDir().getAbsolutePath() + "/csp.jar");
-        AppLog.log("更新", "开始更新订阅: " + jarUrl + (md5.isEmpty() ? "" : "  md5=" + md5));
         LogStore.log(Category.SUBSCRIPTION, "订阅: 开始更新爬虫 jar " + jarUrl);
 
         if (!md5.isEmpty() || useCache) {
             if (cache.exists() && (useCache || MD5.getFileMd5(cache).equalsIgnoreCase(md5))) {
                 if (jarLoader.load(cache.getAbsolutePath())) {
-                    AppLog.log("更新", "使用缓存订阅成功: " + jarUrl);
                     LogStore.success(Category.SUBSCRIPTION, "订阅: 使用缓存爬虫 jar " + jarUrl);
                     callback.success();
                 } else {
-                    AppLog.log("更新", "缓存订阅 jar 加载失败: " + jarUrl);
                     LogStore.fail(Category.SUBSCRIPTION, "订阅: 缓存爬虫 jar 加载失败 " + jarUrl);
                     callback.error("");
                 }
@@ -350,7 +342,6 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
                         onJarDownloaded(cache, callback, realJarUrl);
                     } catch (Throwable th) {
                         th.printStackTrace();
-                        AppLog.log("更新", "订阅图片解析失败: " + realJarUrl + "  " + th.getMessage());
                         LogStore.fail(Category.SUBSCRIPTION, "订阅: 爬虫 jar 图片套路解析失败 " + realJarUrl);
                         callback.error("");
                     }
@@ -358,7 +349,6 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
 
                 @Override
                 public void onError(Throwable e) {
-                    AppLog.log("更新", "订阅下载失败: " + realJarUrl + "  " + (e != null ? e.getMessage() : ""));
                     LogStore.fail(Category.SUBSCRIPTION, "订阅: 爬虫 jar 下载失败 " + realJarUrl + " " + (e != null ? e.getMessage() : ""));
                     callback.error("");
                 }
@@ -372,7 +362,6 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
 
                 @Override
                 public void onError(Throwable e) {
-                    AppLog.log("更新", "订阅下载失败: " + realJarUrl + "  " + (e != null ? e.getMessage() : ""));
                     LogStore.fail(Category.SUBSCRIPTION, "订阅: 爬虫 jar 下载失败 " + realJarUrl + " " + (e != null ? e.getMessage() : ""));
                     callback.error("");
                 }
@@ -396,7 +385,7 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
                         fos.write(imgJar);
                         fos.flush();
                         fos.close();
-                        AppLog.log("更新", "jar 图片套路解码成功: " + jarUrl);
+                        LogStore.log(Category.SUBSCRIPTION, "订阅: 爬虫 jar 图片套路解码成功 " + jarUrl);
                     }
                 }
             }
@@ -404,10 +393,10 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
             th.printStackTrace();
         }
         if (jarLoader.load(cache.getAbsolutePath())) {
-            AppLog.log("更新", "订阅更新成功: " + jarUrl);
+            LogStore.success(Category.SUBSCRIPTION, "订阅: 爬虫 jar 加载成功 " + jarUrl);
             callback.success();
         } else {
-            AppLog.log("更新", "订阅 jar 加载失败: " + jarUrl + "  (jar 文件可能损坏或与蜘蛛不匹配)");
+            LogStore.fail(Category.SUBSCRIPTION, "订阅: 爬虫 jar 加载失败(文件可能损坏或与蜘蛛不匹配) " + jarUrl);
             callback.error("");
         }
     }
@@ -459,7 +448,7 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
         if (jsonStr != null && !jsonStr.contains("\"sites\"")) {
             String wrapped = CmsApiRules.wrapSiteJson(jsonStr);
             if (wrapped != null && !wrapped.isEmpty()) {
-                AppLog.log("配置", "订阅内容补 sites 外壳: " + apiUrl);
+                LogStore.log(Category.SUBSCRIPTION, "订阅: 裸站点内容补 sites 外壳 " + apiUrl);
                 jsonStr = wrapped;
             }
         }
@@ -683,21 +672,23 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
 
         String defaultIJKADS="{\"ijk\":[{\"options\":[{\"name\":\"opensles\",\"category\":4,\"value\":\"0\"},{\"name\":\"framedrop\",\"category\":4,\"value\":\"1\"},{\"name\":\"soundtouch\",\"category\":4,\"value\":\"1\"},{\"name\":\"start-on-prepared\",\"category\":4,\"value\":\"1\"},{\"name\":\"http-detect-rangeupport\",\"category\":1,\"value\":\"0\"},{\"name\":\"fflags\",\"category\":1,\"value\":\"fastseek\"},{\"name\":\"skip_loop_filter\",\"category\":2,\"value\":\"48\"},{\"name\":\"reconnect\",\"category\":4,\"value\":\"1\"},{\"name\":\"enable-accurate-seek\",\"category\":4,\"value\":\"0\"},{\"name\":\"mediacodec\",\"category\":4,\"value\":\"0\"},{\"name\":\"mediacodec-all-videos\",\"category\":4,\"value\":\"0\"},{\"name\":\"mediacodec-auto-rotate\",\"category\":4,\"value\":\"0\"},{\"name\":\"mediacodec-handle-resolution-change\",\"category\":4,\"value\":\"0\"},{\"name\":\"mediacodec-hevc\",\"category\":4,\"value\":\"0\"},{\"name\":\"max-buffer-size\",\"category\":4,\"value\":\"15728640\"}],\"group\":\"软解码\"},{\"options\":[{\"name\":\"opensles\",\"category\":4,\"value\":\"0\"},{\"name\":\"framedrop\",\"category\":4,\"value\":\"1\"},{\"name\":\"soundtouch\",\"category\":4,\"value\":\"1\"},{\"name\":\"start-on-prepared\",\"category\":4,\"value\":\"1\"},{\"name\":\"http-detect-rangeupport\",\"category\":1,\"value\":\"0\"},{\"name\":\"fflags\",\"category\":1,\"value\":\"fastseek\"},{\"name\":\"skip_loop_filter\",\"category\":2,\"value\":\"48\"},{\"name\":\"reconnect\",\"category\":4,\"value\":\"1\"},{\"name\":\"enable-accurate-seek\",\"category\":4,\"value\":\"0\"},{\"name\":\"mediacodec\",\"category\":4,\"value\":\"1\"},{\"name\":\"mediacodec-all-videos\",\"category\":4,\"value\":\"1\"},{\"name\":\"mediacodec-auto-rotate\",\"category\":4,\"value\":\"1\"},{\"name\":\"mediacodec-handle-resolution-change\",\"category\":4,\"value\":\"1\"},{\"name\":\"mediacodec-hevc\",\"category\":4,\"value\":\"1\"},{\"name\":\"max-buffer-size\",\"category\":4,\"value\":\"15728640\"}],\"group\":\"硬解码\"}],\"ads\":[\"mimg.0c1q0l.cn\",\"www.googletagmanager.com\",\"www.google-analytics.com\",\"mc.usihnbcq.cn\",\"mg.g1mm3d.cn\",\"mscs.svaeuzh.cn\",\"cnzz.hhttm.top\",\"tp.vinuxhome.com\",\"cnzz.mmstat.com\",\"www.baihuillq.com\",\"s23.cnzz.com\",\"z3.cnzz.com\",\"c.cnzz.com\",\"stj.v1vo.top\",\"z12.cnzz.com\",\"img.mosflower.cn\",\"tips.gamevvip.com\",\"ehwe.yhdtns.com\",\"xdn.cqqc3.com\",\"www.jixunkyy.cn\",\"sp.chemacid.cn\",\"hm.baidu.com\",\"s9.cnzz.com\",\"z6.cnzz.com\",\"um.cavuc.com\",\"mav.mavuz.com\",\"wofwk.aoidf3.com\",\"z5.cnzz.com\",\"xc.hubeijieshikj.cn\",\"tj.tianwenhu.com\",\"xg.gars57.cn\",\"k.jinxiuzhilv.com\",\"cdn.bootcss.com\",\"ppl.xunzhuo123.com\",\"xomk.jiangjunmh.top\",\"img.xunzhuo123.com\",\"z1.cnzz.com\",\"s13.cnzz.com\",\"xg.huataisangao.cn\",\"z7.cnzz.com\",\"xg.huataisangao.cn\",\"z2.cnzz.com\",\"s96.cnzz.com\",\"q11.cnzz.com\",\"thy.dacedsfa.cn\",\"xg.whsbpw.cn\",\"s19.cnzz.com\",\"z8.cnzz.com\",\"s4.cnzz.com\",\"f5w.as12df.top\",\"ae01.alicdn.com\",\"www.92424.cn\",\"k.wudejia.com\",\"vivovip.mmszxc.top\",\"qiu.xixiqiu.com\",\"cdnjs.hnfenxun.com\",\"cms.qdwght.com\"]}";
         JsonObject defaultJson=new Gson().fromJson(defaultIJKADS, JsonObject.class);
-        // 广告地址
-        if(AdBlocker.isEmpty()){
-            //默认广告拦截
+        // 广告地址:默认名单进程内只装一次(幂等),当前源名单每次解析配置都整体替换。
+        // 旧实现用 AdBlocker.isEmpty() 当"只初始化一次"的开关,导致切源后新源的 ads 永远加不进来、
+        // 旧源的 ads 一直生效(且 clear() 全仓无人调用,名单无法刷新)。
+        if (defaultJson != null && defaultJson.get("ads") != null && defaultJson.get("ads").isJsonArray()) {
+            List<String> defaultAds = new ArrayList<>();
             for (JsonElement host : defaultJson.getAsJsonArray("ads")) {
-                AdBlocker.addAdHost(host.getAsString());
+                if (host != null && !host.isJsonNull()) defaultAds.add(host.getAsString());
             }
-            //追加的广告拦截
-            if(infoJson.has("ads")){
-                for (JsonElement host : infoJson.getAsJsonArray("ads")) {
-                    if(!AdBlocker.hasHost(host.getAsString())){
-                        AdBlocker.addAdHost(host.getAsString());
-                    }
-                }
+            AdBlocker.ensureDefaultHosts(defaultAds);
+        }
+        List<String> sourceAds = new ArrayList<>();
+        if (infoJson != null && infoJson.has("ads") && infoJson.get("ads").isJsonArray()) {
+            for (JsonElement host : infoJson.getAsJsonArray("ads")) {
+                if (host != null && !host.isJsonNull()) sourceAds.add(host.getAsString());
             }
         }
+        AdBlocker.setSourceHosts(sourceAds);
         // IJK解码配置
         if(ijkCodes==null){
             ijkCodes = new ArrayList<>();
@@ -807,14 +798,32 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
      * 开头的分组,就去把该地址拉下来解析成频道(见 LiveActivity.loadProxyLives)。
      * <p>
      * 用户在设置里配的直播源、订阅源里的直播地址都用这个形态,加载逻辑只有一套。
+     * <p>
+     * 注意:这个回环 URL 是**信封/标记**,没有谁会去请求它 —— 直播页只按前缀识别
+     * ({@code isProxyOnly}),真正的直播源地址在 {@code ext} 参数里,拉取时解出来直连,
+     * 不会打到本机 HTTP 服务。端口仍跟随注入的本机基址,避免"信封写 9978、真实端口 9979"的不一致。
      */
     private LiveChannelGroup proxyLiveGroup(String liveUrl) {
         if (StringUtils.isBlank(liveUrl)) return null;
         String encoded = Base64.encodeToString(liveUrl.getBytes(StandardCharsets.UTF_8),
                 Base64.DEFAULT | Base64.URL_SAFE | Base64.NO_WRAP);
         LiveChannelGroup group = new LiveChannelGroup();
-        group.setGroupName("http://127.0.0.1:9978/proxy?do=live&type=txt&ext=" + encoded);
+        group.setGroupName(loopbackBase() + "proxy?do=live&type=txt&ext=" + encoded);
         return group;
+    }
+
+    /** 本机服务默认端口(与 RemoteServer 默认值一致;仅在本机基址尚未注入时兜底) */
+    private static final int FALLBACK_LOCAL_PORT = 9978;
+
+    /**
+     * 本机回环基址(含动态端口):本机 HTTP 服务就绪后由 ControlManager 经 {@link #setLanBase} 注入。
+     * 端口可能因 9978 被占用而 +1 回退,所以这里读注入值而不是把端口写死;服务未启动(注入为空,
+     * 或注入的不是回环地址)时回落 {@link #FALLBACK_LOCAL_PORT}。
+     */
+    private static String loopbackBase() {
+        String base = getLanBase();
+        if (base != null && base.startsWith("http://127.0.0.1")) return base;
+        return "http://127.0.0.1:" + FALLBACK_LOCAL_PORT + "/";
     }
 
     public String getSpider() {

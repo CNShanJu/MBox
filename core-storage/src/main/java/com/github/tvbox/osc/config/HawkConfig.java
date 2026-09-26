@@ -69,10 +69,6 @@ public class HawkConfig {
      */
     public static final String BACKGROUND_PLAY_TYPE = "background_play_type";
     /**
-     * 广告过滤
-     */
-    public static final String VIDEO_PURIFY = "video_purify";
-    /**
      * 长按的倍速播放设置
      */
     public static final String VIDEO_SPEED = "video_speed";
