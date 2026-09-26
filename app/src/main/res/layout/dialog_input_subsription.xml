@@ -20,7 +20,7 @@
             android:textSize="16sp"
             android:layout_height="wrap_content"/>
 
-        <TextView
+        <com.github.tvbox.osc.ui.kit.SizedIconTextView
             android:id="@+id/tv_local"
             android:text="本地导入"
             android:textColor="@color/text_foreground"
@@ -30,10 +30,11 @@
             android:layout_centerVertical="true"
             android:layout_toStartOf="@id/tv_json"
             android:drawableLeft="@drawable/ic_import_file_16"
+            app:drawableIconSize="16dp"
             android:drawableTint="@color/text_foreground"
             android:drawablePadding="4dp"/>
 
-        <TextView
+        <com.github.tvbox.osc.ui.kit.SizedIconTextView
             android:id="@+id/tv_json"
             android:text="JSON导入"
             android:textColor="@color/text_foreground"
@@ -44,6 +45,7 @@
             android:layout_centerVertical="true"
             android:layout_marginStart="12dp"
             android:drawableLeft="@drawable/ic_import_json_16"
+            app:drawableIconSize="16dp"
             android:drawableTint="@color/text_foreground"
             android:drawablePadding="4dp"/>
     </RelativeLayout>

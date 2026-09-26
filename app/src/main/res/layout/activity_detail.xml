@@ -81,7 +81,10 @@
                         android:layout_marginTop="12dp"
                         >
 
-                            <TextView
+                            <!-- 来源 chip:文字 + 图标。图标尺寸由 app:drawableIconSize 指定 ——
+                                 compound drawable 的显示尺寸恒等于素材固有尺寸(vector 的 android:width/height),
+                                 原生没有可调属性;用 ui/kit/SizedIconTextView 补上这个能力(依据见其类注释) -->
+                            <com.github.tvbox.osc.ui.kit.SizedIconTextView
                                 android:id="@+id/tvSite"
                                 android:background="@drawable/bg_large_round_float"
                                 android:layout_width="wrap_content"
@@ -92,6 +95,7 @@
                                 tools:text="非凡影视"
                                 android:textColor="@color/text_foreground"
                                 android:drawableRight="@drawable/ic_change_20"
+                                app:drawableIconSize="20dp"
                                 android:drawablePadding="4dp"
                                 android:paddingHorizontal="12dp"
                                 android:paddingVertical="6dp"/>
@@ -118,11 +122,12 @@
                         android:layout_marginTop="22dp"
                         android:gravity="end|center_vertical"
                         android:orientation="horizontal">
-                        <TextView
+                        <com.github.tvbox.osc.ui.kit.SizedIconTextView
                             android:id="@+id/tvCast"
                             android:layout_width="wrap_content"
                             android:layout_height="@dimen/dp_40"
                             android:drawableRight="@drawable/ic_cast_18"
+                            app:drawableIconSize="18dp"
                             android:drawablePadding="6dp"
                             android:focusable="true"
                             android:gravity="center"
@@ -135,11 +140,12 @@
                             android:layout_height="14dp"
                             android:background="@color/gray_darker"
                             android:layout_marginHorizontal="6dp"/>
-                        <TextView
+                        <com.github.tvbox.osc.ui.kit.SizedIconTextView
                             android:id="@+id/tvCollect"
                             android:layout_width="wrap_content"
                             android:layout_height="@dimen/dp_40"
                             android:drawableRight="@drawable/ic_colloct_18"
+                            app:drawableIconSize="18dp"
                             android:drawablePadding="6dp"
                             android:focusable="true"
                             android:gravity="center"
@@ -152,11 +158,12 @@
                             android:layout_height="14dp"
                             android:background="@color/gray_darker"
                             android:layout_marginHorizontal="6dp"/>
-                        <TextView
+                        <com.github.tvbox.osc.ui.kit.SizedIconTextView
                             android:id="@+id/tvDownload"
                             android:layout_width="wrap_content"
                             android:layout_height="@dimen/dp_40"
                             android:drawableRight="@drawable/ic_download_18"
+                            app:drawableIconSize="18dp"
                             android:drawablePadding="6dp"
                             android:focusable="true"
                             android:gravity="center"
@@ -220,12 +227,14 @@
                         android:textStyle="bold"
                         android:layout_centerVertical="true"
                         />
-                    <TextView
+                    <!-- 快捷换线:文字 + 图标(图标尺寸见 app:drawableIconSize,统一走 SizedIconTextView) -->
+                    <com.github.tvbox.osc.ui.kit.SizedIconTextView
                         android:id="@+id/tvChangeLine"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="快捷换线"
                         android:drawableRight="@drawable/ic_change_20"
+                        app:drawableIconSize="18dp"
                         android:textColor="@color/text_foreground"
                         android:drawablePadding="4dp"
                         android:paddingVertical="6dp"
@@ -270,12 +279,13 @@
                         android:layout_width="0dp"
                         android:layout_weight="1"
                         android:layout_height="wrap_content"/>
-                    <TextView
+                    <com.github.tvbox.osc.ui.kit.SizedIconTextView
                         android:id="@+id/tvSort"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="倒序"
                         android:drawableRight="@drawable/ic_sort_18"
+                        app:drawableIconSize="18dp"
                         android:textColor="@color/text_foreground"
                         android:drawablePadding="4dp"
                         android:paddingVertical="6dp"
@@ -287,12 +297,13 @@
                         android:layout_height="14dp"
                         android:layout_marginHorizontal="10dp"
                         android:background="@color/gray_darker" />
-                    <TextView
+                    <com.github.tvbox.osc.ui.kit.SizedIconTextView
                         android:id="@+id/tv_all_series"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="全部"
                         android:drawableRight="@drawable/ic_expand_all_18"
+                        app:drawableIconSize="18dp"
                         android:textColor="@color/text_foreground"
                         android:drawablePadding="4dp"
                         android:paddingVertical="6dp"
@@ -338,13 +349,14 @@
         android:visibility="gone"
         tools:visibility="gone">
 
-        <!-- 负外边距抵消 ic_empty 的透明留白(128dp 框里顶 46dp、底 29dp),
+        <!-- 负外边距抵消 ic_empty 的透明留白(128dp 框里顶 46dp、底 33dp;原图底部的灰色投影椭圆
+             已从矢量移除,底边由 1238 抬到 1190,底留白因此由 29dp 变 33dp,这里同步补 4dp),
              让布局盒子≈图案可见范围、与下方文字间距和 view_empty 空态保持一致 -->
         <ImageView
             android:layout_width="@dimen/dp_128"
             android:layout_height="@dimen/dp_128"
             android:layout_marginTop="-46dp"
-            android:layout_marginBottom="-20dp"
+            android:layout_marginBottom="-24dp"
             android:src="@drawable/ic_empty" />
 
         <TextView

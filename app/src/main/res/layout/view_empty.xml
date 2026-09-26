@@ -6,15 +6,16 @@
     android:gravity="center"
     android:orientation="vertical">
 
-    <!-- ic_empty 是 1600 单位画布、图案实际只占 y=580~1238(实测包围盒),显示框上下自带透明留白:
-         100dp 框里顶部 36dp、底部 23dp。负外边距把顶部留白全抵掉,布局盒子≈图案可见范围,
+    <!-- ic_empty 是 1600 单位画布、图案实际只占 y=580~1190(实测包围盒;原图底部的灰色投影椭圆
+         已从矢量里移除,底边因此由 1238 抬到 1190),显示框上下自带透明留白:
+         100dp 框里顶部 36dp、底部 26dp。负外边距把顶部留白全抵掉,布局盒子≈图案可见范围,
          父级 gravity=center 才是"图标+文字"整体居中(否则整组会往下偏十几 dp);
-         底部多吃 14dp,把"图标可见底边→文字"间距从 31dp 收到 16dp 左右(图标本身不缩放) -->
+         底部多吃 17dp,把"图标可见底边→文字"间距从 34dp 收到 16dp 左右(图标本身不缩放) -->
     <ImageView
         android:layout_width="100dp"
         android:layout_height="100dp"
         android:layout_marginTop="-36dp"
-        android:layout_marginBottom="-14dp"
+        android:layout_marginBottom="-17dp"
         android:src="@drawable/ic_empty" />
 
     <!-- 多行文案必须自身居中:wrap_content 下 TextView 宽度取最长一行,

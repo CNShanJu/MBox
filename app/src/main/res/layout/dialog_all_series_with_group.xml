@@ -34,12 +34,13 @@
             android:paddingHorizontal="16dp"
             android:paddingVertical="4dp"
             />
-        <TextView
+        <com.github.tvbox.osc.ui.kit.SizedIconTextView
             android:id="@+id/tvSort"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="倒序"
             android:drawableRight="@drawable/ic_sort_18"
+            app:drawableIconSize="18dp"
             android:textColor="@color/text_foreground"
             android:drawablePadding="4dp"
             android:paddingVertical="6dp"

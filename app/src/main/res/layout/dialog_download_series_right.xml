@@ -38,12 +38,13 @@
             android:textColor="@color/text_highlight"
             android:textSize="13sp" />
 
-        <TextView
+        <com.github.tvbox.osc.ui.kit.SizedIconTextView
             android:id="@+id/tv_sort"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:drawablePadding="4dp"
             android:drawableRight="@drawable/ic_sort_18"
+            app:drawableIconSize="18dp"
             android:paddingVertical="6dp"
             android:text="倒序"
             android:textColor="@color/text_foreground"

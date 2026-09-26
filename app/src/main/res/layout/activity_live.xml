@@ -106,39 +106,46 @@
 				/>
 		</LinearLayout>
 
-		<ImageView
-			android:id="@+id/ic_refresh"
-			android:layout_width="34dp"
-			android:layout_height="34dp"
-			android:src="@drawable/dkplayer_ic_action_replay"
-			app:tint="@color/text_foreground"
-			android:padding="4dp"
-			android:layout_marginTop="10dp"
-			android:layout_toLeftOf="@+id/ic_cast"
-			android:layout_marginRight="10dp"
-			/>
-		<ImageView
-			android:id="@+id/ic_cast"
-			android:layout_width="34dp"
-			android:layout_height="34dp"
-			android:src="@drawable/ic_cast"
-			app:tint="@color/text_foreground"
-			android:padding="4dp"
-			android:layout_marginTop="10dp"
-			android:layout_toLeftOf="@+id/ic_setting"
-			android:layout_marginRight="10dp"
-			/>
-		<ImageView
-			android:id="@+id/ic_setting"
-			android:layout_width="34dp"
-			android:layout_height="34dp"
-			android:src="@drawable/ic_setting"
-			app:tint="@color/text_foreground"
-			android:padding="4dp"
+		<!-- 右上角三个操作钮(刷新 / 投屏 / 设置)收进一个横向容器:
+		     位置由**容器**统一负责(贴右上角 + marginTop/marginEnd),子项同尺寸并由容器
+		     gravity=center_vertical 保证垂直对齐,彼此间距用各自的 marginStart ——
+		     不再让三个图标各写一套 layout_toLeftOf / layout_alignParentEnd + marginTop 拼相对位置
+		     (那样垂直对齐全靠各自的 marginTop 凑,改一个图标的高度或边距就会错位)。 -->
+		<LinearLayout
+			android:layout_width="wrap_content"
+			android:layout_height="wrap_content"
+			android:layout_alignParentTop="true"
 			android:layout_alignParentEnd="true"
-			android:layout_marginRight="30dp"
 			android:layout_marginTop="10dp"
-			/>
+			android:layout_marginEnd="30dp"
+			android:baselineAligned="false"
+			android:gravity="center_vertical"
+			android:orientation="horizontal">
+
+			<ImageView
+				android:id="@+id/ic_refresh"
+				android:layout_width="32dp"
+				android:layout_height="32dp"
+				android:src="@drawable/dkplayer_ic_action_replay"
+				app:tint="@color/text_foreground"
+				android:padding="4dp" />
+			<ImageView
+				android:id="@+id/ic_cast"
+				android:layout_width="30dp"
+				android:layout_height="30dp"
+				android:layout_marginStart="10dp"
+				android:src="@drawable/ic_cast"
+				app:tint="@color/text_foreground"
+				android:padding="4dp" />
+			<ImageView
+				android:id="@+id/ic_setting"
+				android:layout_width="32dp"
+				android:layout_height="32dp"
+				android:layout_marginStart="10dp"
+				android:src="@drawable/ic_setting"
+				app:tint="@color/text_foreground"
+				android:padding="4dp" />
+		</LinearLayout>
 
 	</RelativeLayout>
 
@@ -174,7 +181,7 @@
 			       两列各自 10dp 内边距已构成视觉间距,故外层不再加 40/30/40dp 外边距(纯空白)。 -->
 			<androidx.recyclerview.widget.RecyclerView
 				android:id="@+id/mGroupGridView"
-				android:layout_width="@dimen/dp_120"
+				android:layout_width="@dimen/dp_140"
 				android:layout_height="wrap_content"
 				android:fadeScrollbars="false"
 				android:listSelector="@drawable/item_bg_selector_left"

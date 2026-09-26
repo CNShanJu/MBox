@@ -48,6 +48,8 @@ public class LocalVideoAdapter extends BaseQuickAdapter<VideoInfo, BaseViewHolde
 
     // 视频帧缓存:path -> Bitmap(LRU 上限 64),避免滚动/刷新反复取帧
     private static final int FRAME_CACHE_MAX = 64;
+    /** 无集数/来源的行(本地视频列表)标题最多几行:下方是空白区,给到 3 行才不浪费(见 item_local_video.xml) */
+    private static final int NAME_MAX_LINES_ROOMY = 3;
     private final Map<String, Bitmap> frameCache = new LinkedHashMap<String, Bitmap>(FRAME_CACHE_MAX, 0.75f, true) {
         @Override
         protected boolean removeEldestEntry(Map.Entry<String, Bitmap> eldest) {
@@ -101,6 +103,15 @@ public class LocalVideoAdapter extends BaseQuickAdapter<VideoInfo, BaseViewHolde
         } else {
             tvSource.setVisibility(View.GONE);
         }
+
+        // 标题行数:本地视频这类"只有文件名 + 文件大小"的行(集数/来源都隐藏)中间是本行的空白区,
+        // 让文件名吃到 3 行,别再单行省略(布局里 tv_name 已按 bottom_toTopOf(tv_video_size) 兜底);
+        // 下载完成那种 剧名+集数+来源 的行必须保持单行 —— 标题一撑高就会把下面两行挤出 120dp 的行高。
+        boolean hasSubRows = tvEpisode.getVisibility() == View.VISIBLE
+                || tvSource.getVisibility() == View.VISIBLE;
+        int wantLines = hasSubRows ? 1 : NAME_MAX_LINES_ROOMY;
+        // TextView.setMaxLines 不判等、每次都 requestLayout,列表复用时会白刷一遍布局,故先比一下
+        if (tvName.getMaxLines() != wantLines) tvName.setMaxLines(wantLines);
 
         helper.setText(R.id.tv_video_size, formatSize(item.getSize()));
 

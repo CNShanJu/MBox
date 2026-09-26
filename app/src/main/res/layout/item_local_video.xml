@@ -70,7 +70,15 @@
         </RelativeLayout>
     </com.lihang.ShadowLayout>
 
-    <!-- 剧名(主标题,颜色由适配器设置:主题主文字色,播放过置灰) -->
+    <!-- 剧名/文件名(主标题,颜色由适配器设置:主题主文字色,播放过置灰)。
+         行高固定 120dp,而"只有文件名 + 文件大小"的行(本地视频列表:集数/来源都隐藏)中间那一大段是空的,
+         所以标题最多给 3 行 —— 以前 maxLines=1,长文件名直接截成省略号,右边下面全是留白。
+         用 bottom_toTopOf(tv_video_size) + layout_constrainedHeight 兜底:标题再长也只占满
+         "文件大小"之上的空间,不会盖住底部那行;字号被系统放大/文件名极长时由 ConstraintLayout
+         压住可用高度,TextView 自己末行省略。vertical_bias=0 保证标题仍然贴顶生长
+         (只加上边约束时是贴顶,补了下边约束若不置 0 会变成在这段空间里垂直居中)。
+         带集数/来源的行(下载完成 tab)由适配器把 maxLines 压回 1:那种行标题一撑高就会把
+         下面两行挤出 120dp 的行高。 -->
     <TextView
         android:id="@+id/tv_name"
         android:layout_width="0dp"
@@ -79,14 +87,17 @@
         android:layout_marginTop="14dp"
         android:ellipsize="end"
         android:gravity="start"
-        android:maxLines="1"
+        android:maxLines="3"
         android:textColor="@color/text_foreground"
         android:textSize="16sp"
         android:textStyle="bold"
+        app:layout_constrainedHeight="true"
         app:layout_constrainedWidth="true"
+        app:layout_constraintBottom_toTopOf="@+id/tv_video_size"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toEndOf="@+id/iv_container"
         app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintVertical_bias="0"
         tools:text="花开锦绣2026" />
 
     <!-- 集数 -->

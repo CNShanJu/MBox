@@ -24,7 +24,7 @@
             android:layout_height="wrap_content"
             android:orientation="horizontal">
 
-            <TextView
+            <com.github.tvbox.osc.ui.kit.SizedIconTextView
                 android:id="@+id/tvName"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
@@ -36,6 +36,7 @@
                 android:drawablePadding="6dp"
                 android:singleLine="true"
                 android:drawableRight="@drawable/ic_arrow_down"
+                app:drawableIconSize="24dp"
                 android:ellipsize="marquee"
                 android:marqueeRepeatLimit="marquee_forever"
                 android:focusable="true"
@@ -46,7 +47,7 @@
 
         <!-- 提示文字色与底栏"未选中"文字/图标同色(同一个主题键 text_hint):
              不写这一项时会落到 Material 默认的 hint 前景色,一旦主题色板或 Material 版本变化两边就会不一致 -->
-        <TextView
+        <com.github.tvbox.osc.ui.kit.SizedIconTextView
             android:id="@+id/search"
             android:layout_width="wrap_content"
             android:layout_weight="1"
@@ -59,7 +60,8 @@
             android:drawableTint="@color/gray_darker"
             android:layout_marginLeft="10dp"
             android:layout_marginRight="6dp"
-            android:drawableRight="@drawable/ic_search"/>
+            android:drawableRight="@drawable/ic_search"
+            app:drawableIconSize="16dp"/>
 
         <ImageView
             android:id="@+id/iv_collect"

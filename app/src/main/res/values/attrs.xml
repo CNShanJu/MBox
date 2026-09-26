@@ -48,4 +48,11 @@
         <attr name="endColor" />
         <attr name="topDelta" />
     </declare-styleable>
+
+    <!-- SizedIconTextView:让 compound drawable(android:drawableLeft/Right/Start/End...)
+         的显示尺寸能在布局里指定(用于替代"按素材固有尺寸绘制、只能另出一份素材"的老做法)。
+         不写(或写 0dp)即保持原生行为。实现与依据见 com.github.tvbox.osc.ui.kit.SizedIconTextView。 -->
+    <declare-styleable name="SizedIconTextView">
+        <attr name="drawableIconSize" format="dimension" />
+    </declare-styleable>
 </resources>

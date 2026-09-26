@@ -143,7 +143,9 @@
                 android:textStyle="bold"
                 />
 
-            <TextView
+            <!-- 图标尺寸由 app:drawableIconSize 指定:compound drawable 恒按素材固有尺寸绘制,
+                 原生无属性可调,故走 ui/kit/SizedIconTextView(依据见其类注释) -->
+            <com.github.tvbox.osc.ui.kit.SizedIconTextView
                 android:id="@+id/scale"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
@@ -154,6 +156,7 @@
                 android:paddingVertical="4dp"
                 android:paddingHorizontal="10dp"
                 android:drawableRight="@drawable/ic_change_20"
+                app:drawableIconSize="20dp"
                 android:drawablePadding="8dp"
                 tools:text="16:9"
                 />
@@ -267,7 +270,8 @@
                 android:layout_height="wrap_content"
                 android:orientation="horizontal">
 
-                <TextView
+                <!-- 图标尺寸由 app:drawableIconSize 统一指定(见 ui/kit/SizedIconTextView) -->
+                <com.github.tvbox.osc.ui.kit.SizedIconTextView
                     android:id="@+id/player"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -279,10 +283,11 @@
                     android:paddingVertical="4dp"
                     android:paddingHorizontal="10dp"
                     android:drawableRight="@drawable/ic_change_20"
+                    app:drawableIconSize="20dp"
                     android:drawablePadding="8dp"
                     tools:text="EXO" />
 
-                <TextView
+                <com.github.tvbox.osc.ui.kit.SizedIconTextView
                     android:id="@+id/decode"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -294,6 +299,7 @@
                     android:paddingVertical="4dp"
                     android:paddingHorizontal="10dp"
                     android:drawableRight="@drawable/ic_change_20"
+                    app:drawableIconSize="20dp"
                     android:drawablePadding="8dp"
                     tools:text="硬解" />
 

@@ -28,15 +28,14 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent">
 
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/mGridView"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:paddingHorizontal="10dp"
-            android:paddingTop="10dp"
-            android:clipToPadding="false" />
-
         <!-- 空态:无历史记录时展示 -->
+        <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/mGridView"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:paddingHorizontal="10dp"
+                android:paddingTop="6dp"
+                android:clipToPadding="false"/>
         <include
             android:id="@+id/ll_empty"
             layout="@layout/view_empty"
