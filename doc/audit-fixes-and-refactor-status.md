@@ -98,6 +98,8 @@
 
   - **贴补(同日,真机反馈后)**：① **按钮改用全局主题按钮样式** `BtnPrimary`/`BtnSecondary`(MaterialButton + 主题 `backgroundTint`/`cornerRadius`/`strokeColor`)—— 原来手写 `android:background` + `textColor` 会被 Material 的主题 tint 盖掉,次按钮出现"文字与底色同色、看不见字";② **判定口径放宽**：有网时仍只认典型断网异常,<b>已经没网时任何 `IOException` 都算</b>(覆盖解析被拦/连接被中间设备重置/读超时等非典型表现);③ **补决策日志**：`NetworkIssueRouter` 现在会打 `网络层报告: <原因>` / `不弹无网络页: <原因>` / `已拉起无网络页(原因: …)`(后者同时进 LogStore) —— 下次"断网了为什么没跳"先看有没有第一行：没有就是请求没走收口客户端或不是网络类失败(实测遇到的是**源站返回空内容**、jar 自己抛 `JSONException: End of input at character 0`,不属于断网)。
 
+  - **贴补二(同日,真机反馈"断网后首页 loading 一直转")**：根因是结束刷新的唯一入口是 `listResult` 观察者,而断网时请求被网络层**快速失败**、异常被上层吞成"无结果" → LiveData 从不发射 → 没人收尾;且断网事件常发生在页面不可见期间(无网络页盖住时 `GridFragment` 已注销网络监听),回到首页也不会补。修法二处:① **断网即收尾** `stopLoadingForOffline()`(结束下拉刷新 + 列表空则显示空态 + 收掉底部"加载中"footer),网络监听回调与"页面重新可见时按当前离线态补一次"都调用它;② **刷新看门狗** `startRefreshWatchdog()` —— 带轮次号的 45s 兜底(长于 VM 侧 typed 15s + 字符串通道 15s 之和,正常慢请求不被打断),到点仍在刷新就强制收尾,兜住其它"没人回结果"的静默失败。
+
 - **hawk 全量退役完成**：`KeyValueStore` 类及全部 legacy 迁移分支已删除，运行权威统一 `PrefsDataStore`/文件；全仓零 `com.orhanobut.hawk` 依赖（mbox 包名隔离，无 Hawk 存量升级场景）。
 - **订阅本地导入改系统 SAF**：`SubscriptionActivity` 用 `ActivityResultContracts.OpenDocument` 替代 hedzr 反射，支持 `content://` 流、`primary:`/`home:` 文档卷，复制到应用专属目录 + canonical 防穿越，按 URL 去重；移除 `MANAGE_EXTERNAL_STORAGE` 前置检查。
 - **下载存储权限引导**：`DownloadDialogCoordinator` 无存储权限时弹 `ConfirmDialog` + `XXPermissions` 拉起系统授权（与「我的-本地视频」入口一致），不再仅 toast 提示。
