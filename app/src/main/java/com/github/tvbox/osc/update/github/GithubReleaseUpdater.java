@@ -68,10 +68,12 @@ public class GithubReleaseUpdater implements Updater {
                 okhttp3.Response resp = null;
                 try {
                     OkHttpClient client = AppCompositionRoot.network().general();
-                    Request req = new Request.Builder()
+                    // 检查更新是后台链路:失败不要弹"网络不可用"整屏页(用户可能正在看本地内容)。
+                    // 用请求级标记,不影响共用 general() 客户端的页面/接口链路。
+                    Request req = com.github.tvbox.osc.util.NetworkGuardInterceptor.markQuiet(new Request.Builder()
                             .url(api)
                             .header("Accept", "application/vnd.github.v3+json")
-                            .build();
+                            .build());
                     resp = client.newCall(req).execute();
                     if (!resp.isSuccessful() || resp.body() == null) {
                         err = "检查更新失败: HTTP " + resp.code();

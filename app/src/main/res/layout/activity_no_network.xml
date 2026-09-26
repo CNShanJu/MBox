@@ -7,6 +7,7 @@
      自带底色会把用户自定义背景图盖掉(其它页面同理,底色由背景层/窗口主题给)。
      可滚动组件按 AGENTS §六保留内边距并 clipToPadding=false(TV/横屏小高度下内容不贴边、不裁死)。 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:clipToPadding="false"
@@ -50,6 +51,19 @@
             android:textColor="@color/text_sub"
             android:textSize="14sp" />
 
+        <!-- 触发原因副标题:排查/反馈时能一眼看到"为什么弹了这一屏"(由 NoNetworkActivity 按 EXTRA_REASON 填,
+             没有原因时整条隐藏)。用比正文更弱的色,不抢主文案 -->
+        <TextView
+            android:id="@+id/tv_no_network_reason"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:gravity="center"
+            android:textColor="@color/text_sub"
+            android:textSize="12sp"
+            android:visibility="gone"
+            tools:text="原因：无网络" />
+
         <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -57,11 +71,15 @@
             android:gravity="center"
             android:orientation="horizontal">
 
+            <!-- insetTop/Bottom 归零:MaterialButton 默认上下各 6dp inset,40dp 的可见高度只剩 ~28dp,
+                 视觉上比其它页面的按钮小一圈(全项目其它按钮也都是显式归零 inset + 定高) -->
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/btn_no_network_back"
                 style="@style/BtnSecondary"
                 android:layout_width="wrap_content"
                 android:layout_height="40dp"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
                 android:minWidth="140dp"
                 android:text="@string/no_network_back" />
 
@@ -71,6 +89,8 @@
                 android:layout_width="wrap_content"
                 android:layout_height="40dp"
                 android:layout_marginStart="12dp"
+                android:insetTop="0dp"
+                android:insetBottom="0dp"
                 android:minWidth="140dp"
                 android:text="@string/no_network_got_it" />
         </LinearLayout>

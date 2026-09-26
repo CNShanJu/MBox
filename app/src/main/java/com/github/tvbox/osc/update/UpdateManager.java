@@ -307,7 +307,9 @@ public final class UpdateManager {
             if (startFrom > 0) {
                 rb.header("Range", "bytes=" + startFrom + "-");
             }
-            Request req = rb.build();
+            // 静默标记:APK 下载是后台链路(用户可能已经切走去看别的),失败由更新弹窗自己报错,
+            // 不该把用户弹到"网络不可用"整屏页
+            Request req = com.github.tvbox.osc.util.NetworkGuardInterceptor.markQuiet(rb.build());
             okhttp3.Call call = client.newCall(req);
             currentCall = call;
             Response resp = call.execute();
@@ -320,7 +322,8 @@ public final class UpdateManager {
                     resp.close();
                     downloaded = 0;
                     dest.delete();
-                    Request retryReq = new Request.Builder().url(url).build();
+                    Request retryReq = com.github.tvbox.osc.util.NetworkGuardInterceptor
+                            .markQuiet(new Request.Builder().url(url).build());
                     call = client.newCall(retryReq);
                     currentCall = call;
                     resp = call.execute();

@@ -66,6 +66,8 @@
     <!-- 网络不可用页(独立页面,见 NoNetworkActivity/NetworkIssueRouter:断网且发起过请求才拉起,有网自动返回) -->
     <string name="no_network_title">网络连接不可用</string>
     <string name="no_network_hint">请检查手机的 Wi-Fi 或移动数据；网络恢复后会自动返回上一页。</string>
+    <!-- 无网络页的"触发原因"副标题(由 NoNetworkActivity 填 EXTRA_REASON;原因同时进 LogStore) -->
+    <string name="no_network_reason">原因：%1$s</string>
     <string name="no_network_back">返回</string>
     <string name="no_network_got_it">我知道了</string>
 </resources>

@@ -106,7 +106,9 @@ public class DownloadManager {
     }
 
     private static OkHttpClient buildDownloadClient() {
-        return OkGoHelper.newBaseBuilder()
+        // 静默根(false):下载是后台链路——自动续传/恢复网络后重试失败不该把用户弹到"网络不可用"整屏页
+        // (用户可能正在看本地视频/本地文件)。仍会快速失败,只是不上报。
+        return OkGoHelper.newBaseBuilder(false)
                 .connectTimeout(30, TimeUnit.SECONDS)
                 .readTimeout(60, TimeUnit.SECONDS)
                 .writeTimeout(60, TimeUnit.SECONDS)

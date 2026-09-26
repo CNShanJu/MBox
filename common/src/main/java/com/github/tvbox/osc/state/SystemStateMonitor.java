@@ -57,6 +57,13 @@ public final class SystemStateMonitor {
     public static final String VAL_NONE = "NONE";
     public static final String VAL_WIFI = "WIFI";
     public static final String VAL_CELLULAR = "CELLULAR";
+    /**
+     * 有可用链路但不属于 WiFi/蜂窝（VPN / 以太网 / 蓝牙共享等）。
+     * <p>
+     * 语义是"有没有可用网络"，不是"哪种传输方式"：原来只认 WIFI/CELLULAR，其它 transport 一律落回
+     * {@link #VAL_NONE} → 这些用户被整条链路当成"没网"（无网络页永不自动返回、页面永不自动刷新）。
+     */
+    public static final String VAL_CONNECTED = "CONNECTED";
     public static final String VAL_ON = "ON";
     public static final String VAL_OFF = "OFF";
     public static final String VAL_FOREGROUND = "FOREGROUND";
@@ -133,7 +140,9 @@ public final class SystemStateMonitor {
         }
         synchronized (listeners) {
             for (String t : types) {
-                listeners.computeIfAbsent(t, k -> new CopyOnWriteArrayList<>()).add(l);
+                // 去重:同一 listener 重复 register 会收两次事件(调用方各自兜着很脆)
+                List<Listener> list = listeners.computeIfAbsent(t, k -> new CopyOnWriteArrayList<>());
+                if (!list.contains(l)) list.add(l);
             }
         }
     }
@@ -246,22 +255,7 @@ public final class SystemStateMonitor {
 
     private void updateNetwork() {
         try {
-            ConnectivityManager cm = (ConnectivityManager) appContext.getSystemService(Context.CONNECTIVITY_SERVICE);
-            String transport = VAL_NONE;
-            if (cm != null) {
-                Network active = cm.getActiveNetwork();
-                if (active != null) {
-                    NetworkCapabilities nc = cm.getNetworkCapabilities(active);
-                    if (nc != null) {
-                        if (nc.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
-                            transport = VAL_WIFI;
-                        } else if (nc.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) {
-                            transport = VAL_CELLULAR;
-                        }
-                    }
-                }
-            }
-            final String value = transport;
+            final String value = currentTransport();
             if (value.equals(state.network)) return; // 无变化
             state.network = value;
             mainHandler.removeCallbacks(networkDebounce);
@@ -270,6 +264,82 @@ public final class SystemStateMonitor {
         } catch (Throwable th) {
             Log.e("SystemState", "网络状态读取失败", th);
         }
+    }
+
+    /**
+     * 当前网络传输方式（"有没有可用网络"的事实源，不是"哪种传输"）。
+     * <p>
+     * WiFi/蜂窝照旧细分；VPN / 以太网 / 蓝牙共享等其它 transport 只要带 INTERNET 能力就算
+     * {@link #VAL_CONNECTED}；没有活动网络但仍有带 INTERNET 能力的网络时同样算有网（与网络层
+     * 快速失败守卫 {@code OkGoHelper.hasNetwork()} 同一宽松口径，两处结论必须一致）。
+     */
+    private String currentTransport() {
+        ConnectivityManager cm = (ConnectivityManager) appContext.getSystemService(Context.CONNECTIVITY_SERVICE);
+        if (cm != null) {
+            Network active = cm.getActiveNetwork();
+            if (active != null) {
+                NetworkCapabilities nc = cm.getNetworkCapabilities(active);
+                if (nc != null && nc.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
+                    if (nc.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return VAL_WIFI;
+                    if (nc.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) return VAL_CELLULAR;
+                    return VAL_CONNECTED;
+                }
+            }
+        }
+        return hasUsableNetwork() ? VAL_CONNECTED : VAL_NONE;
+    }
+
+    /**
+     * 是否有任何带 {@code NET_CAPABILITY_INTERNET} 的网络（宽松口径的<b>唯一</b>实现）。
+     * <p>
+     * 不要求"已验证可联网"：受限网络/切换瞬间仍可能请求成功，宁可漏判离线也不误杀。
+     * 读不到（未 init / 权限 / 系统差异）一律返回 true —— 判定只是优化，不能因为自己读不到就把用户判成离线。
+     */
+    public static boolean hasUsableNetwork() {
+        SystemStateMonitor m = instance;
+        if (m == null) return true;
+        Context ctx = m.appContext;
+        if (ctx == null) return true;
+        try {
+            ConnectivityManager cm = (ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm == null) return true;
+            if (cm.getActiveNetwork() != null) return true;
+            Network[] all = cm.getAllNetworks();
+            if (all == null) return true;
+            for (Network n : all) {
+                NetworkCapabilities caps = cm.getNetworkCapabilities(n);
+                if (caps != null && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
+                    return true;
+                }
+            }
+            return false;
+        } catch (Throwable th) {
+            return true;
+        }
+    }
+
+    /**
+     * 当前是否没网 —— 页面侧的统一判定（别再各写一份：项目里曾有三份 {@code isOffline()}，
+     * 其中两份的 catch 语义还相反）。未 init / 读不到一律按"有网"处理：误判离线的代价更大
+     * （内容被藏起来、且没有"恢复"事件来救）。
+     */
+    public static boolean isOfflineNow() {
+        SystemStateMonitor m = instance;
+        if (m == null) return false;
+        SystemState s = m.state;
+        return s != null && VAL_NONE.equals(s.network);
+    }
+
+    /** 订阅（未 init 时静默跳过，免调用方裸链式 NPE） */
+    public static void registerSafe(Listener l, String... types) {
+        SystemStateMonitor m = instance;
+        if (m != null) m.register(l, types);
+    }
+
+    /** 退订（未 init 时静默跳过） */
+    public static void unregisterSafe(Listener l) {
+        SystemStateMonitor m = instance;
+        if (m != null) m.unregister(l);
     }
 
     private final Runnable networkDebounce = () -> {
@@ -492,12 +562,16 @@ public final class SystemStateMonitor {
     private void checkDisk() {
         try {
             StatFs stat = new StatFs(android.os.Environment.getDataDirectory().getAbsolutePath());
-            long free = stat.getAvailableBytes();
-            state.freeDiskBytes = free;
-            if (free < MIN_FREE_DISK) {
-                log.warn(SystemSubType.DISK, "磁盘可用空间不足: " + (free / 1024 / 1024) + "MB", null);
-                emit(TYPE_DISK, "LOW:" + free);
-            }
+            final long free = stat.getAvailableBytes();
+            // 事件统一在主线程派发(本类对外的约定):原来在 tvbox-disk 线程直接 emit,
+            // 与注释/其它事件源不一致,监听方若碰 UI 就是隐雷
+            mainHandler.post(() -> {
+                state.freeDiskBytes = free;
+                if (free < MIN_FREE_DISK) {
+                    log.warn(SystemSubType.DISK, "磁盘可用空间不足: " + (free / 1024 / 1024) + "MB", null);
+                    emit(TYPE_DISK, "LOW:" + free);
+                }
+            });
         } catch (Throwable ignored) {
         }
     }

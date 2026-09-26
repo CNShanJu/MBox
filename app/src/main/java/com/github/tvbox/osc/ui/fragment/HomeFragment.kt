@@ -24,6 +24,7 @@ import com.github.tvbox.osc.spiderapi.SourceLoaderProviders
 import com.github.tvbox.osc.base.App
 import com.github.tvbox.osc.base.BaseLazyFragment
 import com.github.tvbox.osc.base.BaseVbFragment
+import com.github.tvbox.osc.state.SystemStateMonitor
 import com.github.tvbox.osc.bean.AbsSortXml
 import com.github.tvbox.osc.bean.MovieSort.SortData
 import com.github.tvbox.osc.bean.SourceBean
@@ -75,6 +76,12 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
         private const val CHECK_AFTER_BUBBLE_MS = BUBBLE_SHOW_MS + 600L
         /** 没有气泡(无痕浏览/本机无历史)时的默认延时:给首页留出首屏渲染时间 */
         private const val CHECK_DEFAULT_DELAY_MS = 4000L
+        /**
+         * 首屏加载看门狗(同 GridFragment 的 45s):某些失败路径压根不回结果
+         * (断网被网络层快速失败、源自己抛异常、VM 侧提前 return),不兜底就会让首页永久停在 loading,
+         * 而 loading 视图会盖住内容、用户连"长按刷新"都点不到。
+         */
+        private const val LOAD_WATCHDOG_MS = 45_000L
     }
 
     /**
@@ -83,6 +90,16 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
     private var mSortDataList: List<SortData> = ArrayList()
     private var dataInitOk = false
     private var jarInitOk = false
+
+    // ---- 首屏"必然收尾 + 自愈"(离线冷启动 / 从无网络页返回的场景) ----
+    /** 首屏加载轮次:看门狗按它作废在途的那一轮(同 GridFragment 的做法) */
+    private var loadEpoch = 0
+    /** 是否有一轮首屏加载在途 */
+    private var loadInFlight = false
+    /** 是否成功拿到过首页数据(拿到过就不再自动补,免得和用户操作打架) */
+    private var loadedOnce = false
+    /** 网络状态是否已订阅 */
+    private var netBound = false
 
     /** "上次看到"气泡预计消失的时间点(uptimeMillis);无气泡时保持 0,自动检查按默认延时走 */
     private var bubbleUntil = 0L
@@ -140,6 +157,10 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
     private fun initViewModel() {
         sourceViewModel = ViewModelProvider(this).get(SourceViewModel::class.java)
         sourceViewModel?.sortResult?.observe(this) { absXml: AbsSortXml? ->
+            // 收到任何结果(数据/空/null)都算本轮结束:作废看门狗、清"在途"标记(同 GridFragment)
+            loadEpoch++
+            loadInFlight = false
+            if (absXml != null) loadedOnce = true
             showSuccess()
             mSortDataList =
                 if (absXml?.classes != null && absXml.classes.sortList != null) {
@@ -171,6 +192,7 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
         scheduleAutoUpdateCheck()
 
         showLoading()
+        startLoadWatchdog()
         when{
             dataInitOk && jarInitOk -> {
                 //正常初始化会先加载,最终到这,此时数据有以下几种情况
@@ -214,6 +236,8 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
                         initData()
                     }
                 } else {
+                    // 拉取/解析失败:先收尾首屏(loading 视图会盖住内容、挡住长按刷新),再把原因告知用户
+                    settleFirstScreen()
                     showTipDialog(msg)
                 }
             }
@@ -390,9 +414,93 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        // "断网/恢复网络"的事件常常发生在页面不可见期间(被无网络页盖住、切到别的页),那时监听是注销的,
+        // 回来时已经错过 → 这里按当前网络状态补一次收尾或补一次加载。真机反馈:断网冷启动进无网络页、
+        // 点"返回"回首页,lading 一直转、恢复网络也不动 —— 就是这条时序没接上。
+        bindNetworkState()
+    }
+
     override fun onPause() {
+        unbindNetworkState()
         super.onPause()
         mHandler.removeCallbacksAndMessages(null)
+    }
+
+    override fun onDestroyView() {
+        unbindNetworkState()
+        mHandler.removeCallbacksAndMessages(null)
+        super.onDestroyView()
+    }
+
+    /** 订阅系统网络状态(幂等;只在可见期间订阅),并处理"事件在页面不可见期间发生"的时序 */
+    private fun bindNetworkState() {
+        if (isOffline()) {
+            settleFirstScreen()
+        } else if (!loadedOnce && !loadInFlight) {
+            // 从未加载成功 + 现在有网:补一次初始化
+            LogStore.log(Category.SYSTEM, "首页: 页面可见且从未加载成功,补一次初始化")
+            mHandler.post {
+                if (!loadedOnce && !loadInFlight) initData()
+            }
+        } else if (loadInFlight) {
+            // 页面不可见期间看门狗被 onPause 清掉了,重新武装,别让 loading 无限等
+            startLoadWatchdog()
+        }
+        if (netBound) return
+        SystemStateMonitor.registerSafe(netListener, SystemStateMonitor.TYPE_NETWORK)
+        netBound = true
+    }
+
+    private fun unbindNetworkState() {
+        if (!netBound) return
+        SystemStateMonitor.unregisterSafe(netListener)
+        netBound = false
+    }
+
+    private val netListener = SystemStateMonitor.Listener { e ->
+        if (e == null || e.type != SystemStateMonitor.TYPE_NETWORK) return@Listener
+        if (SystemStateMonitor.VAL_NONE == e.value) {
+            // 断网:在途请求已被网络层快速失败,不会再有回调 → 立即收尾
+            settleFirstScreen()
+        } else if (!loadedOnce) {
+            // 恢复联网且从未加载成功:自动补一次(否则用户只能重启或长按刷新)
+            mHandler.post {
+                if (!loadedOnce && !loadInFlight) initData()
+            }
+        }
+    }
+
+    private fun isOffline(): Boolean {
+        // 口径统一走系统状态单点(未 init/读不到按有网);别再各写一份 catch 语义相反的判定
+        return SystemStateMonitor.isOfflineNow()
+    }
+
+    /** 起一轮首屏加载看门狗(带轮次号;收到任何结果即被观察者作废) */
+    private fun startLoadWatchdog() {
+        val epoch = ++loadEpoch
+        loadInFlight = true
+        mHandler.postDelayed({
+            if (epoch != loadEpoch) return@postDelayed   // 已收尾/已换轮:这条作废
+            LogStore.log(Category.SYSTEM, "首页: 加载看门狗触发(请求无结果),收尾显示空态")
+            settleFirstScreen()
+        }, LOAD_WATCHDOG_MS)
+    }
+
+    /**
+     * 首屏在途加载收尾:作废看门狗 + 清"在途"标记;从未拿到过内容时显示空态。
+     * <p>
+     * 为什么必须有:结束 loading 的唯一入口是 {@code sortResult} 的观察者,而断网时请求被网络层
+     * 快速失败、异常被上层吞成"无结果" → LiveData 永不发射 → 首屏 loading 一直转(用户从无网络页
+     * 点"返回/我知道了"回来看到的就是它,且 loading 视图盖着内容连长按刷新都点不到)。
+     * <p>
+     * 已经加载成功过就只收尾、不动已有内容(别把用户的列表刷掉)。
+     */
+    private fun settleFirstScreen() {
+        loadEpoch++
+        loadInFlight = false
+        if (!loadedOnce) showEmpty()
     }
 
     private fun showSiteSwitch() {

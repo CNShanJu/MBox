@@ -379,23 +379,20 @@ public class GridFragment extends BaseLazyFragment {
             initData();
         }
         if (mNetBound) return;
-        SystemStateMonitor.get().register(mNetListener, SystemStateMonitor.TYPE_NETWORK);
+        SystemStateMonitor.registerSafe(mNetListener, SystemStateMonitor.TYPE_NETWORK);
         mNetBound = true;
     }
 
     private void unbindNetworkListener() {
         if (!mNetBound) return;
-        SystemStateMonitor.get().unregister(mNetListener);
+        SystemStateMonitor.unregisterSafe(mNetListener);
         mNetBound = false;
     }
 
     private static boolean isOffline() {
-        try {
-            SystemState state = SystemStateMonitor.get().getCurrentState();
-            return state != null && SystemStateMonitor.VAL_NONE.equals(state.network);
-        } catch (Throwable th) {
-            return false;
-        }
+        // 口径统一走系统状态单点(未 init/读不到一律按有网;原来这里 catch 返 false、
+        // NoNetworkActivity 那份 catch 返 true,同一份判定两处相反)
+        return SystemStateMonitor.isOfflineNow();
     }
 
     /**

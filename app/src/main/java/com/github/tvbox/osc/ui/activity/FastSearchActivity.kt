@@ -80,6 +80,12 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
 
         /** 第一波收尾兜底:个别源卡死/不回包时,到点也要把第二波放出去(否则慢源就被永远压在后面) */
         private const val PRIMARY_WAVE_FALLBACK_MS = 12_000L
+
+        /**
+         * 整轮搜索看门狗:某源 getSearch 抛异常(断网时很常见)时批次不会被投递 → allRunCount 不归零 →
+         * "搜索中"永远转、"到底了"永不出现。到点强制收尾(两波 + 重试都留足余量)。
+         */
+        private const val SEARCH_WATCHDOG_MS = 60_000L
     }
 
     private lateinit var sourceViewModel : SourceViewModel
@@ -808,6 +814,29 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
             launchDeferredWave()
         }
     }
+
+    /** 整轮搜索看门狗(见 SEARCH_WATCHDOG_MS):本轮没人收尾时强制收尾 */
+    private val searchWatchdog = Runnable {
+        android.util.Log.w("FastSearch", "搜索看门狗触发:本轮无收尾,强制收尾")
+        finishSearchRound()
+    }
+
+    /**
+     * 本轮搜索收尾(幂等):清"完成态"标记、没结果就空态、收起反馈圈、刷新"到底了"。
+     * "全部来源已返回"与看门狗都走这里,避免两条路各写一份。
+     */
+    private fun finishSearchRound() {
+        if (searchFinished) return
+        searchFinished = true
+        if (searchAdapter.data.size <= 0) {
+            showEmpty()
+        }
+        cancel()
+        if (mBinding.llLayout.isRefreshing) {
+            mBinding.llLayout.setRefreshing(false)
+        }
+        updateEndTip()
+    }
     private fun getSiteTextView(text: String): TextView {
         val textView = TextView(this)
         textView.text = text
@@ -861,6 +890,9 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
         }
         // 一轮新搜索:复位翻页记账(各源从第 1 页重新开始)
         resetPagingState()
+        // 整轮看门狗:任何"没人投递批次"的路径都不允许把"搜索中"永久留着(断网 + 某源抛异常即触发)
+        mBinding.root.removeCallbacks(searchWatchdog)
+        mBinding.root.postDelayed(searchWatchdog, SEARCH_WATCHDOG_MS)
         // 分两波投递(见类内"两波投递"注释):第一波快源先行,判慢的源等第一波收尾后单独跑。
         // allRunCount 记的是全部来源(第一波+第二波),故"全部来源已返回"仍等两波都回完。
         sourceHealth.beginRound()
@@ -1038,16 +1070,8 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
             }
         }
         if (count <= 0 && !searchFinished) {
-            searchFinished = true // 全部来源已返回:进入"完成态"
-            if (searchAdapter.data.size <= 0) {
-                showEmpty()
-            }
-            cancel()
-            // 全部来源已返回:若反馈圈尚未提前收起,此处统一收尾
-            if (mBinding.llLayout.isRefreshing) {
-                mBinding.llLayout.setRefreshing(false)
-            }
-            updateEndTip()
+            // 全部来源已返回:进入"完成态"(与看门狗走同一条收尾,见 finishSearchRound)
+            finishSearchRound()
         }
     }
 
@@ -1094,6 +1118,7 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
         sourceViewModel.setSearchPageBatchListener(null) // 断开翻页批次直调
         cancel()
         mBinding.root.removeCallbacks(deferredWaveFallback) // 页面销毁后别再放第二波
+        mBinding.root.removeCallbacks(searchWatchdog) // 页面销毁后不必再强制收尾
         synchronized(searchLock) {
             searchEpoch++
             searchPaused = false

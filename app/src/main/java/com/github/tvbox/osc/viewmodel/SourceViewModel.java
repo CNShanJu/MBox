@@ -87,6 +87,12 @@ public class SourceViewModel extends ViewModel {
             return;
         }
         SourceBean sourceBean = sourceConfig.getSource(sourceKey);
+        if (sourceBean == null) {
+            // 源不存在(订阅刚被换掉/删除):原来直接 sourceBean.getType() 抛 NPE →
+            // 首页永远收不到"本轮结束" → loading 一直转(与 getDetail 同一防御)
+            sortResult.postValue(null);
+            return;
+        }
         int type = sourceBean.getType();
         if (type == 3) {
             // 调试辅助:jar 源首页加载 trace(定位 jar 内 toast 触发源;tag=SpiderTrace)
@@ -153,7 +159,11 @@ public class SourceViewModel extends ViewModel {
                         }
                         publishHomeSort(sourceBean, sortXml, embedded);
                     } catch (Throwable th) {
+                        // 每条路径都必须让首页收到"本轮结束"(与 getList 同一教训):
+                        // 原来只 printStackTrace,源抛异常/网络被快速失败时 sortResult 永不发射 →
+                        // 首屏 loading 一直转(离线冷启动 + 从"网络不可用"页返回就是这个现象)
                         th.printStackTrace();
+                        sortResult.postValue(null);
                     } finally {
                         android.util.Log.i("SpiderTrace", "[首页] " + sourceBean.getName()
                                 + " homeContent 结束 耗时=" + (System.currentTimeMillis() - traceStart)
