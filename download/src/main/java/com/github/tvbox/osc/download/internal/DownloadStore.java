@@ -249,7 +249,7 @@ public class DownloadStore {
                          FileOutputStream fos = new FileOutputStream(target)) {
                         byte[] buf = new byte[DownloadManager.BUFFER];
                         int n;
-                        while ((n = is.read(buf)) > 0) fos.write(buf, 0, n);
+                        while ((n = is.read(buf)) != -1) fos.write(buf, 0, n); // != -1:0 不是 EOF
                     }
                     Log.i("TVBox-Download", "海报已下载 " + target.getAbsolutePath());
                     dm.notifyChanged(); // 海报就绪,刷新下载页

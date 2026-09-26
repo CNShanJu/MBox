@@ -180,7 +180,7 @@ public class FileCleaner {
         FileOutputStream fos = new FileOutputStream(dst);
         byte[] buf = new byte[DownloadManager.BUFFER];
         int n;
-        while ((n = fis.read(buf)) > 0) fos.write(buf, 0, n);
+        while ((n = fis.read(buf)) != -1) fos.write(buf, 0, n); // != -1:0 不是 EOF
         fis.close();
         fos.close();
     }
@@ -189,7 +189,7 @@ public class FileCleaner {
         FileInputStream fis = new FileInputStream(src);
         byte[] buf = new byte[DownloadManager.BUFFER];
         int n;
-        while ((n = fis.read(buf)) > 0) out.write(buf, 0, n);
+        while ((n = fis.read(buf)) != -1) out.write(buf, 0, n); // != -1:0 不是 EOF
         fis.close();
     }
 }

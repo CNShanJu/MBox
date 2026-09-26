@@ -174,7 +174,7 @@ public class DownloadExecutor {
                 long lastPersist = 0;
                 long lastSpeedTime = System.currentTimeMillis();
                 long lastSpeedBytes = t.downloadedBytes;
-                while ((n = is.read(buf)) > 0) {
+                while ((n = is.read(buf)) != -1) { // != -1:0 不是 EOF(见分片循环处的说明)
                     if (isInterrupted(t)) {
                         os.flush();
                         t.speed = 0;
@@ -364,6 +364,14 @@ public class DownloadExecutor {
             long segDone = 0; // 缺失分片从头下(无残留字节)
             try {
                 downloadSegment(i, segments.get(i), segFile, segDone, t, segKeys.get(i), keyCache);
+                if (isInterrupted(t)) {
+                    // downloadSegment 遇中断是"正常 return"(不抛异常):这里必须同步收尾,
+                    // 否则调用方会把这一片记成已完成(doneSegments 推进),进度与磁盘不一致
+                    t.speed = 0;
+                    dm.persist();
+                    dm.notifyChanged();
+                    return;
+                }
                 consecutiveFail = 0;
                 consecutiveGone = 0;
             } catch (IOException e) {
@@ -1032,6 +1040,8 @@ public class DownloadExecutor {
 
             // 构建输入流:加密分片经 AES-128-CBC 边下边解密(明文落盘,续传/校验/合并/封装流程不变),
             // 非加密分片即原始字节流。密钥按 keyUri 缓存,整任务只拉一次。
+            // 服务器声明的长度(未知为 -1):整段原样落盘时用它校验有没有被提前掐断(见下面的完整性校验)
+            long declared = resp.body().contentLength();
             InputStream is = resp.body().byteStream();
             if (key != null) {
                 byte[] keyBytes = loadKeyBytes(key, t, keyCache);
@@ -1049,6 +1059,10 @@ public class DownloadExecutor {
             // Bug2: 分片先写 .part 再 rename 原子落盘——进程被杀不产生"残缺但非空"的 .ts,
             // 续传/校验只信任 rename 后的完整分片
             File partFile = new File(segFile.getAbsolutePath() + ".part");
+            // 实际落盘字节(完整性校验用):-1 = 读循环没正常走完(中断/异常时不参与校验)
+            long writtenTotal = -1;
+            /** 本次是否为"剥壳落盘"(跳过容器头):剥壳后字节数与服务器声明不等,不能按声明长度校验 */
+            int payloadOffsetOut = 0;
             OutputStream os = new FileOutputStream(partFile, segDone > 0);
             try {
                 byte[] buf = new byte[DownloadManager.BUFFER];
@@ -1063,7 +1077,9 @@ public class DownloadExecutor {
                 byte[] headBuf = new byte[HEAD_PROBE_BYTES];
                 int headLen = 0;
                 boolean decided = segDone > 0;  // 续传已有内容:维持原形态,不再判定
-                while ((n = is.read(buf)) > 0) {
+                // != -1 而不是 > 0:0 不代表 EOF(契约上 len>0 时不该返回 0,但 CipherInputStream 等
+                // 实现会),按 >0 退出会把"还没读完"当"读完了",随后 .part 照样 rename 成 %05d.ts 当成功
+                while ((n = is.read(buf)) != -1) {
                     if (!decided) {
                         int copy = Math.min(n, headBuf.length - headLen);
                         System.arraycopy(buf, 0, headBuf, headLen, copy);
@@ -1163,8 +1179,19 @@ public class DownloadExecutor {
                     t.segmentBytes = written;
                 }
                 os.flush();
+                writtenTotal = written; // 读循环正常结束:记下实收字节供完整性校验
+                payloadOffsetOut = payloadOffset;
             } finally {
                 os.close(); // 无论成功/异常/中断都关闭 FileOutputStream,避免 StrictMode "resource failed to call close"
+            }
+            // 完整性校验:服务器声明了长度、本次又是"整段原样落盘"(未续传/未剥壳/未解密)时,
+            // 实收字节必须与声明一致 —— 否则就是被提前掐断的残片,绝不能 rename 成 %05d.ts 当成功
+            // (校验判据只有 exists() && length()>0,不比对长度的话残片会被当成完整分片合并进成品)
+            if (key == null && payloadOffsetOut == 0 && segDone == 0 && declared > 0
+                    && writtenTotal >= 0 && writtenTotal != declared) {
+                FileCleaner.deleteQuietly(partFile);
+                throw new IOException("分片不完整: 期望 " + declared + " B,实际 " + writtenTotal
+                        + " B(连接被提前中断)");
             }
             if (!partFile.renameTo(segFile)) {
                 FileCleaner.copyFile(partFile, segFile);
@@ -2082,30 +2109,26 @@ public class DownloadExecutor {
 
     /**
      * 5.4 增强: 每任务限速（t.speedLimit 字节/秒, 0=不限速）。
-     * 500ms 窗口滑动节流; 限速不会改变行为, 只是放慢写入。
+     * <p>
+     * 窗口状态存在任务上（{@code throttleWindowStart}/{@code throttleWindowBytes}）——
+     * 原实现用的是方法内局部变量、每次调用都重置,elapsed 永远小于窗口 → 永远直接 return,限速从未生效。
+     * 结算规则本身是纯计算,见 {@link com.github.tvbox.osc.util.ThrottlePolicy}（带单测）。
      */
     private static void throttle(DownloadTask t, int written) {
         if (t.speedLimit <= 0)
             return;
-        long windowBytes = written;
-        long windowStart = System.currentTimeMillis();
-        while (t.speedLimit > 0 && !isInterrupted(t)) {
-            long now = System.currentTimeMillis();
-            long elapsed = now - windowStart;
-            if (elapsed < 500)
-                return; // 窗口未满, 继续
-            long expect = t.speedLimit * elapsed / 1000;
-            if (windowBytes <= expect)
-                return; // 未超速
-            long over = windowBytes - expect;
-            long delay = over * 1000 / Math.max(1, t.speedLimit);
-            try {
-                Thread.sleep(Math.min(delay, 2000));
-            } catch (InterruptedException ignored) {
-                return;
-            }
-            windowStart = now;
-            windowBytes = 0;
+        long now = System.currentTimeMillis();
+        com.github.tvbox.osc.util.ThrottlePolicy.Decision d =
+                com.github.tvbox.osc.util.ThrottlePolicy.decide(t.speedLimit, t.throttleWindowStart,
+                        t.throttleWindowBytes + Math.max(0, written), now);
+        t.throttleWindowStart = d.windowStart;
+        t.throttleWindowBytes = d.windowBytes;
+        if (d.sleepMs <= 0)
+            return;
+        try {
+            Thread.sleep(d.sleepMs);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt(); // 保留中断标志,交给上层按暂停/取消处理
         }
     }
 
@@ -2310,7 +2333,8 @@ public class DownloadExecutor {
              OutputStream out = new FileOutputStream(dst)) {
             int fill = 0;
             int n;
-            while ((n = in.read(buf, fill, buf.length - fill)) > 0) {
+            while (fill < buf.length && (n = in.read(buf, fill, buf.length - fill)) != -1) {
+                if (n == 0) continue; // 0 不是 EOF:继续攒(否则会把没读完的块当末尾残块)
                 fill += n;
                 if (fill < buf.length) continue; // 攒满一整块再处理
                 byte[] packed = TsProbe.repackUnit(buf, fill, probe);

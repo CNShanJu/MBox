@@ -59,6 +59,13 @@ public class DownloadTask {
     public transient long speedLimit = 0;
 
     /**
+     * 限速窗口状态(transient,仅内存):窗口起点与窗口内已写字节。
+     * 必须跨调用保存 —— 原实现把它们写成方法内局部变量、每次重置,导致限速永不生效(见 util/ThrottlePolicy)。
+     */
+    public transient long throttleWindowStart = 0;
+    public transient long throttleWindowBytes = 0;
+
+    /**
      * 大小预检结果(随任务持久化):直链探测到的是精确 Content-Length,写入 {@link #totalBytes};
      * 本字段仅记 m3u8 的估算大小(码率×时长)。0=尚未探测/无法探测。
      * 仅用于磁盘空间预检与"约大小"展示,不参与精确进度分母。
