@@ -1,5 +1,6 @@
 package com.github.tvbox.osc.ui.fragment;
 
+import android.animation.ValueAnimator;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -7,6 +8,7 @@ import android.os.StatFs;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
+import android.view.ViewGroup;
 import android.widget.CheckBox;
 import android.widget.ImageView;
 import android.widget.TextView;
@@ -66,10 +68,14 @@ public class DownloadFragment extends BaseVbFragment<FragmentDownloadBinding> {
 
     private static final int TAB_DOWNLOADING = 0;
     private static final int TAB_DONE = 1;
-    /** 左滑露出的操作区宽度(暂停+删除两个按钮) */
+    /** 左滑露出的操作区宽度(暂停+删除两个按钮,= 布局里两个 64dp 按钮之和) */
     private static final int SWIPE_REVEAL_WIDTH_DP = 128;
+    /** 左滑松手后的吸附动画时长(卡片位移与操作区宽度同一动画驱动) */
+    private static final int SWIPE_SETTLE_MS = 150;
     /** bindPoster 去重 tag key:ImageView 上记录"已发起懒拉取的 pic"(本地海报文件的去重在 PicassoLoad 内按路径记) */
     private static final int TAG_POSTER_SOURCE = 0x2D00001;
+    /** 行内左滑吸附动画 tag key:item_front 上挂当前动画,重绑/新手势前先取消,避免旧动画改写新状态 */
+    private static final int TAG_SWIPE_ANIM = 0x2D00002;
 
     // ------------------------------------------------------------------
     // 聚合根级:剧集网格(收藏页样式,按 剧名+来源 分组)
@@ -193,16 +199,22 @@ public class DownloadFragment extends BaseVbFragment<FragmentDownloadBinding> {
                 // 操作按钮:统一左滑滑出(不区分大小屏,宽屏同样滑出右侧 暂停/删除 操作区)
                 View swipeBehind = helper.getView(R.id.swipe_behind);
                 View front = helper.getView(R.id.item_front);
+                cancelSwipeAnim(front); // 复用条目:先停掉上一次吸附动画,别让它改写这一行的新状态
                 if (dlSelectMode) {
                     swipeBehind.setVisibility(View.GONE);
                     front.setTranslationX(0);
+                    setSwipeBehindWidth(swipeBehind, 0);
                     front.setOnTouchListener(null);
                 } else {
                     swipeBehind.setVisibility(View.VISIBLE);
                     TextView btnSwipe = helper.getView(R.id.btn_swipe_pause);
                     btnSwipe.setText(DownloadDisplay.swipeActionText(task));
-                    front.setTranslationX(swipedTaskIds.contains(task.id) ? -swipeRevealPx() : 0);
-                    attachSwipe(front, task);
+                    float tx = swipedTaskIds.contains(task.id) ? -swipeRevealPx() : 0;
+                    front.setTranslationX(tx);
+                    // 操作区只保留"已滑出的那一段"宽度:信息卡是半透明的(主题 bg_component alpha),
+                    // 整条铺在卡片下面会被透出来(见 item_download_task_new.xml 顶部说明)
+                    setSwipeBehindWidth(swipeBehind, -tx);
+                    attachSwipe(front, swipeBehind, task);
                     helper.addOnClickListener(R.id.btn_swipe_pause, R.id.btn_swipe_delete);
                 }
                 // 多选勾选框:仅长按多选时显示
@@ -995,12 +1007,50 @@ public class DownloadFragment extends BaseVbFragment<FragmentDownloadBinding> {
     }
 
     /**
-     * 窄屏下载条目的左滑手势(手指从右往左):向左拖出右侧操作区(整条高度),松手按拖出距离吸附开/关;
+     * 设置左滑操作区槽位宽度 = 卡片已让出的那一段(px)。
+     * <p>为什么是"动态宽度"而不是"整条铺着让卡片盖住":信息卡底色是主题 bg_component(alpha 60),
+     * 半透明卡片盖不住下面垫着的色块,会按 40% 透出来(每行右侧一条浑浊蓝/红色带)。
+     * 槽位宽度跟随位移后,卡片之外永远只有真正露出来的那一截,静止时宽度为 0 —— 垫在卡片下的像素恒为 0。
+     */
+    private void setSwipeBehindWidth(View behind, float widthPx) {
+        if (behind == null) return;
+        int w = Math.max(0, Math.round(widthPx));
+        ViewGroup.LayoutParams lp = behind.getLayoutParams();
+        if (lp == null || lp.width == w) return;
+        lp.width = w;
+        behind.setLayoutParams(lp);
+    }
+
+    /** 左滑松手吸附:同一动画同时驱动卡片位移与操作区宽度,保证过渡的每一帧都不多露/少露一个像素 */
+    private void settleSwipe(final View front, final View behind, float toTx) {
+        cancelSwipeAnim(front);
+        ValueAnimator anim = ValueAnimator.ofFloat(front.getTranslationX(), toTx);
+        anim.setDuration(SWIPE_SETTLE_MS);
+        anim.addUpdateListener(a -> {
+            float tx = (Float) a.getAnimatedValue();
+            front.setTranslationX(tx);
+            setSwipeBehindWidth(behind, -tx);
+        });
+        front.setTag(TAG_SWIPE_ANIM, anim);
+        anim.start();
+    }
+
+    /** 取消该行还在跑的吸附动画(条目复用重绑、新手势开始前调用) */
+    private void cancelSwipeAnim(View front) {
+        Object running = front.getTag(TAG_SWIPE_ANIM);
+        if (running instanceof ValueAnimator) {
+            ((ValueAnimator) running).cancel();
+            front.setTag(TAG_SWIPE_ANIM, null);
+        }
+    }
+
+    /**
+     * 下载条目的左滑手势(手指从右往左):向左拖出右侧操作区(整条高度),松手按拖出距离吸附开/关;
      * 已展开时点按前面卡片收拢。DOWN 必须消费(true)才能成为触摸目标收到后续 MOVE,
      * 长按进入多选用 Handler 定时触发(手指静止时系统不发 MOVE,不能在 MOVE 里查时长)。
-     * 选中态/宽屏不启用(convert 里已按需置 null)。
+     * 选中态不启用(convert 里已按需置 null);操作区槽位宽度与位移同步(见 setSwipeBehindWidth)。
      */
-    private void attachSwipe(final View front, final DownloadTask task) {
+    private void attachSwipe(final View front, final View behind, final DownloadTask task) {
         final float reveal = swipeRevealPx();
         final int touchSlop = ViewConfiguration.get(mContext).getScaledTouchSlop();
         final long longPressTimeout = ViewConfiguration.getLongPressTimeout();
@@ -1042,9 +1092,10 @@ public class DownloadFragment extends BaseVbFragment<FragmentDownloadBinding> {
                         v.getParent().requestDisallowInterceptTouchEvent(true);
                     }
                     if (dragging[0]) {
-                        // 左滑:以按下时位置为基准增量移动(范围 -reveal..0)
+                        // 左滑:以按下时位置为基准增量移动(范围 -reveal..0);操作区宽度同步跟随
                         float tx = Math.max(-reveal, Math.min(0, startTx[0] + dx));
                         v.setTranslationX(tx);
+                        setSwipeBehindWidth(behind, -tx);
                         return true;
                     }
                     return true;
@@ -1062,14 +1113,14 @@ public class DownloadFragment extends BaseVbFragment<FragmentDownloadBinding> {
                         } else {
                             swipedTaskIds.remove(task.id);
                         }
-                        v.animate().translationX(open ? -reveal : 0).setDuration(150).start();
+                        settleSwipe(v, behind, open ? -reveal : 0);
                         dragging[0] = false;
                         return true;
                     }
                     // 未拖动:已展开点按 → 收拢;未展开快速点击 → 切换 暂停/开始
                     if (v.getTranslationX() < 0) {
                         swipedTaskIds.remove(task.id);
-                        v.animate().translationX(0).setDuration(150).start();
+                        settleSwipe(v, behind, 0);
                     } else {
                         toggleTaskPlay(task);
                     }
@@ -1079,7 +1130,7 @@ public class DownloadFragment extends BaseVbFragment<FragmentDownloadBinding> {
                     if (longPressed[0]) longPressed[0] = false;
                     if (dragging[0]) {
                         // 系统中断(滚动拦截等):恢复到按下前位置(展开保持展开), 不触发点击
-                        v.animate().translationX(startTx[0]).setDuration(150).start();
+                        settleSwipe(v, behind, startTx[0]);
                         dragging[0] = false;
                     }
                     return true;

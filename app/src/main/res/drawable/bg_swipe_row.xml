@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 下载中条目的"行容器圆角"(只提供裁切轮廓,自己不带任何颜色):
+     行根 FrameLayout 用它 + android:clipToOutline,把"信息卡 + 左滑露出的操作区"整体裁成同一个圆角轮廓。
+
+     为什么必须由行容器出这个圆角:信息卡的右边缘必须是直角(bg_swipe_front —— 卡片滑到行中间时,
+     圆角会在行内部露出缺口),而操作区最右的删除块自带 radius_background 圆角。
+     行容器若是直角,卡片滑开时"容器直角"和"删除块圆角"对不齐,滑动过程中右上/右下角的过渡就发虚、错位。
+     行容器统一成同半径后:静止时卡片右角被裁成圆角(与全 App 卡片一致,不再是直角),
+     滑开时行右角与删除块的圆角完全重合,行左角在卡片滑走后也始终保持圆角。
+
+     两个硬约束(改任一条都会失效):
+     1) solid 必须透明 —— 这一层叠在半透明信息卡(主题 bg_component alpha)下面,带颜色会让每张卡变深;
+     2) 必须用统一的 android:radius,不要写成 topLeftRadius/bottomLeftRadius 等分角形式 ——
+        GradientDrawable.getOutline 对统一半径走 setRoundRect(干净的圆角矩形轮廓),
+        分角写法会退化成 Path 轮廓(见 Android 34 源码 GradientDrawable#getOutline)。 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@android:color/transparent" />
+    <corners android:radius="@dimen/radius_background" />
+</shape>

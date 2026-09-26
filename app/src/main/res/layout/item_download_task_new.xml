@@ -1,42 +1,65 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 下载中条目:窄屏下右侧"暂停/继续/重试"改为左滑滑出(整条高度,舒适红);宽屏仍显示常驻按钮 -->
+<!-- 下载中条目:左滑露出右侧"暂停/继续/重试 + 删除"操作区(整条高度,主题蓝 + 舒适红)。
+
+     z 序与裁切的硬约束:前面信息卡(item_front,bg_swipe_front = bg_component,主题默认 alpha 60,
+     即 60% 不透明的半透明卡片)**盖不住任何东西** —— 半透明卡片会把垫在它下面的色块按 40% 透出来
+     (曾经的故障:整条铺在卡片下面 → 每行右侧一条浑浊的蓝/红色带,观感割裂)。
+
+     所以操作区不再整条铺在卡片下面:swipe_behind 的宽度由 DownloadFragment 按"已滑出的那一段"实时设置
+     (静止时宽度=0),它自身右对齐(layout_gravity=end)、内部 128dp 操作条再右对齐,
+     露不出来的部分直接被父容器裁掉 → 任何时刻垫在卡片下的像素数都是 0。
+
+     行容器圆角:根 FrameLayout 用 bg_swipe_row(透明圆角形状)+ clipToOutline,
+     把"信息卡 + 露出的操作区"整体裁成同一个 radius_background 轮廓 —— 卡片右边缘是直角
+     (滑到行中间时圆角会在行内部露出缺口),没有行级圆角的话,滑动过程中"容器直角"和
+     "删除块自带圆角"对不齐、过渡发虚;静止时也正好让卡片右角是圆角(与全 App 卡片一致)。 -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:layout_marginBottom="10dp">
+    android:layout_marginBottom="10dp"
+    android:background="@drawable/bg_swipe_row"
+    android:clipToOutline="true">
 
-    <!-- 背后操作区:左滑露出(窄屏模式,整条高度,位于右侧;暂停+删除两个按钮) -->
-    <LinearLayout
+    <!-- 操作区槽位:宽度 = 已滑出距离(px,代码设置;静止为 0);右对齐 + 裁切,左侧超出的部分不绘制也不可点 -->
+    <FrameLayout
         android:id="@+id/swipe_behind"
-        android:layout_width="match_parent"
+        android:layout_width="0dp"
         android:layout_height="match_parent"
-        android:gravity="end"
-        android:orientation="horizontal"
+        android:layout_gravity="end"
         android:visibility="gone">
 
-        <TextView
-            android:id="@+id/btn_swipe_pause"
-            android:layout_width="64dp"
+        <!-- 操作条:两个 64dp 按钮(=128dp,与 DownloadFragment.SWIPE_REVEAL_WIDTH_DP 对应),
+             右对齐贴住条目右边缘;槽位变窄时左侧被裁掉,右侧按钮始终贴边 -->
+        <LinearLayout
+            android:layout_width="wrap_content"
             android:layout_height="match_parent"
-            android:background="@drawable/bg_swipe_pause"
-            android:gravity="center"
-            android:text="暂停"
-            android:textColor="@color/white"
-            android:textSize="14sp" />
+            android:layout_gravity="end"
+            android:orientation="horizontal">
 
-        <TextView
-            android:id="@+id/btn_swipe_delete"
-            android:layout_width="64dp"
-            android:layout_height="match_parent"
-            android:background="@drawable/bg_swipe_delete"
-            android:gravity="center"
-            android:text="删除"
-            android:textColor="@color/white"
-            android:textSize="14sp" />
-    </LinearLayout>
+            <TextView
+                android:id="@+id/btn_swipe_pause"
+                android:layout_width="64dp"
+                android:layout_height="match_parent"
+                android:background="@drawable/bg_swipe_pause"
+                android:gravity="center"
+                android:text="暂停"
+                android:textColor="@color/white"
+                android:textSize="14sp" />
 
-    <!-- 前面内容卡片(左滑时整体左移露出右侧操作区;右侧直角防圆角透色) -->
+            <TextView
+                android:id="@+id/btn_swipe_delete"
+                android:layout_width="64dp"
+                android:layout_height="match_parent"
+                android:background="@drawable/bg_swipe_delete"
+                android:gravity="center"
+                android:text="删除"
+                android:textColor="@color/white"
+                android:textSize="14sp" />
+        </LinearLayout>
+    </FrameLayout>
+
+    <!-- 前面内容卡片(左滑时整体左移让出右侧操作区;右侧直角防圆角透色) -->
     <LinearLayout
         android:id="@+id/item_front"
         android:layout_width="match_parent"

@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 下载条目前面卡片(左滑条目用):右侧直角(滑出侧,避免圆角透出背后操作区颜色),左侧圆角与常规卡片一致 -->
+<!-- 下载条目前面卡片(左滑条目用):左侧圆角与常规卡片一致;
+     右侧必须是直角,别改成圆角:卡片滑到行中间时,右角的圆角会在行内部露出缺口(缺口里是行底色,
+     不是操作区颜色),看着像卡片被啃掉一块。
+     行最右/最左的圆角由**行容器**负责:item_download_task_new 根布局用 bg_swipe_row + clipToOutline,
+     半径同为 radius_background —— 静止时把这里的直角裁成圆角,滑开时与删除块的圆角完全重合。 -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
     <solid android:color="@color/bg_gray" />
