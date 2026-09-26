@@ -26,6 +26,8 @@ import com.github.tvbox.osc.constant.IntentKey;
 import com.github.tvbox.osc.player.MyVideoView;
 import com.github.tvbox.osc.ui.activity.DetailActivity;
 
+import java.lang.ref.WeakReference;
+
 /**
  * 后台播放前台服务(后台播放=开启时承载)。
  *
@@ -46,7 +48,16 @@ import com.github.tvbox.osc.ui.activity.DetailActivity;
 public class PlayService extends Service {
 
     static String videoInfo = "MBox&&第一集";
-    private static MyVideoView videoView;
+    /**
+     * 共享播放视图:后台播放期间服务只"借用"它来响应通知栏/媒体卡控制,用弱引用持有。
+     *
+     * <p>原来用静态强引用,会把承载该视图的 Activity 一直钉在进程里 —— 后台播放中 Activity
+     * 被回收后,通知栏按钮操作的其实是一张已经死掉的视图(既漏内存又行为错乱)。
+     * 弱引用只保证"视图还活着时能用",不再由服务决定 Activity 的存活;
+     * 视图被回收后控制指令安全空转(见 {@link #currentVideoView()} 的调用点),
+     * 播放页回到前台时会重新注入。
+     */
+    private static WeakReference<MyVideoView> videoViewRef = new WeakReference<>(null);
     /** 运行中的服务实例(供播放页直调刷新通知/媒体卡);未启动时为 null。
      *  由 onCreate/onDestroy(主线程)写、播放侧任意线程读,故用 volatile 保证可见性 */
     private static volatile PlayService sInstance;
@@ -76,12 +87,35 @@ public class PlayService extends Service {
         if (currentVideoInfo != null) {
             videoInfo = currentVideoInfo;
         }
-        PlayService.videoView = controller;
+        videoViewRef = new WeakReference<>(controller);
         ContextCompat.startForegroundService(App.getInstance(), new Intent(App.getInstance(), PlayService.class));
     }
 
     public static void stop() {
         App.getInstance().stopService(new Intent(App.getInstance(), PlayService.class));
+    }
+
+    /**
+     * 播放宿主 Activity 销毁时直调:只解除服务对视图的借用,<b>不</b>停服务
+     * (后台播放是用户显式开启的能力,不能把"宿主销毁"等同于"停止播放")。
+     *
+     * <p>弱引用已能保证不泄漏,这里再做一次显式摘除,是为了让"视图已死"立刻生效:
+     * 通知栏/媒体卡的控制指令无需等 GC 就会安全空转,而不是打到一张正在销毁的视图上。
+     */
+    public static void onHostDestroyed(android.content.Context host) {
+        MyVideoView current = videoViewRef.get();
+        if (current == null) {
+            return;
+        }
+        // 只摘自己这张:重进播放页的实例可能已经注入新视图,别把新的抹掉
+        if (current.getContext() == host) {
+            videoViewRef.clear();
+        }
+    }
+
+    /** 取当前可用的共享视图;已被回收时为 null(调用方必须按 null 安全处理,控制指令空转) */
+    private static MyVideoView currentVideoView() {
+        return videoViewRef.get();
     }
 
     /**
@@ -127,7 +161,8 @@ public class PlayService extends Service {
         if (mediaSession != null) {
             mediaSession.setActive(true);
         }
-        // videoView 可能已被界面销毁(静态引用跨生命周期),判空避免 NPE
+        // 视图可能已被回收/宿主已销毁(弱引用跨生命周期),判空避免 NPE
+        MyVideoView videoView = currentVideoView();
         if (videoView != null) {
             videoView.start();
         }
@@ -147,7 +182,13 @@ public class PlayService extends Service {
             mediaSession.setCallback(new MediaSession.Callback() {
                 @Override
                 public void onPlay() {
-                    if (videoView != null && !videoView.isPlaying()) {
+                    MyVideoView videoView = currentVideoView();
+                    if (videoView == null) {
+                        // 视图已随宿主销毁:通知栏/锁屏按钮安全空转并留痕,不再操作死视图
+                        logViewGone("播放");
+                        return;
+                    }
+                    if (!videoView.isPlaying()) {
                         videoView.start();
                     }
                     syncPlaybackState();
@@ -155,7 +196,12 @@ public class PlayService extends Service {
 
                 @Override
                 public void onPause() {
-                    if (videoView != null && videoView.isPlaying()) {
+                    MyVideoView videoView = currentVideoView();
+                    if (videoView == null) {
+                        logViewGone("暂停");
+                        return;
+                    }
+                    if (videoView.isPlaying()) {
                         videoView.pause();
                     }
                     syncPlaybackState();
@@ -173,10 +219,13 @@ public class PlayService extends Service {
 
                 @Override
                 public void onSeekTo(long pos) {
-                    if (videoView != null) {
-                        videoView.seekTo(pos);
-                        syncPlaybackState();
+                    MyVideoView videoView = currentVideoView();
+                    if (videoView == null) {
+                        logViewGone("拖动进度");
+                        return;
                     }
+                    videoView.seekTo(pos);
+                    syncPlaybackState();
                 }
 
                 @Override
@@ -199,6 +248,12 @@ public class PlayService extends Service {
                     .setPackage(getPackageName()));
         } catch (Throwable ignored) {
         }
+    }
+
+    /** 视图已被回收时的空转留痕:说明"点了但没生效"是视图没了,而不是播放器坏了 */
+    private static void logViewGone(String action) {
+        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.PLAYER,
+                "后台播放控制[" + action + "]忽略: 共享播放视图已随宿主销毁");
     }
 
     private String videoTitle() {
@@ -229,6 +284,8 @@ public class PlayService extends Service {
     private void syncPlaybackState() {
         if (mediaSession == null) return;
         try {
+            // 视图已被回收时按"未播放/进度 0"上报,不额外打日志(轮询会反复触发,避免刷屏)
+            MyVideoView videoView = currentVideoView();
             boolean playing = videoView != null && videoView.isPlaying();
             long position = videoView != null ? videoView.getCurrentPosition() : 0L;
             long actions = PlaybackState.ACTION_PLAY
@@ -260,6 +317,8 @@ public class PlayService extends Service {
         String episodes = splitPart(videoInfo, 1);
         if (title == null || title.trim().isEmpty()) title = "MBox";
         if (episodes == null) episodes = "";
+        // 视图已被回收时按"暂停"显示:通知仍可见(服务还在),但不再假装能控制播放
+        MyVideoView videoView = currentVideoView();
         boolean playing = videoView != null && videoView.isPlaying();
 
         // 展开布局
@@ -320,11 +379,11 @@ public class PlayService extends Service {
             mediaSession = null;
         }
         // 只清自己:重建场景下旧实例的 onDestroy 可能晚于新实例的 onCreate。
-        // videoView 也必须一并放进这个判断 —— 原来无条件置 null,会把新实例刚注入的共享视图抹掉,
+        // 视图引用也必须一并放进这个判断 —— 原来无条件置 null,会把新实例刚注入的共享视图抹掉,
         // 之后通知栏/锁屏控制拿不到视图,播放状态与进度就失灵了。
         if (sInstance == this) {
             sInstance = null;
-            videoView = null;
+            videoViewRef.clear();
         }
         stopForeground(true);
     }

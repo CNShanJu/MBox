@@ -295,6 +295,13 @@ public class VideoView<P extends AbstractPlayer> extends FrameLayout
             mMediaPlayer.prepareAsync();
             setPlayState(STATE_PREPARING);
             setPlayerState(isFullScreen() ? PLAYER_FULL_SCREEN : isTinyScreen() ? PLAYER_TINY_SCREEN : PLAYER_NORMAL);
+        } else {
+            // 数据源没设上(如地址为空):必须落到错误态。若维持 IDLE,release() 的
+            // !isInIdleState() 守卫会把整个清理逻辑跳掉,而 startPlay() 里已经建好的
+            // 播放器/渲染视图/音频焦点就再也释放不掉(内存与 surface 泄漏)。
+            // 语义与播放中出错一致(见 onError),上层也能收到失败通知而不是一直无响应。
+            mPlayerContainer.setKeepScreenOn(false);
+            setPlayState(STATE_ERROR);
         }
     }
 

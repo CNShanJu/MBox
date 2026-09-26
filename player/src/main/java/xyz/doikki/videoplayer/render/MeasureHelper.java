@@ -73,8 +73,10 @@ public class MeasureHelper {
                 }
                 break;
             case VideoView.SCREEN_SCALE_MATCH_PARENT:
-                width = widthMeasureSpec;
-                height = heightMeasureSpec;
+                // "填充"要的就是父布局量出来的可用尺寸:上面取出的 width/height 已是解包后的 size,
+                // 直接沿用即可。此处原来赋的是 measureSpec 打包值(size<<2|mode),而调用方
+                // TextureRenderView/SurfaceRenderView 会把返回值直接交给 setMeasuredDimension,
+                // 拼上 mode 位后尺寸被放大数倍,故不能再用 spec 本身当尺寸
                 break;
             case VideoView.SCREEN_SCALE_CENTER_CROP:
                 if (mVideoWidth * height > width * mVideoHeight) {

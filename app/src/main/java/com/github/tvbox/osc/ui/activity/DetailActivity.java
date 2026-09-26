@@ -832,6 +832,10 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     protected void onDestroy() {
         sourceViewModel.setQuickSearchBatchListener(null); // 断开 quick 结果直调,防悬垂
         if (playFragment != null) playFragment.setPlaySyncHost(null); // 断开屏内直调
+        // 页面销毁:解除后台播放服务对共享播放视图的借用。只摘引用、不停服务 ——
+        // 后台播放是用户显式开启的能力,"宿主销毁"不等于"停止播放";
+        // 但不摘掉的话服务会继续操作一张随本页销毁的视图(通知栏/锁屏按钮打在死视图上)
+        PlayService.onHostDestroyed(this);
         pipHelper.setReceiverEnabled(false);
         super.onDestroy();
         // 注销广播接收器

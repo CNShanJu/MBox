@@ -3,12 +3,13 @@ package xyz.doikki.videoplayer.exo;
 import android.content.Context;
 import android.content.res.AssetFileDescriptor;
 import android.net.TrafficStats;
-import android.util.Log;
 import android.view.Surface;
 import android.view.SurfaceHolder;
 
 import androidx.annotation.NonNull;
 
+import com.github.tvbox.osc.log.Category;
+import com.github.tvbox.osc.log.LogStore;
 import com.google.android.exoplayer2.DefaultLoadControl;
 import com.google.android.exoplayer2.DefaultRenderersFactory;
 import com.google.android.exoplayer2.ExoPlayer;
@@ -333,17 +334,60 @@ public class ExoMediaPlayer extends AbstractPlayer implements Player.Listener {
     @Override
     public void onPlayerError(@NonNull PlaybackException error) {
         errorCode = error.errorCode;
-        Log.e("tag--", "" + error.errorCode);
-        if (path != null) {
+        // 只有瞬时/可自愈的错误才值得再请求一次;403/404(状态码错误)、解析、解码、不支持类错误
+        // 重试必然同样失败,且会把真实原因盖掉,必须直接透传。
+        // path 在重试后被置空,天然保证"同一地址最多重试一次"。
+        if (path != null && isRetryableError(error.errorCode)) {
+            // 重试前留下原因:否则日志里只能看到最终那次失败,看不出"中途重试过"
+            LogStore.log(Category.PLAYER, "Exo 播放出错,重新请求一次: " + describeError(error));
             setDataSource(path, headers);
             path = null;
             prepareAsync();
             start();
-        } else {
-            if (mPlayerEventListener != null) {
-                mPlayerEventListener.onError();
-            }
+            return;
         }
+        LogStore.fail(Category.PLAYER, "Exo 播放失败: " + describeError(error));
+        if (mPlayerEventListener != null) {
+            mPlayerEventListener.onError();
+        }
+    }
+
+    /**
+     * 是否属于可重试的瞬时错误。
+     *
+     * <p>白名单而非黑名单:未归类的错误码一律直接透传,宁可让上层/日志看到真实原因,
+     * 也不要再发一次注定失败的请求。
+     *
+     * <p>{@link PlaybackException#ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED} 必须留在可重试里:
+     * ExoMediaSourceHelper 正是靠"重试时 setDataSource 带过去的 errorCode"改按 m3u8 容器再解一次
+     * (见 ExoMediaSourceHelper#getMediaSource 的同名校验分支),去掉这次重试该兜底就失效了。
+     */
+    private static boolean isRetryableError(int errorCode) {
+        switch (errorCode) {
+            case PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED:
+            case PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT:
+            case PlaybackException.ERROR_CODE_IO_UNSPECIFIED:
+            case PlaybackException.ERROR_CODE_TIMEOUT:
+            case PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /** 错误码 + 直接原因的可读描述(日志用):把 403/404、解码失败等具体原因带出去 */
+    private static String describeError(@NonNull PlaybackException error) {
+        StringBuilder sb = new StringBuilder(error.getErrorCodeName())
+                .append("(code=").append(error.errorCode).append(")");
+        Throwable cause = error.getCause();
+        if (cause != null && cause.getMessage() != null) {
+            String msg = cause.getMessage().trim().replace('\n', ' ');
+            if (msg.length() > 200) {
+                msg = msg.substring(0, 200);
+            }
+            sb.append(' ').append(cause.getClass().getSimpleName()).append(": ").append(msg);
+        }
+        return sb.toString();
     }
 
     @Override

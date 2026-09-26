@@ -2,6 +2,7 @@ package com.github.tvbox.osc.ui.fragment;
 
 import android.annotation.SuppressLint;
 import android.content.pm.ActivityInfo;
+import android.net.Uri;
 import android.os.Bundle;
 import android.text.TextUtils;
 import android.view.KeyEvent;
@@ -525,7 +526,20 @@ public class PlayFragment extends BaseLazyFragment {
                                 forwardurl = line;
                             } else if (line.charAt(0) == '/') {
                                 int ifirst = url.indexOf('/', 9);// skip https://, http://
-                                forwardurl = url.substring(0, ifirst) + line;
+                                if (ifirst >= 0) {
+                                    forwardurl = url.substring(0, ifirst) + line;
+                                } else {
+                                    // 地址本身没有路径(如 https://a.b 或 https://a.b?x=1)时 indexOf 返回 -1,
+                                    // substring(0,-1) 会抛 StringIndexOutOfBoundsException;这里退化成"协议+主机(:端口)",
+                                    // 与上面正常分支拼出的结果一致。解析不出主机时保持空串,走原有"用原地址播放"的兜底
+                                    Uri base = Uri.parse(url);
+                                    String scheme = base.getScheme();
+                                    String host = base.getHost();
+                                    if (scheme != null && host != null) {
+                                        int port = base.getPort();
+                                        forwardurl = scheme + "://" + host + (port == -1 ? "" : ":" + port) + line;
+                                    }
+                                }
                             } else {
                                 int ilast = url.lastIndexOf('/');
                                 forwardurl = url.substring(0, ilast + 1) + line;
