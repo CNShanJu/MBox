@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center_horizontal"
+    tools:context=".ui.activity.SubscriptionActivity">
+
+    <!-- 标题栏:右侧三个图标(导出/使用说明/添加)都用"自绘 ImageView 子视图",结构完全一致
+         (同样 wrap_content×20dp、同样的 paddingLeft 间距),想收紧间距就一起改这一个值;
+         不再用 TitleBar 原生 rightIcon —— 那个由库自己排版、和这两个子视图不是一套布局,间距调不了 -->
+    <com.github.tvbox.osc.ui.kit.AppTitleBar
+        android:id="@+id/title_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        app:title="订阅管理"
+        >
+
+        <!-- 右侧动作区:导出 / 使用说明 / 添加 -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="end|center_vertical"
+            android:layout_marginRight="14dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <ImageView
+                    android:id="@+id/iv_use_tip"
+                    android:layout_width="wrap_content"
+                    android:layout_height="16dp"
+                    android:paddingLeft="4dp"
+                    android:src="@drawable/ic_use_description_24"/>
+
+            <ImageView
+                    android:id="@+id/iv_export"
+                    android:layout_width="wrap_content"
+                    android:layout_height="20dp"
+                    android:paddingLeft="4dp"
+                    android:src="@drawable/ic_export_24"/>
+
+            <ImageView
+                android:id="@+id/iv_add"
+                android:layout_width="wrap_content"
+                android:layout_height="20dp"
+                android:paddingLeft="4dp"
+                android:src="@drawable/ic_add_24"/>
+        </LinearLayout>
+    </com.github.tvbox.osc.ui.kit.AppTitleBar>
+
+    <!-- 卡片容器:悬浮面圆角底放在容器上(不放在列表上),这样列表越界回弹时只有内容在动、卡片不动
+         (与「我的」页/底栏同一个面 bg_float);clipToOutline 让回弹中的条目仍被圆角裁住 -->
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_margin="10dp"
+        android:background="@drawable/bg_large_round_float"
+        android:clipToOutline="true">
+
+        <!-- 列表内边距 + clipToPadding=true(与「我的」页卡片内部滚动一致):
+             首末条目离卡片上下边各留 10dp,滚动过程中内容也不越过内边距去贴卡片边缘/圆角;
+             条目自身还有 10dp 左右内边距,合计离卡片边 20dp,与「我的」页观感一致 -->
+        <com.github.tvbox.osc.ui.kit.RubberBandRecyclerView
+            android:id="@+id/rv"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@android:color/transparent"
+            android:clipToPadding="true"
+            android:paddingVertical="10dp"
+            tools:listitem="@layout/item_subscription"
+            app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"/>
+
+        <!-- 空态:无任何订阅时展示(底色沿用卡片容器) -->
+        <include
+            android:id="@+id/ll_empty"
+            layout="@layout/view_empty"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
+    </FrameLayout>
+
+    <!-- 导出操作条:仅在标题栏点"导出"后出现,勾选要合并的订阅 -->
+    <LinearLayout
+        android:id="@+id/ll_export_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginHorizontal="10dp"
+        android:layout_marginBottom="10dp"
+        android:background="@drawable/bg_large_round_float"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="16dp"
+        android:paddingEnd="12dp"
+        android:paddingVertical="8dp"
+        android:visibility="gone"
+        tools:visibility="visible">
+
+        <TextView
+            android:id="@+id/tv_export_all"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingVertical="8dp"
+            android:paddingEnd="16dp"
+            android:text="全选"
+            android:textColor="@color/text_accent"
+            android:textSize="14sp"/>
+
+        <TextView
+            android:id="@+id/tv_export_count"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            tools:text="已选 2 项"
+            android:textColor="@color/text_sub_foreground"
+            android:textSize="13sp"/>
+
+        <Space
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1"/>
+
+        <!-- 导出条两个按钮完全走主题按钮样式(BtnSecondary/BtnPrimary):
+             底/字/描边/圆角都来自主题色板与圆角文件,不要再单独写 android:textColor(页面文字色≠按钮文字色)
+             或 app:strokeColor(会顶掉主题的 btn_stroke) -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_export_cancel"
+            android:layout_width="wrap_content"
+            android:layout_height="33dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:text="取 消"
+            style="@style/BtnSecondary"/>
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_export_ok"
+            android:layout_width="wrap_content"
+            android:layout_height="33dp"
+            android:layout_marginStart="10dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:text="导 出"
+            style="@style/BtnPrimary"/>
+    </LinearLayout>
+</LinearLayout>

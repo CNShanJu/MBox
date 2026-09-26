@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <!-- 滚动指示条 thumb:半透明主题前景色,深浅主题均可见 -->
+    <solid android:color="@color/text_sub_foreground" />
+    <corners android:radius="1.5dp" />
+    <size android:width="3dp" />
+</shape>

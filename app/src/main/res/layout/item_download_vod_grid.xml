@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 下载管理聚合卡片(样式同收藏页):海报 + 左上角来源徽标(长按多选时换成圆形勾选框) + 底部剧名/聚合状态
+     根布局使用 RatioShadowLayout:宽:高 = 3:4,与首页剧集卡片一致,高度随宽度自适应(屏幕旋转自动更新) -->
+<com.github.tvbox.osc.ui.kit.RatioShadowLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_margin="3dp"
+    app:hl_cornerRadius="@dimen/radius_card"
+    app:hl_layoutBackground="@android:color/transparent"
+    >
+
+    <RelativeLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+
+        <ImageView
+            android:id="@+id/ivThumb"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@drawable/placeholder_poster"
+            android:clipToOutline="true"
+            android:scaleType="centerCrop" />
+
+        <!-- 左上角:长按多选时的圆形勾选框(未选中=外环,选中=外环+内部填充圆,两圆有边距) -->
+        <ImageView
+            android:id="@+id/iv_select"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:layout_alignParentLeft="true"
+            android:layout_alignParentTop="true"
+            android:layout_margin="8dp"
+            android:src="@drawable/ic_select_ring"
+            android:visibility="gone"
+            tools:visibility="visible" />
+
+        <!-- 左上角:来源徽标(正常模式显示,样式同收藏页) -->
+        <com.lihang.ShadowLayout
+            android:id="@+id/layout_source"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_alignParentLeft="true"
+            android:layout_alignParentTop="true"
+            app:hl_layoutBackground="@color/poster_badge_bg"
+            app:hl_cornerRadius_rightBottom="8dp">
+            <TextView
+                android:id="@+id/tv_source"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxWidth="70dp"
+                android:padding="5dp"
+                android:singleLine="true"
+                tools:text="来源名"
+                android:textColor="@color/white"
+                android:textSize="10dp" />
+        </com.lihang.ShadowLayout>
+
+        <!-- 底部渐变:聚合状态 + 剧名 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_alignParentBottom="true"
+            android:background="@drawable/bg_gradient_black_b2t"
+            android:orientation="vertical"
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="6dp">
+
+            <TextView
+                android:id="@+id/tv_note"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom"
+                android:drawablePadding="4dp"
+                android:ellipsize="end"
+                android:gravity="center"
+                android:singleLine="true"
+                android:textColor="@color/white"
+                android:textSize="12sp"
+                tools:text="2 个任务 · 已完成 10 集" />
+
+            <TextView
+                android:id="@+id/tv_name"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:ellipsize="marquee"
+                android:marqueeRepeatLimit="marquee_forever"
+                android:singleLine="true"
+                android:textColor="@color/white"
+                tools:text="狂飙" />
+        </LinearLayout>
+    </RelativeLayout>
+
+</com.github.tvbox.osc.ui.kit.RatioShadowLayout>

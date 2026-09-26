@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 搜索结果-单列列表:左侧小图(宽113 高144),右侧信息块整体垂直居中(片名/时间/类型 地区/集数/来源) -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:paddingHorizontal="10dp"
+    android:layout_marginTop="14dp"
+    android:layout_marginBottom="14dp"
+    android:orientation="horizontal"
+    android:gravity="center_vertical">
+
+    <!-- 可复用海报卡:竖向小图(宽113 高144,宽度拉宽20dp、高度不变);评分左上角标,底部渐变黑底叠集数 -->
+    <FrameLayout
+        android:layout_width="113dp"
+        android:layout_height="144dp"
+        android:background="@drawable/bg_img_round_corner"
+        android:clipToOutline="true">
+
+        <include layout="@layout/view_search_poster_card"/>
+    </FrameLayout>
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_weight="1"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingStart="12dp"
+        android:paddingEnd="4dp">
+
+        <!-- 片名 -->
+        <TextView
+            android:id="@+id/tvName"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            tools:text="爱情公寓"
+            android:textColor="@color/text_foreground"
+            android:textSize="@dimen/search_card_title_size"
+            android:textStyle="bold"
+            android:ellipsize="end"
+            android:singleLine="true"/>
+
+        <!-- 时间 -->
+        <TextView
+            android:id="@+id/tvYear"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            tools:text="2009"
+            android:layout_marginTop="5dp"
+            android:textColor="@color/text_sub_foreground"
+            android:textSize="@dimen/search_card_text_size"
+            android:ellipsize="end"
+            android:singleLine="true"/>
+
+        <!-- 类型 空格 地区 -->
+        <TextView
+            android:id="@+id/tvMeta"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            tools:text="电视剧 内地"
+            android:layout_marginTop="2dp"
+            android:textColor="@color/text_sub_foreground"
+            android:textSize="@dimen/search_card_text_size"
+            android:ellipsize="end"
+            android:singleLine="true"/>
+
+        <!-- 集数(替代原演员行;移除演员信息) -->
+        <TextView
+            android:id="@+id/tvActor"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            tools:text="更新至30集"
+            android:layout_marginTop="2dp"
+            android:textColor="@color/text_sub_foreground"
+            android:textSize="@dimen/search_card_text_size"
+            android:ellipsize="end"
+            android:maxLines="1"/>
+
+        <!-- 来源 -->
+        <LinearLayout
+            android:id="@+id/llSite"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="5dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:id="@+id/tvSite"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                tools:text="优酷小程序"
+                android:textColor="@color/text_accent"
+                android:textSize="@dimen/search_card_text_size"
+                android:ellipsize="end"
+                android:singleLine="true"/>
+        </LinearLayout>
+    </LinearLayout>
+
+</LinearLayout>

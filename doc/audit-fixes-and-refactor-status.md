@@ -1,0 +1,166 @@
+# 安全审计整改与架构迁移状态（跟踪文档）
+
+> 本文件汇总 MBox（原名 TVBoxOS-Mobile）多轮整改（安全/性能审计 + 模块边界路线图 改进.txt）
+> 的落地状态、关键改动点与真机回归矩阵。代码级验证：Debug/Release 双变体 BUILD SUCCESSFUL。
+
+> **模块现状（2026-09）**：全仓 9 个模块 `:app`/`:common`/`:core-storage`/`:player`/`:thirdparty`/`:log`/`:core-network`/`:spider`/`:download`。本文件中提到的 `:core-model`/`:core-utils`/`:state` 已合并进 `:common`，`:spider-api`→`:spider`，`:player-api`→`:player`，`:crash`/`:TabLayout`/`:ViewPager1Delegate`/`:quickjs`→`:thirdparty`，`:ui-common`→`:app`（主题 JSON 在 `app/src/main/assets/theme/`）。下文历史记录保留当年模块名。
+
+## 0. 近期进展补充（2026-09-25）
+
+- **未推送改动全量复查 + 缺陷修复（一轮 review→fix 批次）**：对当时全部未 push 内容（6 个本地 commit + 工作区改动）做了四个域（下载/播放UI/检查更新/网络爬虫）并行审查 + 逐条读码复核，确认并修掉以下问题（均已过 `assembleDebug/assembleRelease/testDebugUnitTest/checkModuleDependencies`，单测 176 例 0 失败）：
+  - **默认订阅被清空（高，已被并行会话先修）**：`App.putDefaultApi()` 原逻辑把"上次注入记录"里的订阅无条件删除且拒绝补回 → 第 2 次启动清空内置默认订阅 + 置空 apiUrl。现改为 `injectedTags` 差集（只删"注入过且文件已移除"的项），**需真机回归：装包→启动→杀进程→再启动，订阅仍在**。
+  - **发版说明版本号重复（中）**：`ReleaseNotes.aggregate` 单版本分支绕过标题去重 → 弹窗标题"发现新版本 vX"下再来一行 `## vX`；改为单版本同样走 `dropVersionHeader`，引言去重也从"标题命中"子分支里独立出来。
+  - **dev 围栏误吞正文（中）**：围栏改为**独占一行**才生效（同一行成对写出仍整段剔除），避免正文里"提到"围栏写法时把它之后的用户可见内容一起删掉；AGENTS 围栏约定同步补充说明，测试补 4 例。
+  - **代理地址不再判 HLS（中）**：`ExoMediaSourceHelper.inferContentType` 先按路径末段扩展名判定后，对"路径无明确媒体后缀"的地址回退看查询串（`/proxy?...&url=xxx.m3u8`），恢复旧 `contains(".m3u8")` 兜底，避免退化成 Progressive 首播失败。
+  - **失败图记忆永不自愈（中）**：`PicassoLoad`/`FastSearchAdapter` 的失败集合改为"URL→失败时间 + 60s 窗口 + 上限 500"（成功即清），瞬时失败（开局无网/CDN 抖动）不再需要杀进程才恢复。
+  - **下载细节（低）**：AES-128 密钥请求登记进 `activeResponses`（暂停/删除可中断在途密钥请求，登记采用顶替-还原避免摘掉分段响应的登记）；"仅Wi-Fi"守卫下沉到 `doStartDownloads()` 单入口（授权成功回调不再绕过）；右侧下载抽屉补注册状态监听、注销与注册成对（`statusListenerRegistered`）。
+  - **其它（低）**：`PlayService.sInstance` 加 `volatile` + 只清自己；`CmsApiRules` 协议相对链接 `//host/...` 按当前页协议绝对化、`siteKey` 加主机名短哈希（消除不同站点生成同名 `cms_<key>.json` 互相覆盖）、候选顺序改为站点根默认路径优先（不再被 10 条上限截掉）；`player_vod_control_view.xml` marginStart/marginLeft 统一 dp_10（原 start=30 覆盖 left=10 使改动无效）；`box_vod_control_view.xml` 两处 `textSize` 由 dp 回 sp；`DetailActivity` 无剧集时连 260dp 预览占位区一起收起；订阅地址响应"配置 vs 资源站采集接口"判定收紧（`CmsApiRules.detectKind`，避免只有 flags/ads 的最小配置被误送去嗅探）。
+  - 未改（评估后风险更高，留待排期）：`Utils.getVideoList()` 的 MediaStore 主线程查询 + 新增 `File.length()` 兜底（需两页异步化重构）；跨版本续传复用旧密文分片（触发前提苛刻，强制校验有引发补片死循环风险）。
+
+- **hawk 全量退役完成**：`KeyValueStore` 类及全部 legacy 迁移分支已删除，运行权威统一 `PrefsDataStore`/文件；全仓零 `com.orhanobut.hawk` 依赖（mbox 包名隔离，无 Hawk 存量升级场景）。
+- **订阅本地导入改系统 SAF**：`SubscriptionActivity` 用 `ActivityResultContracts.OpenDocument` 替代 hedzr 反射，支持 `content://` 流、`primary:`/`home:` 文档卷，复制到应用专属目录 + canonical 防穿越，按 URL 去重；移除 `MANAGE_EXTERNAL_STORAGE` 前置检查。
+- **下载存储权限引导**：`DownloadDialogCoordinator` 无存储权限时弹 `ConfirmDialog` + `XXPermissions` 拉起系统授权（与「我的-本地视频」入口一致），不再仅 toast 提示。
+- **播放器收口 P1 真机通过**（MEIZU 21/Android 16）：IJK/Exo 双内核起播、后台播放系统 MediaSession 媒体卡、会话 bind/release 无泄漏。
+
+## 1. 已落地改动总览
+
+### 1.1 局域网 HTTP 服务（RemoteServer / ControlManager）
+- 默认仅绑定 `127.0.0.1`：订阅/本地播放/代理等回环功能不受影响；局域网可达需
+  `HawkConfig.LAN_SERVER_ENABLE = true`（设置页新增“局域网服务”开关，重启应用生效）。
+- 管理令牌：每次进程启动随机生成（`accessToken`），web 控制台经 `/token.js` 注入
+  `window.TVBOX_TOKEN`，所有 AJAX 自动携带 `X-TVBox-Token`；`/token.js` 禁止缓存。
+- 鉴权范围：`/upload`、`/newFolder`、`/delFolder`、`/delFile`、`/action`、目录列表须令牌（回环放行）；
+  `/proxy`、`/m3u8`、`/dns-query` 仅本机回环。
+- 路径安全：`resolveUnderRoot()` 拒绝 `..`/绝对路径/NUL/反斜杠分隔并做 canonical 根目录包含性校验；
+  拒绝删除外部存储根；ZIP 解压逐条目 canonical 包含性校验（Zip Slip），`ZipFile`/流全部 try-with-resources。
+- 越界修复：`/proxy` 返回数组按 `length>=3` 且 `rs[2] instanceof InputStream` 校验后再读。
+- 文件：`app/.../server/RemoteServer.java`、`ControlManager.java`、`InputRequestProcess.java`、
+  `res/raw/{index.html,script.js}`。
+
+### 1.2 TLS 与证书策略
+- 移除所有“恒真 HostnameVerifier”（OkGoHelper / App / spider OkHttp / SSLCompat.VERIFIER）。
+- WebView `onReceivedSslError` 默认 `cancel()`，仅当 `HawkConfig.IGNORE_SSL_ERROR=true`（默认 false）放行。
+  覆盖点：PlayFragment、PlayParseHelper、WebSniffResolver。
+- 设置页新增“忽略证书错误”开关（默认 OFF；WebView 即时生效，OkHttp 网络请求重启应用后按新值重建客户端生效）。
+- 文件：`common/.../util/OkGoHelper.java`、`common/.../net/SSLCompat.java`、
+  `spider/.../net/OkHttp.java`、`app/.../base/App.java`、`util/WebSniffResolver.java`、
+  `util/player/PlayParseHelper.java`、`ui/fragment/PlayFragment.java`。
+
+### 1.3 明确崩溃点修复（判空/越界）
+- ApiConfig `getIJKCodec`：离线/空列表不再 `ijkCodes.get(0)` NPE（改从非空列表取，空列表返回 null 由调用方防御）。
+- IjkMediaPlayer.setOptions：codec 判空后再取 option。
+- InputRequestProcess：word/url 参数缺失判空。
+- CustomWebReceiver：intent/action/extras 判空。
+- PlayService：`videoInfo.split("&&")` 越界回退、静态 videoView 判空。
+- PlayFragment/PlayParseHelper/DetailActivity：sourceBean/集合/playIndex/seriesMap 判空与越界回退。
+
+### 1.4 Room 与数据层
+- `AppDataManager`：移除 `allowMainThreadQueries()`；所有 DAO 访问经 `runOnDb`（单线程专用执行器，串行化），
+  主线程不再执行 SQLite 查询。
+- Room schema：`AppDataBase version=2`，新增 `MIGRATION_1_2` 为 vodRecord/vodCollect 建
+  `(sourceKey,vodId)`、`updateTime` 索引；log 模块 `LogDatabase version=2` + `MIGRATION_1_2` 为
+  `log_entry` 建 `(taskKey,timestamp)`、`(category,timestamp)` 索引。schema 导出：1.json（基线）+2.json。
+- `RoomDataManger`：Gson/TypeToken 静态单例复用；删除残留的陈旧 3.json。
+- `CacheManager`/`RoomDataManger` 全部调用经 `AppDataManager.runOnDb`。
+
+### 1.5 依赖 / 签名 / 构建
+- 升级：Room 2.3.0→2.5.2、Gson 2.8.7→2.10.1、XStream 1.4.15→1.4.20（各模块 build.gradle 同步）。
+- XStream 白名单：SourceViewModel 两个 fromXML 前 `NoTypePermission.NONE` + 业务 bean/JDK 包放行。
+- 移除零引用/重复依赖：ZXing、Conscrypt、lifecycle-extensions（改为显式 viewmodel/livedata/runtime-ktx 2.6.2）、
+  app 层重复 retrofuture（spider 层保留）、Glide（调用点统一到 Picasso 后移除，含 4 个文件残留 import 清理）。
+- 删除未注册 ExoPlayer/FFmpeg 扩展源码（`player/src/main/java/com/google/android/exoplayer2/ext/ffmpeg`、
+  `tv/danmaku/ijk/media/player/ffmpeg`）。
+- Manifest：两个广播 Receiver `exported=false`；`allowBackup=false`(+`tools:replace`)；
+  清理 READ_PHONE_STATE/GET_TASKS/ACCESS_FINE_LOCATION/REQUEST_INSTALL_PACKAGES 等无用权限；
+  READ/WRITE_EXTERNAL_STORAGE 限 maxSdk 32/29。
+- 签名：`TVBoxOSC.jks` 移出版本控制（`git rm --cached`），`.gitignore` 收编 `*.jks/keystore.properties`；
+  `app/build.gradle` 从环境变量(`KEYSTORE_FILE/KEYSTORE_PASSWORD/KEY_ALIAS/KEY_PASSWORD`)或
+  `app/keystore.properties` 注入，缺失自动回退 debug 签名。
+  ⚠️ 若仓库公开：旧 keystore+口令曾入库，需更换密钥并清理 git 历史；CI 请改用 secrets。
+- 换签+换包名（2025 落地，解决与开源 TVBox 应用安装冲突）：正式签名改用全新专属库 `mbox-release.jks`
+  （仓库根目录，不入库；本地 `app/keystore.properties` 读取，CI 经 GitHub Secrets `KEYSTORE_BASE64` 注入）；
+  `applicationId` 由 `com.github.tvbox.osc` 改为专属 `com.github.tvbox.osc.mbox`（namespace 不变，代码/资源引用不受影响）。
+  效果：与设备上其他同包名族系的开源 TVBox 应用互不冲突、可共存安装；旧 `TVBoxOSC.jks` 已成历史遗留（待删除）。
+  注意：换包名后新包不覆盖旧包名版本，属全新应用（旧应用数据不随迁移），发布前务必备份 `mbox-release.jks`+口令。
+- gradle.properties：`org.gradle.parallel=true`、`org.gradle.caching=true`；app 默认 `resConfigs 'zh-rCN','zh'`。
+
+### 1.6 启动与运行性能
+- 播放器缓存清理：`App.onCreate` 移除主线程递归删除 → `schedulePlayerCacheCleanup()`（延迟 5s、后台低优先级线程、
+  `FileUtils.cleanPlayerCacheIfOverflow(100MB)` 阈值）。
+- EPG JSON：启动不再解析，`EpgUtil.getEpgInfo` 首次使用懒加载（`init()` synchronized）。
+- OkHttp 根统一：`OkGoHelper.newBaseBuilder()` 作为默认/免重定向/Exo 客户端公共根。
+- UA.java：约 5400 条 → 47 条去重真实 UA（文件 ~733KB→8KB）。
+- 下载进度：`DownloadManager.flushProgress()` 600ms 窗口合并落盘+广播（直链/HLS 分片/合并进度），终态强制落盘。
+- 下载页刷新：新增 `DownloadProgressEvent(taskId)` 高频增量；`DownloadEvent` 仅结构性全量。
+- 网络事件统一：删除 DownloadScheduler 自注册 ConnectivityManager 回调，改订阅
+  SystemStateMonitor TYPE_NETWORK（WIFI→续传；CELLULAR 且非仅WiFi→续传；NONE→不处理）。
+- LocalVideoAdapter：convert 内 O(n²) 全量统计移除 → 增量计数（syncSelection/setItemChecked/selectAll/
+  cancelAllSelection；BRVAH notifyDataSetChanged 为 final，调用点已接线）。
+- GridFragment：单套 RecyclerView+Adapter + 轻量快照栈（数据引用/page/滚动/loadMoreEnd），逐层新建视图移除。
+
+### 1.7 改进.txt（模块边界）第一阶段
+- DownloadFacade 补全（enqueue/pause/resume/remove/removeArchiveByPath/removeTasksByPath/getPosterFile/
+  ensurePosterAsync/pauseAll/startAll/getTasks…）。
+- UI 只走门面：DownloadFragment、DetailActivity、VideoListActivity.kt 的 `DownloadManager.get()` 清零
+  （DownloadFragment 保留 MSG_* 常量引用）。
+
+### 1.8 超大类物理拆分（已做部分）
+- 新增 `app/.../util/EpisodeDownloadBatch.java`：DetailActivity “整剧批量下载”逻辑整体搬出
+  （解析/拼名/统一剧集标识/门面入队/计数），并修复“均已下载/已在任务中”提示分支不可达问题。
+- 新增 `app/.../util/DetailQuickSearchHelper.java` 并已接线：DetailActivity 快速搜索编排整体迁移
+  （共享线程池 HeavyTaskUtil + epoch 去重/切换词取消、弹窗打开续跑/关闭暂停语义），
+  Activity 内不再持有 searchExecutorService/pauseRunnable/quickSearchData 等搜索状态。
+- 详情/播放页另有先期拆分的 `util/player/PlayParseHelper.java`（暂未被引用，见“待后续”）。
+
+### 1.9 模块化(改进.txt 第二/三阶段已落地部分；当时的模块划分，现状见顶部「模块现状」)
+- 新增 `:core-model`（纯 Java，23 个共享 DTO：Movie/MovieSort/AbsXml/AbsSortXml/AbsJson/AbsSortJson/
+  SourceBean/Subscription/VodInfo(+嵌套)/DownloadTask/IJKCode/Live*/Subtitle*/TmdbVodInfo/Source 等）。
+  现状：该模块已连同 `:core-utils`/`:state` 并入 `:common`（包名不变）。
+- 新增 `:core-storage`（android-library）：迁入 data/cache 包(Entity/DAO/AppDataManager/RoomDataManger/CacheManager)，
+  已去除对 App 单例、spider ApiConfig、HistoryHelper/SystemConfig/Hawk 的依赖；Room schema 统一导出。
+- 原 `:common` 已更名挂接为 `:core-network`（projectDir=common，FQN 不变）；裁剪计划见
+  `doc/phase2-core-modules-plan.md`。
+  现状：`:common` 与 `:core-network` 为两个并存模块——`:common` 承接纯模型/算法工具(AES/MD5/AdBlocker)/
+  系统状态(`.state.*`)，`:core-network` 只留网络职责；上述“更名挂接”是当时的一次性历史动作。
+
+### 1.10 强类型蜘蛛契约(type3 试点,改进.txt §1/§4.3)
+- `:spider`（原 `:spider-api`，现契约与实现同在 `:spider`）提供领域契约:`SpiderDetailApi`/`SpiderSearchApi`/`SpiderHomeApi`/`SpiderManualCheckApi`/
+  `PlayUrlResolverApi`(含 ResolveResult)/`MediaUrlUtil`/`SortParser`(首页/分类 JSON+XML 解析,XStream 白名单,纯静态)。
+- `:spider` 侧实现 `SpiderDetailImpl`/`SpiderSearchImpl`/`SpiderHomeImpl`/`SpiderManualCheckImpl`/`SpiderUrlResolverImpl`,
+  解析下沉(spider 内拉串→Gson→Abs*/SortParser→返回类型化对象),链路日志 tag=`SpiderBridge`。
+- `SourceViewModel` 全部 `ApiConfig.getCSP` 直调已替换为契约 Providers;detail/search(quick/聚合)/category/
+  homeContent/homeVideoContent(type3)均为 **typed 优先 + 失败回退字符串通道**,15s 超时保护与旧链路一致。
+- App 组合根 `AppCompositionRoot.init()` 注入全部服务;`SortParser` 由 app 迁入 :spider-api 后单测随迁
+  (`SortParserTest`),排序/筛选解析可 JVM 验证。
+
+### 1.11 playback 会话层原型(roadmap 2.1 第一部分)
+- `:player`（原 `:player-api`，现契约与实现同在 `:player`）新增 `PlaybackSessions`:会话键注册表(bind/unbind/observe/release + 内建 PLAYER 日志)。
+- app 新增 `VideoViewPlayerApi`(⑥ 适配层):包 doikki VideoView,以**轮询 getCurrentPlayState 差分**映射
+  引擎无关 `PlayState`,不向共享视图挂额外 OnStateChangeListener(避免与既有 Controller 监听冲突)。
+- `AppCompositionRoot` 注册 PlayerFactory type=1(IJK)/type=2(Exo) adapter(工厂语义与 PlayerHelper.updateCfg 对齐)。
+- `PlayFragment` 播放入口 bind 会话(仅日志观察:state/buffering/error/completion)、切集与销毁时释放,
+  不改变现有 mVideoView/Controller 控制流;真机回归后再收敛为 session.play/pause/observe 全驱动。
+
+## 2. 待后续（需真机回归或架构决策）
+
+| 项 | 说明 |
+|---|---|
+| PlayFragment(~1.8k) 进一步拆分 | 字幕/播放器控制器与宿主深度耦合，无回归环境不强行搬移 |
+| `util/player/PlayParseHelper.java`（未引用） | 疑似拆分遗留件，未接入任何调用方；可选择接线或删除 |
+| playback 会话全驱动 | 原型(观察/日志)已接;PlayFragment 收敛到 session.play/pause/observe 需真机回归 |
+| 强类型收尾 | 字符串通道(SpiderContentApi)仍为过渡兼容层,待 FakeSpiderService 单测覆盖后可删 |
+| 局域网服务热切换 | 有意不做：重启应用生效即可（热重启会打断回环播放代理流） |
+| web 控制台静态资源(~260KB)精简 | 视觉设计类工作，另行处理 |
+
+## 3. 真机回归矩阵（建议）
+
+1. 详情页→下载整剧（含“全部已下载/已在任务中/解析失败”提示、多选、失败重下、暂停/恢复/删除）。
+2. 下载页：进度平滑度（多任务+多分片）、单行刷新不打断长按多选、底部内存栏、完成列表计数。
+3. 本地视频列表与下载完成文件列表：进多选/长按/全选/取消全选/删除后计数与删除按钮态。
+4. 分类/文件夹 3+ 级下钻返回：滚动位置、加载更多续页、下拉刷新、旋转后列数。
+5. 断网→恢复/飞行模式/仅WiFi 开关：下载暂停与自动续传行为。
+6. 局域网：默认仅本机；设置开启后重启 → 局域网浏览器可开控制台、目录/上传/删除需令牌；
+   未开启时局域网不可达 9978。
+7. 自签名/证书错误站点：默认无法加载/播放，开启“忽略证书错误”后可访问。
+8. 后台播放 + 通知栏控制；历史/收藏列表新增与删除后的刷新。
+9. 冷启动速度（缓存清理不再阻塞主线程）与升级后历史/收藏数据保留（Room 迁移）。

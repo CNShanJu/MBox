@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 全局更新悬浮气泡:自绘圆底+环形进度+状态图标(下载箭头/暂停/失败/完成),无外围进度数字 -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/floatRoot"
+    android:layout_width="54dp"
+    android:layout_height="54dp"
+    android:clickable="true"
+    android:focusable="true">
+
+    <com.github.tvbox.osc.update.UpdateBubbleView
+        android:id="@+id/update_bubble"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+</FrameLayout>

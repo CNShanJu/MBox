@@ -1,0 +1,41 @@
+plugins {
+    id 'com.android.library'
+}
+
+android {
+    namespace 'com.github.tvbox.osc.storage'
+    compileSdk 34
+
+    defaultConfig {
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+        // Room schema 导出位置与历史保持一致(app/schemas),保证版本/迁移可核对
+        javaCompileOptions {
+            annotationProcessorOptions {
+                arguments = ["room.schemaLocation": "$rootDir/app/schemas".toString()]
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}
+
+dependencies {
+    implementation project(':common')
+    implementation project(':log') // SystemConfig 配置变更业务日志(LogStore)
+    implementation 'androidx.annotation:annotation:1.3.0'
+    implementation 'com.google.code.gson:gson:2.10.1'
+    annotationProcessor 'androidx.room:room-compiler:2.5.2'
+    implementation 'androidx.room:room-runtime:2.5.2'
+    implementation 'androidx.datastore:datastore-preferences-rxjava3:1.0.0' // 现代化偏好存储(PrefsDataStore)
+}

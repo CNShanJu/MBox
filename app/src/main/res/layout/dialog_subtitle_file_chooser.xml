@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 本地字幕文件选择弹窗(自研文件浏览器,替代不可用的 android-file-chooser):
+     顶栏固定标题 + 当前路径(居中单行省略) + TvRecyclerView 列表(自带滚动)。
+     目录项点击进入;文件项点击即选定。 -->
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/cl_root"
+    android:layout_width="320dp"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_dialog">
+
+    <LinearLayout
+        android:id="@+id/header"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        app:layout_constraintLeft_toLeftOf="parent"
+        app:layout_constraintRight_toRightOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        android:paddingStart="@dimen/dp_20"
+        android:paddingEnd="@dimen/dp_10"
+        android:paddingTop="@dimen/dp_10"
+        android:paddingBottom="@dimen/dp_10">
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/title"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:singleLine="true"
+                android:text="选择字幕文件"
+                android:textColor="@color/text_foreground"
+                android:textStyle="bold"
+                android:textSize="16sp" />
+
+            <TextView
+                android:id="@+id/path"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/dp_10"
+                android:singleLine="true"
+                android:ellipsize="start"
+                android:textColor="@color/text_foreground"
+                android:textSize="12sp"
+                tools:text="/storage/emulated/0/Download" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/tv_up"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:padding="@dimen/dp_10"
+            android:text="上级"
+            android:textColor="@color/text_foreground"
+            android:textSize="14sp" />
+
+        <ImageView
+            android:id="@+id/iv_close"
+            android:layout_width="50dp"
+            android:layout_height="50dp"
+            android:padding="10dp"
+            android:src="@drawable/ic_close_24"
+            app:tint="@color/text_foreground" />
+    </LinearLayout>
+
+    <com.owen.tvrecyclerview.widget.TvRecyclerView
+        android:id="@+id/list"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:clipToPadding="false"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp"
+        android:paddingBottom="@dimen/dp_10"
+        android:orientation="vertical"
+        app:layout_constrainedHeight="true"
+        app:layout_constraintHeight_max="@dimen/dp_410"
+        app:layout_constraintLeft_toLeftOf="parent"
+        app:layout_constraintRight_toRightOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/header"
+        app:tv_layoutManager="V7LinearLayoutManager"
+        app:tv_selectedItemIsCentered="true"
+        app:tv_horizontalSpacingWithMargins="@dimen/dp_10"
+        app:tv_verticalSpacingWithMargins="@dimen/dp_10"
+        tools:listitem="@layout/item_dialog_subtitle_file_chooser" />
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/dp_30"
+        app:layout_constraintLeft_toLeftOf="parent"
+        app:layout_constraintRight_toRightOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/list" />
+</androidx.constraintlayout.widget.ConstraintLayout>

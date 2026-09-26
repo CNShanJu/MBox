@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 全局加载框:居中的全局加载动画(经 LoadingAnim.apply 动态切换)+ 可选状态文本,
+     无卡片背景,由 XPopup 暗色遮罩垫底;状态文本用于"识别/探测耗时较长"的场景
+     (如资源站嗅探:选一个候选地址就更新一次,避免用户以为点了没反应)。
+     文本与动画的间距由当前动画的 config.json(LoadingAnim.getMsgGapDp)在建弹窗时覆盖,
+     这里的 2dp 只是兜底:动画图形的可见内容大多只占画布中上部,盒子底部固有留白由动画自己配负值抵掉 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:gravity="center_horizontal"
+    android:orientation="vertical"
+    android:paddingLeft="24dp"
+    android:paddingRight="24dp">
+
+    <com.airbnb.lottie.LottieAnimationView
+        android:id="@+id/lottie_loading"
+        android:layout_width="120dp"
+        android:layout_height="120dp"
+        android:layout_gravity="center_horizontal"
+        android:scaleType="centerCrop"
+        app:lottie_autoPlay="true"
+        app:lottie_speed="1"
+        app:lottie_loop="true"
+        app:lottie_repeatMode="restart" />
+
+    <TextView
+        android:id="@+id/tv_loading_msg"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:gravity="center"
+        android:maxWidth="240dp"
+        android:shadowColor="#CC000000"
+        android:shadowDx="0"
+        android:shadowDy="1"
+        android:shadowRadius="2"
+        android:textColor="@color/white"
+        android:textSize="13sp"
+        android:visibility="gone"
+        tools:text="正在识别资源站 3/10" />
+
+    <!-- 可取消流程(导出/导入等长耗时)才显示:默认隐藏,由 LoadingDialog.setOnCancel 打开。
+         用全局按钮色板 BtnSecondary(= btn_cancel_bg / btn_cancel_text / btn_stroke / radius_btn),
+         不写任何色值:浅色主题是"浅灰填充+深字",暗色主题是"透明+40% 描边+浅字",压在加载框的深色遮罩上都清楚 -->
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btn_loading_cancel"
+        style="@style/BtnSecondary"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="14dp"
+        android:minWidth="96dp"
+        android:text="取消"
+        android:visibility="gone"
+        tools:visibility="visible" />
+</LinearLayout>

@@ -1,0 +1,260 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:layout_margin="10dp"
+    android:orientation="vertical">
+
+    <!-- ============ 下载相关 box:独立圆角卡片(悬浮面 bg_float,与底栏/「我的」页同一个面),
+         内容超出内部滚动 ============ -->
+    <LinearLayout
+        android:id="@+id/ll_download_box"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="@drawable/bg_large_round_float"
+        android:orientation="vertical"
+        android:paddingHorizontal="12dp"
+        android:paddingVertical="10dp">
+
+        <!-- 剧集展示插槽:聚合组件 / 详情组件 二选一换入 -->
+        <FrameLayout
+            android:id="@+id/fl_series_slot"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1">
+
+            <!-- 聚合组件:剧集网格(收藏页样式),点击进入详情组件,长按圆形多选 -->
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/rv_aggregate"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:clipToPadding="false"
+                android:paddingBottom="6dp" />
+
+            <!-- 聚合级空态:无任何下载任务/档案时展示 -->
+            <include
+                android:id="@+id/ll_aggregate_empty"
+                layout="@layout/view_empty"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:visibility="gone" />
+
+            <!-- 详情组件:剧集详情状态页(导航路径 + 正在下载/下载完成 两个 tab) -->
+            <LinearLayout
+                android:id="@+id/ll_detail"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <!-- 路径展示:只展示 片名 · 来源,点按返回聚合根级 -->
+                <LinearLayout
+                    android:id="@+id/ll_nav"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:foreground="?selectableItemBackground"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="4dp"
+                    android:paddingVertical="6dp">
+
+                    <ImageView
+                        android:id="@+id/iv_nav_back"
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:src="@drawable/ic_back"
+                        app:tint="@color/text_foreground" />
+
+                    <TextView
+                        android:id="@+id/tv_nav_path"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:layout_weight="1"
+                        android:ellipsize="end"
+                        android:maxLines="1"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginBottom="2dp"
+                    android:background="@color/gray_darker_press_alpha" />
+
+                <!-- Tab 行:正在下载 / 下载完成 -->
+                <LinearLayout
+                    android:id="@+id/ll_tabs"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:id="@+id/tv_tab_downloading"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="center"
+                        android:paddingVertical="10dp"
+                        android:text="正在下载"
+                        android:textColor="@color/colorPrimary"
+                        android:textSize="16sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/tv_tab_done"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="center"
+                        android:paddingVertical="10dp"
+                        android:text="下载完成"
+                        android:textColor="@color/text_sub_foreground"
+                        android:textSize="16sp" />
+                </LinearLayout>
+
+                <!-- 正在下载:该剧任务列表 -->
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/rv_downloading"
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1" 
+                    android:paddingBottom="6dp"
+                    android:clipToPadding="false"
+                    />
+
+                <!-- 下载中空态:该剧无下载中/排队任务 -->
+                <include
+                    android:id="@+id/ll_downloading_empty"
+                    layout="@layout/view_empty"
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"
+                    android:visibility="gone" />
+
+                <!-- 下载完成:该剧文件列表 -->
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/rv_done"
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"
+                    android:visibility="gone" 
+                    android:paddingBottom="6dp"
+                    android:clipToPadding="false"
+                    />
+
+                <!-- 下载完成空态:该剧无已完成文件 -->
+                <include
+                    android:id="@+id/ll_done_empty"
+                    layout="@layout/view_empty"
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"
+                    android:visibility="gone" />
+            </LinearLayout>
+        </FrameLayout>
+
+        <!-- 控件 box:长按多选时显示,吸底于下载 box 底部 -->
+        <LinearLayout
+            android:id="@+id/ll_menu"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:id="@+id/ll_toolbar_actions"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingBottom="6dp"
+                android:visibility="gone">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btn_pause_all"
+                    style="@style/BtnSecondary"
+                    android:layout_width="0dp"
+                    android:layout_height="36dp"
+                    android:layout_marginRight="8dp"
+                    android:layout_weight="1"
+                    android:minWidth="0dp"
+                    android:paddingHorizontal="4dp"
+                    android:text="全部暂停" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btn_start_all"
+                    style="@style/BtnPrimary"
+                    android:layout_width="0dp"
+                    android:layout_height="36dp"
+                    android:layout_weight="1"
+                    android:minWidth="0dp"
+                    android:paddingHorizontal="4dp"
+                    android:text="全部开始" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/tv_all_check"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_weight="1"
+                    android:foreground="?selectableItemBackgroundBorderless"
+                    android:gravity="center"
+                    android:text="全选"
+                    android:textColor="@color/colorPrimary" />
+
+                <TextView
+                    android:id="@+id/tv_delete"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_weight="1"
+                    android:enabled="false"
+                    android:foreground="?selectableItemBackgroundBorderless"
+                    android:gravity="center"
+                    android:text="删除"
+                    android:textColor="@color/disable_text" />
+
+                <TextView
+                    android:id="@+id/tv_cancel_all_checked"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_weight="1"
+                    android:foreground="?selectableItemBackgroundBorderless"
+                    android:gravity="center"
+                    android:text="取消全选"
+                    android:textColor="@color/colorPrimary" />
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- ============ 显示内存和其他信息 box:无背景色,文字居中 ============ -->
+    <LinearLayout
+        android:id="@+id/ll_storage_box"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:gravity="center"
+        android:orientation="horizontal"
+        android:paddingVertical="4dp">
+
+        <TextView
+            android:id="@+id/tv_storage"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:gravity="center"
+            android:maxLines="1"
+            android:textColor="@color/text_sub_foreground"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+</LinearLayout>

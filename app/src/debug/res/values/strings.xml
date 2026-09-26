@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 调试版应用名与正式版一致,由 app_config.properties 的 appName 构建时注入(resValue) -->
+</resources>

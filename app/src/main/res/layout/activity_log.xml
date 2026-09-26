@@ -1,0 +1,326 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+
+    <com.github.tvbox.osc.ui.kit.AppTitleBar
+        android:id="@+id/title_bar"
+        android:layout_width="match_parent"
+        android:layout_height="60dp"
+        app:title="运行日志">
+        <!-- 搜索按钮:在当前日志全文内查找关键词(类浏览器 Ctrl+F) -->
+        <ImageView
+            android:id="@+id/btn_search"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:layout_gravity="end|center_vertical"
+            android:layout_marginEnd="56dp"
+            android:contentDescription="搜索日志"
+            android:src="@drawable/ic_search" />
+
+        <!-- 复制按钮:子 View 方式,与左侧返回图标保持同一水平线 -->
+        <ImageView
+            android:id="@+id/btn_copy"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:layout_gravity="end|center_vertical"
+            android:layout_marginEnd="14dp"
+            android:contentDescription="复制日志"
+            android:src="@drawable/ic_copy" />
+    </com.github.tvbox.osc.ui.kit.AppTitleBar>
+
+    <!-- 全文搜索行:输入即高亮全部命中,▲/▼ 跳上一处/下一处,计数 n/N,✕ 关闭 -->
+    <LinearLayout
+        android:id="@+id/search_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginHorizontal="14dp"
+        android:layout_marginTop="8dp"
+        android:background="@drawable/bg_large_round_float"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="14dp"
+        android:paddingEnd="8dp"
+        android:paddingVertical="4dp"
+        android:visibility="gone">
+
+        <EditText
+            android:id="@+id/et_search"
+            android:layout_width="0dp"
+            android:layout_height="36dp"
+            android:layout_weight="1"
+            android:background="@null"
+            android:hint="搜索当前日志,回车跳下一处"
+            android:imeOptions="actionSearch"
+            android:inputType="text"
+            android:maxLines="1"
+            android:selectAllOnFocus="true"
+            android:singleLine="true"
+            android:textColor="@color/text_foreground"
+            android:textColorHint="@color/text_sub_foreground"
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/tv_match"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="6dp"
+            android:textColor="@color/text_sub_foreground"
+            android:textSize="11sp" />
+
+        <ImageView
+            android:id="@+id/btn_prev"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:background="?android:selectableItemBackgroundBorderless"
+            android:clickable="true"
+            android:contentDescription="上一处"
+            android:focusable="true"
+            android:padding="6dp"
+            android:rotation="180"
+            android:src="@drawable/ic_arrow_down"
+            app:tint="@color/text_foreground" />
+
+        <ImageView
+            android:id="@+id/btn_next"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:background="?android:selectableItemBackgroundBorderless"
+            android:clickable="true"
+            android:contentDescription="下一处"
+            android:focusable="true"
+            android:padding="6dp"
+            android:src="@drawable/ic_arrow_down"
+            app:tint="@color/text_foreground" />
+
+        <ImageView
+            android:id="@+id/btn_search_close"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:background="?android:selectableItemBackgroundBorderless"
+            android:clickable="true"
+            android:contentDescription="关闭搜索"
+            android:focusable="true"
+            android:padding="7dp"
+            android:src="@drawable/ic_close_24"
+            app:tint="@color/text_foreground" />
+    </LinearLayout>
+
+    <!-- Tab 切换:业务日志(结构化可筛选) / 错误日志(logcat 本应用 E 级错误流) -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginHorizontal="14dp"
+        android:layout_marginTop="8dp"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/tv_tab_biz"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="@drawable/selector_filter_chip"
+            android:paddingHorizontal="16dp"
+            android:paddingVertical="6dp"
+            android:text="业务日志"
+            android:textColor="@color/text_foreground"
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/tv_tab_all"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="10dp"
+            android:background="@drawable/selector_filter_chip"
+            android:paddingHorizontal="16dp"
+            android:paddingVertical="6dp"
+            android:text="错误日志"
+            android:textColor="@color/text_sub_foreground"
+            android:textSize="13sp" />
+    </LinearLayout>
+
+    <!-- 业务日志模块筛选:大类型 + 仅失败(fail/异常打点;横向可滚动,窄屏不换行挤压) -->
+    <HorizontalScrollView
+        android:id="@+id/ll_filter"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginHorizontal="14dp"
+        android:layout_marginTop="8dp"
+        android:scrollbars="none"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:paddingVertical="2dp">
+
+            <TextView
+                android:id="@+id/ft_all"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="8dp"
+                android:background="@drawable/selector_filter_chip"
+                android:paddingHorizontal="14dp"
+                android:paddingVertical="6dp"
+                android:text="全部"
+                android:textColor="@color/text_sub_foreground"
+                android:textSize="12sp" />
+            <TextView
+                android:id="@+id/ft_download"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="8dp"
+                android:background="@drawable/selector_filter_chip"
+                android:paddingHorizontal="14dp"
+                android:paddingVertical="6dp"
+                android:text="下载"
+                android:textColor="@color/text_sub_foreground"
+                android:textSize="12sp" />
+            <TextView
+                android:id="@+id/ft_player"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="8dp"
+                android:background="@drawable/selector_filter_chip"
+                android:paddingHorizontal="14dp"
+                android:paddingVertical="6dp"
+                android:text="播放"
+                android:textColor="@color/text_sub_foreground"
+                android:textSize="12sp" />
+            <TextView
+                android:id="@+id/ft_subscription"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="8dp"
+                android:background="@drawable/selector_filter_chip"
+                android:paddingHorizontal="14dp"
+                android:paddingVertical="6dp"
+                android:text="订阅"
+                android:textColor="@color/text_sub_foreground"
+                android:textSize="12sp" />
+            <TextView
+                android:id="@+id/ft_system"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="8dp"
+                android:background="@drawable/selector_filter_chip"
+                android:paddingHorizontal="14dp"
+                android:paddingVertical="6dp"
+                android:text="系统"
+                android:textColor="@color/text_sub_foreground"
+                android:textSize="12sp" />
+            <TextView
+                android:id="@+id/ft_error"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/selector_filter_chip"
+                android:paddingHorizontal="14dp"
+                android:paddingVertical="6dp"
+                android:text="仅失败"
+                android:textColor="@color/text_sub_foreground"
+                android:textSize="12sp" />
+        </LinearLayout>
+    </HorizontalScrollView>
+
+    <!-- 日期选择入口:点击弹出底部抽屉选择日期 -->
+    <LinearLayout
+        android:id="@+id/ll_date_picker"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginHorizontal="14dp"
+        android:layout_marginTop="10dp"
+        android:background="@drawable/bg_large_round_float"
+        android:foreground="?android:selectableItemBackground"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="12dp">
+
+        <TextView
+            android:id="@+id/tv_selected_day"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="暂无日志"
+            android:textColor="@color/text_foreground"
+            android:textSize="14sp" />
+
+        <ImageView
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:src="@drawable/ic_arrow_down"
+            app:tint="@color/text_sub_foreground" />
+    </LinearLayout>
+
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_margin="14dp"
+        android:layout_weight="1">
+
+        <!-- 卡片内部滚动:内边距放在滚动容器上(不再放在里面的 TextView 上),并 clipToPadding=true,
+             滚动过程中文字不越过内边距,不会贴到圆角卡片上下/左右边(与「我的」页、订阅页同一处理)。
+             内边距若放在内容 TextView 上,滚动时文字会一路滑到卡片边缘才被裁掉。 -->
+        <ScrollView
+            android:id="@+id/scroll_log"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@drawable/bg_large_round_float"
+            android:clipToPadding="true"
+            android:padding="12dp"
+            android:scrollbars="vertical">
+
+            <TextView
+                android:id="@+id/tv_content"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:textColor="@color/text_foreground"
+                android:textIsSelectable="true"
+                android:textSize="11sp" />
+        </ScrollView>
+
+        <!-- 点击直接滚动到底部 -->
+        <ImageView
+            android:id="@+id/btn_scroll_bottom"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_gravity="bottom|end"
+            android:layout_margin="12dp"
+            android:background="@drawable/bg_semi_black_circle"
+            android:contentDescription="滚动到底部"
+            android:foreground="?selectableItemBackgroundBorderless"
+            android:padding="9dp"
+            android:src="@drawable/ic_arrow_down" />
+    </FrameLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:paddingHorizontal="20dp"
+        android:paddingBottom="16dp">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_clear"
+            style="@style/BtnSecondary"
+            android:layout_width="0dp"
+            android:layout_height="38dp"
+            android:layout_marginRight="12dp"
+            android:layout_weight="1"
+            android:text="清 空" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_export"
+            style="@style/BtnSecondary"
+            android:layout_width="0dp"
+            android:layout_height="38dp"
+            android:layout_weight="1"
+            android:text="导 出" />
+    </LinearLayout>
+
+</LinearLayout>

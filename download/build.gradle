@@ -1,0 +1,41 @@
+plugins {
+    id 'com.android.library'
+}
+
+android {
+    namespace 'com.github.tvbox.osc.download'
+    compileSdk 34
+
+    defaultConfig {
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}
+
+dependencies {
+    implementation project(':common')
+    implementation project(':core-network')
+    implementation project(':core-storage') // PrefsDataStore(任务/档案/策略持久化)
+    implementation project(':log')
+    implementation project(':spider')
+    implementation 'androidx.annotation:annotation:1.3.0'
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    implementation 'com.google.code.gson:gson:2.10.1'
+    implementation 'androidx.core:core:1.6.0' // NotificationCompat/FileProvider
+    implementation('com.thoughtworks.xstream:xstream:1.4.20') { // bean 注解
+        exclude group: 'xmlpull', module: 'xmlpull'
+    }
+}

@@ -1,0 +1,249 @@
+# MBox 项目规则(AGENTS)
+
+> 项目名:MBox(仓库 `CNShanJu/MBox`,原名 TVBoxOS-Mobile / 工程名 TVBoxMobile,更名已落地于代码与文档)。
+
+> 本文件将仓库根目录《改进.txt》的限制与要求固化为**项目级规则**,所有代码改动(人工与 AI)必须遵守;
+> 并沉淀安全审计中的**持续约束型**红线(见「七、安全与工程红线」,一次性修复明细不入本文件)。
+> 原始文档见仓库根 `改进.txt`(经确认已纳入版本库跟踪,不再豁免提交);本文件是其在版本库中的权威落地,随 git 一起跟踪与演进。两份文件需保持一致,改规则/改要求时同步更新。
+
+---
+
+## 一、目标架构(依赖方向,强制)
+
+最终分四层,依赖只允许自上而下,**禁止反向**:
+
+```
+app / feature
+    ↓
+业务 API:PlayerApi、SpiderService、DownloadFacade
+    ↓
+业务实现:player、spider、download
+    ↓
+基础设施:network、storage、state、log
+    ↓
+纯模型:model
+```
+
+- 业务模块只通过公开契约协作(接口/门面),具体实现放 internal 包。
+- 禁止基础模块反向依赖业务或 UI。
+- 同一领域模型只定义一次;跨模块不共享可变对象。
+- 所有后台任务必须由模块级执行器管理,**页面/UI 不得自行创建线程池**。
+- UI 组件不得读取全局配置(Hawk/ApiConfig 等)或访问业务单例;状态与事件经属性、接口或 ViewModel 传入。
+
+## 二、模块边界(现状模块与残留治理)
+
+现状:**9 个模块** —— `:app`、`:common`、`:core-network`、`:core-storage`、`:log`、`:player`、`:spider`、`:download`、`:thirdparty`。
+合模块已落地(契约与实现同模块后,靠**源码层门禁**守边界,不再靠 Gradle 拆模块):`:core-model`/`:core-utils`/`:state` → `:common`;`:spider-api` → `:spider`;`:player-api` → `:player`;`:crash`/`:TabLayout`/`:ViewPager1Delegate`/`:quickjs` → `:thirdparty`;`:ui-common` → `:app`(主题 JSON 在 `app/src/main/assets/theme/`,`generateThemeColors` 任务在 `app/build.gradle`)。
+
+| 模块 | 边界要求 |
+|---|---|
+| `:common` | 全局共用:纯模型(`com.github.tvbox.osc.bean.*`,不依赖 Android/Hawk/Room/ApiConfig)+ 算法工具(AES/MD5/AdBlocker)+ 系统状态(`.state.*`);由原 `:core-model`/`:core-utils`/`:state` 三模块合并,包名不变 |
+| `:core-network` | 收敛网络客户端(OkGoHelper/HttpClient/各 OkHttp 创建),业务不得自行 `new OkHttpClient.Builder()` |
+| `:core-storage` | Room/缓存/配置收口,对外只暴露 Repository/类型安全 Config,不暴露 DAO;storage 不得依赖 spider/download/player |
+| `:spider` | 爬虫**契约 + 实现同模块**(原 `:spider-api` 已并入):契约(SourcePage/Category/Detail/Search/Play 与 SourceConfigProviders/ParseConfigProviders/LiveChannelConfigApi/SourceLoaderApi/PlayUrlResolverProviders/IjkCodecConfigProviders)、QuickJS/JarLoader/ApiConfig/具体 Spider;**app/UI 一律经契约,禁止直连 `ApiConfig`/`JsLoader`/`PlayUrlResolver`**(`checkModuleDependencies` 已加该红线,白名单只剩组合根/启动注入点) |
+| `:player` | 播放**契约 + 实现同模块**(原 `:player-api` 已并入):契约(PlayerSession/PlayerState/PlayerOptions/PlayerEvent/PlayerFactory)与 MyVideoView/IJK/Exo 同模块;UI 不得直接依赖具体内核 |
+| `:thirdparty` | 纯第三方归堆,不依赖任何本仓模块:TabLayout(`com.angcyo.tablayout`)、CustomActivityOnCrash(`cat.ereza.customactivityoncrash`,原 `:crash`)、QuickJS(`com.whl.quickjs.*` + `src/main/jniLibs`,原 `:quickjs`) |
+| `:download` | 只公开 DownloadFacade.enqueue/pause/resume/delete/observe;Manager/Scheduler/Executor/Archive 等为模块内部实现 |
+| `:log` | 日志(LogStore + 落盘/Logcat 采集),不依赖任何业务模块 |
+| `:app` 的 ui-kit/ui-common | 主题资源(原 `:ui-common`)与通用组件已全部收在 app 内(app 的 `res` + `ui/kit` package);组件成熟后再考虑拆模块 |
+
+现状残留(持续治理,新代码勿新增同类):
+- app 仍直用 `MyVideoView`/IJK/Exo、`PlayerTrackHelper` 按内核分发(播放器收口长线)。
+- `:core-network` 已只剩网络职责(OkGoHelper/HttpClient/HttpUrls/FCallBack/HCallBack/SSLCompat/urlhttp 的 brotli 拦截器);AES/MD5/AdBlocker/AppLog/LOG 已迁出。残留:网络客户端装配与通用工具仍同包,后续可按职责再分目录。
+- `:spider` 字符串通道(SpiderContentApi)为过渡兼容层,新功能不得新增字符串协议依赖。
+- app 已无直连 `:spider` 实现的代码:批量下载解析经 `PlayUrlResolverProviders`(spiderapi 契约,组合根注入 `SpiderUrlResolverImpl`),JS 源运行态(取消在跑任务/清空源实例)经 `SourceLoaderProviders.stopAllSourceTasks/resetSources`。
+  - 门禁白名单里的 `ui/activity/FastSearchActivity.kt` 是过渡项:该文件调用点已改为 `SourceLoaderProviders`,改动随其 WIP 一并提交后即可从 `spiderImplAllow` 删除。
+- 未建 `:playback` / feature-* 模块(第三/四阶段,需真机回归环境再动)。
+
+## 三、大页面拆分目标(§三)
+
+- **PlayFragment**:应拆为 PlayFragment(只绑 View/生命周期)+ PlayViewModel(页面状态)+ PlayCoordinator(换源/解析/重试)+ PlayerSession(播放控制)+ SubtitleCoordinator + PlayHistoryRepository。
+  - Fragment 不应直接持有 Spider、ExoPlayer、IJK 或 DAO;解析/嗅探引擎已抽 `util/player/PlayParseCoordinator`。
+  - 已抽:`PlayRequest`/`PlaySessionKeys`/`PlayedVodKey`/`SubtitleCoordinator`/`PlayHistoryRepository`/`PlayParseCoordinator`;剩余大块(startPlayUrl 等)仍与控制器耦合,拆分需真机回归。
+- **DetailActivity**:应拆 DetailViewModel/DetailRepository/EpisodeSelectionState/DetailDownloadCoordinator/QuickSearchCoordinator;Activity 只处理导航、弹窗、视图事件。
+- **SourceViewModel**:只依赖 SpiderService 等契约(可 FakeSpiderService 做 JVM 单测),不得直调 `ApiConfig.get().getCSP()` 之类具体爬虫。
+
+## 四、依赖注入(§四)
+
+- 不强制全面引入 Hilt;先建 app 层组合根 `AppCompositionRoot`(network/storage/spider/download/players 等)。
+- 静态 get() 保留为兼容入口;新代码一律构造注入接口;ViewModel 经 Factory 取依赖;旧调用逐个迁移后静态入口清零。
+- 依赖注入的目的是可替换实现与便于测试,不是为框架而框架。
+
+## 五、状态与事件(§五)
+
+- 页面状态:ViewModel + LiveData(逐步 Kotlin 化后 StateFlow);一次性页面事件用明确 Event 类型。
+- 跨页状态(下载/播放):由 Facade 提供订阅接口(如 `DownloadFacade.DownloadStatusListener/TaskProgressListener`、`PlaybackSessions`)。
+- 系统状态(电量/网络):统一 SystemStateMonitor。
+- **EventBus 已全仓移除(app + download,依赖已从 classpath 删除),禁止再引入**;跨页/模块事件一律用直调、Facade 订阅接口或明确监听器(如 `DownloadFacade` 内部经 `DownloadManager.EventSink` 直调扇出、播放通知经 `PlayService.onPlaybackNotify` 直调)。`checkModuleDependencies` 已加 app 层 EventBus 红线;移除依赖后任何模块新增 EventBus 均编译不过。
+
+## 六、验收红线(新代码不得触碰)
+
+1. app 内基本搜索不到 `getCSP()`、`DownloadManager.get()` 与具体播放器内核直调(见 `checkModuleDependencies` 门禁)。
+2. UI/页面层禁止裸读 Hawk 或具体配置单例(一律经业务 Config 门面读写,如 SystemConfig/LiveConfig/PlayConfig/SubscriptionConfig;底层为 core-storage `PrefsDataStore`/DataStore)。
+3. UI 禁止自建线程池;禁止 `(Activity) context` 强转具体 Activity 依赖弹窗/组件(依赖经构造注入窄宿主接口)。
+4. 禁止引入/使用 EventBus(已全仓移除,依赖不在 classpath);跨页/模块事件一律直调或经 Facade 订阅接口。
+5. 模块依赖只增公开契约接口;Gradle 依赖默认 `implementation`,谨慎 `api`。
+6. 业务/后台任务必须用模块级共享执行器(如 `HeavyTaskUtil`),且带取消/过期自检语义(epoch),不得每轮 new 线程池后 shutdown 了事。
+7. 所有可滚动组件(RecyclerView/ScrollView/GridView/横向列表等)必须保留**内边距**并配合
+   `clipToPadding=false` 让首/末内容不贴到屏幕或容器边缘滚动;禁止内容贴边滚动影响视觉效果。
+
+## 七、安全与工程红线(持续约束)
+
+**网络与 TLS**
+- 禁止全局关闭 HTTPS/TLS 校验(如 WebView `onReceivedSslError` 一律 proceed、HttpClient 全信任);确需忽略证书只允许"按域 + 用户显式开关"且默认拒绝(cancel)。
+- 局域网/回环服务(RemoteServer 等)按需启动、用毕即停;对外暴露最小化,敏感操作必须带鉴权/令牌,禁止无鉴权读写。
+
+**输入与文件安全**
+- 本地路径一律防目录穿越:拼接前校验并规范化,拒绝 `..`/绝对路径逃逸出目标目录。
+- 解压(压缩包/归档)防 Zip Slip:每个条目的最终落盘路径必须位于目标目录内,解压前校验。
+- HLS/代理分片等高频落盘必须节流/限频,禁止无界写盘。
+
+**数据、并发与性能**
+- Room/DB 查询禁止主线程执行;需即异步(协程/执行器)或缓存预热。
+- Gson 等解析器复用实例并建索引/缓存,禁止热路径重复构建;UA 等常量数组化,避免每请求新建数组。
+- 启动阶段不做阻塞式删缓存/重 IO;大资源懒加载,页面销毁即释放。
+- 列表更新用 DiffUtil 时保证差量正确(LocalVideoAdapter/下载列表等禁止 O(n²)/整表 notify);页面/Adapter 不得把视图/Activity 持有到生命周期外(视图泄漏)。
+
+**Android 暴露面**
+- Manifest 权限最小化:只声明实际使用权限;组件(Activity/Service/Receiver/Provider)按需 `exported`,不对外暴露者一律 `android:exported="false"`,敏感暴露组件配权限保护。
+
+**依赖、构建与资源**
+- 依赖升级与版本对齐走显式批次(Room/exo 等跨模块依赖版本一致),禁止引入冗余/重复依赖;同步清理死源码与无效 import。
+- Gradle 开启/维护缓存与并行构建,避免本地与 CI 行为漂移。
+- 图片加载统一单一图片库,不复用多套;网络状态/电量等系统状态统一经 SystemStateMonitor 单点订阅。
+- **全局复用同一个图片占位符**:全 App 图片(海报/封面/缩略图等)占位与加载失败统一用
+  `placeholder_poster`(灰底+居中图标,主题感知)。**占位图标当前用 `ic_placeholder_cat`**
+  (由 `D:\Code\Video\icon\drawing (1).svg` 导出;位图按 96dp 各密度置于 drawable-<dpi>,灰底+透明黑猫撕纸);
+  原矢量 `ic_image_placeholder.xml`(`D:\Code\Video\icon\图片加载失败.svg` 转)保留为回退,不再被引用。
+  禁止各页面/适配器自行引入第二套占位图
+  (如 iv_load_fail / img_loading_placeholder / ic_img_placeholder / ic_poster_placeholder 等),发现即收敛到统一占位。
+  **占位只有一套实现**:`util/PosterPlaceholderDrawable`(加载态 `loading` / 失败态 `failed`,色值圆角图标与
+  XML `placeholder_poster` 同源)+ 统一加载入口 `util/PicassoLoad`(URL 走 `into`、本地文件走 `intoFile`);
+  XML `placeholder_poster` 只作**布局里的静态形态**(首帧),运行时占位一律经 `PicassoLoad` 铺。
+  **占位必须放 ImageView 的背景层,禁止塞进 src / `.placeholder()`**:占位是"灰底+居中图标",
+  塞 src 会被 scaleType(centerCrop)当普通图片等比放大再裁剪,小卡片上会**超出显示范围**
+  (下载页 56×74dp 封面曾经的故障)。**图标尺寸必须随宿主自适应**:位图各密度都是 96dp 且几乎撑满画布,
+  宿主小于 96dp 时按比例缩(只缩不放),否则一样会溢出。
+  **失败态文案位置有硬约束**:海报卡底部有一条渐变黑底信息条(`view_search_poster_card.xml` 的
+  `llNoteBar`、`item_grid.xml` 的底部覆盖条),它绘制在 ImageView 背景之上,故"图片加载失败"文字与图标
+  必须排在**该条上方**的可用区内。实现见 `util/PosterPlaceholderDrawable#failed`:**整组在卡片里垂直居中**,
+  覆盖条高度由宿主视图自动量(排在图片之后、可见、贴住图片底边、只占下半部分、非 TextView/ImageView 的兄弟),
+  居中放不下就等比缩小图标(下限 40dp)、再放不下才整体上移、最后只留文字;宿主没有覆盖条时纯居中,
+  **不要再固定预留一段高度**(固定预留会让整组贴到卡片顶部,观感上"整体往上飘")。
+  新增海报卡布局时按上述形态摆覆盖条即可被自动识别,无需改绘制代码。
+  不要再把失败文字贴底绘制,否则通栏/宫格等带信息条的形态会被整条盖住。
+- 多语言资源按需裁剪(`resConfigs`),禁止无界塞入语言包。
+
+## 八、推荐推进顺序(供排期参考)
+
+1. **第一阶段(补边界)**:SourceViewModel→SpiderApi;DownloadFragment→DownloadFacade;DetailActivity 不直调 DownloadManager;注册并使用 PlayerFactory;禁止新增 Hawk/EventBus/具体 Manager 直调。
+2. **第二阶段(抽基础)**:common(模型/工具/状态)→ spider 契约 → core-network → core-storage;已完成,且契约模块已回并业务模块(见 §二)。
+3. **第三阶段(拆播放器与大页)**:playback shell;拆 PlayFragment/DetailActivity;字幕迁 playback;ViewModel 只调接口。
+4. **第四阶段**:feature-* 按需模块化(不要在依赖未稳时先搬目录)。
+5. **第五阶段(现代化)**:Exo→Media3、EventBus→Flow/接口、Hawk→DataStore、Java→Kotlin、Hilt(按需)、依赖检查与测试门禁。
+
+## 九、开发与提交纪律
+
+- 全量门禁:改动后必须跑 `:app:assembleDebug :app:assembleRelease :app:testDebugUnitTest checkModuleDependencies` 全绿再提交。
+- 提交信息遵循 `doc/Git提交规范.md`(type[scope]: 描述 ≤50 字;一次提交一件事;提交前 git status 确认无多余文件)。
+- 文件级提交:按范围 `git add`,不混入无关改动;本规则文件(AGENTS.md)与各 doc/ 状态文档随对应批次同步更新并提交。
+- 改进.txt(已纳入版本库跟踪)与 AGENTS.md 保持一致,改动同步更新;release-notes-v3.0.1.md 不入库,其要求以上方章节为准。
+
+### 构建内存纪律(强制)
+
+1. **Gradle 堆固定,不因单次构建临时改动**:`gradle.properties` 的 `org.gradle.jvmargs` 固定为
+   `-Xmx2g -XX:MaxMetaspaceSize=512m -Djdk.tls.client.protocols=TLSv1.2`。禁止为了单次打包临时调大/调小 `-Xmx`
+   构建后还原——不同 `-Xmx` 会让 Gradle 各起一个常驻 Daemon(4g/2g/1g daemon 并存)互抢内存,
+   这正是"每次打包都内存不足/`mmap failed`/`hs_err_pid*.log`"的根因。
+2. **打包内存不足时的标准处理**:先 `gradlew --stop` 停 Daemon,仍不足再结束残留 jdk17 java 进程
+   (`Get-Process java` 排查含 `GradleDaemon`/`KotlinCompileDaemon` 的进程),然后以固定配置重新构建。
+   不要靠改堆绕行。
+3. 若确需为 CI/极端机器调堆,走显式批次讨论,完成后回写固定值,不得留下多个历史堆配置常驻进程。
+
+### 验证纪律(强制)
+
+1. **未经用户明确要求,禁止用机器在真机上验证结果**(adb/自动化脚本一律算):不装包、不启动/点击/滑动界面、
+   不抓 logcat、不读设备文件、不改设备数据;UI 树抓取、截图识读等同样属于机器调试。
+   真机结果一律**由用户人工验证**。
+2. 允许(且应当)做的机器验证只限**本机开发侧**:JVM 单测、纯逻辑/解析校验、`scripts/` 下的离线校验脚本、
+   编译与门禁全绿。这些不属于"真机验证"。
+3. 交付说明必须把「已机器验证(单测/构建/离线脚本)」与「待人工验证(真机行为)」分开写,
+   不得把未经人工验证的真机行为说成"已修复/已可用"。
+4. 确需真机验证时(例如"只有真机才能暴露的问题"),先向用户提出请求并等其同意;用户在对话中明确
+   "可以验证/去验证"即视为当次同意,不得默认继承到下一位需求。
+
+### 发布与版本纪律(强制)
+
+1. **Release 文案一律归纳,禁止照搬 commit**(强制):发布 Release/发版说明(以及任何给用户看的版本更新说明)时,
+   **禁止直接把 git commit 列表原文照搬贴出**,必须**基于 commit 记录自行总结**为**用户可读的更新说明**。做法:
+   - 先取本次发版的 commit 区间(上一发布 tag.. 当前 tag,如 `git log <prev>..<curr> --no-merges`),
+     逐个读懂每条 commit 的**意图与影响**,不能只扫标题;
+   - 按**用户视角**归并分类(通常「新增功能 / 修复 / 改进 / 其他」),每类下用口语化、面向用户的要点概括
+     「改了什么 + 对用户有何影响」,而非罗列 commit 标题;
+   - 剔除对用户无意义的内部细节(依赖重构、代码结构调整、占位符实现、安全审计等),避免照抄;
+   - 按「大.中.小」版本号写出与版本定位相符的总结,**重要变更置顶**,开头标注版本号;措辞克制准确,不夸大新增/修复;
+   - 同一条 commit 跨多类时归入最相关的一类,避免重复。
+   - **给开发者看的内容用注释围栏标出**(强制):App「检查更新」弹窗只展示用户可读内容,约定 Release 正文里
+     内部信息(commit 号、依赖重构、构建/脚本细节)包在 `<!-- dev --> … <!-- /dev -->` 之间
+     (`dev-only`/`internal`/`内部`/`开发者` 同义,大小写不敏感),客户端会自动剔除(实现见
+     `update/github/ReleaseNotes`);GitHub 网页本身不渲染 HTML 注释,网页正文依旧完整。
+     只写了起始围栏视为"以下全是内部内容",一并隐藏。
+     **围栏必须独占一行**(允许行首空白):只在正文里"提到"围栏写法(如说明这个约定本身)不会被当成围栏,
+     否则会把它之后所有用户可见内容一起吞掉;同一行内成对写出(`<!-- dev -->x<!-- /dev -->`)仍整段剔除。
+   - **不必为跨版本升级补历史**:App 取 releases 列表,把"比当前新、且不高于可下载最新版"的各版本说明
+     按新→旧拼成一个弹窗(最多 5 个版本),每条 Release 只写自己的改动即可;
+     正文顶部的版本标题(`## v3.5.5`)与「相比 vX 的更新:」引言会被去重,不重复出现。
+   - **发版流水线不得自动搬运 commit**(强制):`.github/workflows/build-apk.yml` 打 tag 时的 Release 正文,
+     只取仓库里维护者手写的 `doc/release-notes-<tag>.md`(UTF-8);该文件缺失时正文只留 `<!-- dev -->` 围栏
+     里的提交记录并在 Actions 输出警告,**绝不把 commit 标题当作给用户的更新说明**。发版前用
+     `node scripts/check-release-notes.js doc/release-notes-<tag>.md` 自检。
+2. **只写用户关注的内容,开发者事项一律不进用户可见正文**(强制;已发生过"把 AGENTS 规则文件改动写进 Release"的
+   事故——某版本用户更新说明首条是 `docs(AGENTS): 发布含中文必须显式UTF-8防乱码`,用户看不懂也不需要知道):
+   - **属于用户的内容**(这些才写,每类挑重要的 1~5 条):
+     1) **新增功能**:用户能用到的新能力(如"设置里新增「自动检查更新」开关");
+     2) **功能变更**:原有行为怎么变了、入口挪到哪了(如"订阅支持长按编辑地址,不必删了重加");
+     3) **移除/停用**:砍掉或下线的功能、不再支持的用法(如"移除毛玻璃效果,底栏改纯色遮罩");
+     4) **问题修复**:用户会遇到的故障修好了(如"修复导入的订阅在升级后消失");
+     5) **体验与性能**:更快、更省电、更少打扰、界面更顺手;
+     6) **兼容性与注意事项**:系统要求变化、数据迁移、需要用户手动做一步的事(如"需重新授权存储权限")。
+   - **不属于用户的内容**(绝不写进用户可见部分;确要留档就包进 `<!-- dev -->` 围栏):
+     - 规则/流程/文档类改动:`AGENTS.md`、`改进.txt`、`doc/**`、README、`doc/Git提交规范.md` 等纯文档提交;
+     - 构建与发布体系:Gradle/AGP/依赖版本升级、依赖重构、CI/工作流、签名与打包脚本、版本号提升(`chore(版本)`);
+     - 代码结构类:模块拆分与分层、接口抽取、命名与目录调整、死代码清理、EventBus→直调这类内部机制替换
+       (除非用户能感知到差异,如"更省内存/启动更快",那按第 5 类写"效果"而不是写"机制");
+     - 测试与门禁:单测、离线校验脚本、依赖门禁任务;
+     - 纯内部实现细节(占位符实现方式、日志埋点、注释、性能埋点等);
+     - **判断标准**:这条改动,普通用户看完能不能一句话说出"对我有什么用"。说不出 → 不写。
+   - **阈值豁免无效**:哪怕某次发版里"内部改动"占了绝大多数(例如 6 条提交里 5 条是规则/依赖/构建),
+     也只写那 1 条用户可感知的;Release 说明少而准,好过多而杂。
+   - **措辞**:不要写 commit 前缀、文件名、类名、issue 号、构建/脚本细节;用"用户做了什么 → 会有什么变化"的句式;
+     重要变更置顶;不夸大(不把"内部调整"包装成"重大升级")。
+   - **发布前最后一道自检(强制,逐条过)**:把要发的正文从头到尾读一遍,回答"用户看得懂吗、这跟他有关吗",
+     并确认正文里**不含**下列字样:`AGENTS`、`改进.txt`、`doc/`、`chore(`、`refactor(`、`docs(`、`ci(`、
+     `test(`、`依赖`、`模块`、`重构`、`门禁`、`单测`、`Gradle`、`versionCode`、commit 短号。
+     命中任意一个 → 挪进 `<!-- dev -->` 围栏或直接删掉。
+3. **debug 包严禁进 git**:永远不要提交/推送 debug 构建产物(如 *_debug.apk、build 产物);
+   除非用户**明确要求**,且即便如此也须先与用户**二次确认**后方可提交。
+4. **push 前自动升版本(用户未另行说明时)**:
+   - 每次 push 若用户没有指定版本,先按 **大版本号·中版本号·小版本号** 提升**小版本号**一次
+     (改 `app/app_config.properties` 的 `versionName` 末段 +1,并同步 `versionCode` 单调递增),再提交代码。
+   - 用户让**打 tag** 时:一律基于**最新的 versionName** 打(如 `v3.4.5`)。
+   - 用户让**发布 app(出正式包)**时:一律基于**最新 tag 对应的版本**构建。
+   - 用户有主动说明(指定版本号/tag/发布方式)时,以用户说明为准。
+5. **发布/脚本写入含中文(非 ASCII)内容必须显式 UTF-8,发布后抽查乱码**(强制;血泪教训:曾两次发版正文中文全部变成
+   `?`,起因是脚本上传编码被破坏):
+   - 向 GitHub Release 等网页/接口上传含中文的文本时,**禁止**依赖 Windows PowerShell 5.1
+     `Invoke-WebRequest`/`Invoke-RestMethod` 字符串 body 的默认编码——其按 ASCII 发送,会把每个中文字符替换成 `?`;
+   - 正确做法:显式带 charset 并以 UTF-8 字节发送(body 先 `[Text.Encoding]::UTF8.GetBytes(...)`,
+     `ContentType 'application/json; charset=utf-8'`),或直接用 `curl.exe --data-binary @<utf8文件>`;
+   - 含中文的脚本/数据文件(如 .ps1/.md)一律以 **UTF-8** 落盘,避免 GBK/ANSI 读取错乱;
+   - **发布后必须抽查** GitHub 上正文/标题/资产名是否乱码(连续 `?` 即编码被破坏),发现后立即以 UTF-8 方式修正
+     正文再让用户/客户端验证,不得把乱码留到用户测试环节。
+
+## 十、常用基础设施速查
+
+- 配置:core-storage `config.PrefsDataStore`(DataStore,运行权威;历史 Hawk 一次性迁移通道 `KeyValueStore` 已随 hawk 退役下线);各业务 Config 门面见 `com.github.tvbox.osc.config`(SystemConfig)与各模块 config 包。
+- 契约 Providers(在 `:spider` 模块的契约包内,原 `:spider-api`):`SourceConfigProviders`/`ParseConfigProviders`/`LiveChannelConfigApi`/`SourceLoaderProviders`(含 `stopAllSourceTasks`/`resetSources` 源运行态)/`PlayUrlResolverProviders`(批量下载解析)/`IjkCodecConfigProviders` 等,业务/UI 一律经它们取源元信息,禁止直触 ApiConfig。`checkModuleDependencies` 已把"app 直连 `ApiConfig`/`JsLoader`/`PlayUrlResolver`"设为红线,白名单只剩组合根 `di/AppCompositionRoot`、启动 `base/App`、`server/ControlManager` 三个装配/注入点(另有一条待摘的过渡项,见 §二)。
+- 弹窗:统一 `ui/dialog/DialogCoordinator`(center/right/bottom/loading/confirm);同构内容层合并用共享 Panel(如 LiveSettingPanel/DownloadSeriesPanel/PlayingControlPanel),Bottom/Right 收敛为薄壳。
+- 共享执行器:`util/HeavyTaskUtil`(getBigTaskExecutorService 并行 / getSerialExecutorService 串行);配合 epoch/过期自检做取消语义。
+- 播放上下文:`util/player/{PlayRequest,PlaySessionKeys,PlayedVodKey,PlayHistoryRepository,SubtitleCoordinator,PlayParseCoordinator,PlaybackSessions}`。

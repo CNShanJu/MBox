@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 越界回弹通用属性:RubberBandEngine 的所有宿主组件(如 RubberBandScrollView)共用一套 -->
+    <declare-styleable name="RubberBandView">
+        <!-- 顶部方向(下拉越界)是否触发回弹;默认开。首页列表等场景顶部已有下拉刷新时可关掉 -->
+        <attr name="rubber_top_enabled" format="boolean"/>
+        <!-- 底部方向(上推越界)是否触发回弹;默认开 -->
+        <attr name="rubber_bottom_enabled" format="boolean"/>
+        <!-- 回弹作用对象:content=内容子View(仅容器内部内容跟手,默认);container=整个容器自身一起回弹(如 我的-设置) -->
+        <attr name="rubber_target" format="enum">
+            <enum name="content" value="0"/>
+            <enum name="container" value="1"/>
+        </attr>
+        <!-- 最大越界位移(跟手上限);默认 120dp -->
+        <attr name="rubber_max_overscroll" format="dimension"/>
+        <!-- 橡皮筋"拉伸比"参数(>=1,越大越松;1≈1:1 跟手,边界不会放大位移);默认 1 -->
+        <attr name="rubber_saturation" format="float"/>
+    </declare-styleable>
+</resources>

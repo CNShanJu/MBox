@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 图片圆角裁切兜底:供 ImageView background + clipToOutline 使用,加载中/失败占位同样圆角 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <solid android:color="#01000000" />
+    <corners android:radius="12dp" />
+</shape>

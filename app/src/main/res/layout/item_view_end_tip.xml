@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 共享"到底了"提示:主页/分类列表统一复用(文案来自 @string/brvah_load_end)。
+     默认由使用方控制隐藏;仅"确实加载到没有更多内容"时才应显示。 -->
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:alpha="0.55"
+    android:gravity="center"
+    android:paddingTop="6dp"
+    android:paddingBottom="6dp"
+    android:text="@string/brvah_load_end"
+    android:textColor="@color/text_sub_foreground"
+    android:textSize="12sp" />

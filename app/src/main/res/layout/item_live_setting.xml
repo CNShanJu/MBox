@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 直播线路抽屉 / 直播设置面板条目(两处共用):文字样式与播放详情的选集 chip 对齐
+     (RoundChip + item_series.xml)—— 未选中 = 次要灰常规 16sp,选中 = 主题高亮色加粗 17sp,
+     **无边框无背景**,选中只靠文字色/字重/字号区分(色值由 LiveSettingItemAdapter 每次 bind 设置,
+     这里只留静态默认值给布局预览用)。
+     注意:这里**不再挂 shape_live_focus 聚焦底色** —— 整块蓝底(固定 accent_on_dark)会把未选中的
+     灰字压得看不清,而且和选集 chip 是两套观感,已去掉;条目仍保留 focusable,遥控器照旧可导航,
+     只是聚焦不再有底色。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginVertical="10dp"
+    android:layout_gravity="center"
+    android:focusable="true"
+    android:focusableInTouchMode="false"
+    android:orientation="horizontal">
+
+    <TextView
+        android:id="@+id/tvSettingItemName"
+        android:layout_width="0dp"
+        android:layout_height="40dp"
+        android:layout_weight="1"
+        android:ellipsize="marquee"
+        android:gravity="center"
+        android:marqueeRepeatLimit="marquee_forever"
+        android:singleLine="true"
+        android:textColor="@color/text_sub_foreground"
+        android:textSize="16sp" />
+</LinearLayout>

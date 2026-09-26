@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!-- 在 Android 11 中，应用程序需要声明它们要使用的其他应用程序的包名 -->
+    <uses-feature
+        android:name="android.software.leanback"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.touchscreen"
+        android:required="false" />
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- 存储访问以 MANAGE_EXTERNAL_STORAGE(全文件访问)为主;保留旧版读写在 Android 9- 使用 -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Android 14+ 启动 mediaPlayback 类型前台服务必须声明,否则 startForeground 抛 SecurityException -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- Android 13+ 后台播放通知可见需要运行时通知权限 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 应用内"检查更新"安装新版本 APK 所需(安装未知来源应用) -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <application
+        android:name=".base.App"
+        android:allowBackup="false"
+        tools:replace="android:allowBackup"
+        android:configChanges="orientation|keyboardHidden|screenSize"
+        android:hardwareAccelerated="true"
+        android:icon="${appIcon}"
+        android:label="@string/app_name"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:requestLegacyExternalStorage="true"
+        android:theme="@style/AppTheme"
+        android:usesCleartextTraffic="true">
+        <activity
+            android:name=".ui.activity.SplashActivity"
+            android:exported="true"
+            android:theme="@style/SplashTheme">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".ui.activity.SubscriptionActivity"
+            android:configChanges="orientation|screenSize"
+            android:exported="false" />
+        <activity
+            android:name=".ui.activity.VideoListActivity"
+            android:configChanges="orientation|screenSize"
+            android:exported="false"/>
+        <activity
+            android:name=".ui.activity.MovieFoldersActivity"
+            android:configChanges="orientation|screenSize"
+            android:exported="false"/>
+        <activity
+            android:name=".ui.activity.LocalPlayActivity"
+            android:supportsPictureInPicture="true"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="false"
+            android:screenOrientation="landscape" />
+        <activity
+            android:name=".ui.activity.MainActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden|uiMode"
+            android:exported="false"/>
+        <activity
+            android:name=".ui.activity.LiveActivity"
+            android:launchMode="singleTop"
+            android:configChanges="orientation|screenSize|keyboardHidden|uiMode|screenLayout"
+            android:exported="false"/>
+        <activity
+            android:name=".ui.activity.DetailActivity"
+            android:supportsPictureInPicture="true"
+            android:launchMode="singleTask"
+            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|uiMode"
+            android:exported="false"/>
+        <activity
+            android:name=".ui.activity.FastSearchActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="false"
+            />
+        <activity
+            android:name=".ui.activity.SettingActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="false"/>
+        <activity
+            android:name=".ui.activity.HistoryActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="false" />
+        <activity
+            android:name=".ui.activity.CollectActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="false"/>
+        <activity
+            android:name=".ui.activity.DownloadActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="false"/>
+        <activity
+            android:name=".ui.activity.LogActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="false"/>
+        <!-- 背景图设置(设置-主题颜色-设置背景图):选图/拖动缩放/遮罩透明度 -->
+        <activity
+            android:name=".ui.activity.BackgroundSettingActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="false"/>
+
+        <!-- DLNA 投屏服务已停用:依赖 com.github.devin1014.DLNA-Cast 从 JitPack 消失,待找到替代库后恢复 -->
+        <!-- <service android:name="com.android.cast.dlna.dmc.DLNACastService"/> -->
+
+        <!-- 广播接收器不对三方 App 开放(exported=false):CustomWebReceiver 无外部契约,
+             避免任意应用向本应用注入刷新指令 -->
+        <receiver
+            android:name=".receiver.CustomWebReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.content.movie.custom.web.Action" />
+            </intent-filter>
+        </receiver>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+        <service
+            android:name=".service.PlayService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
+        <!-- autosize设计尺寸 -->
+        <meta-data
+            android:name="design_width_in_dp"
+            android:value="360" />
+        <meta-data
+            android:name="design_height_in_dp"
+            android:value="820" />
+ <!-- immersionbar沉浸状态兰适配华为（huawei）刘海屏 -->
+        <meta-data
+            android:name="android.notch_support"
+            android:value="true" /> <!-- immersionbar沉浸状态兰适配小米（xiaomi）刘海屏 -->
+        <meta-data
+            android:name="notch.config"
+            android:value="portrait|landscape" />
+    </application>
+
+</manifest>

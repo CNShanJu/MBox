@@ -1,0 +1,44 @@
+plugins {
+    id 'com.android.library'
+}
+
+android {
+    namespace 'com.github.tvbox.osc.spider'
+    compileSdk 34
+
+    defaultConfig {
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}
+
+dependencies {
+    implementation fileTree(dir: "libs", include: ['*.jar'])
+    implementation project(':common')
+    implementation project(':core-network')
+    implementation project(':core-storage') // 配置键常量/SystemConfig(ApiConfig/FileUtils 读取)
+    implementation project(':log')
+    implementation project(':thirdparty') // QuickJS(原 :quickjs)/TabLayout/CustomActivityOnCrash 归堆
+    implementation 'androidx.annotation:annotation:1.3.0'
+    implementation 'org.jsoup:jsoup:1.14.1'
+    implementation 'com.google.code.gson:gson:2.10.1'
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    implementation 'com.squareup.okhttp3:okhttp-dnsoverhttps:4.12.0' // Spider.safeDns
+    implementation 'net.sourceforge.streamsupport:android-retrofuture:1.7.4' // util.js 的 java9.util.concurrent
+    implementation('com.thoughtworks.xstream:xstream:1.4.20') { // MovieSort 注解
+        exclude group: 'xmlpull', module: 'xmlpull'
+    }
+}

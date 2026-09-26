@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 下载条目左滑操作区-删除:舒适红(swipe_red),右侧圆角(条目最右边缘) -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/swipe_red" />
+    <corners
+        android:topRightRadius="@dimen/radius_background"
+        android:bottomRightRadius="@dimen/radius_background" />
+</shape>

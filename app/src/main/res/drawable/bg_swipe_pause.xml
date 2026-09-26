@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 下载条目左滑操作区-暂停:主题蓝(download_active),直角(左侧贴卡片,右侧贴删除) -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/download_active" />
+</shape>

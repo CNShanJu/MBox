@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 搜索结果-宫格卡片:图片宽=卡片宽(上限 190dp),高 3:4;海报卡评分左上角标、底部渐变黑底叠集数;文字在图片下方 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingHorizontal="3dp"
+    android:paddingBottom="6dp"
+    android:layout_marginBottom="14dp">
+
+    <!-- 收藏/历史同款海报卡:评分左上角标+底部渐变黑底叠集数;宽:高 = 3:4,宽度=卡片列宽 -->
+    <com.github.tvbox.osc.ui.kit.RatioShadowLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        app:clickable="false"
+        app:hl_cornerRadius="@dimen/radius_card"
+        app:hl_layoutBackground="@android:color/transparent">
+
+        <include layout="@layout/view_search_poster_card"/>
+    </com.github.tvbox.osc.ui.kit.RatioShadowLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingTop="6dp"
+        android:paddingStart="2dp"
+        android:paddingEnd="2dp">
+
+        <!-- 剧名 -->
+        <TextView
+            android:id="@+id/tvName"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            tools:text="《爱情公寓》第三季"
+            android:textColor="@color/text_foreground"
+            android:textSize="@dimen/search_card_title_size"
+            android:textStyle="bold"
+            android:ellipsize="end"
+            android:singleLine="true"/>
+
+        <!-- 类型 空格 地区 空格 语言 -->
+        <TextView
+            android:id="@+id/tvMeta"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            tools:text="电视剧 内地 普通话"
+            android:layout_marginTop="4dp"
+            android:textColor="@color/text_sub_foreground"
+            android:textSize="@dimen/search_card_text_size"
+            android:ellipsize="end"
+            android:singleLine="true"/>
+
+        <!-- 导演 时间(直接显示导演名,空格加年份;有才显示) -->
+        <TextView
+            android:id="@+id/tvDirector"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            tools:text="韦正 2012"
+            android:layout_marginTop="3dp"
+            android:textColor="@color/text_sub_foreground"
+            android:textSize="@dimen/search_card_text_size"
+            android:ellipsize="end"
+            android:singleLine="true"/>
+
+        <!-- 演员:xxx -->
+        <TextView
+            android:id="@+id/tvActor"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            tools:text="演员：娄艺潇 孙艺洲 邓家佳 王传君"
+            android:layout_marginTop="3dp"
+            android:textColor="@color/text_sub_foreground"
+            android:textSize="@dimen/search_card_text_size"
+            android:ellipsize="end"
+            android:maxLines="1"/>
+
+        <!-- 来源 -->
+        <LinearLayout
+            android:id="@+id/llSite"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:id="@+id/tvSite"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                tools:text="爱奇艺播放"
+                android:textColor="@color/text_accent"
+                android:textSize="@dimen/search_card_text_size"
+                android:ellipsize="end"
+                android:singleLine="true"/>
+        </LinearLayout>
+    </LinearLayout>
+
+</LinearLayout>

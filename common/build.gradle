@@ -1,0 +1,42 @@
+plugins {
+    id 'com.android.library'
+}
+
+// :common —— 全局共用:算法工具 + 跨模块共享模型 + 系统状态
+//   com.github.tvbox.osc.util.{AES,MD5,AdBlocker}  纯算法工具(原 :core-utils)
+//   com.github.tvbox.osc.bean.*                    共享 DTO(原 :core-model,仍是纯 Java,不引 Android API)
+//   com.github.tvbox.osc.state.*                   电量/网络等系统状态(原 :state)
+// 合并时**包名保持不变** → 源码零改动;只收模块数,不改调用面。
+// 禁止本模块反向依赖业务/UI(checkModuleDependencies 门禁)。
+android {
+    namespace 'com.github.tvbox.osc.common'
+    compileSdk 34
+
+    defaultConfig {
+        minSdk 24
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}
+
+dependencies {
+    // 原 :core-model —— Movie/MovieSort/AbsXml 等用 XStream 注解,AbsSortJson 等用 Gson(版本与全仓一致)
+    implementation('com.thoughtworks.xstream:xstream:1.4.20') {
+        exclude group: 'xmlpull', module: 'xmlpull'
+    }
+    implementation 'com.google.code.gson:gson:2.10.1'
+    // 原 :state —— 系统状态监听里写业务日志
+    implementation project(':log')
+}

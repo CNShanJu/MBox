@@ -1,0 +1,199 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/bg"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical">
+
+    <!-- 顶部手势条(拖动/点击热区) -->
+    <LinearLayout
+        android:id="@+id/v_drag_zone"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_horizontal"
+        android:paddingTop="10dp"
+        android:paddingBottom="6dp">
+
+        <com.lihang.ShadowLayout
+            android:id="@+id/v_gesture_line"
+            android:layout_width="30dp"
+            android:layout_height="2dp"
+            xmlns:app="http://schemas.android.com/apk/res-auto"
+            app:hl_cornerRadius="@dimen/radius_card"
+            app:hl_layoutBackground="@color/gray_darker" />
+    </LinearLayout>
+
+    <!-- 固定头部:海报 + 名称/年份/地区/类型/演员/导演 + 链接(不随内容滚动) -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:paddingHorizontal="20dp"
+        android:paddingTop="4dp">
+
+        <com.lihang.ShadowLayout
+            android:id="@+id/ll_thum"
+            android:layout_width="100dp"
+            android:layout_height="140dp"
+            xmlns:app="http://schemas.android.com/apk/res-auto"
+            app:hl_cornerRadius="@dimen/common_corners">
+
+            <!-- 占位走 ImageView 背景层(全 App 统一做法):不放 src,免得 src 盖住
+                 "图片加载失败"占位层;真实图由 PicassoLoad 加载后盖在背景之上 -->
+            <ImageView
+                android:id="@+id/iv_thum"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="@drawable/placeholder_poster"
+                android:scaleType="centerCrop" />
+        </com.lihang.ShadowLayout>
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="16dp"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/tvName"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:maxLines="2"
+                android:ellipsize="end"
+                android:textColor="@color/text_foreground"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                tools:text="鬼灭之刃" />
+
+            <TextView
+                android:id="@+id/tvYear"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingTop="4dp"
+                tools:text="年份: 2019" />
+
+            <TextView
+                android:id="@+id/tvArea"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                tools:text="地区: 中国" />
+
+            <TextView
+                android:id="@+id/tvType"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:maxLines="2"
+                android:ellipsize="end"
+                tools:text="类型: 动画" />
+
+            <TextView
+                android:id="@+id/tvActor"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:maxLines="2"
+                android:ellipsize="end"
+                tools:text="主演: xxx" />
+
+            <TextView
+                android:id="@+id/tvDirector"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:maxLines="2"
+                android:ellipsize="end"
+                tools:text="导演: xxx" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- 链接行(固定,可复制);链接为空时整行隐藏(见 VideoDetailDialog) -->
+    <LinearLayout
+        android:id="@+id/ll_link"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="20dp"
+        android:paddingTop="8dp">
+
+        <TextView
+            android:id="@+id/tv_link_tip"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="链接：" />
+
+        <TextView
+            android:id="@+id/url"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:ellipsize="middle"
+            android:singleLine="true"
+            tools:text="http://" />
+
+        <TextView
+            android:id="@+id/tv_link_copy"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingLeft="10dp"
+            android:text="复制"
+            android:textStyle="bold"
+            android:textColor="@color/text_accent" />
+    </LinearLayout>
+
+    <!-- 简介标签:固定一行,不随简介内容滚动 -->
+    <TextView
+        android:id="@+id/tv_des_label"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingHorizontal="20dp"
+        android:paddingTop="6dp"
+        android:text="简介："
+        android:textColor="@color/text_foreground"
+        android:textSize="14sp"
+        android:textStyle="bold" />
+
+    <!-- 简介区:文本按状态显示(收起≤5行+行末“… 展开” / 展开全文);
+         仅展开的长文才允许在区内滚动 -->
+    <ScrollView
+        android:id="@+id/sheet_scroll"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:overScrollMode="never"
+        android:scrollbars="none"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp"
+        android:clipToPadding="false"
+        >
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingHorizontal="20dp"
+            android:paddingBottom="18dp">
+
+            <TextView
+                android:id="@+id/tv_des"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:lineSpacingExtra="4dp"
+                android:textColor="@color/text_foreground"
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/tv_fold"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:clickable="true"
+                android:focusable="true"
+                android:paddingTop="6dp"
+                android:textColor="@color/text_accent"
+                android:textStyle="bold"
+                android:textSize="13sp"
+                android:visibility="gone"
+                tools:ignore="MissingConstraints" />
+        </LinearLayout>
+    </ScrollView>
+</LinearLayout>

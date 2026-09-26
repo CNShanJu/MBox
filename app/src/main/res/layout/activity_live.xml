@@ -1,0 +1,222 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout
+	xmlns:tools="http://schemas.android.com/tools"
+	android:id="@+id/live_root"
+	xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+	android:orientation="vertical">
+
+    <RelativeLayout
+		android:layout_width="match_parent"
+		android:layout_height="240dp">
+
+		<xyz.doikki.videoplayer.player.VideoView
+			android:id="@+id/mVideoView"
+			android:layout_width="match_parent"
+			android:layout_height="300dp" />
+
+
+	</RelativeLayout>
+
+	<!--频道序号显示-->
+	<RelativeLayout
+		android:gravity="center_vertical"
+		android:id="@+id/ll_epg"
+		android:layout_width="match_parent"
+		android:layout_height="100dp"
+		android:background="@drawable/bg_large_round_float"
+		android:layout_margin="10dp">
+
+		<LinearLayout
+			android:id="@+id/channelinfo"
+			android:layout_width="140dp"
+			android:layout_height="match_parent"
+			android:layout_marginStart="@dimen/dp_5"
+			android:layout_marginLeft="@dimen/dp_5"
+			android:layout_marginEnd="@dimen/dp_5"
+			android:layout_marginRight="@dimen/dp_5"
+			android:gravity="center"
+			android:orientation="vertical">
+			<com.github.tvbox.osc.ui.tv.widget.MarqueeTextView
+				android:id="@+id/tv_channel_bar_name"
+				android:layout_width="wrap_content"
+				android:layout_height="wrap_content"
+				android:ellipsize="marquee"
+				android:gravity="center"
+				android:paddingTop="0dp"
+				android:singleLine="true"
+				android:text="中央 HD"
+				android:textStyle="bold"
+				android:textSize="16sp" />
+
+			<TextView
+				android:id="@+id/tv_channel_bottom_number"
+				android:layout_width="wrap_content"
+				android:layout_height="wrap_content"
+				android:layout_gravity="center"
+				android:ellipsize="marquee"
+				android:gravity="center"
+				android:marqueeRepeatLimit="marquee_forever"
+				android:singleLine="true"
+				tools:text="10"
+				android:visibility="gone"
+				tools:visibility="visible"
+				android:textSize="16sp"
+				android:textStyle="bold"
+				android:layout_marginTop="6dp"/>
+
+		</LinearLayout>
+
+		<LinearLayout
+			android:layout_width="wrap_content"
+			android:layout_height="wrap_content"
+			android:layout_marginRight="20dp"
+			android:layout_marginBottom="10dp"
+			android:layout_alignParentRight="true"
+			android:gravity="center"
+			android:layout_alignParentBottom="true">
+
+			<ImageView
+				android:id="@+id/ic_pre_source"
+				android:layout_width="30dp"
+				android:layout_height="30dp"
+				android:src="@drawable/ic_pre"
+				app:tint="@color/text_foreground"
+				android:rotation="-180"
+				android:padding="4dp"
+				/>
+			<TextView
+				android:id="@+id/tv_source"
+				android:layout_width="wrap_content"
+				android:layout_height="wrap_content"
+				android:text="线路 1/1"
+				android:layout_marginHorizontal="14dp"
+				android:textSize="16sp"
+				android:textColor="@color/text_foreground"
+				/>
+			<ImageView
+				android:id="@+id/ic_next_source"
+				android:layout_width="30dp"
+				android:layout_height="30dp"
+				android:src="@drawable/ic_pre"
+				app:tint="@color/text_foreground"
+				android:padding="4dp"
+				/>
+		</LinearLayout>
+
+		<ImageView
+			android:id="@+id/ic_refresh"
+			android:layout_width="34dp"
+			android:layout_height="34dp"
+			android:src="@drawable/dkplayer_ic_action_replay"
+			app:tint="@color/text_foreground"
+			android:padding="4dp"
+			android:layout_marginTop="10dp"
+			android:layout_toLeftOf="@+id/ic_cast"
+			android:layout_marginRight="10dp"
+			/>
+		<ImageView
+			android:id="@+id/ic_cast"
+			android:layout_width="34dp"
+			android:layout_height="34dp"
+			android:src="@drawable/ic_cast"
+			app:tint="@color/text_foreground"
+			android:padding="4dp"
+			android:layout_marginTop="10dp"
+			android:layout_toLeftOf="@+id/ic_setting"
+			android:layout_marginRight="10dp"
+			/>
+		<ImageView
+			android:id="@+id/ic_setting"
+			android:layout_width="34dp"
+			android:layout_height="34dp"
+			android:src="@drawable/ic_setting"
+			app:tint="@color/text_foreground"
+			android:padding="4dp"
+			android:layout_alignParentEnd="true"
+			android:layout_marginRight="30dp"
+			android:layout_marginTop="10dp"
+			/>
+
+	</RelativeLayout>
+
+	<LinearLayout
+		android:id="@+id/tvLeftChannnelListLayout"
+		android:layout_width="match_parent"
+		android:layout_height="0dp"
+		android:layout_weight="1"
+		android:layout_gravity="center_horizontal"
+		android:layout_margin="0dp"
+		android:baselineAligned="false"
+		android:orientation="horizontal">
+
+		<LinearLayout
+			android:id="@+id/ll_typeSelect"
+			android:layout_width="match_parent"
+			android:layout_height="match_parent"
+			android:baselineAligned="false"
+			android:padding="0dp"
+			android:background="@drawable/bg_large_round_float"
+			android:clipToOutline="true"
+			android:layout_marginHorizontal="10dp"
+			android:layout_marginBottom="10dp">
+
+			<!-- 分组列 / 频道列:两张列表都是"圆角卡片内部滚动",按全站卡片约定
+			     内边距 + clipToPadding=true(与订阅管理、「我的」页卡片一致):
+			     首末条目离卡片上下边各留 10dp,滚动过程中内容也不越过内边距去贴卡片边缘/圆角。
+
+			     ★ 宽度分工(别再让两列平分卡片;分组名短、频道名长,平分等于把分组列的空白
+			       全从频道名身上扣):
+			       - 分组列固定 @dimen/dp_120(分组名多为 2~4 字,足够;超长仍走 marquee);
+			       - 频道列 0dp + weight=1 吃掉剩余全部宽度 —— 频道名(尤其"电台"分组)才有地方放;
+			       两列各自 10dp 内边距已构成视觉间距,故外层不再加 40/30/40dp 外边距(纯空白)。 -->
+			<androidx.recyclerview.widget.RecyclerView
+				android:id="@+id/mGroupGridView"
+				android:layout_width="@dimen/dp_120"
+				android:layout_height="wrap_content"
+				android:fadeScrollbars="false"
+				android:listSelector="@drawable/item_bg_selector_left"
+				android:paddingHorizontal="10dp"
+				android:paddingVertical="10dp"
+				android:scrollbars="none"
+				android:layout_gravity="center"
+				tools:listitem="@layout/item_live_channel_group_new"
+				android:clipToPadding="true" />
+
+			<androidx.recyclerview.widget.RecyclerView
+				android:id="@+id/mChannelGridView"
+				android:layout_width="0dp"
+				android:layout_weight="1"
+				android:layout_height="match_parent"
+				android:fadeScrollbars="false"
+				android:focusable="true"
+				android:listSelector="@drawable/item_bg_selector_right"
+				android:scrollbars="none"
+				tools:listitem="@layout/item_live_channel_new"
+
+				android:paddingHorizontal="10dp"
+				android:paddingVertical="10dp"
+				android:clipToPadding="true"
+				/>
+		</LinearLayout>
+	</LinearLayout>
+<!--添加EPG显示，更改样式 by 龍-->
+
+    <TextView
+        android:id="@+id/tvChannel"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="right"
+        android:layout_marginTop="30dp"
+        android:layout_marginRight="60dp"
+        android:background="@drawable/shape_live_channel_num"
+        android:gravity="center"
+        android:paddingTop="5dp"
+        android:paddingBottom="5dp"
+        android:textSize="36dp"
+        android:textStyle="bold"
+        android:visibility="gone" />
+
+</LinearLayout>

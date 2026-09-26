@@ -1,0 +1,490 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+// ------------------------------------------------------------------
+// 发布配置:版本号/应用名/图标统一由 app_config.properties 维护,
+// 修改该文件后重新构建即可,无需改动 build.gradle 与资源。
+// ------------------------------------------------------------------
+def appConfig = new Properties()
+def appConfigFile = file('app_config.properties')
+if (appConfigFile.exists()) {
+    appConfigFile.withInputStream { ins ->
+        // 跳过 UTF-8 BOM(记事本等工具保存 UTF-8 时可能带 BOM),避免污染第一个键
+        ins.mark(3)
+        if (ins.read() != 0xEF || ins.read() != 0xBB || ins.read() != 0xBF) {
+            ins.reset()
+        }
+        appConfig.load(new InputStreamReader(ins, 'UTF-8'))
+    }
+}
+def cfgVersionCode = (appConfig.getProperty('versionCode', '41') ?: '41').toInteger()
+def cfgVersionName = appConfig.getProperty('versionName', '2.2.0') ?: '2.2.0'
+def cfgAppName = appConfig.getProperty('appName', 'MBox') ?: 'MBox'
+def cfgAppIcon = appConfig.getProperty('appIcon', '@drawable/app_icon') ?: '@drawable/app_icon'
+
+/** debug 包用小一档的版本号(末段 -1,如 3.4.6 → 3.4.5),使 debug 内"检查更新"能检测到当前 release 并触发下载自测 */
+def debugVersionName(String releaseName) {
+    def parts = (releaseName ?: '').trim().split(/\./)
+    if (parts.length < 3) return releaseName
+    def last = parts[parts.length - 1].isInteger() ? parts[parts.length - 1].toInteger() : -1
+    if (last > 1) {
+        parts[parts.length - 1] = String.valueOf(last - 1)
+    }
+    return parts.join('.')
+}
+
+
+// ------------------------------------------------------------------
+// 主题与公共资源自持(3.7② 建 :ui-common 模块,后已整体并入 :app):
+// 主题资源(theme_colors/theme_radii/样式/公共 drawable)与页面级资源现在同在 app 的 res,
+// 主题 JSON 统一维护于 app/src/main/assets/theme/。
+// ------------------------------------------------------------------
+android {
+    namespace 'com.github.tvbox.osc'
+    compileSdk 34
+
+    defaultConfig {
+        // 专属包名:与 TVBox 系开源应用通用的 com.github.tvbox.osc 区分开,
+        // 保证本包可与已安装的其他开源 TVBox 应用共存安装、互不冲突。
+        // (namespace 保持不变,代码包/资源引用均不受影响)
+        applicationId 'com.github.tvbox.osc.mbox'
+        minSdk 24
+        targetSdk 34
+        versionCode cfgVersionCode
+        versionName cfgVersionName
+        // 应用名与图标来自 app_config.properties(集中配置)
+        resValue "string", "app_name", cfgAppName
+        manifestPlaceholders = [appIcon: cfgAppIcon]
+        multiDexEnabled true
+        // 仅保留中文本地化,减小 APK 体积(未翻译文案自动回退到默认 values/)
+        resConfigs 'zh-rCN', 'zh'
+
+        ndk {
+            //abiFilters "armeabi-v7a"//, ""
+            abiFilters "arm64-v8a"
+        }
+
+    }
+
+    // 执行配置
+    applicationVariants.all { variant ->
+
+        // Apk 输出配置
+        variant.outputs.all { output ->
+            // debug 包版本号小一档(如 3.4.5):便于从 debug 包触发对 release(3.4.6)的"检查更新→下载"自测
+            String vn = cfgVersionName
+            if (variant.buildType.name == buildTypes.debug.getName()) {
+                vn = debugVersionName(cfgVersionName)
+                output.versionNameOverride = vn
+            }
+            outputFileName = cfgAppName + '_v' + vn + '_' + variant.buildType.name
+            if (variant.buildType.name == buildTypes.release.getName()) {
+                outputFileName += '_' + new Date().format("yyyyMMdd")
+            }
+            outputFileName += '.apk'
+        }
+    }
+
+    packaging {
+        resources {
+            excludes += ['META-INF/DEPENDENCIES', 'META-INF/beans.xml']
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 签名:密钥一律不入库(见 .gitignore:*.jks / keystore.properties 已忽略)。
+    // 本项目正式密钥:仓库根目录 mbox-release.jks(2025 年生成,全新建库,
+    //   不再使用 TVBox 开源圈流传/曾泄露的 TVBoxOSC.jks),
+    //   本地读取 app/keystore.properties(不入库,storeFile=../mbox-release.jks)。
+    // 读取顺序:环境变量 > keystore.properties(不入库) > 默认占位。
+    // 任一密钥缺失时自动退回 debug 签名,保证本地/CI 都能出包;
+    // 正式发布请在 CI 通过 secret 注入(GitHub Secrets: KEYSTORE_BASE64 /
+    //   KEYSTORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD,见 .github/workflows/build-apk.yml)。
+    // ------------------------------------------------------------------
+    def env = System.getenv()
+    // 变量刻意不与 signingConfig 属性(storeFile/storePassword/keyAlias/keyPassword)同名,
+    // 否则 Groovy DSL 下 `keyAlias keyAlias` 会把同名局部变量当方法调用而报错(曾踩坑)。
+    def ksFile = env['KEYSTORE_FILE'] ?: ''
+    def ksStorePassword = env['KEYSTORE_PASSWORD'] ?: ''
+    def ksKeyAlias = env['KEY_ALIAS'] ?: ''
+    def ksKeyPassword = env['KEY_PASSWORD'] ?: ''
+    def keystoreProps = file('keystore.properties')
+    if (keystoreProps.exists()) {
+        def props = new Properties()
+        keystoreProps.withInputStream { ins -> props.load(ins) }
+        if (ksFile.isEmpty()) ksFile = props.getProperty('storeFile', '')
+        if (ksStorePassword.isEmpty()) ksStorePassword = props.getProperty('storePassword', '')
+        if (ksKeyAlias.isEmpty()) ksKeyAlias = props.getProperty('keyAlias', '')
+        if (ksKeyPassword.isEmpty()) ksKeyPassword = props.getProperty('keyPassword', '')
+    }
+    def hasSigning = !ksFile.isEmpty() && !ksStorePassword.isEmpty()
+            && !ksKeyAlias.isEmpty() && !ksKeyPassword.isEmpty()
+    def signFile = hasSigning ? file(ksFile) : null
+    def canSign = hasSigning && signFile != null && signFile.exists()
+
+    if (!canSign && gradle.startParameter.taskNames.any { it.toLowerCase().contains('release') }) {
+        println "WARN: 未检测到正式签名密钥(环境变量或 app/keystore.properties 缺失)," +
+                "本次 release 将退回 debug 签名(仅测试用,勿对外分发)!"
+    }
+
+    signingConfigs {
+        config {
+            if (canSign) {
+                storeFile signFile
+                storePassword ksStorePassword
+                keyAlias ksKeyAlias
+                keyPassword ksKeyPassword
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig canSign ? signingConfigs.config : signingConfigs.debug
+            // 调试包使用独立包名,可与设备上已安装的同包名应用共存(避免签名不一致需卸载旧应用)
+            applicationIdSuffix ".debug"
+            // 调试包应用名带 " debug" 后缀:桌面图标与首页/我的页标题一眼可辨
+            // (resValue 优先级高于 res 文件,此处覆盖 defaultConfig 的 app_name)
+            resValue "string", "app_name", cfgAppName + " debug"
+        }
+
+        release {
+            signingConfig canSign ? signingConfigs.config : signingConfigs.debug
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = '1.8'
+    }
+
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+
+    buildFeatures {
+        viewBinding true
+    }
+}
+
+dependencies {
+    api fileTree(dir: "libs", include: ['*.jar', '*.aar'])
+
+    implementation 'com.google.android.material:material:1.9.0'
+
+    
+    implementation 'androidx.core:core-ktx:1.6.0'
+
+    implementation 'org.nanohttpd:nanohttpd:2.3.1'
+    implementation 'androidx.appcompat:appcompat:1.3.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.0.4'
+    implementation 'androidx.swiperefreshlayout:swiperefreshlayout:1.0.0'
+    implementation 'androidx.recyclerview:recyclerview:1.2.1'
+    implementation files('libs/thunder.jar')
+    implementation files('libs/commons-lang3-3.12.0.jar')
+
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    implementation 'com.squareup.okhttp3:logging-interceptor:4.12.0'
+    implementation 'com.squareup.okhttp3:okhttp-dnsoverhttps:4.12.0'
+    implementation 'androidx.multidex:multidex:2.0.1'
+    implementation 'com.github.CymChad:BaseRecyclerViewAdapterHelper:2.9.45-androidx'
+    implementation 'com.kingja.loadsir:loadsir:1.3.8'
+    implementation 'com.google.code.gson:gson:2.10.1'
+    implementation 'com.squareup.picasso:picasso:2.71828'
+    implementation 'com.github.JessYanCoding:AndroidAutoSize:v1.2.1'
+    implementation('com.thoughtworks.xstream:xstream:1.4.20') {
+        exclude group: 'xmlpull', module: 'xmlpull'
+    }
+
+    implementation project(":player")
+    implementation project(':common')
+    implementation project(":core-storage")
+    implementation project(":log")
+    implementation project(":core-network")
+    implementation project(":spider")
+    implementation project(":download")
+
+    // implementation 'com.tencent.bugly:crashreport_upgrade:latest.release'
+    implementation 'com.owen:tv-recyclerview:3.0.0'
+
+    implementation 'com.github.getActivity:XXPermissions:13.6'
+    implementation 'org.jsoup:jsoup:1.14.1'
+    implementation 'commons-io:commons-io:2.11.0'
+    implementation 'com.googlecode.juniversalchardet:juniversalchardet:1.0.3'
+
+    //沉浸式状态栏
+    implementation 'com.geyifeng.immersionbar:immersionbar:3.2.2'
+    //标题栏
+    implementation 'com.github.getActivity:TitleBar:10.5'
+    //弹窗
+    implementation 'com.github.li-xiaojun:XPopup:2.10.0'
+    //工具类
+    implementation 'com.blankj:utilcodex:1.31.0'
+    //阴影/shape/选择器/圆角/...
+    implementation 'com.github.lihangleo2:ShadowLayout:3.3.3'
+
+    //tab标题栏
+    implementation project(':thirdparty')
+    //TabLayout的非kt项目需要依赖这个包实现点击事件等
+    implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:$kotlin_version"
+    //展开收缩tv
+    implementation 'com.github.MZCretin:ExpandableTextView:v1.6.1-x'
+    //lottie动画(6.7.1:支持 v5.7 动画格式与 Gaussian Blur,修复 5.2.0 加载新动画的资源ID异常/GC风暴)
+    implementation 'com.airbnb.android:lottie:6.7.1'
+    //流式布局
+    implementation 'com.hyman:flowlayout-lib:1.1.2'
+    //毛玻璃底栏(BlurView: API31+ RenderEffect 硬件模糊 / 低版本 RenderScript 回退)
+    implementation 'com.eightbitlab:blurview:1.6.3'
+    //崩溃
+    //单元测试(JVM,纯逻辑)
+    testImplementation 'junit:junit:4.13.2'
+    //dlna投屏(已移除:com.github.devin1014.DLNA-Cast:dlna-dmc:V1.0.0 已从 JitPack 消失,功能暂用桩实现,见 _backup_dlna/)
+    // Lifecycles(显式依赖,替代已废弃合并包 lifecycle-extensions:ViewModel/LiveData/协程作用域)
+    implementation 'androidx.lifecycle:lifecycle-viewmodel:2.6.2'
+    implementation 'androidx.lifecycle:lifecycle-livedata:2.6.2'
+    implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.6.2'
+}
+
+// ------------------------------------------------------------------
+// 主题颜色生成(3.7② 主题自持,资源与任务现在都在 :app):两个主题各一个文件 ——
+//   assets/theme/theme_colors.json(亮色)→ res/values,theme_colors_night.json(暗色)→ res/values-night
+// 每个文件自包含、**每个概念一个键**(底色/各种面+各自的透明度/各级文字色/品牌色/按钮色板/开关/状态色),
+// 只有"和主色同值的别名"不写进文件,由下面的规则表派生(原文件里同一主题内浅色 #1F2937 重复 9 次、
+// #ECECF4 重复 5 次那类)。文件不存在时用内置默认值。
+// ------------------------------------------------------------------
+def themeColorsFile = file('src/main/assets/theme/theme_colors.json')
+def themeColorsNightFile = file('src/main/assets/theme/theme_colors_night.json')
+def themeRadiiFile = file('src/main/assets/theme/theme_radii.json')
+def themeColorsDir = file("${buildDir}/generated/theme_colors")
+
+def defaultRadii = [
+        radius_background: '25dp',
+        radius_dialog    : '18dp',
+        radius_card      : '12dp',
+        // 按钮圆角:radius_btn=常规按钮,radius_btn_large=大圆角按钮(chip/预设)
+        radius_btn       : '12dp',
+        radius_btn_large : '25dp'
+]
+
+// 主题文件缺失时的兜底(与仓库内文件同值)
+def defaultLightColors = [
+        bg_body: '#faf8ff',
+        bg_component: '#ECECF4', bg_component_alpha: 100,
+        bg_float: '#ECECF4', bg_float_alpha: 92,
+        text_main: '#050505', text_sub: '#787878', text_hint: '#611C1B1F',
+        text_disable: '#b3b3b3', text_highlight: '#1F2937', text_accent: '#1890FF',
+        brand: '#1F2937', brand_text: '#FFFFFF',
+        btn_confirm_bg: '#1F2937', btn_confirm_text: '#FFFFFF',
+        btn_cancel_bg: '#ECECF4', btn_cancel_text: '#1F2937',
+        switch_track_on: '#1890FF', switch_track_off: '#1F2937', switch_thumb: '#FFFFFF',
+        accent_on_dark: '#1890FF',
+        download_active: '#037AFF', download_done: '#08CA2C', swipe_red: '#E5484D'
+]
+def defaultNightColors = [
+        bg_body: '#141218',
+        bg_component: '#211D28', bg_component_alpha: 100,
+        bg_float: '#211D28', bg_float_alpha: 92,
+        text_main: '#FFFFFF', text_sub: '#AFAFAF', text_hint: '#99E6E1E5',
+        text_disable: '#b3b3b3', text_highlight: '#E5E7EB', text_accent: '#1890FF',
+        brand: '#E5E7EB', brand_text: '#141218',
+        btn_confirm_bg: '#00000000', btn_confirm_text: '#E5E7EB',
+        btn_cancel_bg: '#00000000', btn_cancel_text: '#7A7A7A',
+        switch_track_on: '#1890FF', switch_track_off: '#3C3C46', switch_thumb: '#FFFFFF',
+        accent_on_dark: '#1890FF',
+        download_active: '#037AFF', download_done: '#08CA2C', swipe_red: '#E5484D'
+]
+
+// ---- 读取主题文件 ----
+// 颜色键:只认默认表里的键(类型按默认值);desc:每个键一句说明(可选,写进生成的 XML 注释,
+// 将来做"用户自定义主题"界面时就是每个色块下面的说明文字)。手改文件写错键名/漏写说明都会 WARN。
+static def readTheme(def file, def defaults) {
+    def colors = new LinkedHashMap(defaults)
+    def desc = [:]
+    if (!file.exists()) return [colors: colors, desc: desc]
+    try {
+        // 必须显式按 UTF-8 读:主题文件里有中文说明(desc),走平台默认编码(Windows 下可能是 GBK)会读成乱码
+        def json = new groovy.json.JsonSlurper().parseText(file.getText('UTF-8'))
+        colors.each { k, v ->
+            def uv = json[k]
+            if (v instanceof Number) {
+                if (uv instanceof Number) colors[k] = ((Number) uv).intValue()
+            } else if (uv instanceof String && uv.startsWith('#')) {
+                colors[k] = uv
+            }
+        }
+        // 非颜色键(type=主题元信息、desc=说明)不参与派生,也不该被"不认识的键"告警误伤
+        def unknown = json.keySet().findAll { it != 'type' && it != 'desc' && !defaults.containsKey(it) }
+        if (unknown) println "WARN: ${file.name} 里有不认识的键(已忽略): ${unknown.join(', ')}"
+        def d = json['desc']
+        if (d instanceof Map) d.each { k, v -> if (v instanceof String) desc[k] = v }
+        def staleDesc = desc.keySet().findAll { !defaults.containsKey(it) }
+        if (staleDesc) println "WARN: ${file.name} 的 desc 里有不存在的键: ${staleDesc.join(', ')}"
+        def noDesc = defaults.keySet().findAll { !desc.containsKey(it) }
+        if (noDesc) println "WARN: ${file.name} 的 desc 缺少这些键的说明: ${noDesc.join(', ')}"
+    } catch (Throwable th) {
+        println "WARN: ${file.name} 解析失败,使用内置默认颜色: ${th.message}"
+    }
+    return [colors: colors, desc: desc]
+}
+
+/** '#RRGGBB' / '#AARRGGBB' -> 0xAARRGGBB;非法值回退 fallback(入参用 def:Groovy 把 8 位十六进制字面量当 Long) */
+static int parseColor(def value, def fallback) {
+    int fb = ((Number) fallback).intValue()
+    if (!(value instanceof String)) return fb
+    String hex = ((String) value).trim().replace('#', '')
+    try {
+        if (hex.length() == 6) return (int) (0xFF000000L | Long.parseLong(hex, 16))
+        if (hex.length() == 8) return (int) Long.parseLong(hex, 16)
+    } catch (Throwable ignored) {
+    }
+    return fb
+}
+
+/** 写出 '#RRGGBB'(不透明)或 '#AARRGGBB'(带透明度) */
+static String toHex(def argbRaw) {
+    int argb = ((Number) argbRaw).intValue()
+    return ((argb >>> 24) & 0xFF) == 0xFF
+            ? String.format('#%06X', argb & 0xFFFFFF)
+            : String.format('#%08X', argb)
+}
+
+/** 透明度百分比(0-100)-> 0..1;入参用 def 再归一化(Groovy 数字字面量可能是 Long/BigDecimal,写死形参会签名不匹配) */
+static float percent(def value, def fallback) {
+    int p = (value instanceof Number) ? ((Number) value).intValue() : ((Number) fallback).intValue()
+    return Math.max(0, Math.min(100, p)) / 100f
+}
+
+static int withAlpha(def colorRaw, def alphaRaw) {
+    int color = ((Number) colorRaw).intValue()
+    int a = Math.round(Math.max(0f, Math.min(1f, ((Number) alphaRaw).floatValue())) * 255f)
+    return (a << 24) | (color & 0xFFFFFF)
+}
+
+// ---- 派生规则表 ----
+// 面的合并:主题文件里只有两个面 —— bg_component(组件/卡片)与 bg_float(悬浮面);
+//   bg_popup(弹窗/抽屉)、bg_float(底栏·标题栏·搜索框)、bg_float_fab(悬浮圆钮)是**同一个悬浮面**,
+//   本来就必须同色同透明度(否则同屏能看出深浅不一),所以共用 bg_float + bg_float_alpha。
+// 同值别名(不占配置):
+//   color_highlight / select_fill / btn_plain_text / btn_select_bg = brand
+//     (全局高亮填充=chip/进度条/悬浮圈、勾选框填充、无背景按钮文字、选中按钮填充 —— 设计上就与主色同色)
+//   btn_select_text = brand_text(选中填充上的文字)
+//   btn_stroke      = brand @40%(无填充按钮的描边)
+static def derivePalette(def c) {
+    int brand = parseColor(c.brand, 0xFF1F2937)
+    int brandText = parseColor(c.brand_text, 0xFFFFFFFF)
+    int component = withAlpha(parseColor(c.bg_component, 0xFFECECF4), percent(c.bg_component_alpha, 100))
+    int floatBg = withAlpha(parseColor(c.bg_float, 0xFFECECF4), percent(c.bg_float_alpha, 92))
+
+    return [
+            bg_body          : toHex(parseColor(c.bg_body, 0xFFFAF8FF)),
+            bg_component     : toHex(component),
+            bg_popup         : toHex(floatBg),
+            bg_float         : toHex(floatBg),
+            bg_float_fab     : toHex(floatBg),
+            text_main        : toHex(parseColor(c.text_main, 0xFF050505)),
+            text_sub         : toHex(parseColor(c.text_sub, 0xFF787878)),
+            text_hint        : toHex(parseColor(c.text_hint, 0xFF611C1B1F)),
+            text_disable     : toHex(parseColor(c.text_disable, 0xFFB3B3B3)),
+            text_highlight   : toHex(parseColor(c.text_highlight, brand)),
+            text_accent      : toHex(parseColor(c.text_accent, 0xFF1890FF)),
+            color_highlight  : toHex(brand),
+            select_fill      : toHex(brand),
+            btn_confirm_bg   : toHex(parseColor(c.btn_confirm_bg, brand)),
+            btn_confirm_text : toHex(parseColor(c.btn_confirm_text, brandText)),
+            btn_cancel_bg    : toHex(parseColor(c.btn_cancel_bg, 0x00000000)),
+            btn_cancel_text  : toHex(parseColor(c.btn_cancel_text, brand)),
+            btn_plain_text   : toHex(brand),
+            btn_select_bg    : toHex(brand),
+            btn_select_text  : toHex(brandText),
+            btn_stroke       : toHex(withAlpha(brand, 0.4f)),
+            switch_track_on  : toHex(parseColor(c.switch_track_on, 0xFF1890FF)),
+            switch_track_off : toHex(parseColor(c.switch_track_off, brand)),
+            switch_thumb     : toHex(parseColor(c.switch_thumb, 0xFFFFFFFF)),
+            accent_on_dark   : toHex(parseColor(c.accent_on_dark, 0xFF1890FF)),
+            download_active  : toHex(parseColor(c.download_active, 0xFF037AFF)),
+            download_done    : toHex(parseColor(c.download_done, 0xFF08CA2C)),
+            swipe_red        : toHex(parseColor(c.swipe_red, 0xFFE5484D))
+    ]
+}
+
+static def readRadii(def file, def defaults) {
+    def radii = new LinkedHashMap(defaults)
+    if (file.exists()) {
+        try {
+            def json = new groovy.json.JsonSlurper().parseText(file.getText('UTF-8'))
+            radii.each { k, v ->
+                def uv = json[k]
+                if (uv instanceof String && (uv.endsWith('dp') || uv.endsWith('dip') || uv.endsWith('px'))) {
+                    radii[k] = uv
+                }
+            }
+        } catch (Throwable th) {
+            println "WARN: ${file.name} 解析失败,使用默认圆角: ${th.message}"
+        }
+    }
+    return radii
+}
+
+/** 写出颜色资源;desc 命中时在行尾带一条说明注释(方便直接看生成的 theme_colors.xml 知道每行是啥) */
+static def writeColorsXml(def dir, def name, def colors, def desc) {
+    def valuesDir = new File(dir, name)
+    valuesDir.mkdirs()
+    def f = new File(valuesDir, 'theme_colors.xml')
+    def sb = new StringBuilder('<?xml version="1.0" encoding="utf-8"?>\n<resources>\n')
+    colors.each { k, v ->
+        def note = (desc && desc[k]) ? "  <!-- ${desc[k]} -->" : ''
+        sb.append("    <color name=\"${k}\">${v}</color>${note}\n")
+    }
+    sb.append('</resources>\n')
+    f.setText(sb.toString(), 'UTF-8')   // 注释里有中文,必须显式 UTF-8 落盘(别用平台默认编码)
+}
+
+static def writeRadiiXml(def dir, def name, def radii) {
+    def valuesDir = new File(dir, name)
+    valuesDir.mkdirs()
+    def f = new File(valuesDir, 'theme_radii.xml')
+    def sb = new StringBuilder('<?xml version="1.0" encoding="utf-8"?>\n<resources>\n')
+    radii.each { k, v -> sb.append("    <dimen name=\"${k}\">${v}</dimen>\n") }
+    sb.append('</resources>\n')
+    f.setText(sb.toString(), 'UTF-8')
+}
+
+task generateThemeColors {
+    inputs.file(themeColorsFile).optional()
+    inputs.file(themeColorsNightFile).optional()
+    inputs.file(themeRadiiFile).optional()
+    outputs.dir(themeColorsDir)
+    // 派生项的内置说明(主题文件的 desc 里没有这些键,因为它们不占配置):写进生成 XML 的注释里
+    def derivedNotes = [
+            bg_popup       : '同 bg_float(弹窗/抽屉就是悬浮面)',
+            bg_float_fab   : '同 bg_float(悬浮圆钮就是悬浮面)',
+            color_highlight: '派生自 brand(全局高亮填充)',
+            select_fill    : '派生自 brand(勾选框填充)',
+            btn_plain_text : '派生自 brand(无背景按钮文字)',
+            btn_select_bg  : '派生自 brand(选中按钮/chip 填充)',
+            btn_select_text: '派生自 brand_text(选中填充上的文字)',
+            btn_stroke     : '派生自 brand @40%(无填充按钮的描边)'
+    ]
+    doLast {
+        def light = readTheme(themeColorsFile, defaultLightColors)
+        def night = readTheme(themeColorsNightFile, defaultNightColors)
+        // 两套主题的键、说明都应当一致(同一批概念):不一致 = 改了一边忘了另一边
+        def descDiff = (light.desc.keySet() + night.desc.keySet()).unique().findAll { light.desc[it] != night.desc[it] }
+        if (descDiff) println "WARN: 两个主题文件的 desc 不一致(同一个键应同一说明): ${descDiff.join(', ')}"
+        def lightNotes = new LinkedHashMap(derivedNotes); lightNotes.putAll(light.desc)
+        def nightNotes = new LinkedHashMap(derivedNotes); nightNotes.putAll(night.desc)
+        writeColorsXml(themeColorsDir, 'values', derivePalette(light.colors), lightNotes)
+        writeColorsXml(themeColorsDir, 'values-night', derivePalette(night.colors), nightNotes)
+        writeRadiiXml(themeColorsDir, 'values', readRadii(themeRadiiFile, defaultRadii))
+    }
+}
+preBuild.dependsOn generateThemeColors
+android.sourceSets.main.res.srcDirs += themeColorsDir

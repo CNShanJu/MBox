@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 下载中条目:窄屏下右侧"暂停/继续/重试"改为左滑滑出(整条高度,舒适红);宽屏仍显示常驻按钮 -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginBottom="10dp">
+
+    <!-- 背后操作区:左滑露出(窄屏模式,整条高度,位于右侧;暂停+删除两个按钮) -->
+    <LinearLayout
+        android:id="@+id/swipe_behind"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:gravity="end"
+        android:orientation="horizontal"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/btn_swipe_pause"
+            android:layout_width="64dp"
+            android:layout_height="match_parent"
+            android:background="@drawable/bg_swipe_pause"
+            android:gravity="center"
+            android:text="暂停"
+            android:textColor="@color/white"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/btn_swipe_delete"
+            android:layout_width="64dp"
+            android:layout_height="match_parent"
+            android:background="@drawable/bg_swipe_delete"
+            android:gravity="center"
+            android:text="删除"
+            android:textColor="@color/white"
+            android:textSize="14sp" />
+    </LinearLayout>
+
+    <!-- 前面内容卡片(左滑时整体左移露出右侧操作区;右侧直角防圆角透色) -->
+    <LinearLayout
+        android:id="@+id/item_front"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@drawable/bg_swipe_front"
+        android:orientation="vertical"
+        android:padding="12dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <!-- 多选勾选框:仅长按多选(组内条目)时显示 -->
+            <CheckBox
+                android:id="@+id/cb"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="6dp"
+                android:clickable="false"
+                android:focusable="false"
+                android:visibility="gone" />
+
+            <!-- 封面图(剧集海报,本地文件;缺失/加载失败由 DownloadFragment 铺统一占位,
+                 见 util/PosterPlaceholderDrawable)。
+                 这里只给一层纯灰底:96dp 的占位猫图标放进 56×74dp 的封面会超出显示范围,
+                 所以布局层不用 XML 占位图,交给按宿主尺寸自适应的统一占位组件(背景层) -->
+            <com.lihang.ShadowLayout
+                android:id="@+id/cover_container"
+                android:layout_width="56dp"
+                android:layout_height="74dp"
+                app:clickable="false"
+                app:hl_cornerRadius="@dimen/radius_card"
+                app:hl_layoutBackground="@android:color/transparent">
+
+                <androidx.appcompat.widget.AppCompatImageView
+                    android:id="@+id/iv_cover"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:background="@drawable/bg_small_round_gray"
+                    android:scaleType="centerCrop" />
+            </com.lihang.ShadowLayout>
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="12dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
+
+                <!-- 行1:剧名 · 集名 -->
+                <TextView
+                    android:id="@+id/tv_name"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:textColor="@color/text_foreground"
+                    android:textSize="15sp"
+                    android:textStyle="bold" />
+
+                <!-- 行2:状态 · 进度 -->
+                <TextView
+                    android:id="@+id/tv_status"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:textSize="13sp" />
+
+                <!-- 行3:大小 · 速度 -->
+                <TextView
+                    android:id="@+id/tv_size_speed"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="3dp"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:textColor="@color/text_sub_foreground"
+                    android:textSize="12sp" />
+
+                <!-- 行4:来源 · 存储位置 -->
+                <TextView
+                    android:id="@+id/tv_source"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="3dp"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:textColor="@color/text_sub_foreground"
+                    android:textSize="11sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+    </LinearLayout>
+
+</FrameLayout>

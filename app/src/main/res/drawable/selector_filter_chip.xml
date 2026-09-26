@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 日志筛选/操作按钮:圆角背景 + 选中高亮(与按钮圆角一致, 点击态不再出现长方形水波纹) -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_selected="true">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/color_highlight" />
+            <corners android:radius="@dimen/radius_background" />
+        </shape>
+    </item>
+    <item android:state_pressed="true">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/gray_darker_press_alpha" />
+            <corners android:radius="@dimen/radius_background" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/bg_gray" />
+            <corners android:radius="@dimen/radius_background" />
+        </shape>
+    </item>
+</selector>

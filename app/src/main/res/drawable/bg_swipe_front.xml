@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 下载条目前面卡片(左滑条目用):右侧直角(滑出侧,避免圆角透出背后操作区颜色),左侧圆角与常规卡片一致 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/bg_gray" />
+    <corners
+        android:topLeftRadius="@dimen/radius_background"
+        android:bottomLeftRadius="@dimen/radius_background" />
+</shape>

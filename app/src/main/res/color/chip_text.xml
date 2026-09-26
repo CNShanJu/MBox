@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- chip/预设按钮文字色(跟随主题按钮色板):选中 = btn_select_text,未选中 = btn_plain_text -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_selected="true" android:color="@color/btn_select_text" />
+    <item android:color="@color/btn_plain_text" />
+</selector>

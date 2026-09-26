@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <corners
+        android:topLeftRadius="@dimen/radius_dialog"
+        android:topRightRadius="@dimen/radius_dialog" />
+    <solid android:color="@color/bg_popup" />
+</shape>

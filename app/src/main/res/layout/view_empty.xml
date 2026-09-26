@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 公共空数据组件:图标 + "暂无数据" 文字,任意页面 include 复用(覆盖根 id 以区分多实例) -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:gravity="center"
+    android:orientation="vertical">
+
+    <!-- ic_empty 是 1600 单位画布、图案实际只占 y=580~1238(实测包围盒),显示框上下自带透明留白:
+         100dp 框里顶部 36dp、底部 23dp。负外边距把顶部留白全抵掉,布局盒子≈图案可见范围,
+         父级 gravity=center 才是"图标+文字"整体居中(否则整组会往下偏十几 dp);
+         底部多吃 14dp,把"图标可见底边→文字"间距从 31dp 收到 16dp 左右(图标本身不缩放) -->
+    <ImageView
+        android:layout_width="100dp"
+        android:layout_height="100dp"
+        android:layout_marginTop="-36dp"
+        android:layout_marginBottom="-14dp"
+        android:src="@drawable/ic_empty" />
+
+    <!-- 多行文案必须自身居中:wrap_content 下 TextView 宽度取最长一行,
+         只靠父级 gravity=center 时短行会贴在这一行的左侧(订阅页两行文案曾因此看着"没居中") -->
+    <TextView
+        android:id="@+id/tv_empty_text"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:gravity="center_horizontal"
+        android:lineSpacingExtra="4dp"
+        android:text="暂无数据"
+        android:textColor="@color/text_sub_foreground"
+        android:textSize="14sp" />
+</LinearLayout>

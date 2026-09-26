@@ -1,0 +1,284 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 背景图设置(二级页):本页自身就是预览 —— 页面背景层显示的就是当前正在调的背景,
+     手指直接在背景上拖动/双指缩放,所见即所得(与其他页面同一套渲染)。
+     改动只在点"确认背景"时写入,直接返回则全部丢弃。
+     底部控制面板是抽屉:收起时只留一条"背景图设置"手柄,方便整屏查看背景(默认收起) -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <!-- 手势层:单指拖动位置 / 双指等比缩放(最底层,避免挡住标题栏与下方面板) -->
+    <com.github.tvbox.osc.ui.kit.BackgroundTuneView
+        android:id="@+id/tune"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <com.github.tvbox.osc.ui.kit.AppTitleBar
+        android:id="@+id/title_bar"
+        android:layout_width="match_parent"
+        android:layout_height="45dp"
+        app:title="背景图"
+        app:titleStyle="bold">
+
+        <!-- 更换图片:放标题栏右侧(不再塞进底部按钮行) -->
+        <TextView
+            android:id="@+id/tv_pick"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:layout_gravity="end|center_vertical"
+            android:layout_marginEnd="12dp"
+            android:background="@drawable/ripple_round_background"
+            android:gravity="center"
+            android:paddingHorizontal="12dp"
+            android:text="更换图片"
+            android:textColor="@color/text_foreground"
+            android:textSize="14sp" />
+    </com.github.tvbox.osc.ui.kit.AppTitleBar>
+
+    <!-- 底部抽屉面板:与底栏同一个面(bg_float 半透明圆角卡片)。
+         内边距统一 8dp:行内点击态高亮(胶囊)四周都留 8dp,不贴面板边、也不贴圆角,
+         文字再由各行自己的 8dp 内边距顶到 16dp,与全 App 其余页面一致 -->
+    <LinearLayout
+        android:id="@+id/panel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:layout_margin="12dp"
+        android:background="@drawable/bg_large_round_float"
+        android:clipToOutline="true"
+        android:orientation="vertical"
+        android:padding="8dp">
+
+        <!-- 抽屉手柄(常显):胶囊点击态,四周各留 8dp 边距(不贴面板顶边/侧边,也不贴文字) -->
+        <LinearLayout
+            android:id="@+id/panel_handle"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:layout_marginHorizontal="4dp"
+            android:background="@drawable/ripple_round_background"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="4dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="背景图设置"
+                android:textColor="@color/text_foreground"
+                android:textSize="14sp" />
+
+            <Space
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1" />
+
+            <TextView
+                android:id="@+id/tv_panel_state"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="4dp"
+                android:text="展开"
+                android:textColor="@color/text_sub_foreground"
+                android:textSize="12sp"
+                tools:text="展开" />
+
+            <ImageView
+                android:id="@+id/iv_panel_arrow"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:alpha="0.75"
+                android:rotation="180"
+                android:src="@drawable/ic_arrow_down"
+                app:tint="@color/text_foreground" />
+        </LinearLayout>
+
+        <!-- 可收起的内容区(高度由代码做 0↔full 动画,实现抽屉效果)。
+             结构:上面是可滚动区(超高时内部滚动),下面是常显的按钮行 —— 两个按钮固定在面板
+             最下面,不会被上面的内容顶出去/裁掉(内容高度由代码按可用高度封顶) -->
+        <LinearLayout
+            android:id="@+id/panel_content"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:orientation="vertical">
+
+            <!-- 可滚动区:高度由代码设成"内容区高度 - 底部按钮行";内边距 + clipToPadding=false,
+                 滚动中内容不贴边(AGENTS §六.7) -->
+            <ScrollView
+                android:id="@+id/panel_scroll"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:clipToPadding="false"
+                android:paddingVertical="2dp">
+
+                <LinearLayout
+                    android:id="@+id/panel_scroll_content"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:id="@+id/tv_hint"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:paddingHorizontal="8dp"
+                        android:text="单指拖动调整位置,双指等比缩放"
+                        android:textColor="@color/text_sub_foreground"
+                        android:textSize="12sp" />
+
+                    <!-- 预设:尺寸 + 位置(点一下立即套用,当前状态对应的项会高亮) -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:orientation="horizontal"
+                        android:paddingHorizontal="8dp">
+
+                        <TextView
+                            android:id="@+id/chip_fill"
+                            style="@style/PageBgChip"
+                            android:text="全屏铺满" />
+
+                        <!-- 适应屏幕:按屏幕算,宽或高其中一边刚好铺满、另一边留边,整图可见 -->
+                        <TextView
+                            android:id="@+id/chip_fit"
+                            style="@style/PageBgChip"
+                            android:text="适应屏幕" />
+
+                        <TextView
+                            android:id="@+id/chip_native"
+                            style="@style/PageBgChip"
+                            android:text="原图大小" />
+
+                        <TextView
+                            android:id="@+id/chip_center"
+                            style="@style/PageBgChip"
+                            android:text="居中显示" />
+                    </LinearLayout>
+
+                    <!-- 四角 = 保持原始大小并贴到该角 -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:orientation="horizontal"
+                        android:paddingHorizontal="8dp">
+
+                        <TextView
+                            android:id="@+id/chip_tl"
+                            style="@style/PageBgChip"
+                            android:text="左上角" />
+
+                        <TextView
+                            android:id="@+id/chip_tr"
+                            style="@style/PageBgChip"
+                            android:text="右上角" />
+
+                        <TextView
+                            android:id="@+id/chip_bl"
+                            style="@style/PageBgChip"
+                            android:text="左下角" />
+
+                        <TextView
+                            android:id="@+id/chip_br"
+                            style="@style/PageBgChip"
+                            android:text="右下角" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingHorizontal="8dp">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="背景图透明度"
+                            android:textColor="@color/text_foreground"
+                            android:textSize="14sp" />
+
+                        <com.google.android.material.slider.Slider
+                            android:id="@+id/slider_alpha"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:layout_marginHorizontal="10dp" />
+
+                        <TextView
+                            android:id="@+id/tv_alpha"
+                            android:layout_width="52dp"
+                            android:layout_height="wrap_content"
+                            android:gravity="end"
+                            android:textColor="@color/text_foreground"
+                            android:textSize="14sp"
+                            tools:text="100%" />
+                    </LinearLayout>
+
+                    <!-- 遮罩开关:遮罩不透明度固定,用户只开关;关掉后背景原图直出,压在底图上的文字对比度会下降 -->
+                    <LinearLayout
+                        android:id="@+id/ll_scrim"
+                        android:layout_width="match_parent"
+                        android:layout_height="44dp"
+                        android:layout_marginHorizontal="4dp"
+                        android:background="@drawable/ripple_round_background"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingHorizontal="4dp">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="背景遮罩"
+                            android:textColor="@color/text_foreground"
+                            android:textSize="14sp" />
+
+                        <Space
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1" />
+
+                        <com.github.tvbox.osc.ui.kit.AppSwitch
+                            android:id="@+id/switch_scrim"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:clickable="false" />
+                    </LinearLayout>
+                </LinearLayout>
+            </ScrollView>
+
+            <!-- 底部动作:恢复默认(次) + 确认背景(主);改动只有确认后才写入配置。
+                 常显在面板最下面(不随上面内容滚动/被顶出去) -->
+            <LinearLayout
+                android:id="@+id/panel_actions"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:orientation="horizontal"
+                android:paddingHorizontal="8dp">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btn_reset"
+                    style="@style/BtnSecondary"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_weight="1"
+                    android:text="恢复默认" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btn_confirm"
+                    style="@style/BtnPrimary"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_weight="1"
+                    android:layout_marginStart="12dp"
+                    android:text="确认背景" />
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+</FrameLayout>

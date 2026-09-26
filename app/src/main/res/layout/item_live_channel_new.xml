@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 直播频道条目:只有频道名,文字<b>居中</b>、占满整行宽度(左侧分组列 item_live_channel_group_new 同一套观感)。
+     以前名字前面还有一列"顺序号"(channelNum,解析直播源时跨分组累加出来的索引,并不是源里
+     真实的频道号),它占宽把长频道名(尤其电台)挤成省略号,已去掉 —— 不要在列表里再加回来;
+     需要显示编号的地方是底部信息条/换台大数字(见 activity_live.xml)。
+     注意:占满宽度后必须显式 gravity=center,否则名字会全部贴左(电台那种长名字看着尤其明显) -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:padding="10dp"
+    android:focusable="true"
+    android:focusableInTouchMode="false"
+    android:orientation="horizontal"
+    android:gravity="center"
+    >
+
+    <TextView
+        android:id="@+id/tvChannelName"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:ellipsize="marquee"
+        android:gravity="center"
+        android:marqueeRepeatLimit="marquee_forever"
+        android:singleLine="true"
+        android:textColor="@color/text_foreground"
+        tools:text="CCTV1"/>
+</LinearLayout>

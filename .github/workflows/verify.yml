@@ -1,0 +1,50 @@
+name: Verify
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+concurrency:
+  group: verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Unit tests + dependency gate + assembleDebug
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Unit tests
+        run: |
+          chmod +x gradlew
+          ./gradlew testDebugUnitTest --no-daemon --console=plain
+
+      - name: Module dependency gate
+        run: |
+          ./gradlew checkModuleDependencies --no-daemon --console=plain
+
+      - name: Assemble debug APK
+        run: |
+          ./gradlew assembleDebug --no-daemon --console=plain
+
+      - name: Upload debug APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MBox-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error

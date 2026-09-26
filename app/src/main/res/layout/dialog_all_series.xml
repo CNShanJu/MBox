@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/bg"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:orientation="vertical"
+    android:paddingTop="8dp"
+    android:paddingBottom="10dp"
+    android:gravity="center_horizontal">
+
+    <!-- 拖拽热区(手势条):内含细横条视觉,整块可按住上下拖动调整弹窗高度 -->
+    <LinearLayout
+        android:id="@+id/v_drag_zone"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_horizontal"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp">
+
+        <com.lihang.ShadowLayout
+            android:layout_width="30dp"
+            android:layout_height="2dp"
+            app:hl_cornerRadius="@dimen/radius_card"
+            app:hl_layoutBackground="@color/gray_darker" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="20dp">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="全部剧集"
+            android:textColor="@color/text_foreground"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tv_sort"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:drawablePadding="4dp"
+            android:drawableRight="@drawable/ic_sort_18"
+            android:paddingVertical="6dp"
+            android:text="倒序"
+            android:textColor="@color/text_foreground"
+            android:textSize="13sp" />
+    </LinearLayout>
+
+    <!-- 列表滚动区:高度随弹窗高度(weight=1)伸缩,内容超出内部滚动 -->
+    <FrameLayout
+        android:id="@+id/list_box"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_marginTop="8dp">
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/rv"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:paddingHorizontal="16dp"
+            android:paddingVertical="4dp"
+            tools:listitem="@layout/item_series" />
+    </FrameLayout>
+
+</LinearLayout>

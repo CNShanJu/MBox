@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_large_round_popup"
+    android:orientation="vertical"
+    android:paddingTop="16dp"
+    android:paddingBottom="16dp">
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:paddingVertical="8dp"
+        android:text="下载设置"
+        android:textColor="@color/text_foreground"
+        android:textSize="16sp"
+        android:textStyle="bold" />
+
+    <!-- 仅 WiFi 下载:开关组件 -->
+    <LinearLayout
+        android:id="@+id/ll_wifi"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:foreground="?android:selectableItemBackground"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="20dp">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="仅 WiFi 下载"
+            android:textColor="@color/text_foreground"
+            android:textSize="15sp" />
+
+        <com.github.tvbox.osc.ui.kit.AppSwitch
+            android:id="@+id/switch_wifi"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:clickable="false" />
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:layout_marginHorizontal="20dp"
+        android:background="@color/gray_darker_press_alpha" />
+
+    <!-- 下载并发:点击弹 SelectDialog -->
+    <LinearLayout
+        android:id="@+id/ll_concurrent"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:foreground="?android:selectableItemBackground"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="20dp">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="下载并发"
+            android:textColor="@color/text_foreground"
+            android:textSize="15sp" />
+
+        <TextView
+            android:id="@+id/tv_concurrent"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="@color/text_highlight"
+            android:textSize="15sp" />
+
+        <ImageView
+            android:layout_width="18dp"
+            android:layout_height="18dp"
+            android:layout_gravity="center"
+            android:layout_marginLeft="6dp"
+            android:alpha="0.75"
+            android:src="@drawable/ic_pre"
+            app:tint="@color/text_foreground" />
+    </LinearLayout>
+
+</LinearLayout>

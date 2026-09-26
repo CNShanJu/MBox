@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 描边按钮背景选择器:常态=透明底+主题描边(bg_btn_outline);聚焦/按压=描边加粗为高亮色,
+     提供遥控器焦点/触屏按压反馈。避开 Material OutlinedButton 在部分主题下描边走样。 -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_focused="true">
+        <shape android:shape="rectangle">
+            <solid android:color="@android:color/transparent" />
+            <stroke
+                android:width="1dp"
+                android:color="@color/text_highlight" />
+            <corners android:radius="@dimen/common_corners" />
+        </shape>
+    </item>
+    <item android:state_pressed="true">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/bg_float_fab" />
+            <stroke
+                android:width="1dp"
+                android:color="@color/text_highlight" />
+            <corners android:radius="@dimen/common_corners" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@android:color/transparent" />
+            <stroke
+                android:width="1dp"
+                android:color="@color/fab_stroke" />
+            <corners android:radius="@dimen/common_corners" />
+        </shape>
+    </item>
+</selector>

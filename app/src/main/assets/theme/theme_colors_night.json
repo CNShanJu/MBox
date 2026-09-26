@@ -1,0 +1,64 @@
+{
+  "type": "dark",
+  "bg_body": "#141218",
+  "bg_component": "#211D28",
+  "bg_component_alpha": 60,
+  "bg_float": "#211D28",
+  "bg_float_alpha": 92,
+
+  "text_main": "#FFFFFF",
+  "text_sub": "#AFAFAF",
+  "text_hint": "#99E6E1E5",
+  "text_disable": "#b3b3b3",
+  "text_highlight": "#E5E7EB",
+  "text_accent": "#1890FF",
+
+  "brand": "#E5E7EB",
+  "brand_text": "#141218",
+
+  "btn_confirm_bg": "#00000000",
+  "btn_confirm_text": "#E5E7EB",
+  "btn_cancel_bg": "#00000000",
+  "btn_cancel_text": "#7A7A7A",
+
+  "switch_track_on": "#1890FF",
+  "switch_track_off": "#3C3C46",
+  "switch_thumb": "#FFFFFF",
+
+  "accent_on_dark": "#1890FF",
+  "download_active": "#037AFF",
+  "download_done": "#08CA2C",
+  "swipe_red": "#E5484D",
+
+  "desc": {
+    "bg_body": "页面背景色(所有页面的底)",
+    "bg_component": "组件/卡片底色(海报占位、列表卡片、页面内容块)",
+    "bg_component_alpha": "组件/卡片底色透明度(0-100);100=不透明",
+    "bg_float": "悬浮面底色(底部导航栏、二级页标题栏、主页搜索框、弹窗与抽屉、悬浮圆钮——本来就是同一个面)",
+    "bg_float_alpha": "悬浮面透明度(0-100)",
+
+    "text_main": "正常文字",
+    "text_sub": "次要文字(灰色:说明、描述、副标题)",
+    "text_hint": "未选中/占位文字(底栏未选中文字图标、搜索框「搜索」)",
+    "text_disable": "禁用文字",
+    "text_highlight": "强调/选中文字(选中项、标题、tab 选中)",
+    "text_accent": "高亮文字(蓝色:搜索结果来源、链接、展开/复制)",
+
+    "brand": "主题主色(chip 选中、进度条等填充色;并派生勾选框填充、无背景按钮文字、选中按钮填充、按钮描边@40%)",
+    "brand_text": "主色上的文字(选中按钮/chip 上的字)",
+
+    "btn_confirm_bg": "主按钮(确定/开始下载)背景;透明=无填充",
+    "btn_confirm_text": "主按钮文字",
+    "btn_cancel_bg": "次按钮(取消/重置)背景;透明=无填充",
+    "btn_cancel_text": "次按钮文字",
+
+    "switch_track_on": "开关-开 的轨道色",
+    "switch_track_off": "开关-关 的轨道色",
+    "switch_thumb": "开关圆点色",
+
+    "accent_on_dark": "固定深色面(直播页、播放控制面板)上的强调色,不随主题",
+    "download_active": "下载中状态色",
+    "download_done": "下载完成状态色",
+    "swipe_red": "列表右滑删除的红"
+  }
+}

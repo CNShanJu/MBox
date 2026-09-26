@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 可复用搜索海报卡:图片 + 左上角橙色评分角标 + 底部渐变透黑底叠集数(参考播放历史卡片)。
+     宽/高由外层比例容器(RatioShadowLayout / BannerRatioLayout 等)决定,本组件填满父容器 -->
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <ImageView
+        android:id="@+id/ivThumb"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@drawable/placeholder_poster"
+        android:clipToOutline="true"
+        android:scaleType="centerCrop"/>
+
+    <!-- 评分(左上角,橙色圆角徽标;贴齐图片左上缘,样式与播放历史一致) -->
+    <com.lihang.ShadowLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignParentStart="true"
+        android:layout_alignParentTop="true"
+        app:clickable="false"
+        app:hl_layoutBackground="@color/poster_badge_bg"
+        app:hl_cornerRadius_rightBottom="8dp">
+        <TextView
+            android:id="@+id/tvScore"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:maxWidth="70dp"
+            android:ellipsize="end"
+            android:padding="5dp"
+            android:singleLine="true"
+            tools:text="7.9"
+            android:textColor="@color/white"
+            android:textSize="10dp"/>
+    </com.lihang.ShadowLayout>
+
+    <!-- 底部渐变透黑底,叠集数(有才显示;固定高度,内容空则整块隐藏) -->
+    <LinearLayout
+        android:id="@+id/llNoteBar"
+        android:layout_width="match_parent"
+        android:layout_height="28dp"
+        android:layout_alignParentBottom="true"
+        android:orientation="vertical"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="8dp"
+        android:background="@drawable/bg_gradient_black_b2t">
+
+        <TextView
+            android:id="@+id/tvNote"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:gravity="end"
+            android:singleLine="true"
+            tools:text="更新至2集"
+            android:textColor="@color/white"
+            android:textSize="11sp"
+            android:drawablePadding="4dp"/>
+    </LinearLayout>
+
+</RelativeLayout>

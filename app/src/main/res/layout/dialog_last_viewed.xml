@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:paddingHorizontal="30dp"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <TextView
+        android:id="@+id/tv"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:background="@drawable/bg_bubble"
+        android:paddingHorizontal="20dp"
+        android:paddingVertical="12dp"
+        android:textSize="14sp"
+        android:textColor="@color/text_foreground"
+        android:drawableTint="@color/text_foreground"
+        android:drawableRight="@drawable/ic_play"
+        android:singleLine="true"
+        android:ellipsize="marquee"
+        android:marqueeRepeatLimit="marquee_forever"
+        android:focusable="false"
+        android:focusableInTouchMode="false"
+        android:maxLines="1"
+        tools:text="上次"/>
+</LinearLayout>

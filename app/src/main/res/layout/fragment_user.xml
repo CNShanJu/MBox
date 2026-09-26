@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 下拉刷新容器(顶部下拉=拉伸回弹+刷新转圈混合;后代扫描:列表不在顶部时下拉不触发,在顶部时下拉重载当前页数据) -->
+<com.github.tvbox.osc.ui.kit.RubberBandSwipeRefreshLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/swipe_refresh"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <RelativeLayout xmlns:tools="http://schemas.android.com/tools"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical">
+
+        <!-- 到底回弹列表:到底继续上推即回弹,顶部方向让给外层下拉刷新容器 -->
+        <com.github.tvbox.osc.ui.kit.RubberBandRecyclerView
+            android:id="@+id/tvHotList1"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            app:rubber_top_enabled="false"
+            tools:listitem="@layout/item_grid"
+            tools:layoutManager="androidx.recyclerview.widget.GridLayoutManager"
+            tools:spanCount="3"
+            android:paddingHorizontal="10dp"
+            android:paddingBottom="70dp"
+            android:clipToPadding="false"
+            />
+
+        <!-- 直播悬浮按钮: 54dp 圆, 圆形裁剪(clipToOutline), 底色=悬浮色 bg_float(94%,与底栏/气泡一致),
+             不再单独叠一层主题遮罩(两层会把半透明盖实);marginBottom=78dp(58 悬浮底栏 + 20 间距), 不被底栏覆盖。
+             **默认 gone**:频道列表为空(源没配直播)时压根不该出现,有内容才由代码置 VISIBLE(UserFragment.syncLiveButton),
+             不要改成 visible 默认值,否则没直播的源会先闪一个点进去就退出的按钮 -->
+        <FrameLayout
+            android:id="@+id/btn_live"
+            android:layout_width="54dp"
+            android:layout_height="54dp"
+            android:layout_alignParentEnd="true"
+            android:layout_alignParentBottom="true"
+            android:layout_marginEnd="20dp"
+            android:layout_marginBottom="20dp"
+            android:background="@drawable/bg_fab_oval"
+            android:clipToOutline="true"
+            android:foreground="?android:selectableItemBackground"
+            android:visibility="gone"
+            android:elevation="8dp">
+
+            <ImageView
+                android:layout_width="28dp"
+                android:layout_height="28dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_live_tv_48"
+                app:tint="@color/text_highlight" />
+        </FrameLayout>
+
+        <!-- "到底了"悬浮提示:落在列表底部留白区内、贴近底部导航栏(见 item_view_end_tip) -->
+        <include
+            android:id="@+id/end_tip"
+            layout="@layout/item_view_end_tip"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_alignParentBottom="true"
+            android:layout_centerHorizontal="true"
+            android:layout_marginBottom="20dp"
+            android:visibility="gone" />
+    </RelativeLayout>
+</com.github.tvbox.osc.ui.kit.RubberBandSwipeRefreshLayout>

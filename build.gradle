@@ -1,0 +1,180 @@
+// Top-level build file where you can add configuration options common to all sub-projects/modules.
+plugins {
+    id 'com.android.application' version '8.2.2' apply false
+    id 'com.android.library' version '8.2.2' apply false
+    id 'org.jetbrains.kotlin.android' version '1.9.22' apply false
+}
+
+ext {
+    kotlin_version = '1.9.22'
+}
+
+allprojects {
+    repositories {
+        gradlePluginPortal()
+        maven { url "https://maven.aliyun.com/repository/releases" }
+        maven { url "https://maven.aliyun.com/repository/public" }
+        maven { url "https://maven.aliyun.com/repository/google" }
+        //dlna-cast中cling仓(依赖已移除,保留以备其他依赖)
+        maven {
+            url 'http://4thline.org/m2'
+            allowInsecureProtocol true
+        }
+        maven { url "https://jitpack.io" }
+        google()
+        mavenCentral()
+    }
+}
+
+task clean(type: Delete) {
+    delete rootProject.buildDir
+}
+
+// ------------------------------------------------------------------
+// 模块依赖方向门禁(改进.txt §六/§七):禁止基础模块反向依赖业务/UI。
+// 运行:./gradlew checkModuleDependencies(后续可挂到 check/CI)。
+// ------------------------------------------------------------------
+def forbiddenModuleDeps = [
+        // 纯第三方归堆:不含任何本仓模块
+        ':thirdparty'     : [':app', ':common', ':core-network', ':core-storage', ':download', ':log', ':player', ':spider'],
+        // 基础设施层
+        ':log'            : [':app', ':common', ':core-network', ':core-storage', ':download', ':player', ':spider', ':thirdparty'],
+        ':common'         : [':app', ':core-network', ':core-storage', ':download', ':player', ':spider', ':thirdparty'],
+        ':core-storage'   : [':app', ':download', ':player', ':spider', ':thirdparty'],
+        ':core-network'   : [':app', ':common', ':download', ':player', ':spider', ':thirdparty'],
+        // 业务实现层(契约与实现同模块)
+        ':spider'         : [':app', ':download', ':player'],
+        ':player'         : [':app', ':download', ':spider', ':thirdparty'],
+        ':download'       : [':app', ':thirdparty'],
+]
+def moduleDir = [
+        ':app' : 'app', ':common' : 'common', ':core-network' : 'core-network', ':core-storage' : 'core-storage', ':download' : 'download', ':log' : 'log', ':player' : 'player', ':spider' : 'spider', ':thirdparty' : 'thirdparty'
+]
+
+
+// 源码级门禁 2:app/ui 层禁止 import 下载模块内部实现(只允许 DownloadFacade/DownloadRequest 等公开面)。
+// 下载内部实现包:com.github.tvbox.osc.download.internal.*;历史 app/util.Download* 实现类已全部
+// 迁入该包并删除(app util 不再持有),仅保留对 internal 包的 import 拦截。
+def appSourceDirs = [
+        new File(rootDir, 'app/src/main/java'),
+        new File(rootDir, 'app/src/test/java'),
+]
+def forbiddenDownloadImports = ~/import\s+com\.github\.tvbox\.osc\.download\.internal\.\w+\s*;/
+
+tasks.register('checkModuleDependencies') {
+    group = 'verification'
+    description = '校验模块依赖方向 + app 验收红线(getCSP/hawk/DownloadManager.get/自建 OkHttpClient/下载内部实现)'
+    doLast {
+        def violations = []
+        forbiddenModuleDeps.each { mod, forbidden ->
+            def file = new File(rootDir, moduleDir[mod] + '/build.gradle')
+            if (!file.exists()) return
+            def text = file.getText('UTF-8')
+            forbidden.each { dep ->
+                // 仅匹配项目依赖行(忽略注释)
+                def linePattern = ~/(?m)^[^#\/]*project\((['"])${dep.replace(':','\\:')}\1\)/
+                if (linePattern.matcher(text).find()) {
+                    violations << "${mod} 禁止依赖 ${dep}"
+                }
+            }
+        }
+        // app 源码不得直接 import 下载内部实现(UI 只依赖 DownloadFacade;java+kt 都查)
+        appSourceDirs.each { dir ->
+            if (!dir.exists()) return
+            dir.eachFileRecurse(groovy.io.FileType.FILES) { f ->
+                if (f.name.endsWith('.java') || f.name.endsWith('.kt')) {
+                    def src = f.getText('UTF-8')
+                    if (forbiddenDownloadImports.matcher(src).find()) {
+                        violations << "app 源码禁止 import 下载内部实现: ${f.path}"
+                    }
+                }
+            }
+        }
+        // 验收红线自动化(改进.txt §六/AGENTS §六;app 层,含测试源码)
+        def appRedLines = [
+                'getCSP 爬虫直调'           : ~/\bgetCSP\s*\(/,
+                'Hawk 裸依赖(import)'       : ~/import\s+com\.orhanobut\.hawk\./,
+                'DownloadManager.get() 直调': ~/\bDownloadManager\.get\s*\(/,
+                '业务自建 OkHttpClient'      : ~/\bnew\s+OkHttpClient\.Builder\s*\(/,
+                // app 层 EventBus 已清零(改进.txt §五:新代码禁止新增 EventBus);只匹配真实 API,避开注释里的"EventBus"字样
+                'app 层 EventBus 残留'       : ~/(org\.greenrobot\.eventbus|EventBus\.getDefault\s*\(|@Subscribe\b)/,
+        ]
+        appSourceDirs.each { dir ->
+            if (!dir.exists()) return
+            dir.eachFileRecurse(groovy.io.FileType.FILES) { f ->
+                if (!(f.name.endsWith('.java') || f.name.endsWith('.kt'))) return
+                def lines = f.getText('UTF-8').readLines()
+                lines.eachWithIndex { line, idx ->
+                    appRedLines.each { label, pat ->
+                        if (pat.matcher(line).find()) {
+                            violations << "app 验收红线[${label}]: ${f.path}:${idx + 1}"
+                        }
+                    }
+                }
+            }
+        }
+        // UI 层红线(app/ui 目录:禁具体播放内核 import / 禁页面自建线程池)
+        def uiSourceDirs = [new File(rootDir, 'app/src/main/java/com/github/tvbox/osc/ui')]
+        def uiRedLines = [
+                'UI 层内核 import(IJK/Exo)'          : ~/import\s+(tv\.danmaku|com\.google\.android\.exoplayer2)\./,
+                'UI 层自建线程池'                     : ~/(Executors\s*\.\s*new\w+\s*\(|new\s+\w*ThreadPoolExecutor\s*\(|new\s+ForkJoinPool\s*\()/,
+        ]
+        uiSourceDirs.each { dir ->
+            if (!dir.exists()) return
+            dir.eachFileRecurse(groovy.io.FileType.FILES) { f ->
+                if (!(f.name.endsWith('.java') || f.name.endsWith('.kt'))) return
+                def lines = f.getText('UTF-8').readLines()
+                lines.eachWithIndex { line, idx ->
+                    uiRedLines.each { label, pat ->
+                        if (pat.matcher(line).find()) {
+                            violations << "UI 层红线[${label}]: ${f.path}:${idx + 1}"
+                        }
+                    }
+                }
+            }
+        }
+        // app 层红线:api/impl 合模块后的"墙"。:spider 的契约与实现现在同模块,故必须在源码层
+        // 拦住 app 直连实现单例/具体爬虫类(AGENTS §二/§十):一律经 spider 契约
+        // (SourceConfigProviders/ParseConfigProviders/LiveChannelConfigApi/IjkCodecConfigProviders)。
+        // 下面是仅存的装配/注入点与两条遗留待迁移项,新增直连一律门禁失败。
+        def spiderImplPattern = ~/(com\.github\.tvbox\.osc\.api\.ApiConfig|com\.github\.catvod\.crawler\.(JsLoader|PlayUrlResolver))/
+        def spiderImplAllow = [
+                'di\\AppCompositionRoot.java',          // 组合根:契约适配 ApiConfig(唯一装配点)
+                'base\\App.java',                        // 启动:context/局域网地址注入(ApiConfig)
+                'server\\ControlManager.java',           // 局域网地址注入
+                'ui\\activity\\FastSearchActivity.kt',   // 待摘:该文件已改为经 SourceLoaderProviders 契约,但改动随其 WIP 未提交(见 AGENTS §二)
+        ]
+        appSourceDirs.each { dir ->
+            if (!dir.exists()) return
+            dir.eachFileRecurse(groovy.io.FileType.FILES) { f ->
+                if (!(f.name.endsWith('.java') || f.name.endsWith('.kt'))) return
+                def path = f.path.replace('/', '\\')
+                if (spiderImplAllow.any { path.endsWith(it) }) return
+                f.getText('UTF-8').readLines().eachWithIndex { line, idx ->
+                    if (spiderImplPattern.matcher(line).find()) {
+                        violations << "app 层红线[爬虫实现直连,应经 spider 契约]: ${f.path}:${idx + 1}"
+                    }
+                }
+            }
+        }
+        // app 层红线:UI/组件对具体 Activity 强转(改进.txt §七/AGENTS §六;应经窄宿主接口注入)
+        def activityCastPattern = ~/\((DetailActivity|LiveActivity|MainActivity|LocalPlayActivity|DownloadActivity|FastSearchActivity|SettingActivity|VideoListActivity|BaseActivity|BaseVbActivity)\)\s*(context|mContext|this)/
+        appSourceDirs.each { dir ->
+            if (!dir.exists()) return
+            dir.eachFileRecurse(groovy.io.FileType.FILES) { f ->
+                if (!(f.name.endsWith('.java') || f.name.endsWith('.kt'))) return
+                def lines = f.getText('UTF-8').readLines()
+                lines.eachWithIndex { line, idx ->
+                    if (activityCastPattern.matcher(line).find()) {
+                        violations << "app 层红线[具体 Activity 强转]: ${f.path}:${idx + 1}"
+                    }
+                }
+            }
+        }
+        if (violations) {
+            throw new GradleException("模块依赖方向/验收红线违规:\n  " + violations.join('\n  '))
+        }
+        println 'checkModuleDependencies: 模块依赖方向与验收红线(含 UI 层)校验通过'
+    }
+}
+// 说明:各 android 子工程自带 check,如需随构建自动校验可在 CI 中显式调用本任务

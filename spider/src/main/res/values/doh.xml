@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Doh bean 使用(独立模块 :spider, 资源自持) -->
+    <string-array name="doh_name">
+        <item>System</item>
+        <item>Tencent</item>
+        <item>Alibaba</item>
+        <item>360</item>
+    </string-array>
+
+    <string-array name="doh_url">
+        <item />
+        <item>https://doh.pub/dns-query</item>
+        <item>https://dns.alidns.com/dns-query</item>
+        <item>https://doh.360.cn/dns-query</item>
+    </string-array>
+</resources>

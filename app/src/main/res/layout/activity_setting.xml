@@ -1,0 +1,997 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+
+    <com.github.tvbox.osc.ui.kit.AppTitleBar
+        android:id="@+id/title_bar"
+        android:layout_width="match_parent"
+        android:layout_height="45dp"
+        app:title="设置"
+        app:titleStyle="bold"/>
+
+    <!-- 越界跟手回弹(rubber_target=container:整个容器一起回弹,拖到顶/底松手弹回) -->
+    <com.github.tvbox.osc.ui.kit.RubberBandScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        app:rubber_target="container"
+        android:scrollbars="none"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp"
+        android:clipToPadding="false"
+        >
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_marginHorizontal="20dp"
+            android:paddingVertical="10dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingVertical="20dp"
+                android:background="@drawable/bg_large_round_float">
+                <LinearLayout
+                    android:id="@+id/llHomeRec"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/dp_60"
+                    android:layout_weight="1"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="40dp"
+                    android:foreground="?android:selectableItemBackground"
+                    >
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="主页内容"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="16sp"/>
+
+                    <TextView
+                        android:id="@+id/tvHomeRec"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="end"
+                        android:maxLines="1"
+                        android:ellipsize="end" />
+
+                    <ImageView
+                        android:layout_width="26dp"
+                        android:layout_height="26dp"
+                        android:layout_gravity="center"
+                        android:alpha="0.75"
+                        android:src="@drawable/ic_pre"
+                        app:tint="@color/text_foreground"/>
+                </LinearLayout>
+
+
+                <LinearLayout
+                    android:id="@+id/showFastSearch"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/dp_60"
+                    android:layout_marginBottom="@dimen/dp_10"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="20dp"
+                    android:visibility="gone">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="聚合模式"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="16sp"
+                        />
+
+                    <TextView
+                        android:id="@+id/showFastSearchText"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="end"
+                        android:maxLines="1"
+                        android:ellipsize="end" />
+
+                    <ImageView
+                        android:layout_width="26dp"
+                        android:layout_height="26dp"
+                        android:layout_gravity="center"
+                        android:alpha="0.75"
+                        android:src="@drawable/ic_pre"
+                        app:tint="@color/text_foreground"/>
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/llTheme"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/dp_60"
+                    android:layout_weight="1"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="40dp"
+                    android:foreground="?android:selectableItemBackground"
+                    >
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="主题颜色"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="16sp"
+                        />
+
+                    <TextView
+                        android:id="@+id/tvTheme"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="end"
+                        android:maxLines="1"
+                        android:ellipsize="end" />
+
+                    <ImageView
+                        android:layout_width="26dp"
+                        android:layout_height="26dp"
+                        android:layout_gravity="center"
+                        android:alpha="0.75"
+                        android:src="@drawable/ic_pre"
+                        app:tint="@color/text_foreground"/>
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/llPageBackground"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/dp_60"
+                    android:layout_weight="1"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="40dp"
+                    android:foreground="?android:selectableItemBackground">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="设置背景图"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="16sp"
+                        />
+
+                    <TextView
+                        android:id="@+id/tvPageBackground"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="end"
+                        android:maxLines="1"
+                        android:ellipsize="end" />
+
+                    <ImageView
+                        android:layout_width="26dp"
+                        android:layout_height="26dp"
+                        android:layout_gravity="center"
+                        android:alpha="0.75"
+                        android:src="@drawable/ic_pre"
+                        app:tint="@color/text_foreground"/>
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/llLoadingAnim"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/dp_60"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="40dp"
+                    android:foreground="?android:selectableItemBackground">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="加载动画"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="16sp"
+                        />
+
+                    <TextView
+                        android:id="@+id/tvLoadingAnim"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="end"
+                        android:maxLines="1"
+                        android:ellipsize="end" />
+
+                    <ImageView
+                        android:layout_width="26dp"
+                        android:layout_height="26dp"
+                        android:layout_gravity="center"
+                        android:alpha="0.75"
+                        android:src="@drawable/ic_pre"
+                        app:tint="@color/text_foreground"/>
+                </LinearLayout>
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingVertical="20dp"
+                android:layout_marginTop="14dp"
+                android:background="@drawable/bg_large_round_float">
+                <LinearLayout
+                    android:id="@+id/llPrivateBrowsing"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/dp_60"
+                    android:layout_weight="1"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="40dp"
+                    android:foreground="?android:selectableItemBackground">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="无痕浏览"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="16sp"
+                        />
+
+                    <Space
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1" />
+
+                    <com.github.tvbox.osc.ui.kit.AppSwitch
+                        android:id="@+id/switchPrivateBrowsing"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:clickable="false"/>
+                </LinearLayout>
+
+                <!-- 局域网服务开关:默认关闭(HTTP 服务仅监听 127.0.0.1);开启后局域网可访问文件共享/管理(带令牌鉴权) -->
+                <LinearLayout
+                    android:id="@+id/llLanServer"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/dp_60"
+                    android:layout_weight="1"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="40dp"
+                    android:foreground="?android:selectableItemBackground">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="局域网服务"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="16sp"
+                        />
+
+                    <TextView
+                        android:id="@+id/tvLanServerDesc"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="end"
+                        android:textColor="@color/text_sub_foreground"
+                        android:textSize="12sp"/>
+
+                    <com.github.tvbox.osc.ui.kit.AppSwitch
+                        android:id="@+id/switchLanServer"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="10dp"
+                        android:clickable="false"/>
+                </LinearLayout>
+
+                <!-- 忽略证书错误开关:默认关闭(校验证书/主机名);个别自签名站点打不开时再开启(会降低 TLS 安全性) -->
+                <LinearLayout
+                    android:id="@+id/llIgnoreSsl"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/dp_60"
+                    android:layout_weight="1"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="40dp"
+                    android:foreground="?android:selectableItemBackground">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="忽略证书错误"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="16sp"
+                        />
+
+                    <TextView
+                        android:id="@+id/tvIgnoreSslDesc"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="end"
+                        android:textColor="@color/text_sub_foreground"
+                        android:textSize="12sp"/>
+
+                    <com.github.tvbox.osc.ui.kit.AppSwitch
+                        android:id="@+id/switchIgnoreSsl"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="10dp"
+                        android:clickable="false"/>
+                </LinearLayout>
+                <LinearLayout
+                    android:id="@+id/llDns"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/dp_60"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="40dp"
+                    android:foreground="?android:selectableItemBackground">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="安全DNS"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="16sp"/>
+
+                    <TextView
+                        android:id="@+id/tvDns"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="end"
+                        android:maxLines="1"
+                        android:ellipsize="end" />
+
+                    <ImageView
+                        android:layout_width="26dp"
+                        android:layout_height="26dp"
+                        android:layout_gravity="center"
+                        android:alpha="0.75"
+                        android:src="@drawable/ic_pre"
+                        app:tint="@color/text_foreground"/>
+                </LinearLayout>
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingVertical="20dp"
+                android:layout_marginTop="14dp"
+                android:background="@drawable/bg_large_round_float">
+                <LinearLayout
+                    android:id="@+id/llDlWifiOnly"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/dp_60"
+                    android:layout_weight="1"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="40dp"
+                    android:foreground="?android:selectableItemBackground">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="仅Wi-Fi下载"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="16sp"/>
+
+                    <Space
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1" />
+
+                    <com.github.tvbox.osc.ui.kit.AppSwitch
+                        android:id="@+id/switchDlWifiOnly"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:clickable="false"/>
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/llDlConcurrent"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/dp_60"
+                    android:layout_weight="1"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="40dp"
+                    android:foreground="?android:selectableItemBackground">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="同时下载任务数"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="16sp"/>
+
+                    <TextView
+                        android:id="@+id/tvDlConcurrent"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="end"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="14sp"/>
+
+                    <ImageView
+                        android:layout_width="26dp"
+                        android:layout_height="26dp"
+                        android:layout_gravity="center"
+                        android:alpha="0.75"
+                        android:src="@drawable/ic_pre"
+                        app:tint="@color/text_foreground"/>
+                </LinearLayout>
+
+                <!--<LinearLayout-->
+                <!--    android:layout_width="match_parent"-->
+                <!--    android:layout_height="wrap_content"-->
+                <!--    android:gravity="center_vertical"-->
+                <!--    android:orientation="horizontal"-->
+                <!--    android:paddingHorizontal="40dp"-->
+                <!--    android:paddingTop="4dp">-->
+
+                <!--    <TextView-->
+                <!--        android:layout_width="wrap_content"-->
+                <!--        android:layout_height="wrap_content"-->
+                <!--        android:text="保存位置"-->
+                <!--        android:textColor="@color/text_foreground"-->
+                <!--        android:textSize="16sp"/>-->
+
+                <!--    <TextView-->
+                <!--        android:id="@+id/tvDlSaveDir"-->
+                <!--        android:layout_width="0dp"-->
+                <!--        android:layout_height="wrap_content"-->
+                <!--        android:layout_weight="1"-->
+                <!--        android:gravity="end"-->
+                <!--        android:ellipsize="middle"-->
+                <!--        android:maxLines="1"-->
+                <!--        android:textColor="@color/text_sub_foreground"-->
+                <!--        android:textSize="12sp"/>-->
+                <!--</LinearLayout>-->
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingVertical="20dp"
+                android:layout_marginTop="14dp"
+                android:background="@drawable/bg_large_round_float">
+                <LinearLayout
+                    android:id="@+id/llLiveApi"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/dp_60"
+                    android:layout_weight="1"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="40dp"
+                    android:foreground="?android:selectableItemBackground">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="直播源"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="16sp"
+                        />
+
+                    <Space
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1" />
+
+                    <ImageView
+                        android:layout_width="26dp"
+                        android:layout_height="26dp"
+                        android:layout_gravity="center"
+                        android:alpha="0.75"
+                        android:src="@drawable/ic_pre"
+                        app:tint="@color/text_foreground"/>
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/llPlay"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/dp_60"
+                    android:layout_weight="1"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="40dp"
+                    android:foreground="?android:selectableItemBackground">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="播放器"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="16sp"
+                        />
+
+                    <TextView
+                        android:id="@+id/tvPlay"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="end"
+                        android:maxLines="1"
+                        android:ellipsize="end" />
+
+                    <ImageView
+                        android:layout_width="26dp"
+                        android:layout_height="26dp"
+                        android:layout_gravity="center"
+                        android:alpha="0.75"
+                        android:src="@drawable/ic_pre"
+                        app:tint="@color/text_foreground"/>
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/llVideoPurify"
+                    android:layout_width="match_parent"
+                    android:layout_height="60dp"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="40dp"
+                    android:foreground="?android:selectableItemBackground">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="广告过滤"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="16sp"/>
+
+                    <Space
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1" />
+
+                    <com.github.tvbox.osc.ui.kit.AppSwitch
+                        android:id="@+id/switchVideoPurify"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:clickable="false"/>
+                </LinearLayout>
+                <LinearLayout
+                    android:id="@+id/llPressSpeed"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/dp_60"
+                    android:layout_weight="1"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="40dp"
+                    android:foreground="?android:selectableItemBackground">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="长按倍速"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="16sp"
+                        />
+
+                    <TextView
+                        android:id="@+id/tvSpeed"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="end"
+                        android:maxLines="1"
+                        android:ellipsize="end" />
+
+                    <ImageView
+                        android:layout_width="26dp"
+                        android:layout_height="26dp"
+                        android:layout_gravity="center"
+                        android:alpha="0.75"
+                        android:src="@drawable/ic_pre"
+                        app:tint="@color/text_foreground"/>
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/llBackgroundPlay"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/dp_60"
+                    android:layout_weight="1"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="40dp"
+                    android:foreground="?android:selectableItemBackground">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="后台播放"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="16sp"
+                        />
+
+                    <TextView
+                        android:id="@+id/tvBackgroundPlayType"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="end"
+                        android:maxLines="1"
+                        android:ellipsize="end" />
+
+                    <ImageView
+                        android:layout_width="26dp"
+                        android:layout_height="26dp"
+                        android:layout_gravity="center"
+                        android:alpha="0.75"
+                        android:src="@drawable/ic_pre"
+                        app:tint="@color/text_foreground"/>
+                </LinearLayout>
+                <LinearLayout
+                    android:id="@+id/llMediaCodec"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/dp_60"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="40dp"
+                    android:foreground="?android:selectableItemBackground">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="IJK解码方式"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="16sp"
+                        />
+
+                    <TextView
+                        android:id="@+id/tvMediaCodec"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="end"
+                        android:maxLines="1"
+                        android:ellipsize="end" />
+
+                    <ImageView
+                        android:layout_width="26dp"
+                        android:layout_height="26dp"
+                        android:layout_gravity="center"
+                        android:alpha="0.75"
+                        android:src="@drawable/ic_pre"
+                        app:tint="@color/text_foreground"/>
+                </LinearLayout>
+
+
+                <LinearLayout
+                    android:id="@+id/llRender"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/dp_60"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="40dp"
+                    android:foreground="?android:selectableItemBackground">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="渲染方式"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="16sp"
+                        />
+
+                    <TextView
+                        android:id="@+id/tvRenderType"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="end"
+                        android:maxLines="1"
+                        android:ellipsize="end" />
+
+                    <ImageView
+                        android:layout_width="26dp"
+                        android:layout_height="26dp"
+                        android:layout_gravity="center"
+                        android:alpha="0.75"
+                        android:src="@drawable/ic_pre"
+                        app:tint="@color/text_foreground"/>
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/llScale"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/dp_60"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="40dp"
+                    android:foreground="?android:selectableItemBackground">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="画面缩放"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="16sp"
+                        />
+
+                    <TextView
+                        android:id="@+id/tvScaleType"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="end"
+                        android:maxLines="1"
+                        android:ellipsize="end" />
+
+                    <ImageView
+                        android:layout_width="26dp"
+                        android:layout_height="26dp"
+                        android:layout_gravity="center"
+                        android:alpha="0.75"
+                        android:src="@drawable/ic_pre"
+                        app:tint="@color/text_foreground"/>
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/llIjkCachePlay"
+                    android:layout_width="match_parent"
+                    android:layout_height="60dp"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="40dp"
+                    android:foreground="?android:selectableItemBackground">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="IJK缓存"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="16sp"/>
+
+                    <Space
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1" />
+
+                    <com.github.tvbox.osc.ui.kit.AppSwitch
+                        android:id="@+id/switchIjkCachePlay"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:clickable="false"/>
+                </LinearLayout>
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingVertical="20dp"
+                android:layout_marginTop="14dp"
+                android:background="@drawable/bg_large_round_float">
+                <LinearLayout
+                    android:id="@+id/llSubscriptionLog"
+                    android:layout_width="match_parent"
+                    android:layout_height="60dp"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="40dp"
+                    android:foreground="?android:selectableItemBackground">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="业务日志"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="16sp"/>
+
+                    <Space
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1" />
+
+                    <com.github.tvbox.osc.ui.kit.AppSwitch
+                        android:id="@+id/switchSubscriptionLog"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:clickable="false"/>
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/llSubscriptionLogView"
+                    android:layout_width="match_parent"
+                    android:layout_height="60dp"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="40dp"
+                    android:foreground="?android:selectableItemBackground">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="查看日志"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="16sp"/>
+
+                    <Space
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="›"
+                        android:textColor="@color/text_sub_foreground"
+                        android:textSize="20sp"/>
+                </LinearLayout>
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingVertical="20dp"
+                android:layout_marginTop="14dp"
+                android:background="@drawable/bg_large_round_float">
+                <LinearLayout
+                    android:id="@+id/llBackup"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/dp_60"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="40dp"
+                    android:foreground="?android:selectableItemBackground">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="数据备份还原"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="16sp"/>
+
+                    <Space
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1" />
+
+                    <ImageView
+                        android:layout_width="26dp"
+                        android:layout_height="26dp"
+                        android:layout_gravity="center"
+                        android:alpha="0.75"
+                        android:src="@drawable/ic_pre"
+                        app:tint="@color/text_foreground"/>
+                </LinearLayout>
+                <LinearLayout
+                    android:id="@+id/llHistoryNum"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/dp_60"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="40dp"
+                    android:foreground="?android:selectableItemBackground">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="历史记录"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="16sp"
+                        />
+
+                    <TextView
+                        android:id="@+id/tvHistoryNum"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="end"
+                        android:maxLines="1"
+                        android:ellipsize="end" />
+
+                    <ImageView
+                        android:layout_width="26dp"
+                        android:layout_height="26dp"
+                        android:layout_gravity="center"
+                        android:alpha="0.75"
+                        android:src="@drawable/ic_pre"
+                        app:tint="@color/text_foreground"/>
+                </LinearLayout>
+
+
+                <LinearLayout
+                    android:id="@+id/llClearCache"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/dp_60"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="40dp"
+                    android:foreground="?android:selectableItemBackground">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="清空缓存"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="16sp"
+                        />
+
+                    <Space
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1" />
+
+                    <ImageView
+                        android:layout_width="26dp"
+                        android:layout_height="26dp"
+                        android:layout_gravity="center"
+                        android:alpha="0.75"
+                        android:src="@drawable/ic_pre"
+                        app:tint="@color/text_foreground"/>
+                </LinearLayout>
+
+                <!-- 启动时自动检查更新(默认开):首页"上次看到"气泡消失后检查一次,有新版本弹更新说明弹窗 -->
+                <LinearLayout
+                    android:id="@+id/llAutoCheckUpdate"
+                    android:layout_width="match_parent"
+                    android:layout_height="60dp"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="40dp"
+                    android:foreground="?android:selectableItemBackground">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="自动检查更新"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="16sp"/>
+
+                    <Space
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1" />
+
+                    <com.github.tvbox.osc.ui.kit.AppSwitch
+                        android:id="@+id/switchAutoCheckUpdate"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:clickable="false"/>
+                </LinearLayout>
+            </LinearLayout>
+
+        </LinearLayout>
+    </com.github.tvbox.osc.ui.kit.RubberBandScrollView>
+</LinearLayout>

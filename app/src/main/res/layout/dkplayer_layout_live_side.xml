@@ -1,0 +1,167 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 直播全屏:四角横排控制 + 右缘窄菜单(投屏/换台/设置)。
+     四角:返回+台名 左上,时间 右上,暂停/刷新 左下,全屏 右下。
+     右缘菜单垂直居中、窄条无背景(不产生贯穿黑线)。 -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <!-- 顶部:返回+台名(左), 时间(右) -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingStart="@dimen/player_control_edge_h"
+        android:paddingEnd="@dimen/player_control_edge_h"
+        android:paddingTop="@dimen/player_control_edge_v">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <androidx.appcompat.widget.AppCompatImageView
+                android:id="@+id/iv_back"
+                android:layout_width="34dp"
+                android:layout_height="34dp"
+                android:padding="6dp"
+                android:src="@drawable/dkplayer_ic_action_arrow_back"
+                app:tint="@color/white" />
+
+            <TextView
+                android:id="@+id/tv_title"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="10dp"
+                android:singleLine="true"
+                android:ellipsize="marquee"
+                android:marqueeRepeatLimit="marquee_forever"
+                android:textSize="14sp"
+                android:textColor="@color/white"
+                tools:text="CCTV3 综艺" />
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/tv_speed"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="8dp"
+                    android:textSize="14sp"
+                    android:textColor="@color/white"
+                    tools:text="2.1M/s" />
+
+                <TextView
+                    android:id="@+id/tv_time"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:textSize="14sp"
+                    android:textColor="@color/white"
+                    tools:text="08:32" />
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- 底部:暂停/刷新(左), 线路信息+全屏(右) -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingStart="@dimen/player_control_edge_h"
+        android:paddingEnd="@dimen/player_control_edge_h"
+        android:paddingBottom="@dimen/player_control_edge_v">
+
+        <androidx.appcompat.widget.AppCompatImageView
+            android:id="@+id/iv_play_pause"
+            android:layout_width="34dp"
+            android:layout_height="34dp"
+            android:padding="6dp"
+            android:src="@drawable/ic_pause"
+            app:tint="@color/white" />
+
+        <androidx.appcompat.widget.AppCompatImageView
+            android:id="@+id/iv_refresh"
+            android:layout_width="34dp"
+            android:layout_height="34dp"
+            android:layout_marginStart="12dp"
+            android:padding="6dp"
+            android:src="@drawable/dkplayer_ic_action_replay"
+            app:tint="@color/white"
+            android:tint="@color/white" />
+
+        <View
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <!-- 线路信息:位于全屏按钮左侧,间距参考返回与频道名之间(10dp) -->
+        <TextView
+            android:id="@+id/tv_line"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginEnd="10dp"
+            android:gravity="center"
+            android:paddingVertical="6dp"
+            android:textColor="@color/white"
+            android:textSize="12sp"
+            tools:text="线路 1/3" />
+
+        <androidx.appcompat.widget.AppCompatImageView
+            android:id="@+id/iv_fullscreen"
+            android:layout_width="34dp"
+            android:layout_height="34dp"
+            android:padding="5dp"
+            android:scaleType="centerCrop"
+            android:src="@drawable/ic_zoom_out"
+            app:tint="@color/white" />
+    </LinearLayout>
+
+    <!-- 右缘窄菜单:垂直居中,无背景(不产生黑线) -->
+    <LinearLayout
+        android:id="@+id/rail"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="end|center_vertical"
+        android:layout_marginEnd="@dimen/player_control_edge_h"
+        android:gravity="center"
+        android:orientation="vertical">
+
+        <androidx.appcompat.widget.AppCompatImageView
+            android:id="@+id/iv_cast"
+            android:layout_width="34dp"
+            android:layout_height="34dp"
+            android:padding="6dp"
+            android:src="@drawable/ic_cast"
+            app:tint="@color/white" />
+
+        <androidx.appcompat.widget.AppCompatImageView
+            android:id="@+id/iv_expand"
+            android:layout_width="34dp"
+            android:layout_height="34dp"
+            android:layout_marginTop="12dp"
+            android:padding="6dp"
+            android:rotation="180"
+            android:src="@drawable/ic_expand"
+            app:tint="@color/white" />
+
+        <androidx.appcompat.widget.AppCompatImageView
+            android:id="@+id/iv_setting"
+            android:layout_width="34dp"
+            android:layout_height="34dp"
+            android:layout_marginTop="12dp"
+            android:padding="4dp"
+            android:scaleType="centerCrop"
+            android:src="@drawable/ic_setting"
+            app:tint="@color/white" />
+    </LinearLayout>
+</FrameLayout>

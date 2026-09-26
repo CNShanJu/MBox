@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/bg"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/bg_popup"
+    android:paddingTop="16dp"
+    android:paddingBottom="12dp">
+
+    <!-- box1: 标题 + 已选计数 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="20dp"
+        android:paddingBottom="12dp">
+
+        <TextView
+            android:id="@+id/tv_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="选择下载剧集"
+            android:textColor="@color/text_foreground"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/tv_selected"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginRight="12dp"
+            android:text="(已选 0)"
+            android:textColor="@color/text_highlight"
+            android:textSize="13sp" />
+
+        <TextView
+            android:id="@+id/tv_sort"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:drawablePadding="4dp"
+            android:drawableRight="@drawable/ic_sort_18"
+            android:paddingVertical="6dp"
+            android:text="倒序"
+            android:textColor="@color/text_foreground"
+            android:textSize="13sp" />
+    </LinearLayout>
+
+    <!-- box2: 集数列表,吃满剩余高度,内容超出内部滚动(类似 css flex:1) -->
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <!-- 数据加载中占位 -->
+        <FrameLayout
+            android:id="@+id/fl_loading"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone">
+
+            <com.airbnb.lottie.LottieAnimationView
+                android:id="@+id/lottie_loading"
+                android:layout_width="72dp"
+                android:layout_height="72dp"
+                android:layout_gravity="center"
+                app:lottie_autoPlay="true"
+                android:scaleType="centerCrop"
+                app:lottie_speed="1"
+                app:lottie_loop="true"
+                app:lottie_repeatMode="restart"/>
+        </FrameLayout>
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/rv"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:clipToPadding="false"
+            android:paddingHorizontal="16dp"
+            android:paddingVertical="4dp"
+            tools:listitem="@layout/item_series" />
+    </FrameLayout>
+
+    <!-- box3: 下载管理 + 开始下载 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:orientation="horizontal"
+        android:paddingHorizontal="20dp">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_manager"
+            style="@style/BtnSecondary"
+            android:layout_width="0dp"
+            android:layout_height="44dp"
+            android:layout_marginRight="10dp"
+            android:layout_weight="1"
+            android:text="下载管理" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_start"
+            style="@style/BtnPrimary"
+            android:layout_width="0dp"
+            android:layout_height="44dp"
+            android:layout_weight="1"
+            android:text="开始下载" />
+    </LinearLayout>
+
+</LinearLayout>

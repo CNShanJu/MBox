@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 更新进度条(主题化):轨道=bg_component(明暗自适应),进度=color_highlight(主题高亮色),圆角 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@android:id/background">
+        <shape>
+            <corners android:radius="4dp" />
+            <solid android:color="@color/bg_component" />
+        </shape>
+    </item>
+    <item android:id="@android:id/progress">
+        <clip>
+            <shape>
+                <corners android:radius="4dp" />
+                <solid android:color="@color/color_highlight" />
+            </shape>
+        </clip>
+    </item>
+</layer-list>

@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 搜索结果-通栏卡片:2:1 横卡,多列并排撑满屏宽;海报卡(评分左上角标、底部渐变黑底叠集数),下方剧集名称(可换行),最下来源 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingHorizontal="10dp"
+    android:layout_marginBottom="14dp">
+
+    <!-- 海报卡:宽:高 = 2:1 横图,宽=所在网格列宽;评分左上角标+底部渐变黑底叠集数 -->
+    <com.github.tvbox.osc.ui.kit.BannerRatioLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        app:clickable="false"
+        app:hl_cornerRadius="@dimen/radius_card"
+        app:hl_layoutBackground="@android:color/transparent">
+
+        <include layout="@layout/view_search_poster_card"/>
+    </com.github.tvbox.osc.ui.kit.BannerRatioLayout>
+
+    <!-- 剧集名称(过长可换行) -->
+    <TextView
+        android:id="@+id/tvName"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        tools:text="《爱情公寓》第三季爱情公寓第三季爱情公寓第三季"
+        android:layout_marginTop="8dp"
+        android:textColor="@color/text_foreground"
+        android:textSize="@dimen/search_card_title_size"
+        android:textStyle="bold"
+        android:ellipsize="end"
+        android:maxLines="2"/>
+
+    <!-- 来源 -->
+    <LinearLayout
+        android:id="@+id/llSite"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="5dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/tvSite"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            tools:text="爱奇艺播放"
+            android:textColor="@color/text_accent"
+            android:textSize="@dimen/search_card_text_size"
+            android:ellipsize="end"
+            android:singleLine="true"/>
+    </LinearLayout>
+
+</LinearLayout>
