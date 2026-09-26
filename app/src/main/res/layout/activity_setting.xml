@@ -445,6 +445,45 @@
                         app:tint="@color/text_foreground"/>
                 </LinearLayout>
 
+                <!-- 下载限速(与下载页齿轮弹窗同一事实源:DownloadFacade/ThrottlePolicy) -->
+                <LinearLayout
+                    android:id="@+id/llDlSpeed"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/dp_60"
+                    android:layout_weight="1"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="40dp"
+                    android:foreground="?android:selectableItemBackground">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="下载限速"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="16sp"/>
+
+                    <TextView
+                        android:id="@+id/tvDlSpeed"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="end"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="14sp"/>
+
+                    <ImageView
+                        android:layout_width="26dp"
+                        android:layout_height="26dp"
+                        android:layout_gravity="center"
+                        android:alpha="0.75"
+                        android:src="@drawable/ic_pre"
+                        app:tint="@color/text_foreground"/>
+                </LinearLayout>
+
                 <!--<LinearLayout-->
                 <!--    android:layout_width="match_parent"-->
                 <!--    android:layout_height="wrap_content"-->

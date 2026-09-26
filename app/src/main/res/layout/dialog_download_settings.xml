@@ -84,4 +84,45 @@
             app:tint="@color/text_foreground" />
     </LinearLayout>
 
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:layout_marginHorizontal="20dp"
+        android:background="@color/gray_darker_press_alpha" />
+
+    <!-- 下载限速:点击弹 SelectDialog(不限速 / 512KB/s / 1MB/s / 2MB/s / 5MB/s) -->
+    <LinearLayout
+        android:id="@+id/ll_speed"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:foreground="?android:selectableItemBackground"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="20dp">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="下载限速"
+            android:textColor="@color/text_foreground"
+            android:textSize="15sp" />
+
+        <TextView
+            android:id="@+id/tv_speed"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="@color/text_highlight"
+            android:textSize="15sp" />
+
+        <ImageView
+            android:layout_width="18dp"
+            android:layout_height="18dp"
+            android:layout_gravity="center"
+            android:layout_marginLeft="6dp"
+            android:alpha="0.75"
+            android:src="@drawable/ic_pre"
+            app:tint="@color/text_foreground" />
+    </LinearLayout>
+
 </LinearLayout>

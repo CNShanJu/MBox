@@ -34,6 +34,8 @@ public class DownloadManager {
     static final String HAWK_KEY = "download_tasks_v1";
     static final String HAWK_MAX_CONCURRENT = "download_max_concurrent";
     static final String HAWK_WIFI_ONLY = "download_wifi_only";
+    /** 全局限速(存 KB/s,0=不限速;见 DownloadPolicy.getSpeedLimitBytesPerSec) */
+    static final String HAWK_SPEED_LIMIT_KBPS = "download_speed_limit_kbps";
     static final int BUFFER = 64 * 1024;
 
     private static DownloadManager instance;
@@ -559,11 +561,27 @@ public class DownloadManager {
         com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.DOWNLOAD, "下载设置: 并发数=" + n);
     }
 
-    /** 每任务限速(字节/秒;0=不限速)。5.4 增强,仅内存生效(重启需重新设置) */
+    /**
+     * 每任务限速(字节/秒;0=不限速)。5.4 增强,仅内存生效(重启需重新设置)。
+     * <p>
+     * 注意:这是"单个任务"的底层入口,正常路径由 UI 设置项经 {@link #setSpeedLimitBytesPerSec} 统一供值
+     * (任务启动时套用、改设置立即生效),业务侧不需要逐个任务调用。
+     */
     public void setSpeedLimit(DownloadTask t, long bytesPerSecond) {
         if (t != null) {
             t.speedLimit = Math.max(0, bytesPerSecond);
         }
+    }
+
+    /** 全局限速(字节/秒;0=不限速):持久化 + 立即套用到所有任务 */
+    public long getSpeedLimitBytesPerSec() {
+        return policy.getSpeedLimitBytesPerSec();
+    }
+
+    public void setSpeedLimitBytesPerSec(long bytesPerSecond) {
+        policy.setSpeedLimitBytesPerSec(bytesPerSecond);
+        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.DOWNLOAD,
+                "下载设置: 限速=" + (bytesPerSecond <= 0 ? "不限速" : (bytesPerSecond / 1024) + "KB/s"));
     }
 
     /** 是否仅 WiFi 下载(默认开启;开启时蜂窝/断网不启动并自动挂起) */

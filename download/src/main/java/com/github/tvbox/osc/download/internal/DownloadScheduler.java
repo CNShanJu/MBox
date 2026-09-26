@@ -275,6 +275,11 @@ public class DownloadScheduler {
                     return;
                 }
                 int retries = 0;
+                // 每次启动任务时套用全局设置项(限速):speedLimit 是 transient,重启/新入队都要重新套,
+                // 设置改动也会由 DownloadPolicy 直接刷到运行中的任务上(见 setSpeedLimitBytesPerSec)
+                t.speedLimit = dm.policy.getSpeedLimitBytesPerSec();
+                t.throttleWindowStart = 0;
+                t.throttleWindowBytes = 0;
                 // 进程重启后首次启动:代理签名URL通常已过期,先重新解析一次(与下载中过期重解析共用逻辑)
                 if (t.needReResolve) {
                     t.needReResolve = false;

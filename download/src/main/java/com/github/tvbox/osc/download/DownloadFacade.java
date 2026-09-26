@@ -325,6 +325,16 @@ public final class DownloadFacade {
         com.github.tvbox.osc.download.internal.DownloadManager.get().setMaxConcurrent(n);
     }
 
+    /** 全局限速(字节/秒;0=不限速):UI 设置项,持久化,改后对运行中任务立即生效 */
+    public long getSpeedLimitBytesPerSec() {
+        return com.github.tvbox.osc.download.internal.DownloadManager.get().getSpeedLimitBytesPerSec();
+    }
+
+    /** 设置全局限速(字节/秒;0=不限速) */
+    public void setSpeedLimitBytesPerSec(long bytesPerSecond) {
+        com.github.tvbox.osc.download.internal.DownloadManager.get().setSpeedLimitBytesPerSec(bytesPerSecond);
+    }
+
     /** 当前网络是否为移动网络(蜂窝) */
     public boolean isMobileNetwork() {
         return com.github.tvbox.osc.download.internal.DownloadManager.isMobileNetwork();

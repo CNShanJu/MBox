@@ -16,6 +16,7 @@ import com.github.tvbox.osc.bean.IJKCode
 import com.github.tvbox.osc.constant.IntentKey
 import com.github.tvbox.osc.databinding.ActivitySettingBinding
 import com.github.tvbox.osc.download.DownloadFacade
+import com.github.tvbox.osc.util.ThrottlePolicy
 import com.github.tvbox.osc.ui.adapter.SelectDialogAdapter
 import com.github.tvbox.osc.ui.adapter.SelectDialogAdapter.SelectDialogInterface
 import com.github.tvbox.osc.ui.dialog.BackupDialog
@@ -573,6 +574,33 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
                     return name ?: ""
                 }
             }, SelectDialogAdapter.stringDiff, types, defaultPos)
+            dialog.show()
+        }
+        // 下载限速(不限速 / 512KB/s / 1MB/s / 2MB/s / 5MB/s):与下载页齿轮弹窗同一事实源,
+        // 改完对运行中的任务当场生效(见 DownloadPolicy.setSpeedLimitBytesPerSec)
+        val refreshSpeed = {
+            mBinding.tvDlSpeed.text = ThrottlePolicy.label(DownloadFacade.get().getSpeedLimitBytesPerSec())
+        }
+        refreshSpeed()
+        mBinding.llDlSpeed.setOnClickListener {
+            FastClickCheckUtil.check(it)
+            val labels = ArrayList<String>()
+            for (bps in ThrottlePolicy.PRESET_BYTES_PER_SEC) labels.add(ThrottlePolicy.label(bps))
+            val defaultPos = ThrottlePolicy.presetIndex(DownloadFacade.get().getSpeedLimitBytesPerSec())
+            val dialog = SelectDialog<String>(this@SettingActivity)
+            dialog.setTip("选择下载限速(不限速即跑满带宽)")
+            dialog.setAdapter(object : SelectDialogInterface<String?> {
+                override fun click(value: String?, pos: Int) {
+                    val bps = ThrottlePolicy.PRESET_BYTES_PER_SEC[pos]
+                    DownloadFacade.get().setSpeedLimitBytesPerSec(bps)
+                    biz("下载限速: " + ThrottlePolicy.label(bps))
+                    refreshSpeed()
+                }
+
+                override fun getDisplay(name: String?): String {
+                    return name ?: ""
+                }
+            }, SelectDialogAdapter.stringDiff, labels, defaultPos)
             dialog.show()
         }
     }

@@ -18,6 +18,39 @@ public final class ThrottlePolicy {
     /** 单次结算最多睡多久 */
     public static final long MAX_SLEEP_MS = 2000;
 
+    /**
+     * UI 预设档位(字节/秒;0=不限速)。抽到这里是为了"设置项与显示文案"只有一份事实源:
+     * 下载设置弹窗与全局设置页共用,避免两边各写一套档位/文案。
+     */
+    public static final long[] PRESET_BYTES_PER_SEC = {
+            0, 512L * 1024, 1024L * 1024, 2L * 1024 * 1024, 5L * 1024 * 1024,
+    };
+
+    /** 预设档位的显示文案("不限速" / "512KB/s" / "1MB/s" …) */
+    public static String label(long bytesPerSec) {
+        if (bytesPerSec <= 0) return "不限速";
+        if (bytesPerSec % (1024L * 1024) == 0) return (bytesPerSec / (1024 * 1024)) + "MB/s";
+        return (bytesPerSec / 1024) + "KB/s";
+    }
+
+    /** 当前值对应哪个预设档位(用于 SelectDialog 默认选中;找不到时返回最接近的一档) */
+    public static int presetIndex(long bytesPerSec) {
+        long v = Math.max(0, bytesPerSec);
+        for (int i = 0; i < PRESET_BYTES_PER_SEC.length; i++) {
+            if (PRESET_BYTES_PER_SEC[i] == v) return i;
+        }
+        int best = 0;
+        long bestDiff = Long.MAX_VALUE;
+        for (int i = 0; i < PRESET_BYTES_PER_SEC.length; i++) {
+            long d = Math.abs(PRESET_BYTES_PER_SEC[i] - v);
+            if (d < bestDiff) {
+                bestDiff = d;
+                best = i;
+            }
+        }
+        return best;
+    }
+
     private ThrottlePolicy() {
     }
 

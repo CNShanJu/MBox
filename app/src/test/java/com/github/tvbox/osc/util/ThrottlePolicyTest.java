@@ -75,4 +75,23 @@ public class ThrottlePolicyTest {
         assertTrue("窗口要足够长,避免每读一块就睡", ThrottlePolicy.WINDOW_MS >= 200);
         assertTrue("单次睡眠要封顶,保证暂停/取消响应", ThrottlePolicy.MAX_SLEEP_MS <= 3000);
     }
+
+    @Test
+    public void presetLabelsAndIndex() {
+        // 设置项文案与档位只有一份事实源(下载设置弹窗 + 全局设置页共用)
+        assertEquals("不限速", ThrottlePolicy.label(0));
+        assertEquals("512KB/s", ThrottlePolicy.label(512 * 1024));
+        assertEquals("1MB/s", ThrottlePolicy.label(1024 * 1024));
+        assertEquals("5MB/s", ThrottlePolicy.label(5L * 1024 * 1024));
+        // 非整 MB 的档位按 KB/s 显示
+        assertEquals("1500KB/s", ThrottlePolicy.label(1500L * 1024));
+        for (int i = 0; i < ThrottlePolicy.PRESET_BYTES_PER_SEC.length; i++) {
+            assertEquals("第 " + i + " 档要能定位回自己", i,
+                    ThrottlePolicy.presetIndex(ThrottlePolicy.PRESET_BYTES_PER_SEC[i]));
+        }
+        assertEquals("非法/负值按不限速处理", 0, ThrottlePolicy.presetIndex(-1));
+        // 夹在档位之间时取最接近的一档:1800KB/s 离 2MB/s(2048KB)最近,而不是 1MB/s
+        assertEquals(3, ThrottlePolicy.presetIndex(1800L * 1024));
+        assertEquals(2, ThrottlePolicy.presetIndex(900L * 1024));
+    }
 }
