@@ -276,6 +276,23 @@ public class DownloadExecutor {
     public void downloadHls(DownloadTask t) throws IOException {
         String playlistUrl = t.url;
         String playlist = fetchPlaylist(playlistUrl, t);
+        // 与播放链路用同一份净化规则(:common 的 M3u8Purifier,播放侧 PlayFragment 也是它):
+        // ① 剔掉少数派分片(广告/占位)—— 这些片源站往往已经删了,播放器因为不看它们所以一路顺,
+        //    下载器照单全下就会"播放不缺、下载缺"(实测 940 片里 8 片 404 全是少数派前缀);
+        // ② 把清单内相对地址补成绝对地址(下载侧同样按播放列表目录解析,顺手统一)。
+        // 返回 null = 无法判定(前缀分组过多/结构异常),与播放侧一样按"不净化"处理。
+        String purified = com.github.tvbox.osc.util.M3u8Purifier.removeMinorityUrl(dirOfUrl(t.url), playlist);
+        int filteredSegments = 0;
+        if (purified != null && !purified.equals(playlist)) {
+            filteredSegments = countSegmentLines(playlist) - countSegmentLines(purified);
+            playlist = purified;
+            if (filteredSegments > 0) {
+                Log.i("TVBox-Download", "广告过滤: 剔除 " + filteredSegments + " 片少数派分片(与播放链路同一份清单): "
+                        + t.fileName);
+                DownloadLog.LOG.info(DownloadSubType.PLAYLIST, "广告过滤: 剔除 " + filteredSegments
+                        + " 片少数派分片(与播放链路同一份清单,这些片不再请求)", DownloadLog.extras(t.episodeId));
+            }
+        }
         // 诊断: 完整播放列表内容(判断分片是否为加密HLS/占位/异常格式)
         Log.i("TVBox-Download", "播放列表内容(" + playlist.length() + "B): "
                 + playlist.substring(0, Math.min(600, playlist.length())).replace("\n", "\\n"));
@@ -717,6 +734,11 @@ public class DownloadExecutor {
                     + ",该分片在源侧已失效,可能少几秒画面";
         } else if (!patchNote.isEmpty()) {
             doneNote = patchNote + ",本线路缺的片已由其它线路补齐,合并为完整文件";
+        }
+        if (filteredSegments > 0) {
+            // 与播放一致:清单里被判为广告/占位的少数派分片没有下(也不该出现在成品里),如实告诉用户
+            String filterNote = "已过滤 " + filteredSegments + " 片广告/占位分片";
+            doneNote = doneNote.isEmpty() ? filterNote : doneNote + "," + filterNote;
         }
         t.message = doneNote.isEmpty() ? "" : "已完成(" + doneNote + ")";
         t.state = DownloadTask.STATE_COMPLETED;
@@ -1427,6 +1449,24 @@ public class DownloadExecutor {
             dm.activeResponses.remove(t.id);
             resp.close();
         }
+    }
+
+    /** 播放列表所在目录(拼相对地址用;取不到返回空串) */
+    private static String dirOfUrl(String url) {
+        if (url == null) return "";
+        int i = url.lastIndexOf('/');
+        return i > 0 ? url.substring(0, i + 1) : "";
+    }
+
+    /** 数一份 m3u8 里的分片行数(非空且非注释),用于统计净化剔除了几片 */
+    private static int countSegmentLines(String playlist) {
+        if (playlist == null || playlist.isEmpty()) return 0;
+        int n = 0;
+        for (String line : playlist.split("\r?\n")) {
+            String l = line.trim();
+            if (!l.isEmpty() && l.charAt(0) != '#') n++;
+        }
+        return n;
     }
 
     private String fetchPlaylist(String url, DownloadTask t) throws IOException {

@@ -500,7 +500,7 @@ public class PlayFragment extends BaseLazyFragment {
             @Override
             public void onSuccess(String content) {
                 // 先剥 BOM:带 BOM 的清单原来会被下面的 startsWith 判否 → 静默放弃广告过滤
-                content = com.github.tvbox.osc.util.player.M3u8Cleaner.stripBom(content);
+                content = com.github.tvbox.osc.util.M3u8Purifier.stripBom(content);
                 if (!content.startsWith("#EXTM3U")) {
                     startPlayUrl(url, headers);
                     return;
@@ -537,7 +537,7 @@ public class PlayFragment extends BaseLazyFragment {
                 if ("".equals(forwardurl)) {
                     int ilast = url.lastIndexOf('/');
 
-                    RemoteServer.m3u8Content = com.github.tvbox.osc.util.player.M3u8Cleaner
+                    RemoteServer.m3u8Content = com.github.tvbox.osc.util.M3u8Purifier
                             .removeMinorityUrl(url.substring(0, ilast + 1), content);
                     if (RemoteServer.m3u8Content == null)
                         startPlayUrl(url, headers);
@@ -551,9 +551,9 @@ public class PlayFragment extends BaseLazyFragment {
                 HttpClient.get(forwardurl, hheaders, "m3u8-2", new HCallBack() {
                     @Override
                     public void onSuccess(String content) {
-                        content = com.github.tvbox.osc.util.player.M3u8Cleaner.stripBom(content);
+                        content = com.github.tvbox.osc.util.M3u8Purifier.stripBom(content);
                         int ilast = finalforwardurl.lastIndexOf('/');
-                        RemoteServer.m3u8Content = com.github.tvbox.osc.util.player.M3u8Cleaner
+                        RemoteServer.m3u8Content = com.github.tvbox.osc.util.M3u8Purifier
                                 .removeMinorityUrl(finalforwardurl.substring(0, ilast + 1), content);
 
                         if (RemoteServer.m3u8Content == null)
