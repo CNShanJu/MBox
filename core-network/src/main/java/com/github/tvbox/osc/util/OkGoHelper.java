@@ -60,6 +60,26 @@ public class OkGoHelper {
         return "";
     }
 
+    /** 安全 DNS 选项数(与 {@link #dnsHttpsList} 一致):UI 取下标前必须先过这里/{{@link #dohLabel}} */
+    public static int dohCount() {
+        initDnsOverHttps();
+        return dnsHttpsList.size();
+    }
+
+    /**
+     * 安全 DNS 的显示文案(下标越界自动收进范围)。
+     * <p>
+     * 为什么必须夹取:历史版本/老备份里的 {@code doh_url} 可能是 4/5/6(那时列表有 7 项),
+     * 而当前列表只有 4 项——直接 {@code dnsHttpsList[getDohUrl()]} 会 IndexOutOfBounds 崩在设置页。
+     * 夹到最后一个有效项(而不是"关闭"),是为了保住用户"我要用 DoH"的意图。
+     */
+    public static String dohLabel(int index) {
+        initDnsOverHttps();
+        if (dnsHttpsList.isEmpty()) return "";
+        int i = Math.max(0, Math.min(dnsHttpsList.size() - 1, index));
+        return dnsHttpsList.get(i);
+    }
+
     static void initDnsOverHttps() {
         if (dnsHttpsList.isEmpty()) {
             dnsHttpsList.add("关闭");

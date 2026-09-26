@@ -3,6 +3,7 @@ package com.github.tvbox.osc.ui.activity
 import android.content.DialogInterface
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.view.View
 import androidx.recyclerview.widget.DiffUtil
 import com.github.tvbox.osc.log.LogConfig
@@ -24,6 +25,7 @@ import com.github.tvbox.osc.ui.dialog.LiveApiDialog
 import com.github.tvbox.osc.ui.dialog.SelectDialog
 import com.github.tvbox.osc.util.FastClickCheckUtil
 import com.github.tvbox.osc.util.FileUtils
+import com.github.tvbox.osc.util.HeavyTaskUtil
 import com.github.tvbox.osc.util.HistoryHelper
 import com.github.tvbox.osc.util.LoadingAnim
 import com.github.tvbox.osc.util.OkGoHelper
@@ -66,7 +68,9 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
         // 加载动画:默认 / Glowing Fish(全局 LoadSir 加载动画,播放器与下载不受影响)
         initLoadingAnimSetting()
 
-        mBinding.tvDns.text = OkGoHelper.dnsHttpsList[SystemConfig.getDohUrl()]
+        // 用 dohLabel 而不是直接下标:老备份/历史版本里 doh_url 可能是 4~6,而当前列表只有 4 项
+        // (直接 dnsHttpsList[getDohUrl()] 会在设置页 IndexOutOfBounds 崩)
+        mBinding.tvDns.text = OkGoHelper.dohLabel(SystemConfig.getDohUrl())
         mBinding.tvHomeRec.text = getHomeRecName(SystemConfig.getHomeRec())
         mBinding.tvHistoryNum.text =
             HistoryHelper.getHistoryNumName(SystemConfig.getHistoryNum())
@@ -259,6 +263,9 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             dialog.setAdapter(object : SelectDialogInterface<IJKCode?> {
                 override fun click(value: IJKCode?, pos: Int) {
                     value?.selected(true)
+                    // 真正落库:内核取值走 PlayConfig.getIjkCodec()(IJKCode.selected() 只改内存字段),
+                    // 原来只 selected() 不写配置 → 弹窗选了、标题变了,起播仍用旧解码,重进设置页又回旧值
+                    value?.name?.let { PlayConfig.setIjkCodec(it) }
                     biz("IJK解码: " + (value?.name ?: "未知"))
                     mBinding.tvMediaCodec.text = value?.name
                 }
@@ -685,17 +692,22 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
 
     private fun onClickClearCache(v: View) {
         FastClickCheckUtil.check(v)
-        val cachePath = FileUtils.getCachePath()
-        val cacheDir = File(cachePath)
-        if (!cacheDir.exists()) return
-        Thread {
-            try {
-                FileUtils.cleanDirectory(cacheDir)
-            } catch (e: Exception) {
-                e.printStackTrace()
+        // 走共享大任务线程池(AGENTS §六.6:UI 不得自建线程池);删缓存要清的是两处 ——
+        // 内部 cacheDir + 外部 getExternalCacheDir()(Exo 的 exo-video-cache 在这里),
+        // 原来只删内部 getCachePath(),清完体积几乎没变;FileUtils.clearAllCache() 就是两处的统一口径。
+        // 删完再 toast(原来在裸 Thread 启动后立刻弹"缓存已清空",其实还没删完)
+        HeavyTaskUtil.getBigTaskExecutorService().execute {
+            val ok = try {
+                FileUtils.clearAllCache()
+                true
+            } catch (t: Throwable) {
+                Log.e("TVBox-Setting", "清空缓存失败", t)
+                false
             }
-        }.start()
-        AppBubble.toastLong("缓存已清空")
+            mBinding.root.post {
+                AppBubble.toastLong(if (ok) "缓存已清空" else "清空缓存失败,请稍后再试")
+            }
+        }
     }
 
     private fun getHomeRecName(type: Int): String {
