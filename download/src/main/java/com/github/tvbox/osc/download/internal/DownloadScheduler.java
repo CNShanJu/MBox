@@ -7,6 +7,7 @@ import com.github.tvbox.osc.download.DownloadSubType;
 import com.github.tvbox.osc.state.SystemEvent;
 import com.github.tvbox.osc.state.SystemState;
 import com.github.tvbox.osc.state.SystemStateMonitor;
+import com.github.tvbox.osc.util.RouteSwitchPolicy;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -340,11 +341,25 @@ public class DownloadScheduler {
                         }
                         // 换线路(4.8②):同线路重解析已到上限,或本线路整体失效(整集缺片全是源侧永久失效 /
                         // 连续多片下载失败)→ 原地怎么试都是同一个结果,改走这条集的另一条线路:
-                        // 换线路=另一份播放列表,旧碎片整份丢弃重下(见 switchRoute/clearRouteProgress)
-                        if (!netErr && canSwitchRoute(t, th)) {
-                            if (switchRoute(t)) {
-                                retries = 0; // 新线路有自己的重试预算
-                                continue;
+                        // 换线路=另一份播放列表,旧碎片整份丢弃重下(见 switchRoute/clearRouteProgress)。
+                        // 止损:已下太多就不自动换(否则几百 MB 进度被悄悄扔掉),保留下载进度按失败收尾,
+                        // 由用户决定重试还是换源(见 RouteSwitchPolicy)
+                        boolean keptProgressNoSwitch = false;
+                        if (!netErr) {
+                            if (canSwitchRoute(t, th)) {
+                                if (switchRoute(t)) {
+                                    retries = 0; // 新线路有自己的重试预算
+                                    continue;
+                                }
+                            } else if (maySwitchRoute(t, th)) {
+                                keptProgressNoSwitch = true;
+                                Log.i("TVBox-Download", "本线路分片不可用,但已下进度较多("
+                                        + t.doneSegments + "/" + t.totalSegments + " 片, "
+                                        + t.downloadedBytes + "B),不自动换线路(避免整集重下): " + t.fileName);
+                                DownloadLog.LOG.warn(DownloadSubType.RESOLVE,
+                                        "本线路分片不可用,已保留下载进度不自动换线路(换线路需整集重下): "
+                                                + t.fileName + " 进度 " + t.doneSegments + "/" + t.totalSegments + " 片",
+                                        DownloadLog.extras(t.episodeId));
                             }
                         }
                         if (retries < maxRetry) {
@@ -379,6 +394,10 @@ public class DownloadScheduler {
                         if (t.routeSwitchCount > 0) {
                             // 换过线路说明"这条集的其它线路也试过了":让用户知道不是没尝试,而是整个源这集不行
                             t.message = t.message + "(已换 " + t.routeSwitchCount + " 条线路)";
+                        }
+                        if (keptProgressNoSwitch) {
+                            // 本线路没救、但已下不少:明确告诉用户进度还在,别以为白下了
+                            t.message = t.message + "(该线路分片不可用;已保留下载进度,重试可续传)";
                         }
                         DownloadLog.LOG.fail(DownloadSubType.FAIL, "任务失败: " + t.fileName + " | " + t.message,
                                 DownloadLog.extras(t.episodeId));
@@ -505,17 +524,33 @@ public class DownloadScheduler {
     }
 
     /**
-     * 是否值得换线路(4.8②):还有候选,且本线路已"整体不可用"——
+     * 是否<b>值得</b>换线路(4.8②):还有候选,且本线路已"整体不可用"——
      * ①整集缺片全是源侧永久失效(HTTP 404/410,本线路彻底没救);
      * ②连续多片下载失败(该线路的分片地址整体失效);
      * ③本线路的"地址过期"重解析已到上限(再解析还是同一个地址,原地重试没意义)。
+     * 不含"损失是否可接受"的止损判断(见 {@link #routeSwitchLossAcceptable} / {@link #canSwitchRoute})。
      */
-    private boolean canSwitchRoute(DownloadTask t, Throwable th) {
+    private boolean maySwitchRoute(DownloadTask t, Throwable th) {
         if (t.altRoutes == null || t.altRoutes.isEmpty()) return false;
         if (t.sourceKey == null || t.episodeRawUrl == null) return false;
         if (DownloadErrors.isPermanentlyGone(th)) return true;
         if (DownloadErrors.isRouteSuspect(th)) return true;
         return shouldReResolve(t, th) && t.reResolveCount >= DownloadManager.MAX_RE_RESOLVE;
+    }
+
+    /**
+     * 止损:换线路=整集重下,已下的分片全废,所以只在"损失小"时才自动换(见 {@link RouteSwitchPolicy})。
+     * 已经下了不少就<b>不自动换</b>,让任务按普通失败收尾(碎片保留,同线路重试可续传),
+     * 由用户决定是重试还是换源 —— 不能替用户把几百 MB 的进度悄悄扔掉。
+     */
+    private boolean routeSwitchLossAcceptable(DownloadTask t) {
+        if (t.totalSegments > 0) return RouteSwitchPolicy.lossAcceptable(t.doneSegments, t.totalSegments);
+        return RouteSwitchPolicy.lossAcceptableBytes(t.downloadedBytes, t.totalBytes);
+    }
+
+    /** 可以自动换线路:本线路整体不可用 + 有候选 + 损失可接受 */
+    private boolean canSwitchRoute(DownloadTask t, Throwable th) {
+        return maySwitchRoute(t, th) && routeSwitchLossAcceptable(t);
     }
 
     /**
