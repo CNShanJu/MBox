@@ -316,7 +316,12 @@ public abstract class BaseVideoController extends FrameLayout
         public void run() {
             int pos = setProgress();
             if (mControlWrapper.isPlaying()) {
-                postDelayed(this, (long) ((1000 - pos % 1000) / mControlWrapper.getSpeed()));
+                // 除速度前先兜底:内核未就绪时 getSpeed 可能返回 0,0 当除数得 Infinity,
+                // (long) Infinity = Long.MAX_VALUE → 下一次刷新被排到永远之后,进度条与时间从此不再动
+                // (不崩,观感上就是"卡住",实测踩过)
+                float speed = mControlWrapper.getSpeed();
+                if (speed <= 0f) speed = 1f;
+                postDelayed(this, (long) ((1000 - pos % 1000) / speed));
             } else {
                 mIsStartProgress = false;
             }
@@ -341,6 +346,13 @@ public abstract class BaseVideoController extends FrameLayout
     protected void onAttachedToWindow() {
         super.onAttachedToWindow();
         checkCutout();
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        super.onDetachedFromWindow();
+        // 控制器移除时必须停进度刷新:mIsStartProgress 为真时 mShowProgress 会一直 postDelayed 自我重投
+        stopProgress();
     }
 
     /**

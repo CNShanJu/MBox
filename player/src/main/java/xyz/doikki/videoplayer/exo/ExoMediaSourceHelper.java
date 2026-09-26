@@ -3,6 +3,7 @@ package xyz.doikki.videoplayer.exo;
 import android.content.Context;
 import android.net.Uri;
 import android.text.TextUtils;
+import android.util.Log;
 
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.MediaItem;
@@ -33,13 +34,26 @@ import com.google.android.exoplayer2.util.Util;
 
 import java.io.File;
 import java.lang.reflect.Field;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 import okhttp3.OkHttpClient;
 
 public final class ExoMediaSourceHelper {
 
+    private static final String TAG = "ExoMediaSourceHelper";
+
     private static volatile ExoMediaSourceHelper sInstance;
+
+    /**
+     * 取流客户端提供方(app 组合根注入一次)。
+     * <p>
+     * 为什么必须有:client 会被"安全 DNS 变更"作废({@link #dropOkClient()}),作废之后必须有人重新给 ——
+     * 原实现只指望调用方再调一次 {@link #setOkClient},而全仓零调用点,于是 mOkClient 恒为 null,
+     * 取流时 OkHttpDataSource 内部 checkNotNull(callFactory) 抛 NPE(真机回归:Exo 每次起播即失败)。
+     * 有了提供方,作废后由本类在下次取用时自取,不必依赖谁记得多调一次。
+     */
+    private static volatile java.util.function.Supplier<OkHttpClient> sClientSupplier;
 
     private final String mUserAgent;
     private final Context mAppContext;
@@ -75,9 +89,39 @@ public final class ExoMediaSourceHelper {
         mHttpDataSourceFactory = null;
     }
 
-    /** 当前播放客户端;未设置时返回 null,由调用方(App)按新配置补建 */
+    /** 当前播放客户端(已缓存的实例);需"没有就自取"时用 {@link #resolveOkClient()} */
     public OkHttpClient getOkClient() {
         return mOkClient;
+    }
+
+    /**
+     * 注入取流客户端提供方(app 组合根启动时调一次)。
+     * 提供方内部负责懒建与"安全 DNS 变更后重建"(见 App.playbackHttpClient)。
+     */
+    public static void setOkClientSupplier(java.util.function.Supplier<OkHttpClient> supplier) {
+        sClientSupplier = supplier;
+    }
+
+    /**
+     * 取当前播放客户端:mOkClient 优先;被作废({@link #dropOkClient()})后经提供方重新取用并缓存 —— 自愈,
+     * 不再依赖"作废之后必须有人记得再 setOkClient 一次"(那正是 Exo 取流客户端恒为 null 的成因)。
+     * 拿不到时返回 null,由取流处给出明确报错。
+     */
+    public OkHttpClient resolveOkClient() {
+        OkHttpClient client = mOkClient;
+        if (client != null) return client;
+        java.util.function.Supplier<OkHttpClient> supplier = sClientSupplier;
+        if (supplier == null) return null;
+        synchronized (this) {
+            if (mOkClient == null) {
+                try {
+                    mOkClient = supplier.get();
+                } catch (Throwable th) {
+                    Log.e(TAG, "播放客户端提供方取用失败", th);
+                }
+            }
+            return mOkClient;
+        }
     }
 
     /**
@@ -228,7 +272,14 @@ public final class ExoMediaSourceHelper {
             synchronized (this) {
                 factory = mHttpDataSourceFactory;
                 if (factory == null) {
-                    factory = new OkHttpDataSource.Factory(mOkClient)
+                    OkHttpClient client = resolveOkClient();
+                    if (client == null) {
+                        // 明确报错并留日志:否则要到取流时 OkHttpDataSource 内部 checkNotNull(callFactory)
+                        // 才崩,现场只剩一句看不出所以然的 NPE(真机上就是这个症状)
+                        Log.e(TAG, "取流客户端未注入:app 组合根未调用 setOkClientSupplier");
+                        throw new IllegalStateException("Exo 播放客户端未注入(见 AppCompositionRoot)");
+                    }
+                    factory = new OkHttpDataSource.Factory(client)
                             .setUserAgent(mUserAgent)/*
                             .setAllowCrossProtocolRedirects(true)*/;
                     mHttpDataSourceFactory = factory;
@@ -240,9 +291,13 @@ public final class ExoMediaSourceHelper {
 
     private void setHeaders(Map<String, String> headers) {
         if (headers != null && headers.size() > 0) {
+            // 复制一份再动:传进来的是 VideoView 持有的那份 headers 引用(直接传引用),就地
+            // remove("User-Agent") 会把调用方的 UA 永久吃掉 —— 第一次起播正常,replay()/错误重试/
+            // 切线路再次 setDataSource 时只剩裸 UA,需要 UA 的源站直接 403
+            Map<String, String> copy = new LinkedHashMap<>(headers);
             //如果发现用户通过header传递了UA，则强行将HttpDataSourceFactory里面的userAgent字段替换成用户的
-            if (headers.containsKey("User-Agent")) {
-                String value = headers.remove("User-Agent");
+            if (copy.containsKey("User-Agent")) {
+                String value = copy.remove("User-Agent");
                 if (!TextUtils.isEmpty(value)) {
                     try {
                         Field userAgentField = mHttpDataSourceFactory.getClass().getDeclaredField("userAgent");
@@ -253,12 +308,12 @@ public final class ExoMediaSourceHelper {
                     }
                 }
             }
-            for (String k : headers.keySet()) {
-                String v = headers.get(k);
+            for (String k : copy.keySet()) {
+                String v = copy.get(k);
                 if (v != null)
-                    headers.put(k, v.trim());
+                    copy.put(k, v.trim());
             }
-            mHttpDataSourceFactory.setDefaultRequestProperties(headers);
+            mHttpDataSourceFactory.setDefaultRequestProperties(copy);
         }
     }
 

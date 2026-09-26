@@ -1235,5 +1235,10 @@ public class LocalVideoController extends BaseController implements PlaybackSett
     protected void onDetachedFromWindow() {
         super.onDetachedFromWindow();
         mHandler.removeCallbacks(myRunnable2);
+        // 与 VodController 同一处缺陷:1004(设速度)在"非播放态"分支会每 100ms 自我重投,
+        // MessageQueue 里的消息持有 Handler → 持有 View → 持有 Activity;这里一并清干净
+        // (myHandle 在 initView 里才创建,视图被提前移除时为 null,故判空)
+        if (myHandle != null) myHandle.removeCallbacksAndMessages(null);
+        if (mHandler != null) mHandler.removeCallbacksAndMessages(null);
     }
 }

@@ -203,7 +203,8 @@ public class IjkPlayer extends AbstractPlayer implements IMediaPlayer.OnErrorLis
 
     @Override
     public float getSpeed() {
-        return mMediaPlayer.getSpeed(0);
+        // 兜底值传 1f(不是 0):内核未就绪时该属性可能为 0,控制器拿它当除数会得到 Infinity(进度停摆)
+        return mMediaPlayer.getSpeed(1f);
     }
 
     @Override

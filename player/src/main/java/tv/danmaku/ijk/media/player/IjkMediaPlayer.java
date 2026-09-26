@@ -190,11 +190,13 @@ public final class IjkMediaPlayer extends AbstractMediaPlayer {
                 try {
                     libLoader.loadLibrary("ijkffmpeg");
                     libLoader.loadLibrary("ijksdl");
+                    libLoader.loadLibrary("player");
+                    mIsLibLoaded = true;
                 } catch (Throwable throwable) {
-
+                    // 加载失败不能标记"已加载":原实现把 ijkffmpeg/ijksdl 的异常空吞掉后照样置位,
+                    // 之后永不重试,症状是"IJK 每次播都失败"却看不出原因(现在下次起播会重新尝试)
+                    android.util.Log.e("IjkMediaPlayer", "IJK 动态库加载失败(下次起播重试)", throwable);
                 }
-                libLoader.loadLibrary("player");
-                mIsLibLoaded = true;
             }
         }
     }
@@ -752,7 +754,11 @@ public final class IjkMediaPlayer extends AbstractMediaPlayer {
     }
 
     public float getSpeed(float speed) {
-        return _getPropertyFloat(FFP_PROP_FLOAT_PLAYBACK_RATE, .0f);
+        // 入参是"内核拿不到该属性时的兜底值",原来被忽略、恒按 0 取:起播/未就绪时该属性就是 0,
+        // 调用方拿它当除数会得到 Infinity(控制器进度刷新从此停摆)
+        float value = _getPropertyFloat(FFP_PROP_FLOAT_PLAYBACK_RATE, speed);
+        if (value > 0f) return value;
+        return speed > 0f ? speed : 1f;
     }
 
     public int getVideoDecoder() {

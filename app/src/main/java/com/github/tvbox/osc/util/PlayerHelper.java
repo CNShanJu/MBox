@@ -44,6 +44,9 @@ public class PlayerHelper {
             e.printStackTrace();
         }
         IJKCode codec = IjkCodecConfigProviders.get().getIJKCodec(ijkCode);
+        // 同步"本次播放的解码档":面板切档位后走的是重播(播放器实例不重建),IjkMediaPlayer 读这里才能生效。
+        // 解析不出来(null)时不覆盖:让 IjkMediaPlayer 继续沿用上一份或全局设置,避免把有效档位抹成空
+        if (codec != null) com.github.tvbox.osc.player.PlayerKernels.setCurrentCodec(codec);
         PlayerFactory playerFactory = com.github.tvbox.osc.player.PlayerKernels.doikkiFactory(playerType, codec);
         if (playerType == 1) com.github.tvbox.osc.player.PlayerKernels.ensureIjkLibrariesLoaded();
         RenderViewFactory renderViewFactory = com.github.tvbox.osc.player.PlayerKernels.renderFactory(renderType);
@@ -55,6 +58,9 @@ public class PlayerHelper {
     public static void updateCfg(VideoView videoView) {
         if (videoView == null) return; // 防御:播放器视图未初始化时跳过
         int playType = PlayConfig.getPlayType();
+        // 无 per-vod 配置时按全局设置刷新同一份"本次播放解码档"(取不到时同样不覆盖)
+        IJKCode current = IjkCodecConfigProviders.get().getCurrentIJKCode();
+        if (current != null) com.github.tvbox.osc.player.PlayerKernels.setCurrentCodec(current);
         PlayerFactory playerFactory = com.github.tvbox.osc.player.PlayerKernels.doikkiFactory(playType, null);
         if (playType == 1) com.github.tvbox.osc.player.PlayerKernels.ensureIjkLibrariesLoaded();
         int renderType = PlayConfig.getRenderType();

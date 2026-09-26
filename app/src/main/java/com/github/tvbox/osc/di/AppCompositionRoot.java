@@ -22,6 +22,15 @@ public final class AppCompositionRoot {
     /** App.onCreate 网络/下载组件初始化后调用 */
     public static void init() {
         android.util.Log.i("AppCompositionRoot", "init: 注入 UrlResolver/ManualCheck/Content/NetworkProvider");
+        // Exo 取流客户端提供方:ExoMediaSourceHelper 的 client 会被"安全 DNS 变更"作废(dropOkClient),
+        // 有了提供方就在下次取用时自取(懒建 + 变更后重建都在 App.playbackHttpClient 里)。
+        // 缺了它 Exo 取流客户端恒为 null → 起播时 OkHttpDataSource 内部 checkNotNull(callFactory) 直接崩。
+        try {
+            xyz.doikki.videoplayer.exo.ExoMediaSourceHelper.setOkClientSupplier(
+                    com.github.tvbox.osc.base.App::playbackHttpClient);
+        } catch (Throwable th) {
+            android.util.Log.w("AppCompositionRoot", "Exo 取流客户端提供方注册失败", th);
+        }
         // 下载侧播放地址解析(:spider 提供实现,download 不依赖 :spider 实现)
         com.github.tvbox.osc.download.DownloadFacade.setUrlResolverApi(
                 com.github.catvod.crawler.SpiderUrlResolverImpl.get());

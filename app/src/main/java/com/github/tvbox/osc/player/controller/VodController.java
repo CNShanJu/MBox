@@ -1199,6 +1199,11 @@ public class VodController extends BaseController implements PlaybackSettingsCon
     protected void onDetachedFromWindow() {
         super.onDetachedFromWindow();
         mHandler.removeCallbacks(myRunnable2);
+        // 两个 handler 的剩余消息必须一起清干净:1004(设速度)在"非播放态"分支会每 100ms 自我重投,
+        // 而 MessageQueue 里的消息持有 Handler → 持有 View → 持有 Activity;起播失败时还会一直 100ms 空转
+        // (myHandle 在 initView 里才创建,视图被提前移除时为 null,故判空)
+        if (myHandle != null) myHandle.removeCallbacksAndMessages(null);
+        if (mHandler != null) mHandler.removeCallbacksAndMessages(null);
     }
 
     /** {@link SubtitleController}: 字幕视图(在线全屏与本地播放共用字幕设置弹窗) */

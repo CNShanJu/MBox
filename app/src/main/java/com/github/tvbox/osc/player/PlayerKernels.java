@@ -17,7 +17,28 @@ import xyz.doikki.videoplayer.render.TextureRenderViewFactory;
  */
 public final class PlayerKernels {
 
+    /**
+     * 本次播放生效的 IJK 解码档。
+     * <p>
+     * 为什么要有它:IjkMediaPlayer 在创建时把 codec 存成实例字段(快照),而播放面板切档位只改
+     * per-vod 配置 + 重播 —— 重播走的是 {@code mMediaPlayer.reset() + setOptions()},**播放器实例并不会
+     * 重建**,于是那份快照永远停在首次创建时的值,面板切档位等于没生效。
+     * 这里由 {@link com.github.tvbox.osc.util.PlayerHelper} 在每次应用播放配置(含面板切换后的重播)时刷新,
+     * IjkMediaPlayer.setOptions() 每次读它 —— 既让面板立刻生效,又保留"老剧沿用自己那份 per-vod 解码档"的语义。
+     */
+    private static volatile IJKCode sCurrentCodec;
+
     private PlayerKernels() {
+    }
+
+    /** 记录本次播放的解码档(PlayerHelper 应用播放配置时调用) */
+    public static void setCurrentCodec(IJKCode codec) {
+        sCurrentCodec = codec;
+    }
+
+    /** 本次播放的解码档;未记录时返回 null,由调用方回退到全局设置 */
+    public static IJKCode currentCodec() {
+        return sCurrentCodec;
     }
 
     /** doikki 内核工厂:1=IJK(带解码配置) 2=Exo 其它=系统 AndroidMediaPlayer;返回 null 表示未知类型 */

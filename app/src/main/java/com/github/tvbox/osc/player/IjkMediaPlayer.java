@@ -31,21 +31,36 @@ public class IjkMediaPlayer extends IjkPlayer implements KernelTrackSupport {
     @Override
     public void setOptions() {
         super.setOptions();
-        IJKCode codecTmp = this.codec == null ? IjkCodecConfigProviders.get().getCurrentIJKCode() : this.codec;
+        // 解码档每次都重新解析:面板切档位只改 per-vod 配置 + 重播,而重播走的是
+        // mMediaPlayer.reset() + setOptions() —— 播放器实例并不重建,原来优先读构造时那份快照,
+        // 于是切档位永远读到首次的值(等于没生效)。优先级:本次播放的档位 → 构造快照 → 全局设置。
+        IJKCode codecTmp = com.github.tvbox.osc.player.PlayerKernels.currentCodec();
+        if (codecTmp == null) codecTmp = this.codec;
+        if (codecTmp == null) codecTmp = IjkCodecConfigProviders.get().getCurrentIJKCode();
         // codec 列表理论上不会为空,仍做防御:避免 codecTmp.getOption() 空指针
         LinkedHashMap<String, String> options = codecTmp == null ? null : codecTmp.getOption();
         if (options != null) {
             for (String key : options.keySet()) {
                 String value = options.get(key);
-                String[] opt = key.split("\\|");
-                int category = Integer.parseInt(opt[0].trim());
-                String name = opt[1].trim();
                 try {
-                    assert value != null;
-                    long valLong = Long.parseLong(value);
-                    mMediaPlayer.setOption(category, name, valLong);
-                } catch (Exception e) {
-                    mMediaPlayer.setOption(category, name, value);
+                    // 解析整体入 try:源站给的 ijk 配置可能缺 '|' 或分类不是数字,原来
+                    // split/opt[1]/parseInt 都在 try 之外 → 一个坏 key 就崩在起播路径上
+                    String[] opt = key.split("\\|");
+                    if (opt.length < 2) throw new IllegalArgumentException("option 缺少 '|' 分隔: " + key);
+                    int category = Integer.parseInt(opt[0].trim());
+                    String name = opt[1].trim();
+                    try {
+                        assert value != null;
+                        long valLong = Long.parseLong(value);
+                        mMediaPlayer.setOption(category, name, valLong);
+                    } catch (Exception e) {
+                        mMediaPlayer.setOption(category, name, value);
+                    }
+                } catch (Throwable th) {
+                    // 坏 key 跳过并落日志:一条写错的配置不该让整条起播路径崩掉(也便于源作者自查)
+                    android.util.Log.w("IjkMediaPlayer", "跳过无效 ijk option: " + key + " (" + th + ")");
+                    com.github.tvbox.osc.log.LogStore.fail(com.github.tvbox.osc.log.Category.PLAYER,
+                            "跳过无效 ijk option: " + key + " (" + th.getMessage() + ")");
                 }
             }
         }
@@ -102,15 +117,19 @@ public class IjkMediaPlayer extends IjkPlayer implements KernelTrackSupport {
 
     private void setDataSourceHeader(Map<String, String> headers) {
         if (headers != null && !headers.isEmpty()) {
-            String userAgent = headers.get("User-Agent");
+            // 复制一份再动:传进来的是 VideoView 持有的那份 headers 引用,就地 remove("User-Agent")
+            // 会把调用方的 UA 永久吃掉 —— 第一次起播正常,replay()/错误重试/切线路再次 setDataSource
+            // 时只剩裸 UA,需要 UA 的源站直接 403
+            Map<String, String> copy = new LinkedHashMap<>(headers);
+            String userAgent = copy.get("User-Agent");
             if (!TextUtils.isEmpty(userAgent)) {
                 mMediaPlayer.setOption(tv.danmaku.ijk.media.player.IjkMediaPlayer.OPT_CATEGORY_FORMAT, "user_agent", userAgent);
-                // 移除header中的User-Agent，防止重复
-                headers.remove("User-Agent");
+                // 移除副本中的 User-Agent，防止重复
+                copy.remove("User-Agent");
             }
-            if (headers.size() > 0) {
+            if (copy.size() > 0) {
                 StringBuilder sb = new StringBuilder();
-                for (Map.Entry<String, String> entry : headers.entrySet()) {
+                for (Map.Entry<String, String> entry : copy.entrySet()) {
                     String value = entry.getValue();
                     if (!TextUtils.isEmpty(value)) {
                         sb.append(entry.getKey());
