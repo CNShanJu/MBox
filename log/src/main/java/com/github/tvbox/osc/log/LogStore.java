@@ -18,6 +18,7 @@ import com.github.tvbox.osc.log.internal.LogCollector;
 import com.github.tvbox.osc.log.internal.LogFormatter;
 import com.github.tvbox.osc.log.internal.LogRepository;
 import com.github.tvbox.osc.log.internal.LogcatCapture;
+import com.github.tvbox.osc.log.internal.NetworkTag;
 import com.github.tvbox.osc.log.db.LogDatabase;
 
 /**
@@ -237,7 +238,10 @@ public final class LogStore {
         e.subTypeCode = subTypeCode;
         e.subTypeLabel = subTypeLabel;
         e.level = level;
-        e.detail = LogFormatter.truncate(detail, LogFormatter.MAX_DETAIL);
+        // WARN/ERROR 条目在"当时无网络"时补一个后缀(见 NetworkTag):断网导致的失败会被
+        // 包装成 "UnknownHostException/连接失败",不标出来就分不清"没网"和"服务端真坏了"
+        String taggedDetail = level >= LEVEL_WARN ? detail + NetworkTag.offlineSuffix(appContext) : detail;
+        e.detail = LogFormatter.truncate(taggedDetail, LogFormatter.MAX_DETAIL);
         e.result = result;
         e.reason = LogFormatter.truncate(reason, LogFormatter.MAX_REASON);
         e.extras = extras != null ? LogFormatter.truncate(extras.toString(), LogFormatter.MAX_EXTRAS) : null;

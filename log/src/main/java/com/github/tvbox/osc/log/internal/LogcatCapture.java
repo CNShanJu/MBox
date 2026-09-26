@@ -405,7 +405,10 @@ public final class LogcatCapture {
                 File dir = logDir();
                 if (!dir.exists()) dir.mkdirs();
                 File file = todayFile();
-                StringBuilder sb = new StringBuilder(lines.size() * 96);
+                // 新文件(新的一天/首次写入)头部记一次当时的网络状态:排查"某段时间的错误"时先看这里
+                boolean newFile = !file.exists() || file.length() == 0;
+                StringBuilder sb = new StringBuilder(lines.size() * 96 + 96);
+                if (newFile) sb.append(sessionHeader()).append('\n');
                 for (String l : lines) sb.append(l).append('\n');
                 FileOutputStream fos = new FileOutputStream(file, true);
                 try {
@@ -421,6 +424,22 @@ public final class LogcatCapture {
             } catch (Throwable th) {
                 Log.e("LogcatCapture", "写 logcat 文件失败", th);
             }
+        }
+    }
+
+    /** 日志文件头(每个文件一次):时间 + 当时网络状态,用于给这一整段日志定上下文 */
+    private static String sessionHeader() {
+        String time = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
+                .format(new java.util.Date());
+        return "===== 日志会话 " + time + " 网络=" + NetworkTag.name(contextOrNull()) + " =====";
+    }
+
+    /** 容错取 context(context 尚未注入时返回 null,由 NetworkTag 给出"未知") */
+    private static Context contextOrNull() {
+        try {
+            return appContext;
+        } catch (Throwable th) {
+            return null;
         }
     }
 

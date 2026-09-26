@@ -61,5 +61,21 @@
             android:layout_centerHorizontal="true"
             android:layout_marginBottom="20dp"
             android:visibility="gone" />
+
+        <!-- 断网横幅:网络=NONE 时显示(订阅见 GridFragment 的 TYPE_NETWORK 监听),恢复联网自动隐藏并补一次刷新。
+             放在最后 = 绘制在列表之上;不占位(独立悬浮条),列表内容不会被顶下去 -->
+        <TextView
+            android:id="@+id/tv_offline_tip"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_alignParentTop="true"
+            android:background="@color/bg_float"
+            android:gravity="center"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp"
+            android:text="@string/grid_offline_tip"
+            android:textColor="@color/text_highlight"
+            android:textSize="12sp"
+            android:visibility="gone" />
     </RelativeLayout>
 </com.github.tvbox.osc.ui.kit.RubberBandSwipeRefreshLayout>

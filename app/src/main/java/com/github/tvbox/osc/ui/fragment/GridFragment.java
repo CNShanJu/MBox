@@ -34,6 +34,8 @@ import com.github.tvbox.osc.ui.kit.ListRefreshSupport;
 import com.github.tvbox.osc.ui.kit.RubberBandSwipeRefreshLayout;
 import com.github.tvbox.osc.util.FastClickCheckUtil;
 import com.github.tvbox.osc.config.SystemConfig;
+import com.github.tvbox.osc.state.SystemState;
+import com.github.tvbox.osc.state.SystemStateMonitor;
 import com.github.tvbox.osc.util.Utils;
 import com.github.tvbox.osc.viewmodel.SourceViewModel;
 import com.owen.tvrecyclerview.widget.V7GridLayoutManager;
@@ -78,6 +80,28 @@ public class GridFragment extends BaseLazyFragment {
         public int scrollOffset = 0;        // 该条目顶部偏移
     }
     Stack<GridInfo> mGrids = new Stack<GridInfo>(); //导航快照栈(只存轻量状态,不再持有每层各自的 RecyclerView)
+
+    /** 断网横幅(断网显示/恢复隐藏;见 {@link #bindNetworkListener()}) */
+    private View mOfflineTip = null;
+    /** 网络监听是否已注册(幂等:可见时注册、离开或销毁时注销) */
+    private boolean mNetBound = false;
+    /** 上一次已知的离线状态:用于"恢复联网后自动补一次刷新" */
+    private boolean mWasOffline = false;
+
+    /**
+     * 系统网络状态订阅(单点 {@link SystemStateMonitor},与下载侧同一份事实源)。
+     * <p>
+     * 断网时给明确提示、并在恢复联网后自动补一次刷新 —— 原来断网只有"列表空/源打不开"这一种表现,
+     * 用户(和排查的人)根本看不出是没网还是源坏了;请求失败时报回来的还是 UnknownHostException。
+     */
+    private final SystemStateMonitor.Listener mNetListener = e -> {
+        if (e == null || !SystemStateMonitor.TYPE_NETWORK.equals(e.type)) return;
+        boolean offline = SystemStateMonitor.VAL_NONE.equals(e.value);
+        boolean recovered = mWasOffline && !offline;
+        mWasOffline = offline;
+        syncOfflineTip(offline);
+        if (recovered) refreshAfterNetworkBack();
+    };
 
     public static GridFragment newInstance(MovieSort.SortData sortData) {
         return new GridFragment().setArguments(sortData);
@@ -294,6 +318,68 @@ public class GridFragment extends BaseLazyFragment {
         View btn = findViewById(R.id.btn_filter);
         if (btn == null) return;
         btn.setVisibility(hasFilterContent() ? View.VISIBLE : View.GONE);
+    }
+
+    @Override
+    protected void onFragmentResume() {
+        super.onFragmentResume();
+        bindNetworkListener();
+    }
+
+    @Override
+    protected void onFragmentPause() {
+        unbindNetworkListener();
+        super.onFragmentPause();
+    }
+
+    @Override
+    public void onDestroyView() {
+        unbindNetworkListener();
+        mOfflineTip = null;
+        super.onDestroyView();
+    }
+
+    /** 订阅系统网络状态并立即按当前状态刷新一次提示(幂等) */
+    private void bindNetworkListener() {
+        if (mOfflineTip == null) mOfflineTip = findViewById(R.id.tv_offline_tip);
+        boolean offline = isOffline();
+        mWasOffline = offline;
+        syncOfflineTip(offline);
+        if (mNetBound) return;
+        SystemStateMonitor.get().register(mNetListener, SystemStateMonitor.TYPE_NETWORK);
+        mNetBound = true;
+    }
+
+    private void unbindNetworkListener() {
+        if (!mNetBound) return;
+        SystemStateMonitor.get().unregister(mNetListener);
+        mNetBound = false;
+    }
+
+    private static boolean isOffline() {
+        try {
+            SystemState state = SystemStateMonitor.get().getCurrentState();
+            return state != null && SystemStateMonitor.VAL_NONE.equals(state.network);
+        } catch (Throwable th) {
+            return false;
+        }
+    }
+
+    private void syncOfflineTip(boolean offline) {
+        if (mOfflineTip == null) mOfflineTip = findViewById(R.id.tv_offline_tip);
+        if (mOfflineTip != null) mOfflineTip.setVisibility(offline ? View.VISIBLE : View.GONE);
+    }
+
+    /**
+     * 恢复联网后自动补一次刷新:断网期间列表通常是空的,原来必须手动下拉才出内容。
+     * 只在"当前可见 + 列表为空 + 没有在刷新/加载更多"时补一次,避免与用户操作或加载更多打架。
+     */
+    private void refreshAfterNetworkBack() {
+        if (!currentVisibleState) return;
+        if (mRefreshSupport != null && mRefreshSupport.isRefreshing()) return;
+        if (mLoadMoreBusy) return;
+        if (gridAdapter != null && !gridAdapter.getData().isEmpty()) return;
+        onPullRefresh();
     }
 
     /** 有没有"筛选项内容":有分组、且至少一组里有关键值(空分组 / 组里没值 = 弹窗也是空的,同一个判据) */
