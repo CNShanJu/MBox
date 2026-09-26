@@ -37,14 +37,14 @@
             <ImageView
                     android:id="@+id/iv_export"
                     android:layout_width="wrap_content"
-                    android:layout_height="20dp"
+                    android:layout_height="22dp"
                     android:paddingLeft="2dp"
                     android:src="@drawable/ic_export_24"/>
 
             <ImageView
                 android:id="@+id/iv_add"
                 android:layout_width="wrap_content"
-                android:layout_height="24dp"
+                android:layout_height="28dp"
                 android:paddingLeft="2dp"
                 android:src="@drawable/ic_add_24"/>
         </LinearLayout>
