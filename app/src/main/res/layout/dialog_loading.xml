@@ -43,14 +43,18 @@
 
     <!-- 可取消流程(导出/导入等长耗时)才显示:默认隐藏,由 LoadingDialog.setOnCancel 打开。
          用全局按钮色板 BtnSecondary(= btn_cancel_bg / btn_cancel_text / btn_stroke / radius_btn),
-         不写任何色值:浅色主题是"浅灰填充+深字",暗色主题是"透明+40% 描边+浅字",压在加载框的深色遮罩上都清楚 -->
+         不写任何色值:浅色主题是"浅灰填充+深字",暗色主题是"透明+40% 描边+浅字",压在加载框的深色遮罩上都清楚。
+         高度必须写成定高 33dp(与其它弹窗的取消/确定按钮一致):原来用 wrap_content,MaterialButton 默认
+         minHeight=48dp → 这个"取消"比其他页的按钮明显大一圈(订阅导入/导出时看到的就是它) -->
     <com.google.android.material.button.MaterialButton
         android:id="@+id/btn_loading_cancel"
         style="@style/BtnSecondary"
         android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
+        android:layout_height="33dp"
         android:layout_gravity="center_horizontal"
         android:layout_marginTop="14dp"
+        android:insetTop="0dp"
+        android:insetBottom="0dp"
         android:minWidth="96dp"
         android:text="取消"
         android:visibility="gone"

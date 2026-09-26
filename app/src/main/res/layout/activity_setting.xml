@@ -249,15 +249,6 @@
                         android:textSize="16sp"
                         />
 
-                    <TextView
-                        android:id="@+id/tvPrivateDesc"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:gravity="end"
-                        android:textColor="@color/text_sub_foreground"
-                        android:textSize="12sp"/>
-
                     <Space
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
@@ -283,6 +274,7 @@
                     android:foreground="?android:selectableItemBackground">
 
                     <TextView
+                        android:id="@+id/tvLanServerTitle"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="局域网服务"
@@ -290,14 +282,10 @@
                         android:textSize="16sp"
                         />
 
-                    <TextView
-                        android:id="@+id/tvLanServerDesc"
+                    <Space
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:gravity="end"
-                        android:textColor="@color/text_sub_foreground"
-                        android:textSize="12sp"/>
+                        android:layout_weight="1" />
 
                     <com.github.tvbox.osc.ui.kit.AppSwitch
                         android:id="@+id/switchLanServer"
@@ -320,6 +308,7 @@
                     android:foreground="?android:selectableItemBackground">
 
                     <TextView
+                        android:id="@+id/tvIgnoreSslTitle"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="忽略证书错误"
@@ -327,14 +316,10 @@
                         android:textSize="16sp"
                         />
 
-                    <TextView
-                        android:id="@+id/tvIgnoreSslDesc"
+                    <Space
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:gravity="end"
-                        android:textColor="@color/text_sub_foreground"
-                        android:textSize="12sp"/>
+                        android:layout_weight="1" />
 
                     <com.github.tvbox.osc.ui.kit.AppSwitch
                         android:id="@+id/switchIgnoreSsl"
@@ -359,15 +344,6 @@
                         android:text="安全DNS"
                         android:textColor="@color/text_foreground"
                         android:textSize="16sp"/>
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="8dp"
-                        android:alpha="0.6"
-                        android:text="（即时生效）"
-                        android:textColor="@color/text_foreground"
-                        android:textSize="12sp"/>
 
                     <TextView
                         android:id="@+id/tvDns"

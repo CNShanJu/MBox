@@ -23,6 +23,7 @@ import com.github.tvbox.osc.ui.adapter.SelectDialogAdapter.SelectDialogInterface
 import com.github.tvbox.osc.ui.dialog.BackupDialog
 import com.github.tvbox.osc.ui.dialog.LiveApiDialog
 import com.github.tvbox.osc.ui.dialog.SelectDialog
+import com.github.tvbox.osc.ui.dialog.TextTipDialog
 import com.github.tvbox.osc.util.FastClickCheckUtil
 import com.github.tvbox.osc.util.FileUtils
 import com.github.tvbox.osc.util.HeavyTaskUtil
@@ -80,8 +81,6 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             PlayerHelper.getRenderName(PlayConfig.getRenderType())
 
         mBinding.switchPrivateBrowsing.setChecked(SystemConfig.isPrivateBrowsing())
-        // 口径已定(用户确认):无痕只覆盖"历史 + 搜索历史",收藏照常记录 —— 文案写清楚,免得当成 bug
-        mBinding.tvPrivateDesc.text = "不记历史与搜索(收藏照常)"
         mBinding.llPrivateBrowsing.setOnClickListener { view: View? ->
             val newConfig = !SystemConfig.isPrivateBrowsing()
             mBinding.switchPrivateBrowsing.setChecked(newConfig)
@@ -91,15 +90,18 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
 
         // 局域网服务开关(默认关闭):关闭时 HTTP 服务仅监听 127.0.0.1(订阅/本地播放/代理不受影响);
         // 开启后局域网设备可访问 web 控制台与文件共享,管理型请求需携带进程令牌(见 RemoteServer)。
+        // 说明不写进设置行(横排塞不下),长按标题弹 tip 看"到底干啥"(见 R.string.setting_lan_server_tip)。
         val lanEnabled = SystemConfig.isLanServerEnabled()
         mBinding.switchLanServer.setChecked(lanEnabled)
-        updateLanServerDesc(lanEnabled)
+        mBinding.tvLanServerTitle.setOnLongClickListener {
+            showSettingTip("局域网服务", R.string.setting_lan_server_tip)
+            true
+        }
         mBinding.llLanServer.setOnClickListener { view: View? ->
             FastClickCheckUtil.check(view)
             val newVal = !SystemConfig.isLanServerEnabled()
             mBinding.switchLanServer.setChecked(newVal)
             SystemConfig.setLanServerEnabled(newVal)
-            updateLanServerDesc(newVal)
             biz(if (newVal) "开启局域网服务(重启后生效)" else "关闭局域网服务(仅本机)")
             AppBubble.toast(
                 if (newVal) "已开启局域网服务,重启应用后生效" else "已关闭局域网服务(仅本机),重启应用后生效"
@@ -110,13 +112,15 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
         // WebView 即时生效,网络请求(OkHttp)在应用重启后按开关重建客户端时生效。
         val ignoreSsl = SystemConfig.isIgnoreSslError()
         mBinding.switchIgnoreSsl.setChecked(ignoreSsl)
-        updateIgnoreSslDesc(ignoreSsl)
+        mBinding.tvIgnoreSslTitle.setOnLongClickListener {
+            showSettingTip("忽略证书错误", R.string.setting_ignore_ssl_tip)
+            true
+        }
         mBinding.llIgnoreSsl.setOnClickListener { view: View? ->
             FastClickCheckUtil.check(view)
             val newVal = !SystemConfig.isIgnoreSslError()
             mBinding.switchIgnoreSsl.setChecked(newVal)
             SystemConfig.setIgnoreSslError(newVal)
-            updateIgnoreSslDesc(newVal)
             biz(if (newVal) "开启忽略证书错误(重启网络重建后对 OkHttp 生效)" else "关闭忽略证书错误")
             AppBubble.toast(
                 if (newVal) "已开启忽略证书错误(仅用于个别自签名站点)" else "已关闭忽略证书错误(恢复证书校验)"
@@ -722,15 +726,10 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
         }
     }
 
-    /** 局域网服务描述行:开关状态一目了然(开启需重启应用生效) */
-    private fun updateLanServerDesc(enabled: Boolean) {
-        // 口径已定(用户确认):令牌仍由本机下发(不改鉴权模型),但把风险写在界面上 ——
-        // 开启后同网段设备可访问控制台,管理型请求靠进程令牌保护(令牌本身经回环下发)
-        mBinding.tvLanServerDesc.text = if (enabled) "局域网可访问(同网设备可管理)" else "仅本机"
-    }
-
-    /** 忽略证书错误描述行 */
-    private fun updateIgnoreSslDesc(enabled: Boolean) {
-        mBinding.tvIgnoreSslDesc.text = if (enabled) "已忽略(不安全)" else "校验证书"
+    /** 设置项说明:横排设置行塞不下长说明,统一放 tip(观感与「订阅提示」一致),由标题长按调出 */
+    private fun showSettingTip(title: String, contentRes: Int) {
+        XPopup.Builder(this)
+            .asCustom(TextTipDialog(this, title, getString(contentRes)))
+            .show()
     }
 }

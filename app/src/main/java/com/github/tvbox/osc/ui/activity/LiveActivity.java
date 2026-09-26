@@ -15,9 +15,11 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 import androidx.recyclerview.widget.RecyclerView;
 
-import com.blankj.utilcode.util.ConvertUtils;
 import com.blankj.utilcode.util.ScreenUtils;
 import com.github.tvbox.osc.util.AppBubble;
 import com.chad.library.adapter.base.BaseQuickAdapter;
@@ -113,15 +115,47 @@ public class LiveActivity extends BaseActivity implements LiveLineSelectHost, Li
         return R.layout.activity_live;
     }
 
+    /**
+     * 按系统栏 insets 给页面根布局让位(替代 fitsSystemWindows 的整帧内缩,原因见 {@link #init()} 里的注释)。
+     * <p>
+     * 与详情页同一套做法:用 insets 监听而不是一次性算状态栏高度 —— 全屏/横屏隐藏系统栏时 insets 归 0,
+     * padding 自动归零;刘海屏的 displayCutout 也一并算进去。页面背景层挂在 content 里、不是本布局的子节点,
+     * 不受这里的 padding 影响,所以仍铺满整屏(状态栏那条露出的就是它)。
+     */
+    private void applySystemBarsPadding() {
+        View root = findViewById(R.id.live_root);
+        if (root == null) return;
+        ViewCompat.setOnApplyWindowInsetsListener(root, (v, insets) -> {
+            Insets bars = insets.getInsets(
+                    WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
+            if (v.getPaddingLeft() != bars.left || v.getPaddingTop() != bars.top
+                    || v.getPaddingRight() != bars.right || v.getPaddingBottom() != bars.bottom) {
+                v.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+            }
+            return insets;
+        });
+        ViewCompat.requestApplyInsets(root);
+    }
+
     @Override
     protected void init() {
+        // 状态栏不设底色(默认透明),与其它页/详情页一致:原来这里写死 statusBarColor(R.color.black)
+        // + statusBarDarkFont(false),亮色主题下就是一条既不跟主题、也不跟页面背景的黑带
+        // (详情页当年同一问题已改掉)。图标色改为跟随明暗主题。
+        // 导航栏保持黑底:它是深色视频页,且平时被 FLAG_HIDE_NAVIGATION_BAR 隐藏,只在划出时露一下。
+        //
+        // fitsSystemWindows 走 false(内容顶到状态栏下面)+ 自己按 insets 让位(applySystemBarsPadding):
+        // 用 true 时系统会给 android.R.id.content 整帧内缩,而页面背景层(PageBackgroundView)是它的
+        // 子节点,会跟着一起缩 —— 状态栏那条没有任何人绘制,露出的是 DecorView 的 windowBackground
+        // (@color/bg_body 纯色),看着仍是一条色带;改成自己让位后,那条就是页面背景(背景图),
+        // 与详情页改完后的观感一致,而内容位置与内缩时完全相同。
         ImmersionBar.with(this)
-                .statusBarColor(R.color.black)
-                .statusBarDarkFont(false)
+                .statusBarDarkFont(!com.github.tvbox.osc.util.Utils.isDarkTheme())
                 .navigationBarColor(R.color.black)
-                .fitsSystemWindows(true)
+                .fitsSystemWindows(false)
                 .hideBar(BarHide.FLAG_HIDE_NAVIGATION_BAR)
                 .init();
+        applySystemBarsPadding();
         context = this;
         epgStringAddress = LiveConfig.epgUrl();
         if(epgStringAddress == null || epgStringAddress.length()<5)

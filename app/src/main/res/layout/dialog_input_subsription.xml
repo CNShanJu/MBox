@@ -85,23 +85,12 @@
             android:layout_height="wrap_content"
             android:background="@null"
             android:layout_marginTop="10dp"
-            android:hint="地址 例: https://...(配置 / 采集接口)"
+            android:hint="地址 例: https://..."
             android:inputType="textUri"
             android:textColor="@color/text_foreground"
             android:textSize="14sp"/>
 
     </com.google.android.material.textfield.TextInputLayout>
-
-    <!-- 支持范围说明:原来这里只有"地址 例: https://...",用户不知道能填什么、
-         也不知道"资源站采集接口地址"可以直接贴进来(会自动嗅探)——把能解析的形态写清楚 -->
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="10dp"
-        android:lineSpacingExtra="2dp"
-        android:text="可填:站源配置(JSON)、订阅清单(含多条)、多线路、多仓(填后弹窗选仓)、资源站采集接口地址(自动嗅探生成配置)。\n不是订阅配置时会自动按站点嗅探一次;实在识别不了(书源、频道列表等)会提示。\n也可用上方「本地导入」选文件,或用「JSON导入」粘贴内容。"
-        android:textColor="@color/text_sub_foreground"
-        android:textSize="12sp"/>
 
     <CheckBox
         android:id="@+id/cb_check"

@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 通用文字提示弹窗(标题 + 正文 + 「知道了」):设置项说明不塞进设置行(横排塞不下),
+     改为长按标题弹出本弹窗。结构/观感与「订阅提示」(dialog_subs_tip)一致。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_gravity="center"
+    android:orientation="vertical"
+    android:paddingHorizontal="20dp"
+    android:paddingTop="20dp"
+    android:paddingBottom="20dp">
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:scrollbars="none"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp"
+        android:clipToPadding="false">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/tvTipTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="@color/text_foreground"
+                android:textStyle="bold"
+                android:textSize="16sp"/>
+
+            <TextView
+                android:id="@+id/tvTipContent"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:lineSpacingExtra="6dp"
+                android:textColor="@color/text_foreground"/>
+        </LinearLayout>
+    </ScrollView>
+
+    <!-- 按钮完全走主题按钮样式 BtnPrimary(底色/文字色/圆角都来自主题),不要再单独写 textColor/cornerRadius -->
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnTipOk"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="20dp"
+        style="@style/BtnPrimary"
+        android:text="知道了"/>
+</LinearLayout>
