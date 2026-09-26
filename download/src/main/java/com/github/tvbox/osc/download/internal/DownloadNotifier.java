@@ -70,10 +70,16 @@ public final class DownloadNotifier {
                     ctx, 0, open,
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
 
+            // 缺片完成时任务信息里带着"缺 N 片":通知里也说一句,别让用户以为文件是完整的
+            String text = t.fileName == null ? "视频已下载" : t.fileName;
+            if (t.message != null && !t.message.isEmpty()) {
+                text = text + " · " + t.message;
+            }
             Notification n = new NotificationCompat.Builder(ctx, CHANNEL_ID)
                     .setSmallIcon(R.drawable.ic_play)
                     .setContentTitle("下载完成")
-                    .setContentText(t.fileName == null ? "视频已下载" : t.fileName)
+                    .setContentText(text)
+                    .setStyle(new NotificationCompat.BigTextStyle().bigText(text))
                     .setContentIntent(pi)
                     .setAutoCancel(true)
                     .build();

@@ -77,14 +77,21 @@ public class FileCleaner {
         }
     }
 
+    /**
+     * 下载保存根目录名:公共 Download/MBox 或 应用专属 Download/MBox。
+     * (3.5.x 及以前叫 TVBox,随仓库/App 更名统一改为 MBox;不改名历史目录、也不做迁移——
+     *  旧 TVBox 目录里的文件不再被本 App 识别,需要的话手动改名成 MBox 即可,文件内容不用动)
+     */
+    private static final String SAVE_DIR_NAME = "MBox";
+
     /** 下载保存根目录:有存储管理权限用公共 Download,否则用应用私有目录 */
     static File getSaveDir() {
         File base;
         if (Build.VERSION.SDK_INT >= 30 && Environment.isExternalStorageManager()) {
-            base = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "TVBox");
+            base = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), SAVE_DIR_NAME);
         } else {
             File ext = appContext.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
-            base = ext == null ? new File(appContext.getFilesDir(), "downloads") : new File(ext, "TVBox");
+            base = ext == null ? new File(appContext.getFilesDir(), "downloads") : new File(ext, SAVE_DIR_NAME);
         }
         if (!base.exists()) base.mkdirs();
         return base;
