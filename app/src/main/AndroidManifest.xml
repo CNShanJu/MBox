@@ -88,6 +88,14 @@
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:exported="false"
             />
+        <!-- 网络不可用页：由 NetworkIssueRouter 在"断网 + 真实请求失败"时拉起（见 NoNetworkActivity）；
+             singleTop 防重复实例，不对外暴露 -->
+        <activity
+            android:name=".ui.activity.NoNetworkActivity"
+            android:launchMode="singleTop"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="false"
+            />
         <activity
             android:name=".ui.activity.SettingActivity"
             android:configChanges="orientation|screenSize|keyboardHidden"

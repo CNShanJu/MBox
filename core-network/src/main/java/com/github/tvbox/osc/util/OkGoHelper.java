@@ -66,6 +66,48 @@ public class OkGoHelper {
         if (listener != null) dohChangeListeners.addIfAbsent(listener);
     }
 
+    /**
+     * 网络问题通知(供 app 侧弹"网络不可用"页)。
+     * <p>
+     * 触发条件是<b>"断网 + 真的发起了网络请求"</b>,覆盖两类:
+     * ① 请求发出前就被判定没网({@link NetworkGuardInterceptor} 快速失败);
+     * ② 请求发到一半断网(域名解析失败 / 连接建立失败 / 连接被重置)。
+     * <p>
+     * 为什么不直接监听系统网络状态:没做任何网络操作时断网不该弹页(用户可能正在看本地视频/本地文件),
+     * 所以"要不要弹"由网络层在真实失败点决定;页面侧的"有网自动返回"才走系统状态单点
+     * ({@code SystemStateMonitor})——那个单点下载侧已经在用,这里不新增第二条监听链路。
+     */
+    public interface NetworkIssueListener {
+        void onNetworkIssue(String reason);
+    }
+
+    private static final CopyOnWriteArrayList<NetworkIssueListener> networkIssueListeners = new CopyOnWriteArrayList<>();
+
+    /** 同一波失败的节流窗口:整屏内容失败时会有几十个请求同时抛,只该弹一次 */
+    private static final long NETWORK_ISSUE_THROTTLE_MS = 3000L;
+    private static volatile long lastNetworkIssueAt = 0L;
+
+    /** 注册网络问题监听(app 组合根调用一次;回调在触发请求的线程上同步执行) */
+    public static void addNetworkIssueListener(NetworkIssueListener listener) {
+        if (listener != null) networkIssueListeners.addIfAbsent(listener);
+    }
+
+    /**
+     * 由网络层调用(节流统一在这里做):reason 仅用于日志/排查展示。
+     * 监听方自己的异常一律吞掉 —— 通知失败绝不能影响请求本身的失败语义。
+     */
+    static void notifyNetworkIssue(String reason) {
+        long now = System.currentTimeMillis();
+        if (now - lastNetworkIssueAt < NETWORK_ISSUE_THROTTLE_MS) return;
+        lastNetworkIssueAt = now;
+        for (NetworkIssueListener listener : networkIssueListeners) {
+            try {
+                listener.onNetworkIssue(reason);
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
     public static List<ConnectionSpec> getConnectionSpec() {
         return Collections.unmodifiableList(Arrays.asList(RESTRICTED_TLS, MODERN_TLS, COMPATIBLE_TLS, CLEARTEXT));
     }

@@ -1,6 +1,11 @@
 package com.github.tvbox.osc.util;
 
 import java.io.IOException;
+import java.net.ConnectException;
+import java.net.NoRouteToHostException;
+import java.net.SocketException;
+import java.net.SocketTimeoutException;
+import java.net.UnknownHostException;
 
 import okhttp3.Interceptor;
 import okhttp3.Request;
@@ -33,9 +38,39 @@ public final class NetworkGuardInterceptor implements Interceptor {
     public Response intercept(Chain chain) throws IOException {
         Request request = chain.request();
         if (isLocal(request)) return chain.proceed(request);
-        if (OkGoHelper.hasNetwork()) return chain.proceed(request);
-        if (hasNetworkAfterBriefWait()) return chain.proceed(request);
+        if (OkGoHelper.hasNetwork()) return proceed(chain, request);
+        if (hasNetworkAfterBriefWait()) return proceed(chain, request);
+        // 断网 + 真的发起了请求:通知上层弹"网络不可用"页(节流在 notifyNetworkIssue 里)
+        OkGoHelper.notifyNetworkIssue("无网络");
         throw new IOException(NO_NETWORK_MESSAGE);
+    }
+
+    /**
+     * 放行请求,并把"发到一半断网"也归到同一类通知上。
+     * <p>
+     * 这正是"请求发出时还有网、中途断了"的那种情况:表现形式不是快速失败,而是
+     * UnknownHost(切网/掉线后重解析)、ConnectException/NoRouteToHost(新连接建不起来)、
+     * SocketException(连接被重置/中断)。读超时只在"确认没网"时才算(否则可能只是源站慢)。
+     */
+    private Response proceed(Chain chain, Request request) throws IOException {
+        try {
+            return chain.proceed(request);
+        } catch (IOException e) {
+            if (isNetworkDrop(e)) {
+                OkGoHelper.notifyNetworkIssue(request.url().host() + " " + e.getClass().getSimpleName());
+            }
+            throw e;
+        }
+    }
+
+    private static boolean isNetworkDrop(IOException e) {
+        if (e instanceof UnknownHostException
+                || e instanceof ConnectException
+                || e instanceof NoRouteToHostException
+                || e instanceof SocketException) {
+            return true;
+        }
+        return e instanceof SocketTimeoutException && !OkGoHelper.hasNetwork();
     }
 
     /**

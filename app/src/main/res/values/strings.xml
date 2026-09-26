@@ -63,6 +63,9 @@
         \n开启会明显降低传输安全性，平时请保持关闭。
              </string>
 
-    <!-- 内容页断网提示(见 GridFragment 的网络监听:断网显示、恢复后隐藏并补一次刷新) -->
-    <string name="grid_offline_tip">当前无网络，请检查网络连接</string>
+    <!-- 网络不可用页(独立页面,见 NoNetworkActivity/NetworkIssueRouter:断网且发起过请求才拉起,有网自动返回) -->
+    <string name="no_network_title">网络连接不可用</string>
+    <string name="no_network_hint">请检查手机的 Wi-Fi 或移动数据；网络恢复后会自动返回上一页。</string>
+    <string name="no_network_back">返回</string>
+    <string name="no_network_got_it">我知道了</string>
 </resources>

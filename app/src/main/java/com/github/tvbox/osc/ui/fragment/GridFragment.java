@@ -81,8 +81,6 @@ public class GridFragment extends BaseLazyFragment {
     }
     Stack<GridInfo> mGrids = new Stack<GridInfo>(); //导航快照栈(只存轻量状态,不再持有每层各自的 RecyclerView)
 
-    /** 断网横幅(断网显示/恢复隐藏;见 {@link #bindNetworkListener()}) */
-    private View mOfflineTip = null;
     /** 网络监听是否已注册(幂等:可见时注册、离开或销毁时注销) */
     private boolean mNetBound = false;
     /** 上一次已知的离线状态:用于"恢复联网后自动补一次刷新" */
@@ -91,15 +89,15 @@ public class GridFragment extends BaseLazyFragment {
     /**
      * 系统网络状态订阅(单点 {@link SystemStateMonitor},与下载侧同一份事实源)。
      * <p>
-     * 断网时给明确提示、并在恢复联网后自动补一次刷新 —— 原来断网只有"列表空/源打不开"这一种表现,
-     * 用户(和排查的人)根本看不出是没网还是源坏了;请求失败时报回来的还是 UnknownHostException。
+     * 这里只负责"恢复联网后自动补一次刷新"(断网期间列表通常是空的,原来必须手动下拉)。
+     * 断网提示与"回原页面"改由独立的无网络页承担(NetworkIssueRouter/NoNetworkActivity),
+     * 内容页不再显示断网横幅。
      */
     private final SystemStateMonitor.Listener mNetListener = e -> {
         if (e == null || !SystemStateMonitor.TYPE_NETWORK.equals(e.type)) return;
         boolean offline = SystemStateMonitor.VAL_NONE.equals(e.value);
         boolean recovered = mWasOffline && !offline;
         mWasOffline = offline;
-        syncOfflineTip(offline);
         if (recovered) refreshAfterNetworkBack();
     };
 
@@ -335,16 +333,12 @@ public class GridFragment extends BaseLazyFragment {
     @Override
     public void onDestroyView() {
         unbindNetworkListener();
-        mOfflineTip = null;
         super.onDestroyView();
     }
 
-    /** 订阅系统网络状态并立即按当前状态刷新一次提示(幂等) */
+    /** 订阅系统网络状态(幂等:只在可见期间订阅),并记录当前是否离线作为"恢复"的基准 */
     private void bindNetworkListener() {
-        if (mOfflineTip == null) mOfflineTip = findViewById(R.id.tv_offline_tip);
-        boolean offline = isOffline();
-        mWasOffline = offline;
-        syncOfflineTip(offline);
+        mWasOffline = isOffline();
         if (mNetBound) return;
         SystemStateMonitor.get().register(mNetListener, SystemStateMonitor.TYPE_NETWORK);
         mNetBound = true;
@@ -363,11 +357,6 @@ public class GridFragment extends BaseLazyFragment {
         } catch (Throwable th) {
             return false;
         }
-    }
-
-    private void syncOfflineTip(boolean offline) {
-        if (mOfflineTip == null) mOfflineTip = findViewById(R.id.tv_offline_tip);
-        if (mOfflineTip != null) mOfflineTip.setVisibility(offline ? View.VISIBLE : View.GONE);
     }
 
     /**
