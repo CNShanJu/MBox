@@ -612,9 +612,9 @@ public class DownloadExecutor {
         }
         File mergeTmp = new File(tmpDir, "merged.tmp");
         try {
-            // 合并前空间检查:峰值不是 1× 而是 2× —— 合并出 merged.tmp(1×)之后、重封装还要再写一份
-            // remux 产物(1×),两者会同时存在;分片要到合并成功后才删(见下面的 deleteSegmentsDir)。
-            // 只按 1× 预留的话,小容量机器会在重封装中途 ENOSPC。
+            // 合并前空间检查:按 1× 成品大小预留(与 DownloadPolicy 同口径,不做峰值倍数)。
+            // 合并产物/重封装产物确实会短暂同时存在,但真不够时是优雅退化:合并失败保留碎片可重试、
+            // 重封装失败只是回退 .ts(成品仍可播),不值得为不确定的估算误伤用户。
             long mergeSize = 0;
             for (int i = 0; i < segments.size(); i++) {
                 mergeSize += new File(tmpDir, String.format("%05d.ts", i)).length();
@@ -624,11 +624,12 @@ public class DownloadExecutor {
                 if (dir != null && dir.exists()) {
                     android.os.StatFs stat = new android.os.StatFs(dir.getAbsolutePath());
                     long free = stat.getAvailableBytes();
-                    long need = 2 * mergeSize + DownloadPolicy.MIN_FREE_SPACE;
-                    if (free < need) {
-                        throw new IOException("磁盘空间不足,无法合并(合并 + 重封装共需约 "
-                                + formatSize(need) + ",当前可用 " + formatSize(free) + ",需清理约 "
-                                + ((need - free + 1024 * 1024 - 1) / (1024 * 1024)) + "MB)");
+                    if (free - mergeSize < DownloadPolicy.MIN_FREE_SPACE) {
+                        throw new IOException("磁盘空间不足,无法合并(完成后可用仅 "
+                                + formatSize(Math.max(0, free - mergeSize)) + ",需清理约 "
+                                + ((DownloadPolicy.MIN_FREE_SPACE - (free - mergeSize) + 1024 * 1024 - 1)
+                                        / (1024 * 1024))
+                                + "MB)");
                     }
                 }
             }
