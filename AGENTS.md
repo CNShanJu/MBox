@@ -50,9 +50,9 @@ app / feature
 现状残留(持续治理,新代码勿新增同类):
 - app 仍直用 `MyVideoView`/IJK/Exo、`PlayerTrackHelper` 按内核分发(播放器收口长线)。
 - `:core-network` 已只剩网络职责(OkGoHelper/HttpClient/HttpUrls/FCallBack/HCallBack/SSLCompat/urlhttp 的 brotli 拦截器);AES/MD5/AdBlocker/AppLog/LOG 已迁出。残留:网络客户端装配与通用工具仍同包,后续可按职责再分目录。
+- **日志只有一条写通道**:业务日志一律 `LogStore`(`:log` 模块,结构化落 Room),错误流由 `LogcatCapture` 落 `filesDir/app_logs/logcat-*.log`;旧 `AppLog` 按天文件通道**已删除**(它与 LogStore 共用 `"app_log"` 开关,一开日志就双写且 `app-*.log` 永不清理、界面不可见;调用点已全部迁移)。新代码**不得再新增文件级日志通道**。
 - `:spider` 字符串通道(SpiderContentApi)为过渡兼容层,新功能不得新增字符串协议依赖。
-- app 已无直连 `:spider` 实现的代码:批量下载解析经 `PlayUrlResolverProviders`(spiderapi 契约,组合根注入 `SpiderUrlResolverImpl`),JS 源运行态(取消在跑任务/清空源实例)经 `SourceLoaderProviders.stopAllSourceTasks/resetSources`。
-  - 门禁白名单里的 `ui/activity/FastSearchActivity.kt` 是过渡项:该文件调用点已改为 `SourceLoaderProviders`,改动随其 WIP 一并提交后即可从 `spiderImplAllow` 删除。
+- app 已无直连 `:spider` 实现的代码:批量下载解析经 `PlayUrlResolverProviders`(spiderapi 契约,组合根注入 `SpiderUrlResolverImpl`),JS 源运行态(取消在跑任务/清空源实例)经 `SourceLoaderProviders.stopAllSourceTasks/resetSources`。门禁 `spiderImplAllow` 白名单已收净,只剩组合根 `di/AppCompositionRoot`、启动 `base/App`、`server/ControlManager` 三个装配/注入点。
 - 未建 `:playback` / feature-* 模块(第三/四阶段,需真机回归环境再动)。
 
 ## 三、大页面拆分目标(§三)
@@ -243,7 +243,7 @@ app / feature
 ## 十、常用基础设施速查
 
 - 配置:core-storage `config.PrefsDataStore`(DataStore,运行权威;历史 Hawk 一次性迁移通道 `KeyValueStore` 已随 hawk 退役下线);各业务 Config 门面见 `com.github.tvbox.osc.config`(SystemConfig)与各模块 config 包。
-- 契约 Providers(在 `:spider` 模块的契约包内,原 `:spider-api`):`SourceConfigProviders`/`ParseConfigProviders`/`LiveChannelConfigApi`/`SourceLoaderProviders`(含 `stopAllSourceTasks`/`resetSources` 源运行态)/`PlayUrlResolverProviders`(批量下载解析)/`IjkCodecConfigProviders` 等,业务/UI 一律经它们取源元信息,禁止直触 ApiConfig。`checkModuleDependencies` 已把"app 直连 `ApiConfig`/`JsLoader`/`PlayUrlResolver`"设为红线,白名单只剩组合根 `di/AppCompositionRoot`、启动 `base/App`、`server/ControlManager` 三个装配/注入点(另有一条待摘的过渡项,见 §二)。
+- 契约 Providers(在 `:spider` 模块的契约包内,原 `:spider-api`):`SourceConfigProviders`/`ParseConfigProviders`/`LiveChannelConfigApi`/`SourceLoaderProviders`(含 `stopAllSourceTasks`/`resetSources` 源运行态)/`PlayUrlResolverProviders`(批量下载解析)/`IjkCodecConfigProviders` 等,业务/UI 一律经它们取源元信息,禁止直触 ApiConfig。`checkModuleDependencies` 已把"app 直连 `ApiConfig`/`JsLoader`/`PlayUrlResolver`"设为红线,白名单只剩组合根 `di/AppCompositionRoot`、启动 `base/App`、`server/ControlManager` 三个装配/注入点。
 - 弹窗:统一 `ui/dialog/DialogCoordinator`(center/right/bottom/loading/confirm);同构内容层合并用共享 Panel(如 LiveSettingPanel/DownloadSeriesPanel/PlayingControlPanel),Bottom/Right 收敛为薄壳。
 - 共享执行器:`util/HeavyTaskUtil`(getBigTaskExecutorService 并行 / getSerialExecutorService 串行);配合 epoch/过期自检做取消语义。
 - 播放上下文:`util/player/{PlayRequest,PlaySessionKeys,PlayedVodKey,PlayHistoryRepository,SubtitleCoordinator,PlayParseCoordinator,PlaybackSessions}`。

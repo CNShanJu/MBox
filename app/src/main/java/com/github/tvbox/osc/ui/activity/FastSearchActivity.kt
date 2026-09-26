@@ -34,7 +34,6 @@ import com.github.tvbox.osc.spiderapi.SourceConfigProviders
 import com.github.tvbox.osc.spiderapi.SourceLoaderProviders
 import com.github.tvbox.osc.log.Category
 import com.github.tvbox.osc.log.LogStore
-import com.github.tvbox.osc.util.AppLog
 import com.github.tvbox.osc.ui.RefreshUiEnvFactory
 import com.github.tvbox.osc.ui.adapter.FastSearchAdapter
 import com.github.tvbox.osc.ui.adapter.SelectDialogAdapter
@@ -262,7 +261,6 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
             return
         }
         if (!refreshSpinnerDismissed) refreshSpinnerDismissed = true
-        AppLog.log("搜索", "加载更多: " + keys.size + " 个来源,下一页 " + keys.joinToString(","))
         LogStore.log(Category.OTHER, "搜索: 加载更多 " + keys.size + " 个来源")
         for (key in keys) {
             val page = paging.pageOf(key) + 1
@@ -399,7 +397,6 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
                 SystemConfig.setSearchResultLayout(pos)
                 applyResultLayout(pos)
                 val layoutName = resultLayoutNames.getOrElse(pos) { value ?: "" }
-                AppLog.log("搜索", "切换结果布局: " + layoutName)
                 LogStore.success(Category.OTHER, "搜索: 切换结果布局为 " + layoutName)
                 AppBubble.toast("已切换为$layoutName")
                 dialog.dismiss()

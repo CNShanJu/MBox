@@ -113,7 +113,7 @@ public final class UpdateCheck {
             if (onFinished != null) onFinished.run();
             return;
         }
-        com.github.tvbox.osc.util.AppLog.log("更新", "启动自动检查更新");
+        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM, "更新: 启动自动检查更新");
         check(context, new Listener() {
             @Override
             public void onChecking() {
@@ -121,15 +121,15 @@ public final class UpdateCheck {
 
             @Override
             public boolean onResult(UpdateInfo newVersion) {
-                com.github.tvbox.osc.util.AppLog.log("更新", newVersion == null
-                        ? "启动自动检查: 已是最新" : "启动自动检查: 发现新版本 v" + newVersion.versionName);
+                com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM, newVersion == null
+                        ? "更新: 启动自动检查,已是最新" : "更新: 启动自动检查,发现新版本 v" + newVersion.versionName);
                 if (onFinished != null) MAIN.post(onFinished);
                 return false;   // 启动检查没有宿主弹窗要收,直接弹
             }
 
             @Override
             public void onFailed(String message) {
-                com.github.tvbox.osc.util.AppLog.log("更新", "启动自动检查失败: " + message);
+                com.github.tvbox.osc.log.LogStore.fail(com.github.tvbox.osc.log.Category.SYSTEM, "更新: 启动自动检查失败 " + message);
                 if (onFinished != null) MAIN.post(onFinished);
             }
         });

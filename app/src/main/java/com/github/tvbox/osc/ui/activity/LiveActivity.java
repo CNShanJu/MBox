@@ -48,7 +48,6 @@ import com.github.tvbox.osc.ui.widget.LiveNormalControlView;
 import com.github.tvbox.osc.ui.widget.LiveSideControlView;
 import com.github.tvbox.osc.util.FastClickCheckUtil;
 import com.github.tvbox.osc.util.HCallBack;
-import com.github.tvbox.osc.util.AppLog;
 import com.github.tvbox.osc.util.HttpClient;
 import com.github.tvbox.osc.util.LiveConfig;
 import com.github.tvbox.osc.util.live.TxtSubscribe;
@@ -341,7 +340,6 @@ public class LiveActivity extends BaseActivity implements LiveLineSelectHost, Li
         }
         showBottomEpg();
 
-        AppLog.log("直播", "播放频道[" + currentLiveChannelItem.getChannelName() + "] 源[" + (currentLiveChannelItem.getSourceIndex() + 1) + "/" + currentLiveChannelItem.getSourceNum() + "] " + currentLiveChannelItem.getUrl());
         com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.OTHER,
                 "直播: 播放频道[" + currentLiveChannelItem.getChannelName() + "] 源["
                         + (currentLiveChannelItem.getSourceIndex() + 1) + "/"
@@ -606,7 +604,7 @@ public class LiveActivity extends BaseActivity implements LiveLineSelectHost, Li
             return;
         }
         showLoading();
-        AppLog.log("直播", "加载直播源: " + url);
+        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.OTHER, "直播: 加载直播源 " + url);
         HttpClient.get(url, null, new HCallBack() {
 
             @Override
@@ -638,7 +636,6 @@ public class LiveActivity extends BaseActivity implements LiveLineSelectHost, Li
                     });
                 } catch (Throwable th) {
                     th.printStackTrace();
-                    AppLog.log("直播", "解析失败: " + th.getMessage());
                     com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.OTHER,
                             "直播: 直播源解析失败: " + th.getMessage());
                     useFallbackOrFail(fallback, "直播源解析失败,请检查订阅中的直播源");
@@ -647,7 +644,6 @@ public class LiveActivity extends BaseActivity implements LiveLineSelectHost, Li
 
             @Override
             public void onError(Throwable e) {
-                AppLog.log("直播", "加载失败: " + (e == null ? "null" : e.getMessage()));
                 com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.OTHER,
                         "直播: 直播源加载失败: " + (e == null ? "null" : e.getMessage()));
                 useFallbackOrFail(fallback, "直播源加载失败,请检查网络或直播源");

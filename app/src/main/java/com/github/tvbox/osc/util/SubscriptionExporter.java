@@ -107,7 +107,7 @@ public final class SubscriptionExporter {
                 }
             } catch (Throwable t) {
                 t.printStackTrace();
-                AppLog.log("订阅导出", "导出异常 " + t);
+                LogStore.fail(Category.SUBSCRIPTION, "订阅: 导出异常 " + t);
                 err = "导出失败:" + t.getMessage();
             }
             final File fOut = out;
@@ -143,7 +143,6 @@ public final class SubscriptionExporter {
                 try {
                     o.addProperty("content", readText(f));
                 } catch (Throwable t) {
-                    AppLog.log("订阅导出", "读取本地订阅内容失败 " + f + " " + t);
                     LogStore.fail(Category.SUBSCRIPTION, "订阅: 导出时读取本地订阅内容失败 " + f.getName());
                 }
             }

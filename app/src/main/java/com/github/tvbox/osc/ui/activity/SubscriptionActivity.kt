@@ -26,7 +26,6 @@ import com.github.tvbox.osc.ui.dialog.SubsciptionDialog.OnSubsciptionListener
 import com.github.tvbox.osc.log.Category
 import com.github.tvbox.osc.log.LogStore
 import com.github.tvbox.osc.spiderapi.CmsApiRules
-import com.github.tvbox.osc.util.AppLog
 import com.github.tvbox.osc.util.CmsSiteImporter
 import com.github.tvbox.osc.util.HCallBack
 import com.github.tvbox.osc.util.HtmlSiteImporter
@@ -171,7 +170,6 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
                 ) {
                     if (position >= mSubscriptions.size) return@show
                     val deleted = mSubscriptions.removeAt(position)
-                    AppLog.log("订阅管理", "删除订阅: " + deleted.name + "  " + deleted.url)
                     deleteLibraryFileOf(deleted)   // 本地/JSON 导入的内部副本一并删掉,不留垃圾文件
                     LogStore.log(Category.SUBSCRIPTION, "订阅: 删除 " + deleted.name)
                     if (deleted.isChecked) {
@@ -216,7 +214,6 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
                 }
             }
             val chosen = mSubscriptions[position]
-            AppLog.log("订阅管理", "选择订阅: " + chosen.name + "  " + chosen.url)
             LogStore.log(Category.SUBSCRIPTION, "订阅: 切换到 " + chosen.name)
             //删除/选择只刷新,不触发重新排序
             mSubscriptionAdapter.notifyDataSetChanged()
@@ -267,7 +264,7 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
         mSubscriptionAdapter.setExportMode(true)
         mBinding.llExportBar.visibility = View.VISIBLE
         updateExportCount()
-        AppLog.log("订阅管理", "进入导出订阅选择态,共 " + mSubscriptions.size + " 项")
+        LogStore.log(Category.SUBSCRIPTION, "订阅: 进入导出选择态,共 " + mSubscriptions.size + " 项")
     }
 
     /** 退出导出态:恢复"当前订阅"勾选显示 */
@@ -301,7 +298,6 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
         showCancelableLoading("正在导出 " + selected.size + " 个订阅…") {
             // 取消:在跑的导出结果一律作废(已发出的单次请求撤不回,但不会再采用)
             SubscriptionExporter.cancel()
-            AppLog.log("订阅管理", "导出已取消")
             LogStore.log(Category.SUBSCRIPTION, "订阅: 导出已取消")
             AppBubble.toast("已取消导出")
         }
@@ -311,7 +307,6 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
                 if (isFinishing || isDestroyed) return
                 dismissLoadingDialog()
                 val text = "已导出 $count 条订阅清单"
-                AppLog.log("订阅管理", "导出成功: " + file.absolutePath + " " + text)
                 LogStore.log(Category.SUBSCRIPTION, "订阅: 导出成功 " + file.name + "(" + text + ")")
                 AppBubble.toastLong("$text\n${file.parent}")
                 exitExportMode()
@@ -321,7 +316,6 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
             override fun onError(message: String) {
                 if (isFinishing || isDestroyed) return
                 dismissLoadingDialog()
-                AppLog.log("订阅管理", "导出失败: " + message)
                 LogStore.fail(Category.SUBSCRIPTION, "订阅: 导出失败 " + message)
                 AppBubble.toastLong(message)
             }
@@ -343,7 +337,7 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
             startActivity(Intent.createChooser(intent, "分享订阅清单"))
         } catch (t: Throwable) {
             t.printStackTrace()
-            AppLog.log("订阅管理", "分享导出文件失败: " + t)
+            LogStore.fail(Category.SUBSCRIPTION, "订阅: 分享导出文件失败 " + t)
             AppBubble.toast("分享失败:" + t.message)
         }
     }
@@ -404,7 +398,6 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
         mSubscriptionAdapter.notifyItemChanged(position)
         updateEmptyState()
         SubscriptionConfig.setSubscriptions(mSubscriptions)
-        AppLog.log("订阅管理", "编辑订阅: " + name + "  " + oldUrl + " -> " + url)
         LogStore.log(Category.SUBSCRIPTION, "订阅: 编辑 " + name)
         AppBubble.toast("已保存")
         // 改的就是当前启用订阅的地址 → 按新地址重载配置(与切换订阅同一套:清任务栈回首页)
@@ -526,7 +519,6 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
             addLocalFileSubscription(importFile, name, mPendingChecked)
         } catch (t: Throwable) {
             t.printStackTrace()
-            AppLog.log("订阅管理", "本地导入读取失败: " + uri + "  " + t)
             LogStore.fail(Category.SUBSCRIPTION, "订阅: 本地导入读取文件失败")
             AppBubble.toast("读取所选文件失败")
         }
@@ -609,7 +601,6 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
             added++
         }
         if (added == 0) {
-            AppLog.log("订阅管理", "清单导入无新增(全部重复): " + label)
             LogStore.log(Category.SUBSCRIPTION, "订阅: 清单导入无新增,地址均与本机重复")
             AppBubble.toastLong("清单中的订阅地址与本机已有订阅相同")
             return true
@@ -619,7 +610,6 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
             firstAdded.isChecked = true
             mSelectedUrl = firstAdded.url
         }
-        AppLog.log("订阅管理", "导入订阅清单: " + added + " 条(" + label + ")")
         LogStore.log(Category.SUBSCRIPTION, "订阅: 清单导入 " + added + " 条(" + label + ")")
         mSubscriptionAdapter.setNewData(mSubscriptions)
         updateEmptyState()
@@ -656,7 +646,6 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
             AppBubble.toast("JSON 格式不正确")
             return
         }
-        AppLog.log("订阅管理", "JSON 导入: " + text.length + " 字符")
         LogStore.log(Category.SUBSCRIPTION, "订阅: JSON 导入提交 " + text.length + " 字符")
         // 1) 清单数组 / 多线路 / 多仓 / 单条订阅
         if (importJsonEntries(root, checked, "JSON")) return
@@ -719,7 +708,7 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
         // 裸站点条目/数组(用户从别处复制的单站配置):补外壳后当单源订阅用
         val wrapped = CmsApiRules.wrapSiteJson(trimmed)
         if (wrapped != null && wrapped != trimmed) {
-            AppLog.log("订阅管理", "订阅内容补 sites 外壳: " + label)
+                LogStore.log(Category.SUBSCRIPTION, "订阅: 裸站点内容补 sites 外壳 " + label)
             return SubscriptionContent(wrapped, true)
         }
         return when (CmsApiRules.subscriptionShape(trimmed)) {
@@ -741,7 +730,6 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
             CmsApiRules.SHAPE_SITE -> "这只是单站条目,不是完整订阅配置(可改用 JSON 导入粘贴,会自动补 sites)"
             else -> "这份内容不是 TVBox 订阅配置(缺少 sites 站点列表)"
         }
-        AppLog.log("订阅管理", "导入内容不是订阅配置(" + reason + "): " + label)
         LogStore.log(Category.SUBSCRIPTION, "订阅: 拒绝导入非订阅内容 " + reason)
         AppBubble.toastLong(reason)
     }
@@ -755,7 +743,6 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
         if (!CmsApiRules.looksLikeBookSource(text)) return
         val siteUrl = CmsApiRules.bookSourceSiteUrl(text) ?: return
         if (!CmsApiRules.looksLikeSiteUrl(siteUrl)) return
-        AppLog.log("订阅管理", "书源改用其中的站点地址接入: " + siteUrl)
         LogStore.log(Category.SUBSCRIPTION, "订阅: 「阅读」书源改用站点地址识别 " + siteUrl)
         showLoadingDialog("正在读取地址…")
         // 书源文本一并带上当线索:站点常挂在子目录(如 /jiejie),书源规则里写的路径就是子目录线索
@@ -769,13 +756,12 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
      */
     private fun scrapeSite(name: String, siteUrl: String, hintText: String?, checked: Boolean) {
         updateLoadingHint("正在按站点页面识别…\n" + CmsApiRules.displayHost(siteUrl))
-        AppLog.log("订阅管理", "采集接口不可用,改抓站点页面: " + siteUrl)
+        LogStore.log(Category.SUBSCRIPTION, "订阅: 采集接口不可用,改抓站点页面 " + siteUrl)
         HtmlSiteImporter.probe(siteUrl, hintText, importDir(), object : HtmlSiteImporter.Callback {
             override fun onFound(siteName: String, file: File, samplePlayUrl: String) {
                 if (isFinishing || isDestroyed || importCancelled) return
                 dismissLoadingDialog()
                 val display = if (isDefaultSubName(name)) siteName else name.trim()
-                AppLog.log("订阅管理", "抓页面接入成功: " + siteUrl + " 示例播放页=" + samplePlayUrl)
                 LogStore.log(Category.SUBSCRIPTION, "订阅: 站点页面抓取成功 " + display)
                 addLocalFileSubscription(file, display, checked)
                 AppBubble.toastLong("已按站点页面接入：" + display)
@@ -784,7 +770,6 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
             override fun onNotFound() {
                 if (isFinishing || isDestroyed || importCancelled) return
                 dismissLoadingDialog()
-                AppLog.log("订阅管理", "站点页面也没抓到可用结构: " + siteUrl)
                 LogStore.fail(Category.SUBSCRIPTION, "订阅: 采集接口与站点页面均不可用 " + siteUrl)
                 AppBubble.toastLong("未识别到采集接口，也没能按站点页面抓取")
             }
@@ -832,12 +817,10 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
             val stem = if (dot > 0) base.substring(0, dot) else base
             val file = File(importDir(), stem + "_" + contentDigest(text) + ".json")
             if (!file.exists()) file.writeText(text, Charsets.UTF_8)
-            AppLog.log("订阅管理", "JSON 导入存为本地订阅: " + name + "  " + file.absolutePath)
             LogStore.log(Category.SUBSCRIPTION, "订阅: JSON 导入 " + name + "(本地文件)")
             addLocalFileSubscription(file, name, checked)
         } catch (t: Throwable) {
             t.printStackTrace()
-            AppLog.log("订阅管理", "JSON 导入失败: " + t)
             LogStore.fail(Category.SUBSCRIPTION, "订阅: JSON 导入保存本地文件失败")
             AppBubble.toast("JSON 导入失败")
         }
@@ -916,7 +899,7 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
             file
         } catch (t: Throwable) {
             t.printStackTrace()
-            AppLog.log("订阅管理", "写入内部订阅文件失败: " + t)
+            LogStore.fail(Category.SUBSCRIPTION, "订阅: 写入内部订阅文件失败 " + t)
             null
         }
     }
@@ -926,11 +909,10 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
         val f = sub?.let { libraryFileOf(it.url) } ?: return
         try {
             if (f.isFile && f.delete()) {
-                AppLog.log("订阅管理", "删除订阅内部文件: " + f.name)
                 LogStore.log(Category.SUBSCRIPTION, "订阅: 删除本地订阅文件 " + f.name)
             }
         } catch (t: Throwable) {
-            AppLog.log("订阅管理", "删除订阅内部文件失败: " + t)
+            LogStore.fail(Category.SUBSCRIPTION, "订阅: 删除订阅内部文件失败 " + t)
         }
     }
 
@@ -1074,7 +1056,6 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
                 dismissLoadingDialog()
                 AppBubble.toast("已取消")
             }
-            AppLog.log("订阅管理", "新增订阅: " + name + "  " + url)
             LogStore.log(Category.SUBSCRIPTION, "订阅: 新增 " + name + "(http/" + addOrigin + ")")
             HttpClient.get(url, null, "get_subscription", object : HCallBack {
                     override fun onSuccess(response: String) {
@@ -1142,7 +1123,10 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
 
                     override fun onError(e: Throwable) {
                         dismissLoadingDialog()
-                        AppLog.log("订阅管理", "新增订阅失败: " + name + "  " + url + "  " + e)
+                        // 拉取这一步失败:带异常先记一条(排障需要);"新增算不算失败"的结论交给下面两个分支
+                        // 各自落(站点形态转嗅探,它自己记成功/失败;非站点形态由紧随的 LogStore.fail 记)——
+                        // 这里不再下"新增订阅失败"的结论,否则站点形态后续接入成功时日志里会留一条误导
+                        LogStore.fail(Category.SUBSCRIPTION, "订阅: 新增订阅拉取失败 " + name + " " + url + " " + e)
                         // 通用兜底:地址像资源站就说"拉不到页面"太苛刻(站点常拦非浏览器 UA/首页超时),
                         // 仍按站点候选路径实探一次,能探到接口就正常接入
                         if (CmsApiRules.looksLikeSiteUrl(url)) {
@@ -1178,7 +1162,6 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
                             kind: CmsSiteImporter.InputKind, checked: Boolean,
                             hintText: String? = null) {
         updateLoadingHint("正在识别资源站…\n$inputUrl")
-        AppLog.log("订阅管理", "按资源站嗅探采集接口: " + name + "  " + inputUrl + "  形态=" + kind)
         LogStore.log(Category.SUBSCRIPTION, "订阅: 开始识别资源站 " + name + " " + inputUrl + "(形态=" + kind + ")")
         CmsSiteImporter.probeInput(
             inputUrl, probedContent, kind, importDir(),
@@ -1187,7 +1170,6 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
                     if (isFinishing || isDestroyed || importCancelled) return
                     dismissLoadingDialog()
                     val display = if (isDefaultSubName(name)) siteName else name.trim()
-                    AppLog.log("订阅管理", "嗅探成功: " + inputUrl + " -> " + api)
                     LogStore.log(Category.SUBSCRIPTION, "订阅: 资源站识别成功 " + display + " " + api)
                     addLocalFileSubscription(file, display, checked)
                     AppBubble.toastLong("已识别为资源站：" + display)
@@ -1201,7 +1183,6 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
                         return
                     }
                     dismissLoadingDialog()
-                    AppLog.log("订阅管理", "未识别到可用采集接口: " + inputUrl)
                     LogStore.fail(Category.SUBSCRIPTION, "订阅: 资源站未识别到采集接口 " + inputUrl)
                     AppBubble.toastLong("未识别到采集接口，请改填订阅地址或采集接口地址")
                 }

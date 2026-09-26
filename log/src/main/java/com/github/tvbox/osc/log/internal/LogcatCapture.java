@@ -28,8 +28,12 @@ import java.util.Locale;
  * 绝不抓其他应用/系统日志；默认只保留 ERROR(本应用 E 级,即"错误日志")，
  * 日志级别调为 DEBUG 时才全量保留 V/D/I/W/E 便于深挖(显式逃生口)。
  * <p>
- * 按天写入 filesDir/app_logs/logcat-yyyy-MM-dd.log（与旧 AppLog 共用目录），
+ * 按天写入 filesDir/app_logs/logcat-yyyy-MM-dd.log（目录沿用旧 AppLog 的 app_logs），
  * 单文件超 8MB 滚动分段、目录总大小上限 48MB 自动清理、保留天数跟随 {@link LogConfig#getRetentionDays()}。
+ * <p>
+ * 清理/清空范围是整个 app_logs 目录里应用自己的日志文件（logcat-* 与旧通道残留的 app-*.log）：
+ * 旧通道（AppLog 类）已删除，但存量机器上还留着它写的 app-*.log，那些文件界面上看不到
+ * （错误日志 Tab 只列 logcat-*），却一样占存储，不能因为"不展示"就不清理（见 {@link #isLogFile}）。
  * <p>
  * 与业务日志（Room）互补：业务日志结构化可筛选("业务日志"Tab)，这里保留本应用错误流("错误日志"Tab)。
  * 开关由 {@link LogStore#setEnabled(boolean)} 联动（默认关）。
@@ -37,9 +41,15 @@ import java.util.Locale;
  */
 public final class LogcatCapture {
 
-    /** 与旧 AppLog 共用目录（app_logs），前缀 logcat- 区分 */
+    /** 日志目录（沿用旧 AppLog 的 app_logs），前缀 logcat- 区分 */
     private static final String DIR = "app_logs";
     private static final String PREFIX = "logcat-";
+    /**
+     * 已删除的旧 AppLog 通道写出的历史文件前缀。
+     * 写通道已随 AppLog 类一起删除，这里留着只为把存量机器上遗留的 {@code app-*.log} 一并清掉
+     * （否则它们既不按天删也不计入总量上限，会永久占着存储）。
+     */
+    private static final String LEGACY_PREFIX = "app-";
     private static final String SUFFIX = ".log";
     private static final int BATCH_LINES = 100;
     private static final long FLUSH_MS = 1500;
@@ -330,10 +340,10 @@ public final class LogcatCapture {
         return lines;
     }
 
-    /** 清空全部 logcat 文件（分段 + 当日） */
+    /** 清空全部应用日志文件(分段 + 当日 + 旧通道残留的 app-*.log) */
     public static void clearAll() {
         synchronized (LOCK) {
-            for (File f : listLogFiles()) {
+            for (File f : allLogFiles()) {
                 try {
                     //noinspection ResultOfMethodCallIgnored
                     f.delete();
@@ -366,6 +376,8 @@ public final class LogcatCapture {
             } finally {
                 fw.close();
             }
+            // 导出文件是临时的:同类只留最近几个,否则每导出一次 cacheDir 就永久多一份(这份可能几十 MB)
+            ExportFiles.keepNewest(appContext().getCacheDir(), "logcat_export_");
             return out;
         } catch (Throwable th) {
             Log.e("LogcatCapture", "导出 logcat 文件失败", th);
@@ -416,8 +428,13 @@ public final class LogcatCapture {
         return new File(appContext().getFilesDir(), DIR);
     }
 
+    /** 当天日期戳(yyyy-MM-dd):日志文件名与"今天的活跃文件"判定共用 */
+    private static String todayStamp() {
+        return new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(new Date());
+    }
+
     private static File todayFile() {
-        return new File(logDir(), PREFIX + new SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(new Date()) + SUFFIX);
+        return new File(logDir(), PREFIX + todayStamp() + SUFFIX);
     }
 
     /** 当日文件超过单文件上限时滚动为 logcat-yyyy-MM-dd.N.log(与活跃文件同前缀,便于按天查看) */
@@ -450,9 +467,7 @@ public final class LogcatCapture {
             long now = System.currentTimeMillis();
             long retentionDays = Math.max(1, LogConfig.getRetentionDays());
             for (File f : files) {
-                if (!f.isFile() || !f.getName().startsWith(PREFIX) || !f.getName().endsWith(SUFFIX)) {
-                    continue;
-                }
+                if (!isLogFile(f)) continue;
                 if (now - f.lastModified() > retentionDays * DAY_MS) {
                     //noinspection ResultOfMethodCallIgnored
                     f.delete();
@@ -463,12 +478,13 @@ public final class LogcatCapture {
             if (keep.isEmpty()) return;
             // 按最后修改时间升序(最旧的在前),总大小仍超限时优先删除旧文件
             java.util.Collections.sort(keep, (a, b) -> Long.compare(a.lastModified(), b.lastModified()));
-            String activeName = todayFile().getName();
+            // 今天(含 logcat 的滚动分段 .N.log、旧通道的 app-*.log)是活跃文件:删了等于把当下正在记的内容丢掉
+            final String today = todayStamp();
             long total = 0;
             for (File f : keep) total += f.length();
             for (File f : keep) {
                 if (total <= MAX_TOTAL_BYTES) break;
-                if (f.getName().equals(activeName)) continue; // 保留当前正在写的文件
+                if (f.getName().contains(today)) continue; // 保留当前正在写的文件
                 long len = f.length();
                 //noinspection ResultOfMethodCallIgnored
                 f.delete();
@@ -476,5 +492,35 @@ public final class LogcatCapture {
             }
         } catch (Throwable ignored) {
         }
+    }
+
+    /**
+     * 目录内的应用日志文件:本模块的 {@code logcat-*.log} + 已删除的旧 AppLog 通道残留的 {@code app-*.log}。
+     * <p>
+     * 旧通道的文件在界面上看不到(Tab2 只列 logcat-*),但同样是应用自己的运行日志、同样占存储,
+     * 所以清理与清空都要算上它们 —— 以前只认 logcat- 前缀,那些文件既不按天删也不计入总量上限,
+     * 会按天(每天一个新文件、单日最多 2 万行)无限累积,只能靠清应用数据才能删掉。
+     * 写通道现已删除,这里负责把存量文件随保留天数自然清空。
+     */
+    private static boolean isLogFile(File f) {
+        if (f == null || !f.isFile()) return false;
+        String name = f.getName();
+        if (!name.endsWith(SUFFIX)) return false;
+        return name.startsWith(PREFIX) || name.startsWith(LEGACY_PREFIX);
+    }
+
+    /** 目录内全部应用日志文件(清理/清空用);展示口径仍走 {@link #listLogFiles()} 的 logcat-* only */
+    private static List<File> allLogFiles() {
+        List<File> out = new ArrayList<>();
+        try {
+            File dir = logDir();
+            File[] fs = dir.listFiles();
+            if (fs == null) return out;
+            for (File f : fs) {
+                if (isLogFile(f)) out.add(f);
+            }
+        } catch (Throwable ignored) {
+        }
+        return out;
     }
 }

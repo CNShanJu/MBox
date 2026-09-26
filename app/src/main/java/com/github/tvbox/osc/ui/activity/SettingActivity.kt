@@ -21,7 +21,6 @@ import com.github.tvbox.osc.ui.adapter.SelectDialogAdapter.SelectDialogInterface
 import com.github.tvbox.osc.ui.dialog.BackupDialog
 import com.github.tvbox.osc.ui.dialog.LiveApiDialog
 import com.github.tvbox.osc.ui.dialog.SelectDialog
-import com.github.tvbox.osc.util.AppLog
 import com.github.tvbox.osc.util.FastClickCheckUtil
 import com.github.tvbox.osc.util.FileUtils
 import com.github.tvbox.osc.util.HistoryHelper
@@ -51,9 +50,8 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
     /** init() 是否已跑完(onResume 刷新显示前要确认控件已就绪) */
     private var inited = false
 
-    /** 设置操作业务日志:写结构化业务日志(SYSTEM)+ logcat 文件日志 */
+    /** 设置操作业务日志:写结构化业务日志(SYSTEM) */
     private fun biz(msg: String) {
-        com.github.tvbox.osc.util.AppLog.log("设置", msg)
         com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM, "设置: " + msg)
     }
 

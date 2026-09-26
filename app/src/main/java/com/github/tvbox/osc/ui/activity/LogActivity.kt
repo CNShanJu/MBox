@@ -26,7 +26,7 @@ import java.util.Locale
  * <ul>
  *   <li>Tab1 业务日志：LogStore(Room) 结构化日志，模块筛选（全部/下载/播放/订阅/系统/仅失败）；</li>
  *   <li>Tab2 错误日志：本应用 logcat ERROR 级（按天文件），日期选择、复制、清空、导出——
- *       文件读取全部走 LogStore 门面，不再直接依赖 common.AppLog。</li>
+ *       文件读取全部走 LogStore 门面（旧的 AppLog 按天文件通道已退役删除）。</li>
  * </ul>
  */
 class LogActivity : BaseVbActivity<ActivityLogBinding>() {

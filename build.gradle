@@ -136,13 +136,12 @@ tasks.register('checkModuleDependencies') {
         // app 层红线:api/impl 合模块后的"墙"。:spider 的契约与实现现在同模块,故必须在源码层
         // 拦住 app 直连实现单例/具体爬虫类(AGENTS §二/§十):一律经 spider 契约
         // (SourceConfigProviders/ParseConfigProviders/LiveChannelConfigApi/IjkCodecConfigProviders)。
-        // 下面是仅存的装配/注入点与两条遗留待迁移项,新增直连一律门禁失败。
+        // 下面是仅存的装配/注入点,新增直连一律门禁失败。
         def spiderImplPattern = ~/(com\.github\.tvbox\.osc\.api\.ApiConfig|com\.github\.catvod\.crawler\.(JsLoader|PlayUrlResolver))/
         def spiderImplAllow = [
                 'di\\AppCompositionRoot.java',          // 组合根:契约适配 ApiConfig(唯一装配点)
                 'base\\App.java',                        // 启动:context/局域网地址注入(ApiConfig)
                 'server\\ControlManager.java',           // 局域网地址注入
-                'ui\\activity\\FastSearchActivity.kt',   // 待摘:该文件已改为经 SourceLoaderProviders 契约,但改动随其 WIP 未提交(见 AGENTS §二)
         ]
         appSourceDirs.each { dir ->
             if (!dir.exists()) return

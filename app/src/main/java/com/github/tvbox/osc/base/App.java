@@ -15,7 +15,6 @@ import com.github.tvbox.osc.log.LogStore;
 import com.github.tvbox.osc.server.ControlManager;
 import com.github.tvbox.osc.state.SystemStateMonitor;
 import com.github.tvbox.osc.ui.activity.MainActivity;
-import com.github.tvbox.osc.util.AppLog;
 import com.github.tvbox.osc.util.FileUtils;
 import com.github.tvbox.osc.config.HawkConfig;
 import com.github.tvbox.osc.util.LOG;
@@ -61,8 +60,6 @@ public class App extends MultiDexApplication {
         super.onCreate();
         instance = this;
         initParams();
-        // AppLog(common) context 注入: 按天文件/导出用
-        AppLog.setAppContext(this);
         // OKGo: 全局 OkHttpClient 初始化(common 模块, context 注入); Exo/Picasso 初始化拆回 app 侧
         OkGoHelper.init(this);
         initExoOkHttpClient();
@@ -96,7 +93,8 @@ public class App extends MultiDexApplication {
         schedulePlayerCacheCleanup();
         initCrashConfig();
         Utils.initTheme();
-        AppLog.log("运行", "应用启动(Android " + android.os.Build.VERSION.RELEASE + ")");
+        // 业务日志(系统类目):应用启动(旧 AppLog 文件通道已退役,统一走 LogStore 结构化日志)
+        LogStore.log(Category.SYSTEM, "应用启动(Android " + android.os.Build.VERSION.RELEASE + ")");
         // 业务日志(系统类目):记录本机屏幕尺寸(宽×高,px),便于按机型定位布局/适配问题
         logDeviceScreenToBiz();
         // 崩溃捕获:未捕获异常落库(log 模块)
@@ -232,7 +230,6 @@ public class App extends MultiDexApplication {
                 String tag = SubscriptionConfig.injectedTag(s);
                 if (removalTags.contains(tag)) {
                     if (s.isChecked()) removedChecked = true;
-                    AppLog.log("订阅", "默认订阅同步: 移除 " + s.getName() + "  " + s.getUrl());
                     LogStore.log(Category.SUBSCRIPTION, "订阅: 默认订阅已从清单移除 " + s.getName());
                     it.remove();
                     removalTags.remove(tag);
@@ -252,7 +249,6 @@ public class App extends MultiDexApplication {
         // 3) 勾选与接口地址维护
         if (subs.isEmpty()) {
             if (changed) {
-                AppLog.log("订阅", "默认订阅同步: 列表已空(仅移除注入项),当前订阅地址置空");
                 LogStore.log(Category.SUBSCRIPTION, "订阅: 列表已空(默认订阅被清单移除)");
                 SubscriptionConfig.setSubscriptions(subs);
                 SubscriptionConfig.setApiUrl("");

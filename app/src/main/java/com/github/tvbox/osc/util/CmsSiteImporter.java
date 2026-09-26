@@ -80,7 +80,7 @@ public final class CmsSiteImporter {
                         result = scan(inputUrl, pageHtml, outDir, progress);
                     }
                 } catch (Throwable th) {
-                    AppLog.log("订阅导入", "资源站嗅探异常 " + inputUrl + " " + th);
+                    com.github.tvbox.osc.log.LogStore.fail(com.github.tvbox.osc.log.Category.SUBSCRIPTION, "订阅导入: 资源站嗅探异常 " + inputUrl + " " + th);
                 }
                 final Result r = result;
                 MAIN.post(new Runnable() {
@@ -140,7 +140,7 @@ public final class CmsSiteImporter {
             }
         }
         List<String> candidates = CmsApiRules.candidates(siteUrl, new ArrayList<>(declared));
-        AppLog.log("订阅导入", "嗅探 " + siteUrl + " 候选接口数=" + candidates.size());
+        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SUBSCRIPTION, "订阅导入: 嗅探 " + siteUrl + " 候选接口数=" + candidates.size());
         reportProgress(progress, 0, candidates.size(), siteUrl);
 
         for (int idx = 0; idx < candidates.size(); idx++) {
@@ -189,10 +189,10 @@ public final class CmsSiteImporter {
                 writer.close();
             }
         } catch (Throwable th) {
-            AppLog.log("订阅导入", "生成订阅配置写入失败 " + dest.getAbsolutePath() + " " + th);
+            com.github.tvbox.osc.log.LogStore.fail(com.github.tvbox.osc.log.Category.SUBSCRIPTION, "订阅导入: 生成订阅配置写入失败 " + dest.getAbsolutePath() + " " + th);
             return null;
         }
-        AppLog.log("订阅导入", "识别到采集接口 type=" + kind + " " + api + " -> " + dest.getAbsolutePath());
+        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SUBSCRIPTION, "订阅导入: 识别到采集接口 type=" + kind + " " + api + " -> " + dest.getAbsolutePath());
         return new Result(name, dest, api);
     }
 

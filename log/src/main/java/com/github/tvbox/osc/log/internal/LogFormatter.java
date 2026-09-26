@@ -20,6 +20,13 @@ public final class LogFormatter {
 
     public static final int MAX_DETAIL = 2048;
     public static final int MAX_REASON = 2048;
+    /**
+     * extras（附加字段 JSON）入库前的截断长度。
+     * 行数有上限（{@code LogRepository.MAX_ROWS}）但单行若不截断就仍是无界的 ——
+     * 当前唯一生产方是下载日志的 {@code {"episodeId":...}}，512 足够；
+     * extras 落库后只存不读（不参与展示/筛选，taskKey 另有冗余列），截断不会影响任何解析。
+     */
+    public static final int MAX_EXTRAS = 512;
 
     private static final String[] LEVEL_NAMES = {"DEBUG", "INFO", "WARN", "ERROR"};
 

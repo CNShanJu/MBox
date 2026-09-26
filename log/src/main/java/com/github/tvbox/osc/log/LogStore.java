@@ -13,6 +13,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import com.github.tvbox.osc.log.internal.CrashReporter;
+import com.github.tvbox.osc.log.internal.ExportFiles;
 import com.github.tvbox.osc.log.internal.LogCollector;
 import com.github.tvbox.osc.log.internal.LogFormatter;
 import com.github.tvbox.osc.log.internal.LogRepository;
@@ -139,16 +140,36 @@ public final class LogStore {
         }
     }
 
-    private static final CategoryLogger<GenericSubType> genericLogger = new LoggerImpl<>(Category.SYSTEM.name());
+    /**
+     * 大类型 → "通用"小类型的限定对象缓存（便捷方法用，与业务 {@link #register} 的注册表分开，
+     * 免得业务用自定义枚举注册过同一大类型后，便捷方法拿到那个实例）。
+     */
+    private static final ConcurrentHashMap<String, CategoryLogger<GenericSubType>> genericLoggers = new ConcurrentHashMap<>();
+
+    /**
+     * 取该大类型下"通用"小类型（{@code generic}）的限定对象。
+     * <p>
+     * 按传入的 category 分别取，不再一律当 SYSTEM —— 原实现是 {@code category == OTHER ? otherLogger : genericLogger}，
+     * 而 {@code genericLogger} 绑死 SYSTEM，于是 {@code LogStore.log(Category.DOWNLOAD, ...)} 这类调用
+     * （下载设置、播放会话、订阅加载、直播）**全被记成"系统"**，日志页按大类型筛选等于失效。
+     */
+    private static CategoryLogger<GenericSubType> genericLoggerOf(Category category) {
+        Category c = category == null ? Category.SYSTEM : category;
+        CategoryLogger<GenericSubType> cached = genericLoggers.get(c.name());
+        if (cached != null) return cached;
+        CategoryLogger<GenericSubType> created = new LoggerImpl<>(c.name());
+        CategoryLogger<GenericSubType> old = genericLoggers.putIfAbsent(c.name(), created);
+        return old != null ? old : created;
+    }
 
     /**
      * 通用业务日志便捷方法（INFO 级别）：任意业务点直接记录，无需自建小类型枚举。
-     * 大类型=系统(SYSTEM)，小类型=通用；适合 设置/搜索/播放/收藏/删除/清空 等零散业务操作。
+     * 小类型=通用（{@code generic}），大类型取传入的 category；
+     * 适合 设置/搜索/播放/收藏/删除/清空 等零散业务操作。
      */
     public static void log(Category category, String detail) {
         try {
-            CategoryLogger<GenericSubType> l = category == Category.OTHER ? otherLogger : genericLogger;
-            l.info(GenericSubType.GENERIC, detail, null);
+            genericLoggerOf(category).info(GenericSubType.GENERIC, detail, null);
         } catch (Throwable ignored) {
         }
     }
@@ -156,8 +177,7 @@ public final class LogStore {
     /** 成功事件便捷方法(级别 INFO,结果=SUCCESS):补录"某操作成功",任意业务点直接调用 */
     public static void success(Category category, String detail) {
         try {
-            CategoryLogger<GenericSubType> l = category == Category.OTHER ? otherLogger : genericLogger;
-            l.success(GenericSubType.GENERIC, detail, null);
+            genericLoggerOf(category).success(GenericSubType.GENERIC, detail, null);
         } catch (Throwable ignored) {
         }
     }
@@ -165,13 +185,10 @@ public final class LogStore {
     /** 失败事件便捷方法(级别 ERROR,结果=FAILURE):记录失败原因,可在日志页"仅失败"筛出 */
     public static void fail(Category category, String detail) {
         try {
-            CategoryLogger<GenericSubType> l = category == Category.OTHER ? otherLogger : genericLogger;
-            l.fail(GenericSubType.GENERIC, detail, null);
+            genericLoggerOf(category).fail(GenericSubType.GENERIC, detail, null);
         } catch (Throwable ignored) {
         }
     }
-
-    private static final CategoryLogger<GenericSubType> otherLogger = new LoggerImpl<>(Category.OTHER.name());
 
     /**
      * 注册大类型，返回绑定该大类型的限定对象（幂等：同大类型返回同一实例）。
@@ -223,7 +240,7 @@ public final class LogStore {
         e.detail = LogFormatter.truncate(detail, LogFormatter.MAX_DETAIL);
         e.result = result;
         e.reason = LogFormatter.truncate(reason, LogFormatter.MAX_REASON);
-        e.extras = extras != null ? extras.toString() : null;
+        e.extras = extras != null ? LogFormatter.truncate(extras.toString(), LogFormatter.MAX_EXTRAS) : null;
         if (taskKey == null && extras != null) {
             taskKey = extras.optString("episodeId", null);
             if (taskKey != null && taskKey.isEmpty()) taskKey = null;
@@ -314,6 +331,8 @@ public final class LogStore {
             } finally {
                 fw.close();
             }
+            // 导出文件是临时的:同类只留最近几个(见 ExportFiles),否则每导出一次就永久多一份
+            ExportFiles.keepNewest(appContext.getCacheDir(), "log_export_");
             return out;
         } catch (Throwable th) {
             android.util.Log.e("LogStore", "日志导出失败", th);
@@ -336,7 +355,7 @@ public final class LogStore {
 
     // ------------------------------------------------------------------
     // 错误日志文件（Tab2 错误日志: logcat 本应用 E 级错误流; 只含 logcat-* 文件）
-    // 门面委托 LogcatCapture, 页面只依赖本门面, 不再直接碰 common.AppLog
+    // 门面委托 LogcatCapture, 页面只依赖本门面, 不再直接碰文件通道(旧的 AppLog 已删除)
     // ------------------------------------------------------------------
 
     /** 列出 logcat 错误日志按天/分段文件（新在前）；未 init/降级返回空表 */

@@ -86,7 +86,7 @@ public final class HtmlSiteImporter {
                 try {
                     result = scan(inputUrl.trim(), knownText, outDir, progress);
                 } catch (Throwable th) {
-                    AppLog.log("订阅导入", "抓页面探测异常 " + inputUrl + " " + th);
+                    com.github.tvbox.osc.log.LogStore.fail(com.github.tvbox.osc.log.Category.SUBSCRIPTION, "订阅导入: 抓页面探测异常 " + inputUrl + " " + th);
                 }
                 final Result r = result;
                 MAIN.post(new Runnable() {
@@ -176,7 +176,7 @@ public final class HtmlSiteImporter {
                     searchRoute != null ? 1 : 0, 1, 0);
             File dest = write(outDir, key, json);
             if (dest == null) return null;
-            AppLog.log("订阅导入", "抓页面接入成功: " + siteName + " " + host + prefix
+            com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SUBSCRIPTION, "订阅导入: 抓页面接入成功 " + siteName + " " + host + prefix
                     + " 分类=" + classes.size() + " 列表路由=" + listRoute
                     + " 搜索路由=" + (searchRoute == null ? "无" : searchRoute.listUrl)
                     + " 示例播放页=" + playPageUrl + " 分类页=" + categoryUrl
@@ -202,7 +202,7 @@ public final class HtmlSiteImporter {
                 writer.close();
             }
         } catch (Throwable th) {
-            AppLog.log("订阅导入", "抓取源配置写入失败 " + dest.getAbsolutePath() + " " + th);
+            com.github.tvbox.osc.log.LogStore.fail(com.github.tvbox.osc.log.Category.SUBSCRIPTION, "订阅导入: 抓取源配置写入失败 " + dest.getAbsolutePath() + " " + th);
             return null;
         }
         return dest;

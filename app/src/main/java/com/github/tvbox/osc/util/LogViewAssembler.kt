@@ -9,7 +9,8 @@ import java.io.File
  * 下沉到这里，页面只负责交互与展示。
  * <ul>
  *   <li>Tab1 业务日志：经 LogStore(Room) 结构化查询 + formatEntry 组装文本（分类 + 仅失败筛选）；</li>
- *   <li>Tab2 错误日志：经 LogStore 门面读取 logcat 本应用 ERROR 级文件（过渡期含旧 AppLog 同目录文件），
+ *   <li>Tab2 错误日志：经 LogStore 门面读取 logcat 本应用 ERROR 级文件（目录沿用旧 AppLog 的 app_logs，
+ *       展示只含 logcat-*；旧 AppLog 通道已删除，其残留 app-*.log 由 log 模块清理，不在此展示），
  *       日期标签、尾部读取、清空、导出。</li>
  * </ul>
  * 阻塞方法（bizText/rawText/export*）需在后台线程调用（Room 禁止主线程查询）。

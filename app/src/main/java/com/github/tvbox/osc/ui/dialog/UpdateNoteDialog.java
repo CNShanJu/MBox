@@ -10,7 +10,6 @@ import androidx.annotation.NonNull;
 
 import com.github.tvbox.osc.R;
 import com.github.tvbox.osc.update.UpdateInfo;
-import com.github.tvbox.osc.util.AppLog;
 import com.github.tvbox.osc.util.MdText;
 import com.github.tvbox.osc.util.Utils;
 import com.lxj.xpopup.XPopup;
@@ -143,16 +142,18 @@ public class UpdateNoteDialog extends AppCenterPopupView {
             ViewGroup.LayoutParams lp = scroll.getLayoutParams();
             if (clamp.clamped) {
                 lp.height = clamp.height;
-                AppLog.log("更新", "说明区限高 " + clamp.height + "px(弹窗上限 " + maxH + "px,固定区 " + fixed + "px)");
+                com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM,
+                        "更新说明弹窗: 说明区限高 " + clamp.height + "px(弹窗上限 " + maxH + "px,固定区 " + fixed + "px)");
             } else {
                 // 说明区在可用高度内:回推自然高度,让卡片按内容撑开(权重布局会把它压在最小值上)
                 lp.height = Math.max(clamp.height, minScrollPx());
-                AppLog.log("更新", "说明区按内容撑开 " + lp.height + "px(弹窗上限 " + maxH + "px,固定区 " + fixed + "px)");
+                com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM,
+                        "更新说明弹窗: 说明区按内容撑开 " + lp.height + "px(弹窗上限 " + maxH + "px,固定区 " + fixed + "px)");
             }
             scroll.setLayoutParams(lp);
             bodyClampApplied = true;
         } catch (Throwable th) {
-            AppLog.log("更新", "说明区限高失败: " + th);
+            com.github.tvbox.osc.log.LogStore.fail(com.github.tvbox.osc.log.Category.SYSTEM, "更新说明弹窗: 说明区限高失败 " + th);
         }
     }
 
