@@ -15,7 +15,10 @@
   - **P1 播放中不弹页**：`NetworkIssueRouter` 弹页前查 `PlaybackSessions.activeCount()`（播放器播放期间登记会话），有会话就只在播放器内提示；否则 Exo 走带守卫的取流客户端，在线播放断网必弹整屏页、小窗(PiP)也被顶掉，而 IJK 不经 OkHttp 反而不弹（两个内核行为不一致）。
   - **P1 统一"有没有网"的页面判定**：新增 `SystemStateMonitor.isOfflineNow()`，替换三份语义相反的 `isOffline()`（`NoNetworkActivity` 的 catch 返 true、`GridFragment` 返 false、`HomeFragment` 又一份）；新增 `registerSafe/unregisterSafe`（`get()` 未 init 时返回 null，原调用点是裸链式会 NPE；`register` 同时按类型去重，重复登记会收两次事件）。
   - **P2**：事件统一主线程派发（磁盘事件原来在 `tvbox-disk` 线程直接 `emit`）；拦截器去掉每条请求 `Thread.sleep(150)`（断网时逐条睡、本项目还有同步请求 → 可能卡 UI），改成"最多每 500ms 复检一次"的时间戳窗口；无网络页显示 `EXTRA_REASON` 副标题（原来只进日志，页面上没有任何"为什么弹"的线索）；两个按钮归零 `insetTop/Bottom`（MaterialButton 默认上下各 6dp inset，40dp 高只剩 ~28dp 可见，比其它页按钮小一圈）；`FastSearchActivity` 补**整轮搜索看门狗**（某源 `getSearch` 抛异常被吞时批次不投递 → `allRunCount` 不归零 → "搜索中"永远转、"到底了"永不出现）。
-  - **明确留着未做**：① 断网收尾仍是"暂无数据"空态，不区分"源是空的"与"没网"，也没有页面内重试按钮（要动 LoadSir：新增 `NetworkErrorCallback` + 给 `setLoadSir` 传 reload 监听 + 播放器错误提示加重试，属独立 UI 批次）；② 无网络页返回时没有回传"网络已恢复"标记（各页面的 `onResume`/网络监听已自愈，够用）。
+  - **留给下个版本（v3.5.10 待办，2026-09-27 用户确认「先记录、下个版本搞」）**：
+    ① **断网收尾要能区分"源是空的"与"没网"，并给页面内重试入口**：现在两者都落成 LoadSir 的空态（`view_empty.xml` 固定文案"暂无数据"、没有重试按钮），用户分不清是源没内容还是自己没网。做法：新增 `NetworkErrorCallback`（复用无网络页的插图与文案口径）+ 给 `BaseActivity`/`BaseVbFragment`/`BaseLazyFragment` 的 `setLoadSir` 加"带 reload 监听"的重载（现在注册传的是空 lambda，就算加了按钮也点不动），断网收尾处改 `showCallback(NetworkErrorCallback.class)`；顺带给播放器错误提示补重试入口（`PlayFragment` 的错误提示 `clickable=false`、无监听，第二次才给"切换播放器"的 span）。
+    ② **按钮高度口径统一**：现在两套 —— 33dp（`dialog_*` 各弹窗）与 40dp（`dialog_confirm` / `dialog_delete_download` / `activity_no_network`）。方向待用户拍板（都收 33dp = 与弹窗口径一致；都放 40dp = 大按钮口径，整屏页更合适），定了以后一次改齐。注意 MaterialButton 必须写定高，`wrap_content` 会吃默认 `minHeight=48dp`（`dialog_loading` 那个"取消"就是这么大了一圈的）。
+    ③ 无网络页返回时不回传"网络已恢复"标记（各页面 `onResume`/网络监听已自愈，够用，暂不做）。
 
 - **安全 DNS(DoH)改为即时生效 + 爬虫侧接上（2026-09-27）**：此前 `SettingActivity` 改"安全 DNS"只换静态字段 `OkGoHelper.dnsOverHttps`，而 OkHttp 的 DNS 是 **build 时写进 client** 的 —— 已建好的 `defaultClient`/`noRedirectClient`/Exo `playbackHttpClient`/Picasso 图片客户端/下载客户端全都继续用旧 DNS，**必须重启**；`spider` 的 `catvod.net.OkHttp.setDoh` 更是**全仓零调用点**，爬虫请求从不走 DoH。本轮改为：
   - 选项表/夹取/下标→url 收敛为纯逻辑 `util/DohOptions`（+`DohOptionsTest` 6 例）；放在 **`:core-network`** 而非 `:common`——门禁里 `:core-network` 禁止依赖 `:common`，而这份表正是网络侧自用，跟随使用方落位。`OkGoHelper.dnsHttpsList/dohLabel/dohCount/getDohUrl` 全部委托它（语义不变）。
