@@ -376,32 +376,9 @@ public class DownloadScheduler {
         th.start();
     }
 
-    /** 判断异常是否为网络类错误(断网/超时/无法连接/服务端中途断连等) */
+    /** 判断异常是否为网络类错误(断网/超时/无法连接/服务端中途断连/SSL):分类逻辑在 DownloadErrors(与分段循环共用) */
     private boolean isNetworkError(Throwable th) {
-        Throwable c = th;
-        while (c != null) {
-            if (c instanceof java.net.SocketTimeoutException
-                    || c instanceof java.net.ConnectException
-                    || c instanceof java.net.UnknownHostException
-                    || c instanceof java.net.SocketException
-                    || c instanceof javax.net.ssl.SSLException) {
-                return true;
-            }
-            // okio/服务器中途关闭连接:流被 close 后 read 抛 IOException("closed"),
-            // 或 "unexpected end of stream" / "stream closed",本质都是网络层断连,按网络错误处理
-            // (若为本方暂停导致的 close,isTaskStopped 会先拦住不走到这里)
-            if (c instanceof java.io.IOException) {
-                String msg = c.getMessage();
-                if (msg != null && (msg.equals("closed")
-                        || msg.contains("unexpected end of stream")
-                        || msg.contains("stream closed")
-                        || msg.contains("Connection reset"))) {
-                    return true;
-                }
-            }
-            c = c.getCause();
-        }
-        return false;
+        return DownloadErrors.isNetworkError(th);
     }
 
     /**
@@ -415,6 +392,9 @@ public class DownloadScheduler {
         if (msg == null) return false;
         String m = msg.toLowerCase();
         if (m.contains("html") || m.contains("防盗链") || m.contains("网页")) return true;
+        // 内容根本不是音视频(分片返回的是图片/JSON/错误页):同样是"地址失效/被替换"的表现,
+        // 走重新解析地址(换线路)这条路,而不是让用户对着一个下不动的任务反复重试
+        if (m.contains("不是视频") || m.contains("图片") || m.contains("伪装") || m.contains("错误响应")) return true;
         // HTTP 状态码
         java.util.regex.Matcher mat = java.util.regex.Pattern.compile("http\\s*(\\d{3})").matcher(m);
         if (mat.find()) {
@@ -595,15 +575,23 @@ public class DownloadScheduler {
         if (!dir.exists()) dir.mkdirs();
         File finalFile = new File(dir, fileName);
         if (finalFile.exists()) {
-            Log.i("TVBox-Download", "enqueue 拒绝:文件已存在 " + finalFile.getAbsolutePath());
-            return false; // 已下载
+            // 磁盘上已有同名成品文件,但没有对应记录(只删了记录没删文件 / 删除文件失败 / 文件是外部放进来的):
+            // 原实现一律拒绝 → 该集永远"已在下载列表"却哪儿都看不到。这里自愈:
+            // 像视频 → 登记成已下载(列表可见、可删);不像视频(0 字节/网页残留) → 删掉重下。
+            if (dm.executor.looksLikeVideoFile(finalFile)) {
+                Log.i("TVBox-Download", "enqueue: 已存在成品文件,登记为已下载 " + finalFile.getAbsolutePath());
+                dm.adoptExistingAsDownloaded(finalFile, episodeId, sourceKey, src, vn, ep, pic);
+                return false;
+            }
+            Log.i("TVBox-Download", "enqueue: 清理无效残留文件 " + finalFile.getAbsolutePath());
+            FileCleaner.deleteQuietly(finalFile);
         }
         synchronized (dm.tasks) {
             for (DownloadTask t : dm.tasks) {
                 if (episodeId != null && !episodeId.isEmpty() && episodeId.equals(t.episodeId)) {
-                    if (t.state == DownloadTask.STATE_FAILED) {
-                        // 失败任务允许覆盖: 移除旧任务(保留碎片/文件)重新入队——下载抽屉失败集可重新勾选下载
-                        Log.i("TVBox-Download", "enqueue 覆盖失败任务: " + finalFile.getAbsolutePath());
+                    if (isStaleTaskRecord(t)) {
+                        // 失败任务 / "标记完成但文件已不在"的陈旧记录: 覆盖重下
+                        Log.i("TVBox-Download", "enqueue 覆盖陈旧任务记录: " + finalFile.getAbsolutePath());
                         dm.tasks.remove(t);
                         break;
                     }
@@ -611,8 +599,8 @@ public class DownloadScheduler {
                     return false; // 任务已存在(任意状态),按统一剧集标识精确去重
                 }
                 if (t.savePath != null && t.savePath.equals(finalFile.getAbsolutePath())) {
-                    if (t.state == DownloadTask.STATE_FAILED) {
-                        Log.i("TVBox-Download", "enqueue 覆盖失败任务(路径): " + finalFile.getAbsolutePath());
+                    if (isStaleTaskRecord(t)) {
+                        Log.i("TVBox-Download", "enqueue 覆盖陈旧任务记录(路径): " + finalFile.getAbsolutePath());
                         dm.tasks.remove(t);
                         break;
                     }
@@ -869,6 +857,17 @@ public class DownloadScheduler {
                 || t.state == DownloadTask.STATE_SYSTEM_PAUSED
                 || t.state == DownloadTask.STATE_NETWORK_PAUSED
                 || t.state == DownloadTask.STATE_CANCELLED;
+    }
+
+    /**
+     * 陈旧任务记录:失败任务、或"标记完成但成品文件已不在"的记录 —— 都可以被新任务覆盖重下。
+     * 后者是实际踩到的坑:从"已下载"里删掉文件后,同集的已完成任务记录若没被清掉,
+     * 入队会判"任务已存在"拒绝,而列表又只显示"未完成 + 已完成且文件存在",于是两边都看不到。
+     */
+    private static boolean isStaleTaskRecord(DownloadTask t) {
+        if (t.state == DownloadTask.STATE_FAILED) return true;
+        return t.state == DownloadTask.STATE_COMPLETED
+                && (t.savePath == null || !new File(t.savePath).exists());
     }
 
     /**

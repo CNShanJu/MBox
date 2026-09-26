@@ -473,6 +473,57 @@ public class DownloadManager {
         return matched.size();
     }
 
+    /**
+     * 按 episodeId 删除下载任务记录(不删文件):
+     * 档案被删(文件同时被删)时联动清掉同集的"已完成"任务记录 —— 否则该记录既挡住重新下载
+     * (入队按 episodeId 判重)、又不在下载列表显示(列表只聚合未完成任务 + 已完成且文件存在的)。
+     */
+    public int removeTasksByEpisode(String episodeId) {
+        if (episodeId == null || episodeId.isEmpty()) return 0;
+        java.util.List<DownloadTask> matched = new java.util.ArrayList<>();
+        synchronized (tasks) {
+            for (DownloadTask t : tasks) {
+                if (episodeId.equals(t.episodeId)) matched.add(t);
+            }
+        }
+        for (DownloadTask t : matched) {
+            scheduler.remove(t, false); // 文件由档案删除路径负责,这里只清记录
+        }
+        if (!matched.isEmpty()) {
+            com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.DOWNLOAD,
+                    "删除档案联动移除同集任务记录: " + matched.size() + " 条");
+        }
+        return matched.size();
+    }
+
+    /**
+     * 把"磁盘上已有成品文件、但没有任何任务/档案记录"的文件登记为已下载(自愈)。
+     * 只写档案(已下载列表的数据源),不塞进任务列表,避免又被当成"未完成任务"。
+     */
+    void adoptExistingAsDownloaded(java.io.File file, String episodeId, String sourceKey, String sourceName,
+                                   String vodName, String episodeName, String pic) {
+        if (file == null || !file.exists()) return;
+        DownloadTask t = new DownloadTask();
+        t.episodeId = episodeId;
+        t.sourceKey = sourceKey;
+        t.sourceName = sourceName;
+        t.vodName = vodName;
+        t.episodeName = episodeName;
+        t.pic = pic;
+        t.url = "";
+        t.fileName = file.getName();
+        t.savePath = file.getAbsolutePath();
+        t.partPath = t.savePath + ".part";
+        t.state = DownloadTask.STATE_COMPLETED;
+        t.downloadedBytes = file.length();
+        t.totalBytes = file.length();
+        archive.add(t);
+        persist();
+        notifyChanged();
+        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.DOWNLOAD,
+                "已存在成品文件登记为已下载: " + t.fileName);
+    }
+
     /** 查询某集下载状态(0=无记录,1=已下载且文件存在,2=已有任务) */
     public int getEpisodeDownloadState(String sourceName, String vodName, String episodeName) {
         return store.getEpisodeDownloadState(sourceName, vodName, episodeName);

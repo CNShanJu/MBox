@@ -374,7 +374,13 @@ public final class DownloadFacade {
 
     /** 删除档案（deleteFile=true 连文件一起删） */
     public boolean deleteArchive(String episodeId, boolean deleteFile) {
-        return DownloadArchive.get().remove(episodeId, deleteFile);
+        boolean removed = DownloadArchive.get().remove(episodeId, deleteFile);
+        // 文件都要删了,同一集的"已完成"任务记录也必须一起清掉:
+        // 否则它会挡住重新下载(入队按 episodeId 判重)却又不在列表显示
+        // (下载列表只聚合"未完成任务 + 已完成且文件存在"),用户看到的就是
+        //「所选剧集已在下载任务中,可下载列表里什么都没有」。
+        DownloadManager.get().removeTasksByEpisode(episodeId);
+        return removed;
     }
 
     /** 重命名成品文件（同步更新档案） */

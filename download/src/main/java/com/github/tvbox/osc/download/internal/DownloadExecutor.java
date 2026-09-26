@@ -10,8 +10,11 @@ import android.util.Log;
 import com.github.tvbox.osc.bean.DownloadTask;
 import com.github.tvbox.osc.download.DownloadSubType;
 import com.github.tvbox.osc.util.HttpClient;
+import com.github.tvbox.osc.util.SegmentUnwrapper;
+import com.github.tvbox.osc.util.TsProbe;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -33,6 +36,24 @@ import okhttp3.Response;
  * 5.1 从 DownloadManager 按职责拆分，行为零变化；后续阶段将收敛为任务对象（4.6/4.7）。
  */
 public class DownloadExecutor {
+
+    /**
+     * 连续多少片失败就判"系统性故障"直接失败(交给调度器重新解析地址/重试):
+     * 单片抖动/个别 404 靠"跳过 + 补片 3 轮"吸收,但整条线路挂了时不能在几百片上白跑
+     */
+    private static final int MAX_CONSECUTIVE_SEGMENT_FAIL = 8;
+
+    /** 补片轮次之间的等待(ms):分片 404/超时多是 CDN 抖动或地址过期,立刻重试通常还是同样结果 */
+    private static final long REPAIR_ROUND_DELAY_MS = 1500L;
+
+    /** 分片列表指纹文件名(与 segments.txt 同目录,用于识别"换线路后播放列表变了") */
+    private static final String SEGMENTS_SIG = "segments.sig";
+
+    /**
+     * 分片"内容判定"需要攒够的头部字节数:够 TsProbe 按 188/192/204 对齐判真 TS,
+     * 也够 SegmentUnwrapper 在容器头里(≤4KB)找到藏在后面的 TS 载荷
+     */
+    private static final int HEAD_PROBE_BYTES = 8192;
 
     private final DownloadManager dm;
 
@@ -285,6 +306,9 @@ public class DownloadExecutor {
         }
         t.doneSegments = existing;
         t.segmentBytes = 0;
+        // 换线路保护:重新解析地址后如果分片列表变了,旧碎片属于另一份播放列表,必须丢弃重下
+        // (否则两份视频的碎片会被合并成一个放不了的文件);列表一致则保留进度续传
+        dropSegmentsIfPlaylistChanged(t, tmpDir, segments);
         // 下载前记录分段信息 TXT:来源/剧名/集数/碎片数/解析地址/分片列表/已完成(断点续传同步进度)
         writeSegmentsInfo(t, tmpDir, segments, t.doneSegments);
 
@@ -292,6 +316,11 @@ public class DownloadExecutor {
         long speedWindowBytes = 0;
         // 加密 HLS 的密钥缓存(按 keyUri 复用,整个任务只拉一次密钥)
         Map<String, byte[]> keyCache = new HashMap<>();
+        // 分片级失败:单片失败不整体抛(记下来交给下面"校验+补片"重试,3 轮内仍缺才失败);
+        // 但"连续多片都失败"说明是系统性故障(整条线路/播放列表失效),立刻失败交给调度器
+        // "重新解析地址(换线路)"或重试,不必白跑完剩下的几百片
+        IOException lastSegErr = null;
+        int consecutiveFail = 0;
         // 只下载缺失的分片(跳过已存在且非空的分片),支持非连续缺失续传(如第3、7片被删)
         for (int i = 0; i < segments.size(); i++) {
             if (isInterrupted(t)) {
@@ -304,10 +333,37 @@ public class DownloadExecutor {
             if (segFile.exists() && segFile.length() > 0) {
                 if (t.doneSegments <= i)
                     t.doneSegments = i + 1;
+                consecutiveFail = 0;
                 continue; // 已存在,跳过
             }
             long segDone = 0; // 缺失分片从头下(无残留字节)
-            downloadSegment(segments.get(i), segFile, segDone, t, segKeys.get(i), keyCache);
+            try {
+                downloadSegment(segments.get(i), segFile, segDone, t, segKeys.get(i), keyCache);
+                consecutiveFail = 0;
+            } catch (IOException e) {
+                if (isInterrupted(t)) {
+                    // 本方暂停/取消导致的失败:与循环顶部的中断处理同语义,交给上层收尾
+                    t.speed = 0;
+                    dm.persist();
+                    dm.notifyChanged();
+                    return;
+                }
+                if (DownloadErrors.isNetworkError(e)) {
+                    // 断网/超时:每片都会失败,整任务交给调度器按网络重试(带退避)处理
+                    throw e;
+                }
+                lastSegErr = e;
+                consecutiveFail++;
+                Log.i("TVBox-Download", "分片失败(先跳过,交给补片重试): 片" + i + "/" + segments.size()
+                        + " " + DownloadErrors.reasonOf(e));
+                DownloadLog.LOG.warn(DownloadSubType.FAIL, "分片失败/片 " + i + ": " + DownloadErrors.reasonOf(e),
+                        DownloadLog.extras(t.episodeId));
+                if (consecutiveFail >= MAX_CONSECUTIVE_SEGMENT_FAIL) {
+                    throw new IOException("连续 " + consecutiveFail + " 片下载失败(该线路的分片地址可能已失效): 最后错误 "
+                            + DownloadErrors.reasonOf(lastSegErr), lastSegErr);
+                }
+                continue; // doneSegments 不推进,交给后面"校验+补片"重试
+            }
             if (t.doneSegments <= i)
                 t.doneSegments = i + 1;
             t.segmentBytes = 0;
@@ -345,16 +401,49 @@ public class DownloadExecutor {
         DownloadLog.LOG.info(DownloadSubType.VERIFY, "校验开始: 清单 " + segments.size() + " 片, 缺失 " + missing.size()
                 + " 项" + missingList(missing), DownloadLog.extras(t.episodeId));
         int repair = 0;
+        /** 缺片完成时的说明(空=没有任何缺片);完成态写进任务信息,让用户知道少了几秒 */
+        String gapNote = "";
+        /**
+         * 缺片完成时"获准缺席"的分片序号。合并阶段必须跳过这些序号:
+         * 磁盘上确实没有这个文件,而合并循环是逐序号拼接的,不跳过就会
+         * {@code FileNotFoundException(ENOENT)} → 合并失败 → 整个任务重试(每次重跑下载)却永远出不来成品。
+         */
+        List<Integer> gapSegments = new ArrayList<>();
         while (!missing.isEmpty()) {
             if (repair >= DownloadManager.MAX_SEGMENT_REPAIR) {
+                // 补片 3 轮仍缺:先看是不是"极少数分片在源侧永久失效"(CDN 上就是没有这个文件,
+                // 重试与换线路都拿不到)—— 为几秒钟画面把整集判死,对用户是净损失:
+                // 按缺片完成,但必须在任务信息/日志里写清楚缺了几片,不允许静默;
+                // 缺得多(超 MissingSegmentPolicy 阈值)才算失败。
+                if (com.github.tvbox.osc.util.MissingSegmentPolicy.allowGapCompletion(missing.size(), segments.size())) {
+                    gapNote = "缺 " + missing.size() + " 片";
+                    gapSegments.addAll(missing); // 合并阶段按此清单跳过(见 gapSegments 注释)
+                    Log.i("TVBox-Download", "补片 3 轮仍缺 " + missing.size() + " 片(源侧分片已失效),按缺片完成: "
+                            + t.fileName + " 缺失首片=" + missing.get(0));
+                    DownloadLog.LOG.warn(DownloadSubType.REPAIR, "缺片完成: 补片 " + DownloadManager.MAX_SEGMENT_REPAIR
+                            + " 轮后仍缺 " + missing.size() + " 片(共 " + segments.size() + " 片),该分片在源侧已失效:"
+                            + missingList(missing), DownloadLog.extras(t.episodeId));
+                    break;
+                }
                 // 补片 FAILED: 完整缺失清单落日志(不截断), 供事后核对; 保留碎片现场
                 DownloadLog.LOG.fail(DownloadSubType.REPAIR, "补片 FAILED: 第 " + DownloadManager.MAX_SEGMENT_REPAIR
                         + " 轮仍缺失 " + missing.size() + " 片:" + missingList(missing), DownloadLog.extras(t.episodeId));
                 throw new IOException(
                         "碎片校验不一致,自动补下" + DownloadManager.MAX_SEGMENT_REPAIR + "轮后仍缺失(缺 " + missing.size() + " 片,如第"
-                                + missing.get(0) + "片)");
+                                + missing.get(0) + "片)"
+                                + (lastSegErr == null ? "" : ",最后错误: " + DownloadErrors.reasonOf(lastSegErr)),
+                        lastSegErr);
             }
             repair++;
+            if (repair > 1) {
+                // 轮间留点时间:分片 404/超时多是 CDN 抖动或地址过期,立刻重试通常是同样结果
+                try {
+                    Thread.sleep(REPAIR_ROUND_DELAY_MS);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
             // 补片进度:每轮更新剩余片数,让"补片中(剩K片)"可见(而非一直卡在校验/合并入口)
             t.message = DownloadManager.MSG_REPAIRING + "(剩" + missing.size() + "片)";
             dm.persist();
@@ -379,8 +468,9 @@ public class DownloadExecutor {
                                 DownloadLog.extras(t.episodeId));
                         okCount++;
                     } catch (IOException e) {
-                        // 单项补下失败: 原因+HTTP码(留待下轮)
+                        // 单项补下失败: 原因+HTTP码(留待下轮);同时记下最后原因,供最终失败提示带上
                         failCount++;
+                        lastSegErr = e;
                         Log.i("TVBox-Download", "补片失败(留待下轮): 片" + idx + " " + e.getMessage());
                         DownloadLog.LOG.fail(DownloadSubType.REPAIR, "补片/片 " + idx + " 失败 " + e.getMessage(),
                                 DownloadLog.extras(t.episodeId));
@@ -446,9 +536,10 @@ public class DownloadExecutor {
                     }
                 }
             }
-            // 合并/开始 日志: 分片N, 缺失清单状态(此时补片循环已退出=已清空), 分片总size, 目标路径
+            // 合并/开始 日志: 分片N, 缺失清单状态(已清空 / 缺片完成+片号), 分片总size, 目标路径
             DownloadLog.LOG.info(DownloadSubType.MERGE, "合并开始 第 " + t.mergeCount + " 次: 分片 " + segments.size()
-                    + ", 缺失清单=已清空, 分片总size=" + formatSize(mergeSize) + ", 目标 " + t.savePath,
+                    + ", 缺失清单=" + (gapSegments.isEmpty() ? "已清空" : "缺片完成" + missingList(gapSegments))
+                    + ", 分片总size=" + formatSize(mergeSize) + ", 目标 " + t.savePath,
                     DownloadLog.extras(t.episodeId));
 
             OutputStream out = new FileOutputStream(mergeTmp);
@@ -459,6 +550,19 @@ public class DownloadExecutor {
                         throw new IOException("cancelled"); // Bug2: 删除记录后合并立即中止,不落最终文件
                     }
                     File segFile = new File(tmpDir, String.format("%05d.ts", i));
+                    if (!segFile.exists() || segFile.length() <= 0) {
+                        // 缺片完成:该片在源侧永久失效(补片 3 轮仍 404),磁盘上本就没有 —— 跳过拼接,
+                        // 而不是抛 ENOENT 让整集合并失败。缺口处会少约几秒画面(已在完成信息里告知用户)。
+                        if (gapSegments.contains(i)) {
+                            Log.i("TVBox-Download", "合并跳过缺失分片(缺片完成): 片" + i + "/" + segments.size());
+                            DownloadLog.LOG.warn(DownloadSubType.MERGE, "合并跳过缺失分片/片 " + i,
+                                    DownloadLog.extras(t.episodeId));
+                            continue;
+                        }
+                        // 未获准的缺口:磁盘碎片被外部删了/校验与合并之间的竞态,不能静默拼出残片
+                        throw new IOException("合并时缺少分片 " + i + "/" + segments.size() + "(" + segFile.getName()
+                                + " 不存在),碎片可能被清理,请重新下载");
+                    }
                     FileCleaner.copyFile(segFile, out);
                     mergedBytes += segFile.length();
                     // 合并进度:每 20 片或最后一片更新一次(避免频繁写盘),"文件合并中(x%)"可见
@@ -495,6 +599,24 @@ public class DownloadExecutor {
                     + ", 碎片保留", DownloadLog.extras(t.episodeId));
             throw e;
         }
+        // 合并产物内容体检:既不是 TS 也不是 MP4 就不是音视频(常见:分片其实是图片/HTML 错误页,
+        // 例如"整条线路返回 940 张 jpg")。这种绝不能算下载成功 —— 以前会"回退 .ts"照旧置 COMPLETED,
+        // 用户拿到一个打不开的文件还不知道为什么。这里直接判失败,并把内容线索写进原因:
+        // 调度器据此(见 shouldReResolve)自动重新解析地址换线路,提示里也能一眼看出是源的问题。
+        TsProbe mergedProbe = probeHead(finalFile);
+        boolean fragmentedOnly = mergedProbe.kind == TsProbe.Kind.MP4
+                && ("moof".equals(mergedProbe.boxTag) || "styp".equals(mergedProbe.boxTag));
+        if (!mergedProbe.isTs() && (mergedProbe.kind != TsProbe.Kind.MP4 || fragmentedOnly)) {
+            String what = !mergedProbe.contentHint.isEmpty() ? mergedProbe.contentHint
+                    : (fragmentedOnly ? "疑似 fMP4 片段缺 init 段" : "无法识别");
+            String why = "下载内容不是完整视频(" + what + ",前 16 字节 " + mergedProbe.headHex + ")";
+            Log.i("TVBox-Download", "合并产物体检不通过: " + t.fileName + " -> " + mergedProbe.describe());
+            DownloadLog.LOG.fail(DownloadSubType.REMUX, "产物不是音视频,判失败: " + t.fileName + " | " + why
+                    + "(该线路的分片地址可能已失效或被替换)", DownloadLog.extras(t.episodeId));
+            // 删掉这个"假成品"(不能留在下载目录里当成果);碎片现场保留,换线路后按指纹决定是否复用
+            FileCleaner.deleteQuietly(finalFile);
+            throw new IOException(why + ":该线路的分片地址可能已失效或被替换,建议换线路或换源");
+        }
         // Bug3: 合并产物是 TS 字节流(rename 成 .mp4 只是换后缀,时间戳不连续 -> 相册显示 1 秒)。
         // 重封装为标准 MP4(MediaExtractor demux + MediaMuxer mux,时长/缩略图正确);
         // 失败回退 .ts 后缀(不伪装 mp4),日志记录回退原因。
@@ -517,7 +639,8 @@ public class DownloadExecutor {
         }
         // 顺序铁律: 落盘 → 写档案 → 清理 → COMPLETED。
         // 清理(删碎片)是危险操作, 只有档案写成功后才允许; 档案写失败则保留碎片现场可重试。
-        t.message = "";
+        // 缺片完成时把"缺了几片"留在任务信息里(档案/通知/日志都能看到),不允许静默完成
+        t.message = gapNote.isEmpty() ? "" : "已完成(" + gapNote + ",该分片在源侧已失效,可能少几秒画面)";
         t.state = DownloadTask.STATE_COMPLETED;
         DownloadLog.LOG.success(DownloadSubType.SAVE, "下载完成: " + t.fileName, DownloadLog.extras(t.episodeId));
         dm.archive.add(t); // 先写档案(长期)
@@ -527,6 +650,101 @@ public class DownloadExecutor {
         com.github.tvbox.osc.download.internal.DownloadNotifier.notifyCompleted(t); // 可选增强: 完成通知
         dm.persist();
         dm.notifyChanged();
+    }
+
+    /**
+     * 换线路保护:分片列表指纹与上次不一致 → 说明"重新解析地址"拿到的是<b>另一份播放列表</b>,
+     * 磁盘上旧地址的碎片必须整目录丢弃重下(两份视频的碎片拼起来会得到放不了的文件);
+     * 指纹一致(同一份列表,只是地址续期)则保留进度续传。<b>指纹缺失</b>(老任务/首次下载)按"无法判定"处理,
+     * 保留现有碎片 —— 与改动前的行为一致,不会因为升级把在下的任务清空。
+     */
+    private void dropSegmentsIfPlaylistChanged(DownloadTask t, File tmpDir, List<String> segments) {
+        String sig = com.github.tvbox.osc.util.SegmentListSignature.of(segments);
+        if (sig.isEmpty()) return;
+        File sigFile = new File(tmpDir, SEGMENTS_SIG);
+        try {
+            if (!sigFile.exists()) {
+                writeText(sigFile, sig);
+                return;
+            }
+            String old = readText(sigFile).trim();
+            if (old.isEmpty() || sig.equals(old)) {
+                writeText(sigFile, sig); // 缺失/一致:补写或原样保留
+                return;
+            }
+            int dropped = countExistingSegments(tmpDir, segments.size());
+            if (dropped > 0) {
+                Log.i("TVBox-Download", "播放列表已变化(换线路/地址续期后分片不同),丢弃旧碎片 " + dropped
+                        + " 片重下: " + t.fileName);
+                DownloadLog.LOG.warn(DownloadSubType.REPAIR, "换线路: 播放列表变化,丢弃旧碎片 " + dropped + " 片重下: "
+                        + t.fileName, DownloadLog.extras(t.episodeId));
+            }
+            // 整目录清碎片(含新旧数量不一致时多出来的尾巴);segments.txt/指纹/.nomedia 保留,随后会重写
+            File[] leftovers = tmpDir.listFiles();
+            if (leftovers != null) {
+                for (File f : leftovers) {
+                    String n = f.getName();
+                    if (n.endsWith(".ts") || n.endsWith(".ts.part")) FileCleaner.deleteQuietly(f);
+                }
+            }
+            t.doneSegments = 0;
+            t.segmentBytes = 0;
+            writeText(sigFile, sig);
+        } catch (Throwable th) {
+            // 指纹读写失败不影响下载(最坏情况与改动前一致:碎片混用)
+            Log.i("TVBox-Download", "分片指纹处理异常(忽略): " + th);
+        }
+    }
+
+    /**
+     * 剥壳写盘:把 {@code [off, len)} 里的字节<b>按整 188 字节包</b>落盘(容器头已由调用方跳过),
+     * 不足一包的尾巴存进 {@code carry} 留到下一块一起写 —— 流结束时剩下的那点尾巴直接丢弃
+     * (实测包裹型分片尾部就是 20 字节的 PNG 收尾:CRC+IEND,混进 TS 会让后续包错位)。
+     *
+     * @return 新的 carry 长度(调用方据此算实际落盘字节数:{@code (before + len) - after})
+     */
+    private static int writeWholePackets(OutputStream os, byte[] carry, int carryLen,
+            byte[] buf, int off, int len) throws IOException {
+        if (carryLen > 0) {
+            int need = SegmentUnwrapper.PACKET_SIZE - carryLen;
+            int take = Math.min(need, len);
+            System.arraycopy(buf, off, carry, carryLen, take);
+            carryLen += take;
+            off += take;
+            len -= take;
+            if (carryLen == SegmentUnwrapper.PACKET_SIZE) {
+                os.write(carry, 0, SegmentUnwrapper.PACKET_SIZE);
+                carryLen = 0;
+            }
+        }
+        int whole = len / SegmentUnwrapper.PACKET_SIZE * SegmentUnwrapper.PACKET_SIZE;
+        if (whole > 0) {
+            os.write(buf, off, whole);
+            off += whole;
+            len -= whole;
+        }
+        if (len > 0) {
+            System.arraycopy(buf, off, carry, 0, len);
+            carryLen = len;
+        }
+        return carryLen;
+    }
+
+    private static void writeText(File f, String text) throws IOException {        File parent = f.getParentFile();
+        if (parent != null && !parent.exists()) parent.mkdirs();
+        try (OutputStream os = new FileOutputStream(f, false)) {
+            os.write(text.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
+    }
+
+    private static String readText(File f) throws IOException {
+        StringBuilder sb = new StringBuilder();
+        try (java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(
+                new java.io.FileInputStream(f), java.nio.charset.StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = r.readLine()) != null) sb.append(line).append('\n');
+        }
+        return sb.toString();
     }
 
     /**
@@ -644,6 +862,12 @@ public class DownloadExecutor {
         // 加密分片无法断点续传(AES-CBC 需从头整段解密),一律整段下
         if (key != null)
             segDone = 0;
+        // 上次这个分片是"包裹型"(已剥壳落盘):Range 偏移与原始字节对不上,必须整段重下
+        File wrapMarker = new File(segFile.getAbsolutePath() + ".wrap");
+        if (wrapMarker.exists()) {
+            segDone = 0;
+            FileCleaner.deleteQuietly(new File(segFile.getAbsolutePath() + ".part"));
+        }
         Map<String, String> headers = baseHeaders(t);
         if (segDone > 0) {
             headers.put("Range", "bytes=" + segDone + "-");
@@ -671,7 +895,9 @@ public class DownloadExecutor {
                 FileCleaner.deleteQuietly(segFile);
             } else if (code != 200 && code != 206) {
                 Log.i("TVBox-Download", "分片 HTTP " + code + " url=" + segUrl);
-                throw new IOException("segment HTTP " + code);
+                // 文案要求:可读 + 保留 "HTTP 404" 这种状态码 —— 调度器据此判定"地址可能过期"并自动重新解析地址(换线路),
+                // 提示里也要能看出是源的分片失效而不是本机问题
+                throw new IOException("分片下载失败(HTTP " + code + ")");
             }
             File parent = segFile.getParentFile();
             if (parent != null && !parent.exists())
@@ -701,19 +927,71 @@ public class DownloadExecutor {
                 byte[] buf = new byte[DownloadManager.BUFFER];
                 int n;
                 long written = segDone;
-                // 魔数校验只在整段重下(segDone<=0)的首个数据块做一次:明文 .ts 含 0x47 同步字节或
-                // fMP4 以 ftyp 开头;防盗链错误响应/密钥错误的乱码不符 → 判失败(走补片/重试),不产出假分片
-                boolean headChecked = segDone > 0;
+                // 内容判定(只在整段重下做):先攒够头部再判断"是不是音视频/是不是包裹型分片" ——
+                // 旧判据"首 8 字节里有 0x47"会被 PNG 签名(89 50 4E 47 里正好有个 'G')骗过,
+                // 现在用 TsProbe 按 188/192/204 对齐判真 TS,并识别 PNG/JPEG 壳里的 TS 载荷(剥壳)
+                int payloadOffset = 0;      // >0 = 剥壳:从该偏移起才是 TS
+                int carryLen = 0;           // 剥壳时不足 188 包、留到下一块一起写
+                byte[] carry = new byte[SegmentUnwrapper.PACKET_SIZE];
+                byte[] headBuf = new byte[HEAD_PROBE_BYTES];
+                int headLen = 0;
+                boolean decided = segDone > 0;  // 续传已有内容:维持原形态,不再判定
                 while ((n = is.read(buf)) > 0) {
-                    if (!headChecked) {
-                        int hn = Math.min(8, n);
-                        byte[] head = new byte[hn];
-                        System.arraycopy(buf, 0, head, 0, hn);
-                        headChecked = true;
-                        if (!containsByte(head, (byte) 0x47) && !containsAscii(head, "ftyp")) {
-                            FileCleaner.deleteQuietly(partFile);
-                            throw new IOException("分片内容非 TS/fMP4(可能防盗链错误响应)");
+                    if (!decided) {
+                        int copy = Math.min(n, headBuf.length - headLen);
+                        System.arraycopy(buf, 0, headBuf, headLen, copy);
+                        headLen += copy;
+                        if (headLen < headBuf.length) {
+                            continue; // 头没攒够:先不落盘,继续读
                         }
+                        decided = true;
+                        com.github.tvbox.osc.util.TsProbe probe = com.github.tvbox.osc.util.TsProbe.of(headBuf);
+                        if (!probe.isTs() && probe.kind != com.github.tvbox.osc.util.TsProbe.Kind.MP4) {
+                            com.github.tvbox.osc.util.SegmentUnwrapper.Plan plan =
+                                    com.github.tvbox.osc.util.SegmentUnwrapper.plan(headBuf, resp.body().contentLength());
+                            if (plan != null) {
+                                payloadOffset = plan.offset;
+                                Log.i("TVBox-Download", "分片是包裹型(" + probe.contentHint + " 壳里藏 TS),剥壳下载: "
+                                        + segFile.getName() + " 头 " + plan.offset + " 字节,载荷 "
+                                        + (plan.length < 0 ? "至流末尾" : plan.length + "B"));
+                                DownloadLog.LOG.info(DownloadSubType.SEGMENT, "包裹型分片剥壳: " + segFile.getName()
+                                        + " 丢弃容器头 " + plan.offset + "B", DownloadLog.extras(t.episodeId));
+                                try {
+                                    writeText(wrapMarker, "1");
+                                } catch (Throwable ignored) {
+                                }
+                            } else {
+                                FileCleaner.deleteQuietly(partFile);
+                                throw new IOException("分片内容不是视频("
+                                        + (probe.contentHint.isEmpty() ? "无法识别" : probe.contentHint)
+                                        + ",可能防盗链错误响应)");
+                            }
+                        }
+                        // 头部按最终形态落盘(剥壳:跳过容器头;整包截断交给对齐写入)
+                        int headSrcLen = headLen - payloadOffset;
+                        if (payloadOffset > 0) {
+                            int before = carryLen;
+                            carryLen = writeWholePackets(os, carry, carryLen, headBuf, payloadOffset, headSrcLen);
+                            written += (before + headSrcLen) - carryLen;
+                        } else {
+                            os.write(headBuf, 0, headSrcLen);
+                            written += headSrcLen;
+                        }
+                        // 本次 read 里超出头部缓冲的那一段(还没落盘)按同样规则接着写
+                        int excess = n - copy;
+                        if (excess > 0) {
+                            if (payloadOffset > 0) {
+                                int before = carryLen;
+                                carryLen = writeWholePackets(os, carry, carryLen, buf, copy, excess);
+                                written += (before + excess) - carryLen;
+                            } else {
+                                os.write(buf, copy, excess);
+                                written += excess;
+                            }
+                        }
+                        t.segmentBytes = written;
+                        throttle(t, n);
+                        continue;
                     }
                     if (isInterrupted(t)) {
                         os.flush();
@@ -721,10 +999,41 @@ public class DownloadExecutor {
                         dm.persist();
                         return;
                     }
-                    os.write(buf, 0, n);
-                    written += n;
+                    if (payloadOffset > 0) {
+                        int before = carryLen;
+                        carryLen = writeWholePackets(os, carry, carryLen, buf, 0, n);
+                        written += (before + n) - carryLen;
+                    } else {
+                        os.write(buf, 0, n);
+                        written += n;
+                    }
                     t.segmentBytes = written;
                     throttle(t, n); // 5.4 增强: 每任务限速
+                }
+                // 流结束:头都没攒够(极短响应)时也要判一次,避免把错误页当分片收下
+                if (!decided) {
+                    byte[] head = java.util.Arrays.copyOf(headBuf, headLen);
+                    com.github.tvbox.osc.util.TsProbe probe = com.github.tvbox.osc.util.TsProbe.of(head);
+                    if (probe.isTs() || probe.kind == com.github.tvbox.osc.util.TsProbe.Kind.MP4) {
+                        os.write(head, 0, headLen);
+                        written += headLen;
+                    } else {
+                        com.github.tvbox.osc.util.SegmentUnwrapper.Plan plan =
+                                com.github.tvbox.osc.util.SegmentUnwrapper.plan(head, headLen);
+                        if (plan == null) {
+                            FileCleaner.deleteQuietly(partFile);
+                            throw new IOException("分片内容不是视频("
+                                    + (probe.contentHint.isEmpty() ? "无法识别" : probe.contentHint) + ")");
+                        }
+                        // 极短的包裹型分片:同样跳过容器头、只落整包
+                        try {
+                            writeText(wrapMarker, "1");
+                        } catch (Throwable ignored) {
+                        }
+                        carryLen = writeWholePackets(os, carry, carryLen, head, plan.offset, headLen - plan.offset);
+                        written += (headLen - plan.offset) - carryLen;
+                    }
+                    t.segmentBytes = written;
                 }
                 os.flush();
             } finally {
@@ -1289,6 +1598,23 @@ public class DownloadExecutor {
     }
 
     /**
+     * 校验"磁盘上已有的成品文件"是否像视频(复用响应头的魔数规则,供入队自愈复用):
+     * 文件不存在/读不出/长度过小 → false;扩展名非视频 → 按"不误伤"放行(与 {@link #isPlausibleVideo} 同口径)。
+     */
+    boolean looksLikeVideoFile(File f) {
+        if (f == null || !f.exists() || !f.isFile() || f.length() < 16) return false;
+        try (java.io.FileInputStream in = new java.io.FileInputStream(f)) {
+            byte[] head = new byte[16];
+            int n = in.read(head);
+            if (n <= 0) return false;
+            byte[] use = n == head.length ? head : java.util.Arrays.copyOf(head, n);
+            return isPlausibleVideo(use, f.getName());
+        } catch (Throwable th) {
+            return false;
+        }
+    }
+
+    /**
      * 直链内容魔数校验:按扩展名检查响应体文件头, 防盗链占位页/错误响应(几KB文本或随机字节)
      * 与视频格式完全不符 → 返回 false 判失败; 非视频扩展名/无法判断一律放行(不误伤)。
      */
@@ -1380,9 +1706,29 @@ public class DownloadExecutor {
     private static boolean remuxTsToMp4(File src) {
         MediaExtractor extractor = null;
         MediaMuxer muxer = null;
+        File outTmp = null;
+        File repacked = null;
+        boolean done = false;
         try {
-            extractor = new MediaExtractor();
-            extractor.setDataSource(src.getAbsolutePath());
+            // 先自检产物结构:拼接产物可能是 188(标准)/192(M2TS)/204(FEC)字节包 ——
+            // 后两种 Exo/IJK 能直接播,但 MediaExtractor 只按 188 对齐嗅探,拿它去 setDataSource
+            // 会直接建不出提取器(NuMediaExtractor: failed to create MediaExtractor /
+            // Failed to instantiate extractor),重封装因此失败、只能回退 .ts。
+            // 识别出来先重打包成标准 188 再交给它;认不出来仍原样尝试(失败照旧回退 .ts)。
+            TsProbe probe = probeHead(src);
+            Log.i("TVBox-Download", "重封装自检: " + src.getName() + " -> " + probe.describe());
+            File remuxSrc = src;
+            if (probe.needsRepack()) {
+                repacked = new File(src.getParentFile(), "repack_" + System.currentTimeMillis() + ".ts");
+                if (repackTo188(src, repacked, probe)) {
+                    remuxSrc = repacked;
+                    Log.i("TVBox-Download", "重封装:已重打包为 188 字节包 " + formatSize(repacked.length()));
+                } else {
+                    FileCleaner.deleteQuietly(repacked);
+                    repacked = null;
+                }
+            }
+            extractor = openExtractor(remuxSrc);
             int videoTrack = -1;
             int audioTrack = -1;
             MediaFormat videoFormat = null;
@@ -1403,7 +1749,7 @@ public class DownloadExecutor {
             if (videoTrack < 0 && audioTrack < 0)
                 return false; // 无可用轨,无法重封装
 
-            File outTmp = new File(src.getParentFile(), "remux_" + System.currentTimeMillis() + ".mp4");
+            outTmp = new File(src.getParentFile(), "remux_" + System.currentTimeMillis() + ".mp4");
             muxer = new MediaMuxer(outTmp.getAbsolutePath(), MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
             int muxVideo = -1;
             int muxAudio = -1;
@@ -1481,10 +1827,11 @@ public class DownloadExecutor {
                     FileCleaner.deleteQuietly(outTmp);
                 }
             }
+            done = true;
             return true;
         } catch (Throwable th) {
-            // 带异常类型落日志(getMessage 对部分系统异常为 null,难以定位)
-            Log.w("TVBox-Download", "重封装失败: " + src.getName() + " -> " + th, th);
+            // 带异常类型与绝对路径落日志(getMessage 对部分系统异常为 null;路径能区分公共/应用私有下载目录,便于定位)
+            Log.w("TVBox-Download", "重封装失败: " + src.getAbsolutePath() + " -> " + th, th);
             return false;
         } finally {
             if (muxer != null) {
@@ -1499,7 +1846,127 @@ public class DownloadExecutor {
                 } catch (Throwable ignored) {
                 }
             }
+            // 失败/中途异常时清掉半成品 remux_*.mp4:以前会留在下载目录里当垃圾文件(几十~几百MB)
+            if (!done && outTmp != null) {
+                FileCleaner.deleteQuietly(outTmp);
+            }
+            // 192/204 -> 188 的重打包临时件(成品已由 outTmp 覆盖回 src,它只是中间产物)
+            if (repacked != null) {
+                FileCleaner.deleteQuietly(repacked);
+            }
         }
+    }
+
+    /** 读文件头做结构自检(4KB 足够验多个包的同步字节) */
+    private static TsProbe probeHead(File f) {
+        try (InputStream is = new FileInputStream(f)) {
+            byte[] buf = new byte[4096];
+            int n = is.read(buf);
+            if (n <= 0) return TsProbe.of(null);
+            return TsProbe.of(n == buf.length ? buf : java.util.Arrays.copyOf(buf, n));
+        } catch (Throwable th) {
+            Log.w("TVBox-Download", "重封装自检失败: " + f.getAbsolutePath() + " -> " + th);
+            return TsProbe.of(null);
+        }
+    }
+
+    /**
+     * 把 192/204 字节包逐包剥成标准 188 字节包(丢掉每包多出来的时间戳/FEC 字节)。
+     * 逐块读满再转,避免短读把包边界切错;末尾不足一包的残字节丢弃(拼接产物末尾本就是整包)。
+     */
+    private static boolean repackTo188(File src, File dst, TsProbe probe) {
+        int ps = probe.packetSize;
+        byte[] buf = new byte[ps * 4096];
+        long written = 0;
+        try (InputStream in = new FileInputStream(src);
+             OutputStream out = new FileOutputStream(dst)) {
+            int fill = 0;
+            int n;
+            while ((n = in.read(buf, fill, buf.length - fill)) > 0) {
+                fill += n;
+                if (fill < buf.length) continue; // 攒满一整块再处理
+                byte[] packed = TsProbe.repackUnit(buf, fill, probe);
+                if (packed == null) return false;
+                out.write(packed);
+                written += packed.length;
+                fill = 0;
+            }
+            int usable = fill - (fill % ps); // 末尾残块只取整包
+            if (usable > 0) {
+                byte[] packed = TsProbe.repackUnit(buf, usable, probe);
+                if (packed == null) return false;
+                out.write(packed);
+                written += packed.length;
+            }
+            out.flush();
+            return written > 0;
+        } catch (Throwable th) {
+            Log.w("TVBox-Download", "重封装:重打包失败 -> " + th);
+            return false;
+        }
+    }
+
+    /**
+     * 打开提取器并 setDataSource,失败重试一次(媒体服务偶发创建失败/提取器实例受限时,隔 300ms 能过去)。
+     * <p>
+     * 打开方式必须**优先用 FileDescriptor**:{@link MediaExtractor#setDataSource(String)} 的文档写明
+     * "本地文件可能由**别的进程**(媒体服务)按路径打开,该路径必须是 world-readable 的";
+     * 而下载目录要么在应用私有 files 下,要么在 Android/data/&lt;包名&gt; 下(见 FileCleaner.getSaveDir),
+     * 媒体服务读不到(EACCES),服务侧创建提取器即失败 —— MTK/魅族机型的实测日志正是这一串:
+     * {@code Parcel: Expecting binder but got null!} → {@code NuMediaExtractor: initMediaExtractor:
+     * failed to create MediaExtractor} → {@code IOException: Failed to instantiate extractor}(栈顶落在
+     * MediaExtractor.java:202,即传路径的那个重载)。FD 形式由本进程开文件、把 FD 通过 binder 交给提取器,
+     * 既不受私有目录限制,也不受中文路径影响(文档同时说明:本调用返回后即可关闭 FD,框架已 dup)。
+     * <p>
+     * 路径形式保留为兜底(公共 Download 目录 + 部分 ROM 只有路径形式可用),两次都失败则抛出最后一次异常,
+     * 由调用方回退 .ts 后缀。
+     */
+    private static MediaExtractor openExtractor(File src) throws IOException {
+        IOException last = null;
+        for (int attempt = 1; attempt <= 2; attempt++) {
+            try {
+                return openExtractorOnce(src);
+            } catch (IOException e) {
+                last = e;
+                Log.w("TVBox-Download", "重封装:第 " + attempt + " 次打开提取器失败 -> " + e);
+                if (attempt < 2) {
+                    try {
+                        Thread.sleep(300);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+            }
+        }
+        throw last != null ? last : new IOException("Failed to instantiate extractor");
+    }
+
+    /** 单次尝试:FD 形式优先,失败退回路径形式 */
+    private static MediaExtractor openExtractorOnce(File src) throws IOException {
+        MediaExtractor byFd = new MediaExtractor();
+        FileInputStream fis = null;
+        try {
+            fis = new FileInputStream(src);
+            byFd.setDataSource(fis.getFD());
+            return byFd;
+        } catch (Throwable fdFail) {
+            try {
+                byFd.release();
+            } catch (Throwable ignored) {
+            }
+            Log.w("TVBox-Download", "重封装:FD 形式打开失败,退回路径形式: " + src.getAbsolutePath() + " -> " + fdFail);
+        } finally {
+            if (fis != null) {
+                try {
+                    fis.close();
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+        MediaExtractor byPath = new MediaExtractor();
+        byPath.setDataSource(src.getAbsolutePath());
+        return byPath;
     }
 
     /** Bug5: 确保目录内写入 .nomedia(媒体扫描器忽略该目录,碎片不进相册) */
