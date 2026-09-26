@@ -23,7 +23,7 @@
         android:orientation="vertical">
 
         <ImageView
-            android:layout_width="160dp"
+            android:layout_width="120dp"
             android:layout_height="wrap_content"
             android:contentDescription="@null"
             android:scaleType="fitCenter"
