@@ -10,6 +10,8 @@ import com.whl.quickjs.wrapper.JSObject;
 import com.whl.quickjs.wrapper.JSUtils;
 import com.whl.quickjs.wrapper.QuickJSContext;
 
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -26,30 +28,61 @@ import okhttp3.RequestBody;
 import okhttp3.Response;
 
 public class Connect {
-    static OkHttpClient client;
+    /** JS 源请求的 tag 前缀;每个源用 "前缀-源key" 作为自己的 tag(取消时才能只取消这一个源) */
+    public static final String JS_TAG = "js_okhttp_tag";
 
-    public static Call to(String url, Req req) {
-        OkHttpClient client = OkHttp.client(req.isRedirect(), req.getTimeout());
-        return client.newCall(getRequest(url, req, Headers.of(req.getHeader())));
+    public static Call to(String url, Req req, String tag) {
+        OkHttpClient http = OkHttp.client(req.isRedirect(), req.getTimeout());
+        return http.newCall(getRequest(url, req, Headers.of(req.getHeader()), tag));
     }
 
     public static JSObject success(QuickJSContext ctx, Req req, Response res) {
-        try {
+        // try-with-resources:原实现异常分支直接返回 error(ctx),响应体不消费也不关闭 → 连接/套接字泄漏
+        try (Response response = res) {
             JSObject jsObject = ctx.createJSObject();
             JSObject jsHeader = ctx.createJSObject();
-            setHeader(ctx, res, jsHeader);
+            setHeader(ctx, response, jsHeader);
             jsObject.set("headers", jsHeader);
-            if (req.getBuffer() == 0) jsObject.set("content", new String(res.body().bytes(), req.getCharset()));
+            // status 便于 JS 侧区分"请求失败"与"200 空体"(原来 error() 与 200 空体长得一模一样)
+            jsObject.set("status", response.code());
+            byte[] bytes = response.body() == null ? new byte[0] : response.body().bytes();
+            if (req.getBuffer() == 0) jsObject.set("content", new String(bytes, charset(req, response)));
             if (req.getBuffer() == 1) {
                 JSArray array = ctx.createJSArray();
-                for (byte aByte : res.body().bytes()) array.push((int) aByte);
+                for (byte aByte : bytes) array.push((int) aByte);
                 jsObject.set("content", array);
             }
-            if (req.getBuffer() == 2) jsObject.set("content", Base64.encodeToString(res.body().bytes(), Base64.DEFAULT));
+            if (req.getBuffer() == 2) jsObject.set("content", Base64.encodeToString(bytes, Base64.DEFAULT));
             return jsObject;
-        } catch (Exception e) {
+        } catch (Throwable e) {
+            // 原来是全静默:JS 只看到空 content,排查时无从下手
+            LOG.e("Connect", "读取/解码响应失败: " + e);
             return error(ctx);
         }
+    }
+
+    /**
+     * 响应解码字符集:以<b>响应头</b> Content-Type 的 charset 为准。
+     * <p>
+     * 原实现用 {@code req.getCharset()},那读的是<b>请求头</b> —— GET 请求通常没有 Content-Type,
+     * 于是恒为 UTF-8,GBK 老站必然乱码、规则全不命中;请求头里显式写了 charset 的源仍按它解码(兼容老写法)。
+     */
+    private static Charset charset(Req req, Response response) {
+        Charset fromResponse = null;
+        try {
+            MediaType type = response == null || response.body() == null ? null : response.body().contentType();
+            if (type != null) fromResponse = type.charset();
+        } catch (Throwable ignored) {
+        }
+        if (fromResponse != null) return fromResponse;
+        if (req != null) {
+            try {
+                return Charset.forName(req.getCharset());
+            } catch (Throwable ignored) {
+                // 非法字符集名(charset="gbk" 这类写法)不再让整段解码失败
+            }
+        }
+        return StandardCharsets.UTF_8;
     }
 
     public static JSObject error(QuickJSContext ctx) {
@@ -57,16 +90,17 @@ public class Connect {
         JSObject jsHeader = ctx.createJSObject();
         jsObject.set("headers", jsHeader);
         jsObject.set("content", "");
+        jsObject.set("status", 0);
         return jsObject;
     }
 
-    private static Request getRequest(String url, Req req, Headers headers) {
+    private static Request getRequest(String url, Req req, Headers headers, String tag) {
         if (req.getMethod().equalsIgnoreCase("post")) {
-            return new Request.Builder().url(url).tag("js_okhttp_tag").headers(headers).post(getPostBody(req, headers.get("Content-Type"))).build();
+            return new Request.Builder().url(url).tag(tag).headers(headers).post(getPostBody(req, headers.get("Content-Type"))).build();
         } else if (req.getMethod().equalsIgnoreCase("header")) {
-            return new Request.Builder().url(url).tag("js_okhttp_tag").headers(headers).head().build();
+            return new Request.Builder().url(url).tag(tag).headers(headers).head().build();
         } else {
-            return new Request.Builder().url(url).tag("js_okhttp_tag").headers(headers).get().build();
+            return new Request.Builder().url(url).tag(tag).headers(headers).get().build();
         }
     }
 
@@ -105,18 +139,20 @@ public class Connect {
     }
     public static void cancelByTag(Object tag) {
         try {
-            if (client != null) {
-                for (Call call : client.dispatcher().queuedCalls()) {
-                    if (tag.equals(call.request().tag())) {
-                        call.cancel();
-                    }
+            // 必须用根 client 的 Dispatcher:OkHttp.client(timeout) 派生出的 client 与根 client
+            // 共享同一个 Dispatcher,枚举 running/queued 才能取消到 JS 源真正发出的 call。
+            // 原实现读的是本类一个从未被赋值的静态字段(还被同名局部变量遮蔽)→ 恒 null,纯空转,
+            // 于是 FastSearchActivity 的 stopAllSourceTasks 对 JS 源毫无作用。
+            OkHttpClient root = OkHttp.client();
+            if (root != null) {
+                for (Call call : root.dispatcher().queuedCalls()) {
+                    if (tag.equals(call.request().tag())) call.cancel();
                 }
-                for (Call call : client.dispatcher().runningCalls()) {
-                    if (tag.equals(call.request().tag())) {
-                        call.cancel();
-                    }
+                for (Call call : root.dispatcher().runningCalls()) {
+                    if (tag.equals(call.request().tag())) call.cancel();
                 }
             }
+            // 兜底:core-network 的 HttpClient 走另一个 Dispatcher(OkGoHelper 默认客户端),看不到上面这些 call
             HttpClient.cancel(tag);
         } catch (Exception e) {
             LOG.e(e);

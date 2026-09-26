@@ -46,7 +46,10 @@ public class QuickJSContext {
     public void setProperty(JSObject jsObj, String name, Object value) {
         checkSameThread();
 
-        setProperty(context, jsObj.getPointer(), name, value);
+        // 本地补丁:值类型收敛。native setProperty→toJSValue 只认 String/Boolean/Integer/
+        // Long/Double/byte[]/JSObject/JSCallFunction,其它类型会抛 "Unsupported Java type"
+        // 并把异常留在 JNI env 上 → 下一次 JS 调 Java 就是 JNI DETECTED ERROR(整个进程 abort)。
+        setProperty(context, jsObj.getPointer(), name, JSUtils.toJsSafe(value));
     }
 
     public JSArray createNewJSArray() {
@@ -199,7 +202,8 @@ public class QuickJSContext {
     public void arrayAdd(JSObject jsObj, Object value) {
         checkSameThread();
         checkDestroyed();
-        arrayAdd(context, jsObj.getPointer(), value);
+        // 同上:JSArray.push 的值也要收敛类型,否则一样会在 native 侧抛 Unsupported Java type
+        arrayAdd(context, jsObj.getPointer(), JSUtils.toJsSafe(value));
     }
 
     public Object get(JSObject jsObj, String name) {
@@ -217,7 +221,7 @@ public class QuickJSContext {
             putCallFunction((JSCallFunction) value);
         }
 
-        setProperty(context, jsObj.getPointer(), name, value);
+        setProperty(context, jsObj.getPointer(), name, JSUtils.toJsSafe(value));
     }
 
     private void putCallFunction(JSCallFunction callFunction) {
@@ -307,7 +311,7 @@ public class QuickJSContext {
         checkSameThread();
         checkDestroyed();
 
-        set(context, jsArray.getPointer(), value, index);
+        set(context, jsArray.getPointer(), JSUtils.toJsSafe(value), index);
     }
 
     Object call(JSObject func, long objPointer, Object... args) {

@@ -1,9 +1,12 @@
 package com.whl.quickjs.wrapper;
 
+import android.util.Log;
+
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.Map;
@@ -11,6 +14,10 @@ import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class JSObject {
+
+    /** 本地补丁(非上游代码):桥调用失败日志统一走这个 tag,便于按 tag 过滤定位是哪个源/哪个方法 */
+    private static final String TAG = "QuickJSBridge";
+
     private final ConcurrentHashMap<Class<?>, BindingContext> bindingContextMap = new ConcurrentHashMap<>();
     private final QuickJSContext context;
     private final long pointer;
@@ -76,6 +83,7 @@ public class JSObject {
 
     public void set(String name, Object value) {
         checkReleased();
+        // 值的类型收敛在 QuickJSContext.set/setProperty 里统一做(见 JSUtils.toJsSafe)
         context.set(this, name, value);
     }
 
@@ -287,12 +295,20 @@ public class JSObject {
                         @Override
                         public Object call(Object... args) {
                             try {
-                                return functionMethod.invoke(callbackReceiver, args);
-                            } catch (Exception e) {
-                                //试试暴力不处理不抛异常
-                                new QuickJSException(
-                                        e.getMessage()).printStackTrace();
-                                return new Object();
+                                // 入参先按 Java 签名归一化(JS 的整数值 float64 会变成 Long、
+                                // 少传/多传参数是常态,直接 invoke 必抛 argument type mismatch),
+                                // 返回值再收敛到 native 认识的类型 —— 见 JSUtils 两个方法上的说明。
+                                Object result = functionMethod.invoke(callbackReceiver,
+                                        JSUtils.adaptArgs(functionMethod, args));
+                                return JSUtils.toJsSafe(result);
+                            } catch (Throwable e) {
+                                // 本地补丁(原为 return new Object()):java.lang.Object 是 native
+                                // toJSValue 不认识的类型,交回去会抛
+                                // "Unsupported Java type java.lang.Object" 并把异常留在 JNI env 上,
+                                // 下一次 JS 调 Java 就撞出 "JNI DETECTED ERROR IN APPLICATION" → 进程 abort。
+                                // 这里改为:把真实原因(解包 InvocationTargetException)打进日志并返回 null。
+                                Log.e(TAG, functionName + describeArgs(args) + " 调用失败", unwrap(e));
+                                return null;
                             }
                         }
                     });
@@ -302,6 +318,22 @@ public class JSObject {
                 }
             }
         }
+    }
+
+    /** 失败日志里带上 JS 实参类型,便于定位是哪个源哪次调用把桥打崩的 */
+    private static String describeArgs(Object[] args) {
+        if (args == null || args.length == 0) return "()";
+        StringBuilder sb = new StringBuilder("(");
+        for (int i = 0; i < args.length; i++) {
+            if (i > 0) sb.append(", ");
+            sb.append(args[i] == null ? "null" : args[i].getClass().getSimpleName());
+        }
+        return sb.append(')').toString();
+    }
+
+    /** InvocationTargetException 的真实原因在 cause 上(原实现只打 e.getMessage(),经常是 null) */
+    private static Throwable unwrap(Throwable e) {
+        return e instanceof InvocationTargetException && e.getCause() != null ? e.getCause() : e;
     }
 
     BindingContext getBindingContext(Class<?> callbackReceiverClass) throws QuickJSException {

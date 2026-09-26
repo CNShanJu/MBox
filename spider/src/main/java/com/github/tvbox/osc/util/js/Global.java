@@ -4,6 +4,7 @@ import androidx.annotation.Keep;
 import androidx.annotation.NonNull;
 
 
+import com.github.tvbox.osc.util.LOG;
 import com.github.tvbox.osc.util.rsa.RSAEncrypt;
 import com.whl.quickjs.wrapper.ContextSetter;
 import com.whl.quickjs.wrapper.Function;
@@ -29,10 +30,22 @@ public class Global {
     private QuickJSContext runtime;
     public ExecutorService executor;
     private final Timer timer;
+    /** 本源 HTTP 请求的 tag(取消在跑请求时按它匹配,见 Connect.cancelByTag) */
+    private final String tag;
 
-    public Global(ExecutorService executor) {
+    public Global(ExecutorService executor, String tag) {
         this.executor = executor;
-        this.timer = new Timer();
+        this.tag = tag == null ? Connect.JS_TAG : tag;
+        // 守护线程:原来 new Timer() 是非守护线程且从不 cancel,每建一个源就常驻一条线程
+        this.timer = new Timer("js-timeout", true);
+    }
+
+    /** 源销毁时停掉定时器(见 JsSpider.destroyNow),否则线程与已排队的任务一直留着 */
+    public void shutdown() {
+        try {
+            timer.cancel();
+        } catch (Throwable ignored) {
+        }
     }
 
     @Keep
@@ -44,7 +57,10 @@ public class Global {
     @Keep
     @Function
     public String js2Proxy(Boolean dynamic, Integer siteType, String siteKey, String url, JSObject headers) {
-        return getProxy(true) + "&from=catvod" + "&siteType=" + siteType + "&siteKey=" + siteKey + "&header=" + URLEncoder.encode(headers.toJsonString()) + "&url=" + URLEncoder.encode(url);
+        // headers 缺省(源只传 4 个参数或传 undefined)时原来直接 NPE:整个 Java 调用失败,
+        // JS 侧拿不到代理地址 → 代理播放全线失效,排查时还没有任何线索
+        String header = headers == null ? "{}" : headers.toJsonString();
+        return getProxy(true) + "&from=catvod" + "&siteType=" + siteType + "&siteKey=" + siteKey + "&header=" + URLEncoder.encode(header) + "&url=" + URLEncoder.encode(url);
     }
 
     @Keep
@@ -273,10 +289,26 @@ public class Global {
     private JSObject req(String url, JSObject options) {
         try {
             Req req = Req.objectFrom(options.toJsonObject().toString());
-            Response res = Connect.to(url, req).execute();
+            Response res = Connect.to(url, req, tag).execute();
             return Connect.success(runtime, req, res);
         } catch (Exception e) {
+            // 原来静默返回 error():JS 侧只知道"空内容",看不出是网络失败还是源写错了
+            LOG.e("js-http", url + " 请求失败(" + dnsHint() + "): " + e);
             return Connect.error(runtime);
+        }
+    }
+
+    /**
+     * 失败日志里带上"这次用的是哪套解析器"(见 {@link com.github.catvod.net.OkHttp#dnsName()})。
+     * <p>
+     * {@code UnknownHostException} 这类"App 解析不了、浏览器能打开"的问题只有两个可能:
+     * 安全 DNS(腾讯/阿里/360 的 DoH 会对部分域名返回空)或系统 DNS,不写出来就只能靠猜。
+     */
+    private static String dnsHint() {
+        try {
+            return com.github.catvod.net.OkHttp.dnsName();
+        } catch (Throwable th) {
+            return "DNS=未知";
         }
     }
 
@@ -286,38 +318,89 @@ public class Global {
         JSFunction complete = options.getJSFunction("complete");
         if (complete == null) return req(url, options);
         Req req = Req.objectFrom(options.toJsonObject().toString());
-        Connect.to(url, req).enqueue(getCallback(complete, req));
+        // 回调要跨线程执行,必须先 hold:否则 JS 侧丢掉引用后 QuickJS 可能回收它,回调时崩 native
+        complete.hold();
+        try {
+            Connect.to(url, req, tag).enqueue(getCallback(complete, req));
+        } catch (Throwable th) {
+            // 请求构造失败(非法 URL 等):回调永远不会来,必须释放,并把失败明确回给 JS
+            LOG.e("js-http", url + " 异步请求发起失败: " + th);
+            complete.release();
+            return Connect.error(runtime);
+        }
         return null;
     }
 
     @Keep
     @Function
     public void setTimeout(JSFunction func, Integer delay) {
+        // JS 少传参数时 delay 为 null,原来直接拆箱成 long → NPE
+        long delayMs = delay == null ? 0L : Math.max(0L, delay.longValue());
+        if (func == null) return;
         func.hold();
-        timer.schedule(new TimerTask() {
-            @Override
-            public void run() {
-                if (!executor.isShutdown()) executor.submit(() -> {func.call();});
-            }
-        }, delay);
+        try {
+            timer.schedule(new TimerTask() {
+                @Override
+                public void run() {
+                    if (executor.isShutdown()) {
+                        func.release();
+                        return;
+                    }
+                    try {
+                        executor.submit(() -> {
+                            try {
+                                func.call();
+                            } catch (Throwable th) {
+                                LOG.e("js-setTimeout", th);
+                            } finally {
+                                // hold 必须成对 release:轮询型 JS 源(定时器 + 递归 setTimeout 很常见)
+                                // 从不释放会让 QuickJS 堆无界增长
+                                func.release();
+                            }
+                        });
+                    } catch (Throwable th) {
+                        // 执行器已关/队列满:这条回调不会跑了,同样要释放
+                        func.release();
+                    }
+                }
+            }, delayMs);
+        } catch (Throwable th) {
+            // 定时器已 cancel(源已销毁):必须释放,否则这条 JS 函数永远出不去
+            func.release();
+        }
     }
 
     private Callback getCallback(JSFunction complete, Req req) {
         return new Callback() {
             @Override
             public void onResponse(@NonNull Call call, @NonNull Response res) {
-                executor.submit(() -> {
-                    complete.call(Connect.success(runtime, req, res));
-                });
+                submitComplete(complete, () -> complete.call(Connect.success(runtime, req, res)));
             }
 
             @Override
             public void onFailure(@NonNull Call call, @NonNull IOException e) {
-                executor.submit(() -> {
-                    complete.call(Connect.error(runtime));
-                });
+                LOG.e("js-http", "异步请求失败: " + call.request().url() + " " + e);
+                submitComplete(complete, () -> complete.call(Connect.error(runtime)));
             }
         };
+    }
+
+    /** 回调统一回到 QuickJS 自己的线程上执行,并在跑完后释放 hold */
+    private void submitComplete(JSFunction complete, Runnable task) {
+        try {
+            executor.submit(() -> {
+                try {
+                    task.run();
+                } catch (Throwable th) {
+                    LOG.e("js-http", th);
+                } finally {
+                    complete.release();
+                }
+            });
+        } catch (Throwable th) {
+            // 执行器已关(源已销毁):回调不会执行,同样要释放
+            complete.release();
+        }
     }
     @Keep
     // 声明用于依赖注入的 QuickJSContext
