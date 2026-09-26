@@ -100,6 +100,11 @@
 
   - **贴补二(同日,真机反馈"断网后首页 loading 一直转")**：根因是结束刷新的唯一入口是 `listResult` 观察者,而断网时请求被网络层**快速失败**、异常被上层吞成"无结果" → LiveData 从不发射 → 没人收尾;且断网事件常发生在页面不可见期间(无网络页盖住时 `GridFragment` 已注销网络监听),回到首页也不会补。修法二处:① **断网即收尾** `stopLoadingForOffline()`(结束下拉刷新 + 列表空则显示空态 + 收掉底部"加载中"footer),网络监听回调与"页面重新可见时按当前离线态补一次"都调用它;② **刷新看门狗** `startRefreshWatchdog()` —— 带轮次号的 45s 兜底(长于 VM 侧 typed 15s + 字符串通道 15s 之和,正常慢请求不被打断),到点仍在刷新就强制收尾,兜住其它"没人回结果"的静默失败。
 
+  - **贴补三(同日,真机反馈"离线冷启动后 loading 一直转、恢复网络也刷不出来")**：两条根因 ——
+    ① `SourceViewModel.getList` 的 `type==3` 分支 `catch` 里只 `printStackTrace`、**从不 `postValue`**：离线时请求被网络层快速失败并把异常带到那里,首页永远收不到"本轮结束" → `showLoading()` 一直挂着(与"JS Promise 每条路径都要 settle"同一条教训);
+    ② "恢复网络"的状态变化通常发生在页面<b>不可见期间</b>(无网络页盖住/切走),而网络监听是可见时注册、不可见时注销 → 回到首页时已错过,没人触发加载。
+    修法：① VM 每条路径都收尾(`type==3` 的 catch 与"回退旧路径自身抛异常"两处补 `postValue(null)`);② `GridFragment` 看门狗从"只管下拉刷新"扩到"初始加载 + 下拉刷新"(45s、带轮次号,收到任何结果即作废),到点仍在加载就收尾并显示空态 —— 至少保证用户能重新拉动刷新(此前 loading 视图盖住列表,下拉都点不动);③ 页面重新可见时:有网 + 从未成功加载 + 没有加载在途 → 自动补一次 `initData()`。
+
 - **hawk 全量退役完成**：`KeyValueStore` 类及全部 legacy 迁移分支已删除，运行权威统一 `PrefsDataStore`/文件；全仓零 `com.orhanobut.hawk` 依赖（mbox 包名隔离，无 Hawk 存量升级场景）。
 - **订阅本地导入改系统 SAF**：`SubscriptionActivity` 用 `ActivityResultContracts.OpenDocument` 替代 hedzr 反射，支持 `content://` 流、`primary:`/`home:` 文档卷，复制到应用专属目录 + canonical 防穿越，按 URL 去重；移除 `MANAGE_EXTERNAL_STORAGE` 前置检查。
 - **下载存储权限引导**：`DownloadDialogCoordinator` 无存储权限时弹 `ConfirmDialog` + `XXPermissions` 拉起系统授权（与「我的-本地视频」入口一致），不再仅 toast 提示。
