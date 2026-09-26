@@ -26,6 +26,14 @@
   - **已补（下载与播放对齐，2026-09-26）**：③ 下载链路（`M3u8DownloadTask`/`DownloadExecutor`）**已改为用与播放同一份净化清单** —— 净化逻辑从 `app/util/player/M3u8Cleaner.kt` 下沉为 `common/util/M3u8Purifier.java`（模块边界：`:download` 不能依赖 `:app`），`PlayFragment` 与下载侧都调它，少数派（广告/占位）分片在下载时同样剔除。这同时修掉了**"播放不缺、下载缺"**：那些被判为少数派的片在源站往往已被删（404），播放器不看它们所以一路顺，下载器照单全下就会报缺片（实测 940 片里 8 片 404 全是少数派前缀）。净化后清单的分片序号会变，靠既有的 `segments.sig` 指纹保护丢弃旧碎片重下（升级前正在下的任务会重下一次，不会拼错）。
   - **未改（需真机确认后再定）**：① `PlayFragment.startPlayUrl` 内 `autoRetryCount>0` 时把 m3u8 交给第三方 `http://home.jundie.top:666/unBom.php?m3u8=<未编码URL>` 去 BOM（隐私外泄 + URL 带 `&` 时被截断），本地已有剥 BOM 能力，可改本地回环兜底；② 开关**不控制** WebView 嗅探里的 `AdBlocker.isAd` 拦截（嗅探页广告/统计资源仍被拦，属另一语义）。
 
+- **下载模块专项核查（执行器 / 调度与管理器 / 与 UI 交界，2026-09-26）**：逐条核实报告后修复如下（每条都先在代码里验真再改）：
+  - **P0 重封装样本缓冲用了堆缓冲 → HLS 成品从未变成 MP4**：`ByteBuffer.allocate(8MB)` 喂给 native 的 `readSampleData`/`writeSampleData`（经 `GetDirectBufferAddress` 取地址），非 direct 抛 `IllegalArgumentException` → 被 `catch (Throwable)` 吞掉 → 回退 `.ts`，于是 3.5.7 起的"标准 MP4 成品"实际从未生效。改起步与扩容都用 `allocateDirect`（8MB→64MB 封顶）+ 每样本 `clear()`；新增源码级绊线单测 `RemuxBufferContractTest`（本机跑不了 MediaExtractor，就守住最容易回退的一行）。真机核验：成品后缀应变 `.mp4`、logcat 不再有"重封装失败"。
+  - **P1 限速功能从未生效**：`throttle()` 把窗口起点/窗口字节写成方法内局部变量、每次调用都重置 → `elapsed` 恒为 0 → 每次直接 return、从不 sleep。改为窗口状态挂在任务上（`DownloadTask.throttleWindowStart/throttleWindowBytes`），结算规则抽成纯逻辑 `util/ThrottlePolicy`（7 例单测）。注：`speedLimit` 目前仍无 UI 入口（只有 `DownloadManager` 一个写入口），本轮只保证"设了就真生效"。
+  - **P1 读流终止条件写成 `> 0`**：五处（直链/分片/重封装转 188/`FileCleaner` 两处/`DownloadStore`）改为 `!= -1`——0 不是 EOF，按 `>0` 退出会把"没读完"当"读完"，随后 `.part` 照样 rename 成 `%05d.ts` 当成功。并给**分片**补上缺失的完整性校验：服务器声明长度且本次是"整段原样落盘"（未续传/未剥壳/未解密）时，实收字节必须等于声明值，否则删残片并抛错（原来只判 `exists() && length()>0`）。更正报告一处：直链路径本来就有 Content-Length 比对，缺的是分片路径。
+  - **P1 中断时把未完成分片记成已完成**：`downloadSegment` 遇中断是"正常 return"（不抛异常），调用方紧接着 `doneSegments = i + 1` → 进度与磁盘不一致；调用方补中断自检后收尾返回。
+  - **P2 磁盘峰值只按 1× 预检**（修好 P0 后重封装才真正跑起来，这条才成为现实风险）：实际峰值≈3×（分片 + `merged.tmp` + `remux_*.mp4`）。改为两级口径——启动预检 HLS 按 2×（`DownloadPolicy.checkDiskSpace`），合并前按实测碎片总大小卡 `free ≥ 2×mergeSize + MIN_FREE_SPACE`。
+  - **仍待处理（报告已列，本轮未动）**：退避期间独占并发额度（`Thread.sleep` 时状态仍是 DOWNLOADING）；结构事件去抖无最大等待上限；`DownloadFragment.refresh()` 主线程全量 stat + `purgeOrphans` 顺带写盘；"已播放"标记被 `catch (Throwable ignored)` 吞掉；P3 若干（`DownloadStore` 锁顺序、`getPosterDir` 空 context、海报直写非原子、`break` 跳过的尾部未记死片）；以及优化项（`:download` 无自身单测目录、fMP4/`#EXT-X-BYTERANGE` 仍直接抛、分片无断点续传、磁盘被扫 3 遍、`gapSegments` 线性查、跨 DISCONTINUITY 的 PTS 钳制、前台服务异常被吞）。
+
 - **hawk 全量退役完成**：`KeyValueStore` 类及全部 legacy 迁移分支已删除，运行权威统一 `PrefsDataStore`/文件；全仓零 `com.orhanobut.hawk` 依赖（mbox 包名隔离，无 Hawk 存量升级场景）。
 - **订阅本地导入改系统 SAF**：`SubscriptionActivity` 用 `ActivityResultContracts.OpenDocument` 替代 hedzr 反射，支持 `content://` 流、`primary:`/`home:` 文档卷，复制到应用专属目录 + canonical 防穿越，按 URL 去重；移除 `MANAGE_EXTERNAL_STORAGE` 前置检查。
 - **下载存储权限引导**：`DownloadDialogCoordinator` 无存储权限时弹 `ConfirmDialog` + `XXPermissions` 拉起系统授权（与「我的-本地视频」入口一致），不再仅 toast 提示。

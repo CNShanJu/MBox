@@ -127,7 +127,11 @@ public class DownloadPolicy {
      * 下载前磁盘空间预检:估算文件大小(直链精确 Content-Length / m3u8 码率×时长估算,由
      * DownloadExecutor 预检写入任务,入队时已异步探测;此处大小未知才补一次阻塞探测),
      * 检查保存目录所在磁盘剩余空间。
-     * 要求:下载完成后可用空间仍 ≥ MIN_FREE_SPACE(1.5GB),不足则拒绝启动并提示需清理的量级。
+     *
+     * <p>预留口径按"峰值"而不是"成品大小":HLS 走 分片 → 合并 → 重封装,
+     * 分片与合并产物会同时存在(≈2×),重封装那份由合并前的检查按实测碎片大小精确兜住(见
+     * DownloadExecutor 合并前空间检查);直链只有 1×。以前只按 1× 预留,
+     * 小容量机器会在合并/重封装中途 ENOSPC,而那时碎片已下完、用户白等一场。
      *
      * @return null=空间充足;否则返回错误提示文案
      */
@@ -143,16 +147,23 @@ public class DownloadPolicy {
             if (dir == null || !dir.exists()) return null;
             StatFs stat = new StatFs(dir.getAbsolutePath());
             long free = stat.getAvailableBytes();
-            long needAfter = free - size; // 下载完后的剩余
+            long factor = isHlsUrl(t.url) ? 2 : 1;
+            long need = size * factor;
+            long needAfter = free - need; // 峰值时剩余
             if (needAfter < MIN_FREE_SPACE) {
                 long needClean = (MIN_FREE_SPACE - needAfter + 1024 * 1024 - 1) / (1024 * 1024);
-                return "磁盘空间不足:文件约 " + formatSize(size) + ",完成后可用仅 "
-                        + formatSize(Math.max(0, needAfter)) + ",需清理约 " + needClean + "MB";
+                return "磁盘空间不足:文件约 " + formatSize(size) + ",峰值需约 " + formatSize(need)
+                        + ",当前可用 " + formatSize(free) + ",需清理约 " + needClean + "MB";
             }
             return null;
         } catch (Throwable th) {
             return null; // 预检异常不阻塞下载
         }
+    }
+
+    /** 是否 HLS(m3u8):决定空间预检按几倍成品大小预留 */
+    private static boolean isHlsUrl(String url) {
+        return url != null && url.toLowerCase(java.util.Locale.ROOT).contains(".m3u8");
     }
 
     /** 格式化大小(供磁盘空间提示) */
