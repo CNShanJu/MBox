@@ -26,8 +26,9 @@ import com.blankj.utilcode.util.ScreenUtils;
  * <ul>
  *   <li>顶部热区(手势条+标题一带;ScrollView 型再多含开头一小段)始终响应;
  *       <b>按住上拉的判断始终执行</b>:可展开(内容自然高 &gt; 50% 屏高) →
- *       默认 50%,过阈值展开到 70%;高度已定(内容少) → 只做越界回弹,不误动;</li>
- *   <li>展开态下拉:未过阈值收回 50%;压到 ≤ 30% 屏高才收起关闭;</li>
+ *       默认 50%,过阈值展开到 70%;高度已定(内容少) → 上拉只做越界回弹,不误动;</li>
+ *   <li>下拉在任何状态都生效:未过阈值回到收起高;压到 ≤ 30% 屏高松手 → 收起关闭
+ *       (高度已定的短内容抽屉同样能这样关掉;以前这里提前 return,短内容只能橡皮筋、关不掉);</li>
  *   <li>点击热区 = 位移不超过 slop 即点击:可展开 → 50/70 切换(动画),
  *       不可展开 → 脉冲回弹;<b>点击永不收起关闭</b>;</li>
  *   <li>动作经 {@link #setActionListener(ActionListener)} 回传(展开/收回/收起),
@@ -180,6 +181,23 @@ public class SheetResizeController implements View.OnTouchListener {
         }
     }
 
+    /**
+     * 内容不足展开(短内容):按调用方算好的高度固定展示,不进 50↔70 展开状态机。
+     * <p>
+     * 与 {@link #sync()} 的"内容少"分支同一意图,区别是高度由宿主给(它掌握简介/内边距口径),
+     * 且上限压到展开高 —— 短内容不该被 50% 档截断(那个状态下又没有"展开"入口,用户就读不全)。
+     * 上拉只做越界回弹(没有可展开内容),<b>下拉仍可压到 ≤30% 收起关闭</b>(见 release)。
+     */
+    void forceFixedHeight(int heightPx) {
+        inited = true;
+        resizable = false;
+        expanded = false;
+        int h = heightPx > 0 ? Math.min(heightPx, expandedH) : expandedH;
+        curH = h;
+        visualH = h;
+        applyHeight(h);
+    }
+
     /** 宿主“展开”:弹到 70% 并回传(无可展开内容时给脉冲反馈) */
     void expand() {
         if (!resizable) {
@@ -226,30 +244,49 @@ public class SheetResizeController implements View.OnTouchListener {
     // 测量 / 改高 / 动画
     // ------------------------------------------------------------------
 
-    /** 自然总高 = 固定区(root 高 - flex 可视高) + 内容自然高(content 按 wrap 量一遍) */
+    /**
+     * 自然总高 = 固定区(root 高 - flex 可视高) + flex 内边距 + 内容自然高。
+     * <p>
+     * 注意:ScrollView 型 flex 要量的是**它里面的内容根**(内层容器自带 paddingBottom 等),
+     * 不是直接传进来的那个 TextView —— 只量 TextView 会漏掉「ScrollView 的上下 padding +
+     * 内层容器 padding」(详情弹窗实测漏 34dp),弹出来就比内容矮一截:底部文字被截,
+     * 而且内容高于可视区时还能滑动(ScrollView 的 setEnabled(false) 挡不住触摸滚动)。
+     */
     private int measureNaturalHeight() {
-        int width = content.getWidth();
-        if (width <= 0) width = content.getMeasuredWidth();
-        if (width <= 0) return -1;
+        if (content == null || root == null) return -1;
         int rootH = root.getHeight();
         int flexH = flex != null ? flex.getHeight() : 0;
         if (rootH <= 0 || (flex != null && flexH <= 0)) return -1;
 
-        ViewGroup.LayoutParams lp = content.getLayoutParams();
+        View target = content;
+        if (flex instanceof ViewGroup && flex instanceof ScrollView
+                && ((ViewGroup) flex).getChildCount() > 0) {
+            target = ((ViewGroup) flex).getChildAt(0);
+        }
+        int width = target.getWidth();
+        if (width <= 0) width = target.getMeasuredWidth();
+        if (width <= 0 && flex != null) {
+            // 还没量过宽度:用 flex 的可用宽(扣掉它自己的左右 padding)兜底
+            width = flex.getWidth() - flex.getPaddingLeft() - flex.getPaddingRight();
+        }
+        if (width <= 0) return -1;
+
+        ViewGroup.LayoutParams lp = target.getLayoutParams();
         if (lp == null) {
             lp = new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT);
         }
         int oldH = lp.height;
         lp.height = ViewGroup.LayoutParams.WRAP_CONTENT;
-        content.setLayoutParams(lp);
+        target.setLayoutParams(lp);
         int wSpec = View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY);
         int hSpec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED);
-        content.measure(wSpec, hSpec);
-        int contentH = content.getMeasuredHeight();
+        target.measure(wSpec, hSpec);
+        int contentH = target.getMeasuredHeight();
         lp.height = oldH;
-        content.setLayoutParams(lp);
+        target.setLayoutParams(lp);
         if (contentH <= 0) return -1;
+        if (flex != null) contentH += flex.getPaddingTop() + flex.getPaddingBottom();
         int overhead = rootH - (flex != null ? flexH : 0);
         return Math.max(overhead, 0) + contentH;
     }
@@ -370,10 +407,30 @@ public class SheetResizeController implements View.OnTouchListener {
                 visualH = rawH;
             }
         } else {
-            curH = downH;
-            visualH = downH + rubberOf(rawH - downH);
+            // 高度已定(内容不足展开):**上拉**只做越界回弹(没有可展开的内容,不该被拉高);
+            // **下拉**要真的变矮 —— 否则"按住往下压收起"这个底部抽屉的通用手势就失效了
+            // (以前这里上下都只做橡皮筋,配合 release 里的早退,短内容抽屉根本关不掉)
+            if (rawH < downH) {
+                curH = Math.max(rawH, downH - closeDragPx());
+                visualH = curH;
+            } else {
+                curH = downH;
+                visualH = downH + rubberOf(rawH - downH);
+            }
         }
         if (visualH > 0) applyHeight(visualH);
+    }
+
+    /**
+     * 高度已定时"下拉收起"的位移阈值(px)。
+     * <p>
+     * 不能沿用可展开态那种绝对高度判定(压到 ≤30% 屏高):抽屉本来就不高于 30% 屏高时
+     * (大屏 + 内容极少,详情弹窗真的会遇到),绝对阈值一拖就立刻成立 → 稍碰一下就关闭;
+     * 也不能把下限钳到 30% 屏高,那反而会把矮抽屉拉高。故这里按位移判定:
+     * 拖够「30% 屏高」或「抽屉自身高度的 1/2」(取小,且不小于下拉回弹量)即视为要收起关闭。
+     */
+    private int closeDragPx() {
+        return Math.min(closeH, Math.max(Math.round(downH * 0.5f), maxRubberDown));
     }
 
     private void release(float upRawX, float upRawY) {
@@ -395,7 +452,14 @@ public class SheetResizeController implements View.OnTouchListener {
             return;
         }
         if (!resizable) {
-            settleTo(curH); // 高度已定:从越界位置平滑弹回固定高
+            // 高度已定(内容不足展开):往下拖够阈值同样算"收起关闭"(与可展开态一致的手感),
+            // 否则平滑弹回拖动前的高度 —— 阈值口径见 closeDragPx()
+            if (downH - curH >= closeDragPx()) {
+                if (listener != null) listener.onSheetClosed();
+                popup.dismiss();
+                return;
+            }
+            settleTo(downH);
             return;
         }
         if (curH <= closeH) {

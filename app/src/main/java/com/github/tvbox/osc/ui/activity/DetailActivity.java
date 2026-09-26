@@ -18,6 +18,9 @@ import android.view.animation.DecelerateInterpolator;
 import android.widget.FrameLayout;
 import android.widget.Toast;
 
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 import androidx.lifecycle.Observer;
 import androidx.lifecycle.ViewModelProvider;
 
@@ -127,13 +130,48 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
         initViewModel();
         initData();
         initPipHelper();
+        // 状态栏不设底色(ImmersionBar 默认 statusBarColor = 0 即透明),沿用 BaseActivity 的全站口径
+        // "状态栏透明 + 图标色跟随明暗主题":页面底(窗口底色/背景层)自己透上来,亮色主题下不再是一条黑带。
+        // 原来这里写死 statusBarColor(black) + statusBarDarkFont(false)(见 5fbcae95 / dfa53b54:
+        // 当初为治"详情页顶部与状态栏重叠",顺手把状态栏刷成了黑底),详情页没有 AppTitleBar,
+        // 黑底就成了唯一一条既不跟主题、也不跟页面背景的色带。
+        //
+        // fitsSystemWindows 走 false(内容顶到状态栏下面)+ 自己按 insets 让位(applySystemBarsPadding):
+        // 原先是 true(系统整帧内缩 android.R.id.content),而页面背景层就挂在 content 最底层
+        // (PageBackgroundView.attach),于是背景层跟着内缩 —— 状态栏那条没有任何人绘制,露出的是
+        // DecorView 的 android:windowBackground(@color/bg_body 纯色),看起来就是"状态栏一条色带";
+        // 其它页不内缩,所以那条是背景图。改成自己让位后:背景层铺满整屏(那条=页面背景,与其它页一致),
+        // 内容(含预览播放器)位置与内缩时完全一致 —— 不会重新顶到状态栏下面。
         ImmersionBar.with(this)
-                .statusBarColor(R.color.black)
+                .statusBarDarkFont(!Utils.isDarkTheme())
                 .navigationBarColor(R.color.white)
-                .fitsSystemWindows(true)
-                .statusBarDarkFont(false)
+                .fitsSystemWindows(false)
                 .init();
+        applySystemBarsPadding();
         toggleScreenShotListen(true);
+    }
+
+    /**
+     * 按系统栏 insets 给根布局让位(替代 fitsSystemWindows 的整帧内缩,原因见 {@link #init()} 上方注释)。
+     * <p>
+     * 用 insets 监听而不是一次性算状态栏高度:全屏预览/横屏隐藏系统栏时 insets 归 0,padding 自动归零;
+     * 刘海屏的 displayCutout 一并算进去,横屏侧边被裁的区域也不会被内容压住。
+     * <p>
+     * 根布局(activity_detail 的根 FrameLayout)自身不带 padding,这里整体接管;页面背景层是它的兄弟
+     * (在 content 里更靠下),不受 padding 影响,所以仍铺满整屏。
+     */
+    private void applySystemBarsPadding() {
+        View root = mBinding.getRoot();
+        ViewCompat.setOnApplyWindowInsetsListener(root, (v, insets) -> {
+            Insets bars = insets.getInsets(
+                    WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
+            if (v.getPaddingLeft() != bars.left || v.getPaddingTop() != bars.top
+                    || v.getPaddingRight() != bars.right || v.getPaddingBottom() != bars.bottom) {
+                v.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+            }
+            return insets;
+        });
+        ViewCompat.requestApplyInsets(root);
     }
 
     /**

@@ -56,7 +56,6 @@ public class VideoDetailDialog extends SheetResizableBottomPopup {
     private int descFullH;          // 展开全文高度(px,预渲染)
     private int desc5H;             // 收起 5 行高度(px)
     private int headerToDescH;      // 抽屉顶到简介区顶的固定高度(px)
-    private int mDescWidthPx;
     private int mLinkColor;         // 内联展开/收回链接色
 
     public VideoDetailDialog(@NonNull Context context, @NonNull Host host, VodInfo vodInfo) {
@@ -126,7 +125,7 @@ public class VideoDetailDialog extends SheetResizableBottomPopup {
     // 简介:预渲染 + 状态
     // ------------------------------------------------------------------
 
-    /** 布局完成后调用一次:量文本、决定“短文本自然高 / 长文本可展开”、并让抽屉就位 */
+    /** 布局完成后调用一次:量文本、决定“短文本按内容固定高 / 长文本可展开”,并让抽屉就位 */
     private void setupDescription() {
         try {
             if (mTvDes == null || mCtrl == null) return;
@@ -147,34 +146,45 @@ public class VideoDetailDialog extends SheetResizableBottomPopup {
             descFullH = Math.max(lineH, lineCount * lineH);
             desc5H = Math.min(descFullH, DESC_MIN_LINES * lineH);
 
+            // 高度口径(收起/展开两态共用):抽屉顶 → 简介区顶(固定头) + ScrollView 上下内边距
+            // + 文字 + 内容容器的底部内边距。
+            // 以前漏了 ScrollView 的 8+8dp:算出来的高度比实际需要矮 16dp,收起态那 5 行就装不下
+            // ——底部被截、还能滑(ScrollView 的 setEnabled(false) 其实挡不住触摸滚动,
+            //  "收起态不可滚动"只能靠高度算对、内容正好装下来保证)
+            headerToDescH = mScroll.getTop();
+            int scrollPad = mScroll.getPaddingTop() + mScroll.getPaddingBottom();
+            int bottomPad = Math.round(18 * density);
+            int expandedPx = Math.round(ScreenUtils.getScreenHeight()
+                    * DialogHeightPolicy.SHEET_RATIO_EXPANDED);
+            int foldRowH = Math.round(24 * density);
+            int availableWhenExpanded = expandedPx - headerToDescH - scrollPad - foldRowH - bottomPad;
+
             boolean longText = lineCount > DESC_MIN_LINES;
             if (!longText) {
-                // 短文本:简介=内容高,无折叠、不可滚动,抽屉走自然高
+                // 短文本:简介就是全部内容,既没有"展开/收回"文案,也不该被 50% 档截断
+                // (固定头本来就不矮,50% 档下底部会缺一截,而这个状态又没有展开入口 → 用户根本读不全)。
+                // 改为按内容自然高固定展示(上限 70%),不进 50↔70 状态机;下拉照样能压到 ≤30% 收起关闭。
                 descFoldable = false;
-                applyDescMode(false);
-                mCtrl.sync();
+                int needH = headerToDescH + scrollPad + descFullH + bottomPad;
+                // 连 70% 都装不下(小屏/字段特别多)才允许区内滚动,否则读不到;正常情况下内容正好装下,无滚动
+                descLong = needH > expandedPx;
+                setDescExpandedInternal(false);
+                mCtrl.forceFixedHeight(Math.min(expandedPx, needH));
                 return;
             }
 
             // 长文本:预渲染汇总后进入“可展开”
             descFoldable = true;
-            mDescWidthPx = width;
             // "… 展开 / 收回"用文字高亮色(蓝色):color_highlight 是主题主色(近黑/近白),压在正文上看着"没高亮"
             mLinkColor = ContextCompat.getColor(getContext(), R.color.text_accent);
             mCollapsedSpan = InlineExpandableText.buildCollapsed(
                     mDescText, paint, width, spacing, DESC_MIN_LINES,
                     "… 展开", this::toggleFold, mLinkColor);
-            headerToDescH = mScroll.getTop();
-            int bottomPad = Math.round(18 * density);
-            int expandedPx = Math.round(ScreenUtils.getScreenHeight()
-                    * DialogHeightPolicy.SHEET_RATIO_EXPANDED);
-            int foldRowH = Math.round(24 * density);
-            int availableWhenExpanded = expandedPx - headerToDescH - foldRowH - bottomPad;
             descLong = descFullH > availableWhenExpanded;
 
             // 收起高:至少能让 5 行完整显示(不足则从 50% 上调);上限不超过 70%
             int defaultCollapsed = Math.round(ScreenUtils.getScreenHeight() * RATIO_COLLAPSED);
-            int needH = headerToDescH + desc5H + bottomPad;
+            int needH = headerToDescH + scrollPad + desc5H + bottomPad;
             int collapsedPx = Math.min(expandedPx, Math.max(defaultCollapsed, needH));
             mCtrl.forceExpandable(collapsedPx);
             // 初始收起态(展开按钮内联在第 5 行行末,不在独立行)
@@ -209,7 +219,8 @@ public class VideoDetailDialog extends SheetResizableBottomPopup {
             mTvDes.setMaxLines(Integer.MAX_VALUE);
             mTvDes.setEllipsize(null);
             mTvFold.setVisibility(View.GONE);
-            mScroll.setEnabled(false);
+            // 短文本正常都能装下(高度按自然高固定)→ 无可滚动;只有连 70% 都装不下时才允许区内滑动
+            mScroll.setEnabled(descLong);
             return;
         }
         if (expanded) {

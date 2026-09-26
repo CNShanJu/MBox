@@ -126,7 +126,7 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
         initButtons();
         applyDraft();
         // 面板默认收起,进页先提示一句怎么调(不然不知道能直接拖背景)
-        AppBubble.toast("单指拖动调整位置,双指等比缩放;调好后点\"确认背景\"");
+        //AppBubble.toast("单指拖动调整位置,双指等比缩放;调好后点\"确认背景\"");
     }
 
     @Override
