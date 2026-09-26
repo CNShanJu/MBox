@@ -2184,7 +2184,13 @@ public class DownloadExecutor {
             muxer.start();
             MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
             // 8MB 起步:高码率关键帧可超 1MB,缓冲不足时倍增重试同一样本(不丢帧),64MB 封顶
-            ByteBuffer buffer = ByteBuffer.allocate(8 * 1024 * 1024);
+            //
+            // 必须是 **直接缓冲(allocateDirect)**:readSampleData 与 writeSampleData 都是 native 实现,
+            // 经 GetDirectBufferAddress 取数据地址,堆缓冲(allocate)拿不到地址 → 抛
+            // IllegalArgumentException,被下面 catch(Throwable) 吞掉 → 一路回退 .ts ——
+            // 表现就是"HLS 下载成品永远变不成 MP4"(3.5.7 引入重封装后一直如此)。
+            // 堆缓冲还多一次 JVM↔native 拷贝,直接缓冲在正确性与性能上都更优。
+            ByteBuffer buffer = ByteBuffer.allocateDirect(8 * 1024 * 1024);
             // 多段 TS 字节拼接后段间 PTS 可能回跳/重置,而 MediaMuxer 要求每轨单调不减,
             // 回退即抛 IllegalArgumentException 导致整个重封装失败——按轨钳制到 lastPts+1
             long lastVideoPts = Long.MIN_VALUE;
@@ -2193,6 +2199,7 @@ public class DownloadExecutor {
                 int track = extractor.getSampleTrackIndex();
                 if (track < 0)
                     break;
+                buffer.clear(); // 每样本前复位(direct 缓冲也复用同一块,别把上一次的数据/位置带过来)
                 int size = extractor.readSampleData(buffer, 0);
                 if (size < 0) {
                     // 缓冲区不足:扩容后重读同一样本(advance 前可重复调用);已封顶则跳过该样本
@@ -2200,7 +2207,8 @@ public class DownloadExecutor {
                         extractor.advance();
                         continue;
                     }
-                    buffer = ByteBuffer.allocate(buffer.capacity() * 2);
+                    // 扩容同样必须 direct:换成堆缓冲会让本来正常的大样本直接抛异常
+                    buffer = ByteBuffer.allocateDirect(buffer.capacity() * 2);
                     continue;
                 }
                 if (size == 0) {
