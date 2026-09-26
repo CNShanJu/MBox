@@ -67,12 +67,12 @@ public abstract class Spider {
     /**
      * 供爬虫(含合并版 jar)取用自定义 DNS。
      * 注意:okhttp4 的 {@code OkHttpClient.Builder.dns()} 参数非空,而"安全DNS"关闭时
-     * {@link OkGoHelper#dnsOverHttps} 为 null——直接返回 null 会导致合并 jar 初始化时抛
+     * {@link OkGoHelper#getDnsOverHttps()} 返回 null——直接返回 null 会导致合并 jar 初始化时抛
      * {@code NPE: Parameter specified as non-null is null ... dns},进而 ExceptionInInitializerError 崩掉应用。
      * 因此 DoH 未启用时回退系统 DNS(Dns.SYSTEM),保证调用方永远拿到非空值。
      */
     public static Dns safeDns() {
-        Dns dns = OkGoHelper.dnsOverHttps;
+        Dns dns = OkGoHelper.getDnsOverHttps();
         return dns != null ? dns : Dns.SYSTEM;
     }
 }

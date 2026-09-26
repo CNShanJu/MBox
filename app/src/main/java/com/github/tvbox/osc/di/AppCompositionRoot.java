@@ -185,7 +185,7 @@ public final class AppCompositionRoot {
 
             @Override
             public okhttp3.OkHttpClient playback() {
-                okhttp3.OkHttpClient c = com.github.tvbox.osc.base.App.playbackHttpClient;
+                okhttp3.OkHttpClient c = com.github.tvbox.osc.base.App.playbackHttpClient();
                 return c != null ? c : com.github.tvbox.osc.net.NetworkProvider.DEFAULT.playback();
             }
         };

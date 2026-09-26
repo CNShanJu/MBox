@@ -79,12 +79,45 @@ public class DownloadManager {
 
     /** 每个任务当前活动的 HTTP 响应,用于暂停/删除时关闭对应连接 */
     final Map<String, Response> activeResponses = new ConcurrentHashMap<>();
-    /** 下载专用客户端:基于 :core-network 公共根(共享 TLS/UA/Brotli/DNS),超时比播放请求长 */
-    static final OkHttpClient downloadClient = OkGoHelper.newBaseBuilder()
-            .connectTimeout(30, TimeUnit.SECONDS)
-            .readTimeout(60, TimeUnit.SECONDS)
-            .writeTimeout(60, TimeUnit.SECONDS)
-            .build();
+    /**
+     * 下载专用客户端:基于 :core-network 公共根(共享 TLS/UA/Brotli/DNS),超时比播放请求长。
+     * <p>
+     * 为什么是"懒建 + 可替换"而不是 {@code static final}:DoH 是 build 时写进 client 的,
+     * 定死实例就要求用户重启才能换安全 DNS。改为 volatile + 统一 {@link #buildDownloadClient()} 后,
+     * 安全 DNS 变更时整体换新实例,下一次取用即用新 DNS。
+     * 旧实例<b>不 shutdown</b>:它可能正被 {@link DownloadExecutor}/{@link DownloadStore} 的在跑请求持有,
+     * 主动关闭会打断正在下的任务;让它们自然结束后交给 GC。
+     */
+    static volatile OkHttpClient downloadClient = null;
+
+    /** 取下载客户端(懒建):首次取用与每次 DoH 变更后各建一次,不在请求热路径上重复构建 */
+    static OkHttpClient downloadClient() {
+        OkHttpClient c = downloadClient;
+        if (c == null) {
+            synchronized (DownloadManager.class) {
+                c = downloadClient;
+                if (c == null) {
+                    c = buildDownloadClient();
+                    downloadClient = c;
+                }
+            }
+        }
+        return c;
+    }
+
+    private static OkHttpClient buildDownloadClient() {
+        return OkGoHelper.newBaseBuilder()
+                .connectTimeout(30, TimeUnit.SECONDS)
+                .readTimeout(60, TimeUnit.SECONDS)
+                .writeTimeout(60, TimeUnit.SECONDS)
+                .build();
+    }
+
+    // :download 是业务模块,订阅 :core-network 的 DoH 变更属正向依赖(基础模块不认识业务模块);
+    // 放在静态初始化:本类被首次触碰(DownloadFacade.init)即完成订阅,不依赖 app 侧另行调用。
+    static {
+        OkGoHelper.addDohChangeListener(url -> downloadClient = null);
+    }
 
     /** 失败自动重试次数(不含首次) */
     static final int MAX_RETRY = 2;

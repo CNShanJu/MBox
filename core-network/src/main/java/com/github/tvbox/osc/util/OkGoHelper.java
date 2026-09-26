@@ -12,10 +12,10 @@ import com.github.tvbox.osc.config.SystemConfig;
 import com.github.tvbox.osc.util.urlhttp.BrotliInterceptor;
 
 import java.io.File;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 
 import javax.net.ssl.SSLSocketFactory;
@@ -37,33 +37,46 @@ public class OkGoHelper {
 
     private static Context appContext;
 
-    public static DnsOverHttps dnsOverHttps = null;
+    /** 当前生效的安全 DNS 解析器(null=关闭)。{@link #refreshDnsOverHttps()} 整体替换,读方只取一次引用 */
+    private static volatile DnsOverHttps dnsOverHttps = null;
 
-    public static ArrayList<String> dnsHttpsList = new ArrayList<>();
+    /** 当前生效的 DoH 地址(空串=关闭):变更比对用字符串,避免拿 DnsOverHttps 解析反推 */
+    private static volatile String dohUrl = "";
+
+    /** 安全 DNS 选项文案(事实源在本模块 DohOptions;unmodifiable,防止外部原地改坏共享表) */
+    public static final List<String> dnsHttpsList = DohOptions.LABELS;
+
+    /**
+     * 安全 DNS 变更监听:模块初始化时注册,DoH 变化时回调<b>重建自己的客户端</b>。
+     * <p>
+     * 为什么要有它::core-network 只负责建自己那几个客户端,spider/download 等模块各自持有
+     * 按 DoH 构建的 client(这些 client 的 DNS 在 build 时就固定了,改字段不会生效)。
+     * 让每个模块各自在设置页被调用一遍会形成反向依赖(基础模块不得认识业务模块),
+     * 故改由<span>变更方发信号、持有方订阅</span> —— 方向仍是业务模块 → :core-network。
+     */
+    public interface DohChangeListener {
+        void onDohChanged(String dohUrl);
+    }
+
+    private static final CopyOnWriteArrayList<DohChangeListener> dohChangeListeners = new CopyOnWriteArrayList<>();
+
+    /** 注册 DoH 变更监听(幂等由调用方保证;回调在触发变更的线程上同步执行) */
+    public static void addDohChangeListener(DohChangeListener listener) {
+        if (listener != null) dohChangeListeners.addIfAbsent(listener);
+    }
 
     public static List<ConnectionSpec> getConnectionSpec() {
         return Collections.unmodifiableList(Arrays.asList(RESTRICTED_TLS, MODERN_TLS, COMPATIBLE_TLS, CLEARTEXT));
     }
 
+    /** 安全 DNS 下标 → DoH 地址(空串=关闭);映射唯一事实源在 {@link DohOptions#url(int)} */
     public static String getDohUrl(int type) {
-        switch (type) {
-            case 1: {
-                return "https://doh.pub/dns-query";
-            }
-            case 2: {
-                return "https://dns.alidns.com/dns-query";
-            }
-            case 3: {
-                return "https://doh.360.cn/dns-query";
-            }
-        }
-        return "";
+        return DohOptions.url(type);
     }
 
-    /** 安全 DNS 选项数(与 {@link #dnsHttpsList} 一致):UI 取下标前必须先过这里/{{@link #dohLabel}} */
+    /** 安全 DNS 选项数(UI 取下标前必须先过这里/{{@link #dohLabel}}) */
     public static int dohCount() {
-        initDnsOverHttps();
-        return dnsHttpsList.size();
+        return DohOptions.count();
     }
 
     /**
@@ -74,19 +87,23 @@ public class OkGoHelper {
      * 夹到最后一个有效项(而不是"关闭"),是为了保住用户"我要用 DoH"的意图。
      */
     public static String dohLabel(int index) {
-        initDnsOverHttps();
-        if (dnsHttpsList.isEmpty()) return "";
-        int i = Math.max(0, Math.min(dnsHttpsList.size() - 1, index));
-        return dnsHttpsList.get(i);
+        return DohOptions.label(index);
     }
 
     static void initDnsOverHttps() {
-        if (dnsHttpsList.isEmpty()) {
-            dnsHttpsList.add("关闭");
-            dnsHttpsList.add("腾讯");
-            dnsHttpsList.add("阿里");
-            dnsHttpsList.add("360");
-        }
+        String url = getDohUrl(SystemConfig.getDohUrl());
+        dnsOverHttps = buildDohResolver(url);
+        dohUrl = url;
+    }
+
+    /**
+     * 按给定 DoH 地址构建解析器(关闭时返回 null)。
+     * <p>
+     * 这里的 dohClient 只用于解析 DoH 域名本身,与业务客户端<b>独立</b>:它存在的意义是
+     * 解析时先走系统 DNS,避免"用 DoH 解析 DoH 域名"的自锁。
+     */
+    private static DnsOverHttps buildDohResolver(String dohUrl) {
+        if (dohUrl == null || dohUrl.isEmpty()) return null;
         OkHttpClient.Builder builder = new OkHttpClient.Builder();
         HttpLoggingInterceptor loggingInterceptor = new HttpLoggingInterceptor();
         if (SystemConfig.isDebugOpen()) {
@@ -106,16 +123,12 @@ public class OkGoHelper {
             builder.cache(new Cache(new File(appContext.getCacheDir().getAbsolutePath(), "dohcache"), 10 * 1024 * 1024));
         }
         OkHttpClient dohClient = builder.build();
-        String dohUrl = getDohUrl(SystemConfig.getDohUrl());
-        if (dohUrl.isEmpty()) {
-            dnsOverHttps = null;
-        } else {
-            dnsOverHttps = new DnsOverHttps.Builder().client(dohClient).url(HttpUrl.get(dohUrl)).build();
-        }
+        return new DnsOverHttps.Builder().client(dohClient).url(HttpUrl.get(dohUrl)).build();
     }
 
-    static OkHttpClient defaultClient = null;
-    static OkHttpClient noRedirectClient = null;
+    /** 默认客户端(可被 DoH 变更整体替换,故 volatile;读方取一次引用用到底,不会中途换池) */
+    static volatile OkHttpClient defaultClient = null;
+    static volatile OkHttpClient noRedirectClient = null;
     /** 图片专用客户端(带磁盘缓存):仅给 Picasso 等图片加载用,与 API/搜索流量隔离 */
     private static volatile OkHttpClient imageClient = null;
 
@@ -123,11 +136,66 @@ public class OkGoHelper {
     private static final long IMAGE_CACHE_MAX_BYTES = 100L * 1024 * 1024;
 
     /**
-     * 根据当前 Hawk 配置重建 DnsOverHttps(替代原 DnsOverHttps.setUrl 原地修改)
-     * 注意:已构建的 OkHttpClient 不会立即生效,重启应用或下次重建客户端时生效
+     * 安全 DNS 改动后<b>立即</b>换用新解析器:重建 DoH 解析器 + 本模块按 DoH 构建的客户端
+     * ({@code defaultClient}/{@code noRedirectClient},图片客户端置空下次懒建),
+     * 再广播给外部模块(spider/download/app 各自重建自己的 client)。
+     * <p>
+     * 为什么必须重建而不是改字段:OkHttp 的 DNS 是 build 时拷进 client 的,已建好的 client
+     * 改静态字段不会生效(原实现的"要重启"根因)。旧 client 一律<b>不 shutdown</b>:
+     * 它可能正在被在跑的请求(下载分片/正在播的流)持有,主动关闭会打断这些请求;
+     * 让它们自然跑完、随引用释放交给 GC —— 代价是极短期的连接池重复,换来"换 DNS 不打断业务"。
      */
     public static void refreshDnsOverHttps() {
+        if (isSameDohUrl(getDohUrl(SystemConfig.getDohUrl()))) return; // 早退:值没变,不该动连接池
         initDnsOverHttps();
+        rebuildDohClients();
+        notifyDohChanged(dohUrl);
+    }
+
+    /** 当前生效的 DoH 地址(空串=关闭);供变更比对与外部模块读取 */
+    public static String currentDohUrl() {
+        return dohUrl;
+    }
+
+    /** 当前生效的安全 DNS 解析器(null=关闭);供合并版爬虫/回环 DNS 转发读取 */
+    public static DnsOverHttps getDnsOverHttps() {
+        return dnsOverHttps;
+    }
+
+    /**
+     * 当前生效的 DNS 策略(关闭时为系统 DNS)。
+     * <p>
+     * 为什么不直接返回 {@code getDnsOverHttps()}:okhttp4 的 {@code Builder.dns()} 参数非空,
+     * 关设置时传 null 会抛 {@code NPE: Parameter specified as non-null is null}(合并版爬虫曾因此崩在初始化)。
+     */
+    public static okhttp3.Dns currentDns() {
+        DnsOverHttps current = dnsOverHttps;
+        return current != null ? current : okhttp3.Dns.SYSTEM;
+    }
+
+    private static boolean isSameDohUrl(String candidate) {
+        return dohUrl.equals(candidate == null ? "" : candidate);
+    }
+
+    private static void notifyDohChanged(String dohUrl) {
+        for (DohChangeListener listener : dohChangeListeners) {
+            try {
+                listener.onDohChanged(dohUrl);
+            } catch (Throwable th) {
+                // 单个订阅方重建失败不得影响其它模块(例如图片客户端没建好不该拖垮下载客户端)
+                th.printStackTrace();
+            }
+        }
+    }
+
+    private static synchronized void rebuildDohClients() {
+        OkHttpClient.Builder builder = newBaseBuilder();
+        defaultClient = builder.build();
+        builder.followRedirects(false);
+        builder.followSslRedirects(false);
+        noRedirectClient = builder.build();
+        // 图片客户端派生自 defaultClient(共享连接池),置空即可:下次取用时按新根重建
+        imageClient = null;
     }
 
     public static OkHttpClient getDefaultClient() {
@@ -227,21 +295,15 @@ public class OkGoHelper {
     public static void init(Context context) {
         appContext = context == null ? null : context.getApplicationContext();
         initDnsOverHttps();
-
-        OkHttpClient.Builder builder = newBaseBuilder();
-
-        defaultClient = builder.build();
-
-        builder.followRedirects(false);
-        builder.followSslRedirects(false);
-        noRedirectClient = builder.build();
+        // 首次构建与"换 DoH 后重建"同一段代码:两处各自 build 迟早漂移(超时/重定向配置漏改一边)
+        rebuildDohClients();
     }
 
     /**
      * SSL 装配(安全红线):默认走 OkHttp 系统证书校验(校验证书链 + 默认主机名校验);
      * 仅当用户显式开启"忽略证书错误"(SystemConfig.isIgnoreSslError,默认关)时,
      * 才为个别自签名/证书错误站点挂载 SSLCompat(信任任意证书)放行。
-     * 放行覆盖 WebView(即时生效)与 OkHttp 网络请求(重启应用后按新值重建客户端生效)。
+     * 放行覆盖 WebView(即时生效)与 OkHttp 网络请求(本模块客户端在下次"换 DoH/重启"重建时生效)。
      */
     private static synchronized void setOkHttpSsl(OkHttpClient.Builder builder) {
         try {

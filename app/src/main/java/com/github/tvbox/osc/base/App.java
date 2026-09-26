@@ -60,10 +60,11 @@ public class App extends MultiDexApplication {
         super.onCreate();
         instance = this;
         initParams();
-        // OKGo: 全局 OkHttpClient 初始化(common 模块, context 注入); Exo/Picasso 初始化拆回 app 侧
+        // OKGo: 全局 OkHttpClient 初始化(:core-network, context 注入); Exo/Picasso 初始化拆回 app 侧
         OkGoHelper.init(this);
-        initExoOkHttpClient();
         initPicasso();
+        // 安全 DNS 变更订阅:本模块的播放客户端与 Picasso 都要跟着换(必须在 initPicasso 之后注册)
+        registerDohChangeListener();
         // EPG JSON 解析从启动主线程移除:首次直播取 EPG 信息时懒加载(EpgUtil.getEpgInfo 内自触发)
         // 初始化Web服务器
         ControlManager.init(this);
@@ -355,32 +356,118 @@ public class App extends MultiDexApplication {
         }
     }
 
-    /** Exo 播放内核使用与全局共享同一套根配置的 OkHttpClient(公共基础在 :core-network OkGoHelper.newBaseBuilder) */
-    private void initExoOkHttpClient() {
+    /**
+     * Exo 播放内核客户端:懒建 + DoH 变更后整体替换(替代原 static final 字段)。
+     * <p>
+     * 为什么可换:安全 DNS 只在 build 时写进 client,定死实例就只能重启才换 DNS。
+     * 而 Exo 侧不换的另一个原因是 {@link xyz.doikki.videoplayer.exo.ExoMediaSourceHelper}
+     * 会把 client 包成 DataSource 工厂并缓存 —— 换 client 必须同时让那个工厂失效。
+     */
+    private static final class PlaybackHttp {
+        static volatile OkHttpClient client;
+        /** 安全 DNS 变更后置位:下次取用(起播/预加载)时才重建,避免打断正在播的流 */
+        static volatile boolean dirty;
+    }
+
+    /**
+     * 播放内核客户端(供 NetworkProvider.playback 复用同一实例)。
+     * <p>
+     * 懒建:首次起播时才构建(启动路径不再多做一次客户端构建);
+     * 旧实例不 shutdown:正在播的流仍持有它的连接;新起的播放/预加载在下次取用时拿到新实例。
+     */
+    public static OkHttpClient playbackHttpClient() {
+        OkHttpClient c = PlaybackHttp.client;
+        if (c != null && !PlaybackHttp.dirty) return c;
+        synchronized (PlaybackHttp.class) {
+            if (PlaybackHttp.client == null || PlaybackHttp.dirty) {
+                PlaybackHttp.client = buildPlaybackClient(PlaybackHttp.client);
+                PlaybackHttp.dirty = false;
+            }
+            return PlaybackHttp.client;
+        }
+    }
+
+    /**
+     * @param previous 已有实例:重建时当作"根"派生,复用其连接池/线程池 ——
+     *                 同一份配置只换 DNS,没必要连连接池一起丢掉
+     */
+    private static OkHttpClient buildPlaybackClient(OkHttpClient previous) {
+        OkHttpClient.Builder builder = previous != null
+                ? previous.newBuilder()
+                : OkGoHelper.newBaseBuilder().retryOnConnectionFailure(true);
+        builder.followRedirects(true);
+        builder.followSslRedirects(true);
+        builder.dns(OkGoHelper.currentDns());
+        OkHttpClient c = builder.build();
         try {
-            OkHttpClient.Builder builder = OkGoHelper.newBaseBuilder();
-            builder.retryOnConnectionFailure(true);
-            builder.followRedirects(true);
-            builder.followSslRedirects(true);
-            playbackHttpClient = builder.build();
-            xyz.doikki.videoplayer.exo.ExoMediaSourceHelper.getInstance(this).setOkClient(playbackHttpClient);
+            xyz.doikki.videoplayer.exo.ExoMediaSourceHelper.getInstance(instance).setOkClient(c);
+        } catch (Throwable th) {
+            th.printStackTrace();
+        }
+        return c;
+    }
+
+    /**
+     * 安全 DNS 变更:播放客户端与 Picasso 都要跟着换,否则"设置里改了、播放/海报还是老 DNS"。
+     * <p>
+     * 播放侧只<b>置脏</b>不立即重建:设置页点击时可能正在播,当场换 client 会让在跑的流
+     * 落到被丢弃的连接池上(卡顿风险);置脏后由下一次取用统一重建。
+     * 一次注册(不注销):本类生命周期 = 进程,监听列表用写时复制不会残留无效引用。
+     */
+    private void registerDohChangeListener() {
+        // 写入方(设置页直接写 / 备份恢复 importConfig / 以后新增入口)一律经 SystemConfig 门面,
+        // 这里订阅门面变更并复核 DoH:值真变了才重建(OkGoHelper 内部按 url 早退),
+        // 这样"换安全 DNS"不依赖每个调用方都记得多调一次 refreshDnsOverHttps
+        com.github.tvbox.osc.config.SystemConfig.subscribe(OkGoHelper::refreshDnsOverHttps);
+        OkGoHelper.addDohChangeListener(url -> {
+            PlaybackHttp.dirty = true;
+            // 同步作废 Exo 已缓存的 DataSource 工厂(它裹着旧 client),下次起播按新 client 重建
+            try {
+                xyz.doikki.videoplayer.exo.ExoMediaSourceHelper.getInstance(this).dropOkClient();
+            } catch (Throwable th) {
+                th.printStackTrace();
+            }
+            // Picasso 单例持有的是图片客户端实例:换 DNS 后换掉它的下载器
+            // (Picasso 不允许重建单例,只能更换 downloader)
+            reinitPicassoDownloader();
+        });
+    }
+
+    /** 用当前图片客户端替换 Picasso 的下载器(DoH 变更时调用;Picasso 单例本身不可重建) */
+    private void reinitPicassoDownloader() {
+        try {
+            OkHttpClient client = currentImageClient();
+            if (client == null) return;
+            com.github.tvbox.osc.picasso.MyOkhttpDownLoader downloader =
+                    new com.github.tvbox.osc.picasso.MyOkhttpDownLoader(client);
+            java.lang.reflect.Field f = com.squareup.picasso.Picasso.class.getDeclaredField("downloader");
+            f.setAccessible(true);
+            f.set(com.squareup.picasso.Picasso.get(), downloader);
         } catch (Throwable th) {
             th.printStackTrace();
         }
     }
 
-    /** 播放内核客户端(供 NetworkProvider.playback 复用同一实例) */
-    public static volatile okhttp3.OkHttpClient playbackHttpClient;
+    /**
+     * 当前图片客户端(带分发配置)。
+     * <p>
+     * 为什么每次都要 setMaxRequestsPerHost:换 DoH 后图片客户端是新实例,而
+     * {@code dispatcher()} 是它的成员,新实例只有默认值(5),漏配会让海报并发骤降。
+     */
+    private static OkHttpClient currentImageClient() {
+        OkHttpClient client = OkGoHelper.getImageClient();
+        if (client == null) client = OkGoHelper.getDefaultClient();
+        if (client != null) client.dispatcher().setMaxRequestsPerHost(32);
+        return client;
+    }
 
     /** Picasso 全局单例（原 OkGoHelper.initPicasso 拆回 app 侧） */
     private void initPicasso() {
         try {
             // 图片专用客户端:共享默认连接池 + 100MB 磁盘缓存 + 缓存头兜底(OkGoHelper.getImageClient);
             // 修:搜索结果等长列表滑走再滑回时,海报不再因无磁盘缓存而回源重下
-            OkHttpClient client = OkGoHelper.getImageClient();
-            if (client == null) client = OkGoHelper.getDefaultClient();
+            OkHttpClient client = currentImageClient();
             if (client == null) return;
-            client.dispatcher().setMaxRequestsPerHost(32);
             com.github.tvbox.osc.picasso.MyOkhttpDownLoader downloader = new com.github.tvbox.osc.picasso.MyOkhttpDownLoader(client);
             com.squareup.picasso.Picasso picasso = new com.squareup.picasso.Picasso.Builder(this)
                     .downloader(downloader)

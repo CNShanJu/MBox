@@ -29,16 +29,47 @@ public class OkHttp {
     private static final int TIMEOUT = 30 * 1000;
     private static final int CACHE = 100 * 1024 * 1024;
 
-    private DnsOverHttps dns;
-    private OkHttpClient client;
+    /** 解析器:写方在设置线程/静态初始化,读方在爬虫请求线程,故 volatile 保证可见性 */
+    private volatile DnsOverHttps dns;
+    private volatile OkHttpClient client;
     private ProxySelector selector;
+
+    /** 当前生效的 DoH 地址(空串=关闭):仅用于日志/排查,行为以 {@link #dns} 为准 */
+    private volatile String dohUrl = "";
 
     private static class Loader {
         static volatile OkHttp INSTANCE = new OkHttp();
     }
 
+    /**
+     * 订阅 :core-network 的安全 DNS 变更(设置页改"安全 DNS"后立即重建本模块 client)。
+     * <p>
+     * 方向:业务模块 → 基础设施,合法;反过来(core-network 直接调 :spider)会形成反向依赖。
+     * 放在静态初始化而非 app 侧显式调用:app/UI 一律不许直连 spider 实现(AGENTS §二),
+     * 爬虫自身订阅后,合并 jar 内的爬虫也能在首次触碰本类时自动跟上设置。
+     */
+    static {
+        initDoh(com.github.tvbox.osc.util.OkGoHelper.currentDohUrl());
+        com.github.tvbox.osc.util.OkGoHelper.addDohChangeListener(OkHttp::initDoh);
+    }
+
+    /**
+     * 按当前设置重建 DoH 解析器(空串=关闭)。
+     * <p>
+     * 必须换掉 {@code client}:OkHttp 的 DNS 在 build 时固化,只改 dns 字段对已建 client 无效 ——
+     * 这正是"爬虫侧从不跟随安全 DNS 设置"的原因(原 setDoh 全仓无调用点)。
+     */
+    private static synchronized void initDoh(String url) {
+        get().setDoh(new Doh().name("").url(url == null ? "" : url));
+    }
+
     public static OkHttp get() {
         return Loader.INSTANCE;
+    }
+
+    /** 当前生效的 DoH 地址(空串=关闭);排查"爬虫到底走没走安全 DNS"时读它 */
+    public static String dohUrl() {
+        return get().dohUrl;
     }
 
     public static Dns dns() {
@@ -52,7 +83,9 @@ public class OkHttp {
             dohBuilder.sslSocketFactory(new SSLCompat(), SSLCompat.TM);
         }
         OkHttpClient dohClient = dohBuilder.build();
-        dns = doh.getUrl().isEmpty() ? null : new DnsOverHttps.Builder().client(dohClient).url(HttpUrl.get(doh.getUrl())).bootstrapDnsHosts(doh.getHosts()).build();
+        dohUrl = doh.getUrl();
+        dns = dohUrl.isEmpty() ? null : new DnsOverHttps.Builder().client(dohClient).url(HttpUrl.get(dohUrl)).bootstrapDnsHosts(doh.getHosts()).build();
+        // 置空即"下次懒建":正在跑的请求仍持有旧 client(不打断),不再有请求方来取时随之被 GC
         client = null;
     }
 
@@ -135,6 +168,10 @@ public class OkHttp {
     }
 
     private static OkHttpClient.Builder getBuilder() {
+        // 自愈:本类若在 :core-network 初始化之前就被触碰(合并 jar 早跑 / 启动顺序变化),
+        // 静态初始化那次会拿到"未启用";建 client 前比对一次,保证爬到的一定是当前设置
+        String configured = com.github.tvbox.osc.util.OkGoHelper.currentDohUrl();
+        if (!configured.equals(get().dohUrl)) initDoh(configured);
         OkHttpClient.Builder builder = new OkHttpClient.Builder().addInterceptor(new OkhttpInterceptor()).connectTimeout(TIMEOUT, TimeUnit.MILLISECONDS).readTimeout(TIMEOUT, TimeUnit.MILLISECONDS).writeTimeout(TIMEOUT, TimeUnit.MILLISECONDS).dns(dns());
         // 安全红线:默认系统证书校验(证书链 + 主机名校验);仅用户显式开启"忽略证书错误"(默认关)
         // 才为个别自签名源站点挂载 SSLCompat(信任任意证书)放行,禁止无条件全局关闭 TLS 校验。

@@ -207,8 +207,9 @@ public class RemoteServer extends NanoHTTPD {
                 byte[] rs = new byte[0];
                 try {
                     // okhttp 4 的 DnsOverHttps 不再提供原始 DNS 报文转发,这里改为返回解析结果文本
-                    if (OkGoHelper.dnsOverHttps != null) {
-                        List<InetAddress> addresses = OkGoHelper.dnsOverHttps.lookup(name);
+                    okhttp3.dnsoverhttps.DnsOverHttps doh = OkGoHelper.getDnsOverHttps();
+                    if (doh != null) {
+                        List<InetAddress> addresses = doh.lookup(name);
                         if (addresses != null && !addresses.isEmpty()) {
                             StringBuilder sb = new StringBuilder();
                             for (InetAddress a : addresses) {

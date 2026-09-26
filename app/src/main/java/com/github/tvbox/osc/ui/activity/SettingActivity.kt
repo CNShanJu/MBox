@@ -236,7 +236,9 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
                 override fun click(value: String?, pos: Int) {
                     mBinding.tvDns.text = OkGoHelper.dnsHttpsList[pos]
                     SystemConfig.setDohUrl(pos)
-                    biz("安全DNS: " + OkGoHelper.dnsHttpsList[pos])
+                    biz("安全DNS: " + OkGoHelper.dnsHttpsList[pos] + "(即时生效)")
+                    // 幂等:门面变更订阅里已复核并重建过一次,这里再调一次只为"设置页自身也直接触发"
+                    // (值未变时 OkGoHelper 内部早退,不会重建连接池)
                     OkGoHelper.refreshDnsOverHttps()
                     PlayerTrackHelper.toggleDotPort(pos > 0)
                 }

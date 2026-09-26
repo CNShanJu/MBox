@@ -7,6 +7,14 @@
 
 ## 0. 近期进展补充（2026-09-25）
 
+- **安全 DNS(DoH)改为即时生效 + 爬虫侧接上（2026-09-27）**：此前 `SettingActivity` 改"安全 DNS"只换静态字段 `OkGoHelper.dnsOverHttps`，而 OkHttp 的 DNS 是 **build 时写进 client** 的 —— 已建好的 `defaultClient`/`noRedirectClient`/Exo `playbackHttpClient`/Picasso 图片客户端/下载客户端全都继续用旧 DNS，**必须重启**；`spider` 的 `catvod.net.OkHttp.setDoh` 更是**全仓零调用点**，爬虫请求从不走 DoH。本轮改为：
+  - 选项表/夹取/下标→url 收敛为纯逻辑 `util/DohOptions`（+`DohOptionsTest` 6 例）；放在 **`:core-network`** 而非 `:common`——门禁里 `:core-network` 禁止依赖 `:common`，而这份表正是网络侧自用，跟随使用方落位。`OkGoHelper.dnsHttpsList/dohLabel/dohCount/getDohUrl` 全部委托它（语义不变）。
+  - `OkGoHelper.refreshDnsOverHttps()` 改为**按 url 早退 + 重建**：换掉 `defaultClient`/`noRedirectClient`（统一 `rebuildDohClients()`，与首次构建同一段代码），图片客户端置空下次懒建；旧 client **一律不 shutdown**（在跑的请求仍持有它）。
+  - 新增变更广播 `OkGoHelper.addDohChangeListener`（方向仍是业务模块→`:core-network`，基础模块不认识业务模块）：`:download` 静态订阅置空下载客户端；`:spider` 静态订阅重建自己的 client（`initDoh` 把 `OkGoHelper.currentDohUrl()` 映射成 `Doh`，首次触碰本类即自动跟上）；app 侧订阅把 Exo 播放客户端**置脏**、作废 Exo 的 DataSource 工厂并更换 Picasso 的 downloader。
+  - app 侧还订阅了 `SystemConfig.subscribe` 复核 DoH：设置页、备份恢复（`importConfig`）等**任何**写入方都自动触达，不依赖调用方记得多调一次。
+  - **未单测（需真机确认）**：client 重建与 Exo/Picasso 换 client 属纯 Android，JVM 测不了；设置页文案已改"（即时生效）"。
+  - 文件：`core-network/.../util/{DohOptions,OkGoHelper}.java`、`download/.../internal/{DownloadManager,DownloadExecutor,DownloadStore}.java`、`spider/.../catvod/net/OkHttp.java`、`spider/.../catvod/crawler/Spider.java`、`player/.../exo/ExoMediaSourceHelper.java`、`app/.../base/App.java`、`app/.../server/RemoteServer.java`、`app/src/test/.../util/DohOptionsTest.java`。
+
 - **未推送改动全量复查 + 缺陷修复（一轮 review→fix 批次）**：对当时全部未 push 内容（6 个本地 commit + 工作区改动）做了四个域（下载/播放UI/检查更新/网络爬虫）并行审查 + 逐条读码复核，确认并修掉以下问题（均已过 `assembleDebug/assembleRelease/testDebugUnitTest/checkModuleDependencies`，单测 176 例 0 失败）：
   - **默认订阅被清空（高，已被并行会话先修）**：`App.putDefaultApi()` 原逻辑把"上次注入记录"里的订阅无条件删除且拒绝补回 → 第 2 次启动清空内置默认订阅 + 置空 apiUrl。现改为 `injectedTags` 差集（只删"注入过且文件已移除"的项），**需真机回归：装包→启动→杀进程→再启动，订阅仍在**。
   - **发版说明版本号重复（中）**：`ReleaseNotes.aggregate` 单版本分支绕过标题去重 → 弹窗标题"发现新版本 vX"下再来一行 `## vX`；改为单版本同样走 `dropVersionHeader`，引言去重也从"标题命中"子分支里独立出来。
@@ -79,7 +87,7 @@
 - 移除所有“恒真 HostnameVerifier”（OkGoHelper / App / spider OkHttp / SSLCompat.VERIFIER）。
 - WebView `onReceivedSslError` 默认 `cancel()`，仅当 `HawkConfig.IGNORE_SSL_ERROR=true`（默认 false）放行。
   覆盖点：PlayFragment、PlayParseHelper、WebSniffResolver。
-- 设置页新增“忽略证书错误”开关（默认 OFF；WebView 即时生效，OkHttp 网络请求重启应用后按新值重建客户端生效）。
+- 设置页新增“忽略证书错误”开关（默认 OFF；WebView 即时生效，OkHttp 网络请求在下次换 DoH/重启时随客户端重建生效）。
 - 文件：`common/.../util/OkGoHelper.java`、`common/.../net/SSLCompat.java`、
   `spider/.../net/OkHttp.java`、`app/.../base/App.java`、`util/WebSniffResolver.java`、
   `util/player/PlayParseHelper.java`、`ui/fragment/PlayFragment.java`。

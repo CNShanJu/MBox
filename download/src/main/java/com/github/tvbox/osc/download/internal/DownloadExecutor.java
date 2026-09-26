@@ -2057,7 +2057,7 @@ public class DownloadExecutor {
                     }
                 }
             }
-            return dm.downloadClient.newCall(builder.build()).execute();
+            return dm.downloadClient().newCall(builder.build()).execute();
         } catch (IOException e) {
             throw e;
         } catch (Throwable th) {

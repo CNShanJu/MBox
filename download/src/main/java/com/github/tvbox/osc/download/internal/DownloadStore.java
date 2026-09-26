@@ -239,7 +239,7 @@ public class DownloadStore {
         posterExecutor.execute(() -> {
             try {
                 Request req = new Request.Builder().url(pic).build();
-                try (Response resp = dm.downloadClient.newCall(req).execute()) {
+                try (Response resp = dm.downloadClient().newCall(req).execute()) {
                     if (!resp.isSuccessful() || resp.body() == null) return;
                     String ct = resp.header("Content-Type");
                     if (ct != null && !ct.toLowerCase(java.util.Locale.ROOT).contains("image")) return;

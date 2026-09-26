@@ -43,8 +43,9 @@ public final class ExoMediaSourceHelper {
 
     private final String mUserAgent;
     private final Context mAppContext;
-    private OkHttpDataSource.Factory mHttpDataSourceFactory;
-    private OkHttpClient mOkClient = null;
+    /** 由 client 派生的 DataSource 工厂:client 被替换(安全 DNS 变更)时必须一起失效 */
+    private volatile OkHttpDataSource.Factory mHttpDataSourceFactory;
+    private volatile OkHttpClient mOkClient = null;
     private Cache mCache;
 
     private ExoMediaSourceHelper(Context context) {
@@ -63,8 +64,29 @@ public final class ExoMediaSourceHelper {
         return sInstance;
     }
 
-    public void setOkClient(OkHttpClient client) {
+    /**
+     * 设置播放用 OkHttpClient。
+     * <p>
+     * 传 null 表示"作废"({@code getOkClient()} 会回退到当前实例):安全 DNS 变更后
+     * 旧工厂里裹的是旧 client,必须一并丢掉,否则下次起播仍用旧 DNS。
+     */
+    public synchronized void setOkClient(OkHttpClient client) {
         mOkClient = client;
+        mHttpDataSourceFactory = null;
+    }
+
+    /** 当前播放客户端;未设置时返回 null,由调用方(App)按新配置补建 */
+    public OkHttpClient getOkClient() {
+        return mOkClient;
+    }
+
+    /**
+     * 作废当前 client 与由它派生的 DataSource 工厂(安全 DNS 变更后调用)。
+     * 不关闭旧 client:正在播的流仍持有它,关闭会直接断流。
+     */
+    public synchronized void dropOkClient() {
+        mOkClient = null;
+        mHttpDataSourceFactory = null;
     }
 
     public MediaSource getMediaSource(String uri) {
@@ -201,12 +223,19 @@ public final class ExoMediaSourceHelper {
      * @return A new HttpDataSource factory.
      */
     private DataSource.Factory getHttpDataSourceFactory() {
-        if (mHttpDataSourceFactory == null) {
-            mHttpDataSourceFactory = new OkHttpDataSource.Factory(mOkClient)
-                    .setUserAgent(mUserAgent)/*
-                    .setAllowCrossProtocolRedirects(true)*/;
+        OkHttpDataSource.Factory factory = mHttpDataSourceFactory;
+        if (factory == null) {
+            synchronized (this) {
+                factory = mHttpDataSourceFactory;
+                if (factory == null) {
+                    factory = new OkHttpDataSource.Factory(mOkClient)
+                            .setUserAgent(mUserAgent)/*
+                            .setAllowCrossProtocolRedirects(true)*/;
+                    mHttpDataSourceFactory = factory;
+                }
+            }
         }
-        return mHttpDataSourceFactory;
+        return factory;
     }
 
     private void setHeaders(Map<String, String> headers) {
