@@ -37,8 +37,8 @@
 - **fMP4（`#EXT-X-MAP`）与字节范围分片（`#EXT-X-BYTERANGE`）支持（2026-09-26）**：新增纯逻辑解析器 `common/util/HlsMediaPlaylist`（21 例单测）；`DownloadExecutor` 去掉"遇这两条直接抛"，改为 init 段单独落盘并在**合并时先写 init 再拼分片**、带范围分片用**固定区间 Range**（回 200 即判失败、校验 `Content-Range` 起点终点、拒 `multipart/byteranges`）、重封装失败时 fMP4 **保留 `.mp4`**、指纹带上范围（整表无范围时与旧格式逐字节一致，升级不会误清在下的任务）。**限制**：加密 init 直接失败（不产出"分片都对、整集打不开"的成品）；跨 `#EXT-X-DISCONTINUITY` 仍不做时间轴重排；**fMP4 不参与跨线路补片**（替补片段与本线路 init 段"同源"无法证明，PTS 接缝校验只认 188 包 TS），切片型 TS 线路的补片范围已带上。真机回归见 §3 第 10 条。
 
 - **设置项有效性核查（2026-09-26）**：四条"改了就生效"里 **3 真 1 误报**：IJK 解码 `click` 只改内存字段未写 `PlayConfig` → 已补；安全 DNS 下标越界（老备份 `doh_url` 4~6 vs 列表 4 项）→ 加 `OkGoHelper.dohCount/dohLabel` 夹取；清缓存只删内部 cacheDir、裸线程 + 提前 toast → 改走 `HeavyTaskUtil` + `FileUtils.clearAllCache()` + 删完再 toast；**运行日志开关"要重启"是误报**（`LogConfig.setEnabled` 内部早已调 `LogStore.get().setEnabled`，写日志门控读的就是那个实例字段）。以下三条**口径已定**（刻意选择，不要再当缺陷修）：
-  - **局域网服务令牌**：保持现状 —— 令牌仍由本机（含回环）下发、`/token.js` 对局域网可见；开关默认关（显式 opt-in），描述写明"局域网可访问(同网设备可管理)"。要收紧需先定配对/一次性授权方案。
-  - **无痕浏览**：只覆盖"历史 + 搜索历史"，**收藏照常记录**（设置页写明"不记历史与搜索(收藏照常)"）。
+  - **局域网服务令牌**：保持现状 —— 令牌仍由本机（含回环）下发、`/token.js` 对局域网可见；开关默认关（显式 opt-in）。设置行不再写状态描述，"开启后到底能干啥"移到**标题长按**的 tip（`TextTipDialog` + `setting_lan_server_tip`，2026-09-26 用户要求：说明不塞进横排设置行）。要收紧需先定配对/一次性授权方案。
+  - **无痕浏览**：只覆盖"历史 + 搜索历史"，**收藏照常记录**（口径不变；设置页不再写"不记历史与搜索(收藏照常)"那行文案，按用户要求去掉，2026-09-26）。
   - **老剧的播放设置**：保持现状 —— 历史里的 per-vod `playerCfg` 优先于主设置（老剧沿用首次播放时的解码/渲染/缩放），要改就在播放面板改（面板改的也是这份 per-vod 配置）；这是"手动微调优先"的刻意语义。
 
 - **下载模块专项核查（执行器 / 调度与管理器 / 与 UI 交界，2026-09-26）**：逐条核实报告后修复如下（每条都先在代码里验真再改）：
@@ -62,6 +62,22 @@
     **限制**：加密的 fMP4（SAMPLE-AES / init 段被加密）不支持（init 段自检即判失败）、`#EXT-X-MAP` 中途更换判失败、
     fMP4 不参与跨线路补片（缺口走缺片完成）、跨 DISCONTINUITY 仍不做时间轴重排。
     **需真机确认**：这类源下载出的成片能否被 ExoPlayer/MediaExtractor 正常识别（见 §3 第 10 条）。
+
+- **JS 源桥调用失败引发进程 abort（JNI DETECTED ERROR）修复（2026-09-26，用户日志实证）**：日志显示 `js-spider-*` 线程在 `JsSpider.lambda$call$1 → Async.call → QuickJSContext.call` 报 `JNI NewObjectArray called with pending exception: java.lang.IllegalArgumentException: Unsupported Java type java.lang.Object` → `Runtime aborting`（SIGABRT，**不是 ANR**；用户看到的"52 个线程转储"是 ART abort 时的现场，不是 ANR traces）。崩溃链：JS 源调用 `@Function` 桥方法时传参与 Java 签名不符（native 把整数映射成 `Integer`、**整数值的 float64 映射成 `Long`**、非整数 `Double`、布尔 `Boolean`；少传/多传参数同样常见）或方法自身抛异常 → `JSObject.bind` 的 `catch` 吞掉后 **`return new Object()`** → native `toJSValue` 只认 String/Boolean/Integer/Long/Double/byte[]/JSObject/JSCallFunction，`java.lang.Object` 抛 `Unsupported Java type`，且该异常**留在该线程 JNI env 上成为 pending exception**（无 Java 帧回退去处理），下一次 JS 调 Java 时在 `jsFuncCall` 的 `NewObjectArray` 撞 CheckJNI → 进程直接 abort（**abort 现场与真正起因是两次调用，看着毫不相干**）。修复：
+  - `:thirdparty`（本地补丁，非上游 quickjs-wrapper 代码）：`JSObject.bind` 改为"按签名归一化入参 + 返回值收敛 + 失败 `return null`（不再 `new Object()`）"；新增 `JSUtils.adaptArgs(Method,Object[])`（数值/布尔/字符串互转、补齐或截断参数、可变参数按数组装配）与 `JSUtils.toJsSafe(Object)`（`Float/Short/Byte/Character/Map/List/自定义 bean` 降级）；`QuickJSContext.set/setProperty/arrayAdd`（含 `JSArray.push/set`）的 Java→JS 值一并收敛。
+  - `:spider`：`JsSpider.invoke`（jsapi 绑定路径，独立于 `bind`）同走 `adaptArgs`/`toJsSafe`；`Global.js2Proxy` 的 `headers` 空值不再 NPE（源只传 4 个参数即触发，是这条崩溃链的典型入口）。
+  - **排查盲区一并修掉**：原实现只 `printStackTrace()`（写 `System.err`，Android 默认丢进 `/dev/null`，logcat 也看不到），且 `InvocationTargetException.getMessage()` 常为 null；改为 `Log.e("QuickJSBridge", 方法名(实参类型), 真实 cause)` → 会被 `LogcatCapture` 的 `*:E` 收进 `app_logs/logcat-*.log`、错误日志页可见（也是下次定位"哪个源、哪个函数、哪种传参"的入口）。
+  - **debug/release 表现不同（重要口径）**：debuggable 应用默认开 CheckJNI → 直接 abort；release 默认不开 → 同一异常在 native `call` 返回 Java 时抛进 `Async.call`、future 异常完成 → 被爬虫层 catch 吞掉，表现为"该源静默没数据"（release 侧很可能一直在静默踩而未被发现）。
+  - 验证：`assembleDebug/assembleRelease/testDebugUnitTest/checkModuleDependencies` 全绿（379 任务）。**未加 JVM 单测**：`adaptArgs` 纯逻辑可测，`toJsSafe` 的降级分支调 `android.util.Log`（JVM 侧未开 `returnDefaultValues`），需先定日志注入口径再补。**待人工验证**：原订阅启动不再整体退出；`QuickJSBridge` 日志能定位到出错的源与函数。
+  - 文件：`thirdparty/.../wrapper/{JSObject,JSUtils,QuickJSContext}.java`、`spider/.../util/js/{JsSpider,Global}.java`。相关排期见 `doc/后续改造评估.md` §K7/§M（原生 abort/ANR 的进程退出原因回收：崩溃页与结构化日志对 native 死亡双双盲区）。
+
+- **断网被误判成"域名/DNS 故障"的教训 + 无网络处理（2026-09-26，与上一条同一轮排查）**：手机 Wi-Fi 断开时，App 里所有请求的报错都是 `java.net.UnknownHostException: Unable to resolve host "xxx": No address associated with hostname` —— 与"域名被 DNS 拦截 / 解析器有问题"长得一模一样，排查因此先怀疑安全 DNS、再怀疑域名被拦（同一 Wi-Fi 的 PC 用系统 DNS 与阿里/腾讯/360 的 DoH 都能解析该域名，反而"坐实"了这个错误方向），直到开启安全 DNS 后**连 `doh.pub` 自己都解析不到**（DoH 初始化固定走系统 DNS，见 `OkGoHelper.newDohClientBuilder()`）才反过来怀疑"App 的解析整体失效"，最终确认为断网。根因不是解析，而是**信号没有被接到用户和日志看得见的地方**：`SystemStateMonitor` 一直在监听 `TYPE_NETWORK`（`registerDefaultNetworkCallback` + 300ms 去抖，`App` 启动即 init），但**全仓只有 `:download` 订阅**（`DownloadPolicy`/`DownloadScheduler`），UI/内容链路/网络层一个都没订阅，`strings.xml` 里也没有任何"无网络"文案。本轮补齐三处：
+  - **网络层快速失败**：`:core-network` 公共 Builder 最前面加 `NetworkGuardInterceptor`（爬虫/API/下载/图片/播放客户端全部受益），无网络时直接抛 `当前无网络,请检查网络连接`，不再发出去白等一次超时。判定口径**故意宽松**（有任何带 `NET_CAPABILITY_INTERNET` 的网络即算有网，不要求"已验证联网"）+ 切换抖动 150ms 复检 + 回环地址放行（本机代理播放不受影响）+ 自身异常一律放行（`OkGoHelper.hasNetwork()` 读不到就当作"有网"）—— 宁可漏拦，不可错杀。
+  - **内容页提示与自愈**：`GridFragment` 订阅 `TYPE_NETWORK`，断网显示顶部横幅（新增 `grid_offline_tip`，用主题色 `bg_float`/`text_highlight`，不新造样式），恢复联网自动补一次刷新（仅在"当前可见 + 列表为空 + 不在刷新/加载更多"时触发，避免与用户操作打架）。
+  - **日志可判读**：失败日志带解析器与网络状态（形如 `请求失败(系统DNS;网络=无网络;无活动网络)`，见 `OkHttp.dnsName()`/`OkGoHelper.dnsEnvHint()`；后者对"无活动网络/读不到"给出明确原因，不再静默返回空串）；`:log` 的 WARN/ERROR 条目在断网时追加 ` [网络=无网络]`（`internal/NetworkTag`，正常网络下不标注以免噪音），`logcat-*.log` 每建一个新文件写一行 `===== 日志会话 <时间> 网络=<状态> =====`。
+  - 文件：`core-network/.../{OkGoHelper,NetworkGuardInterceptor}.java`、`log/.../{LogStore,internal/LogcatCapture,internal/NetworkTag}.java`、`app/.../ui/fragment/GridFragment.java`、`app/src/main/res/{layout/fragment_grid.xml,values/strings.xml}`。**待人工验证**：断网横幅出现、恢复后自动出内容、错误日志页能看到 `网络=无网络`。
+
+- **崩溃页观感修正（2026-09-26，用户反馈）**：`ic_crash.xml` 是 1600×1600 画布而图案只占 x 445~1140 / y 214~1289 —— **底部约 31dp 全是透明**，与文案 16dp 外边距叠加，观感就是"文字离图标太远"；图标底下还有一层 `#d9d9d9` 灰色椭圆底座。已按图案实际范围裁画布（viewport 700×1075、intrinsic 70×107.5dp、`group` 平移对齐；1 单位仍 = 0.1dp，**图形尺寸与裁切前逐像素一致**，只是不再带留白）、删除灰色椭圆、布局里图标改 `wrap_content`（否则 160dp 空盒子会把留白带回来）；整组内容上移约 24dp（ScrollView 底部留白 64dp > 顶部 16dp），内边距按 AGENTS §六挪到 ScrollView 上并加 `clipToPadding=false`。文件：`app/src/main/res/drawable/ic_crash.xml`、`thirdparty/src/main/res/layout/customactivityoncrash_default_error_activity.xml`。**待人工验证**：真机崩溃页的观感（上移量按 `paddingBottom` 一个值即可调）。
 
 - **hawk 全量退役完成**：`KeyValueStore` 类及全部 legacy 迁移分支已删除，运行权威统一 `PrefsDataStore`/文件；全仓零 `com.orhanobut.hawk` 依赖（mbox 包名隔离，无 Hawk 存量升级场景）。
 - **订阅本地导入改系统 SAF**：`SubscriptionActivity` 用 `ActivityResultContracts.OpenDocument` 替代 hedzr 反射，支持 `content://` 流、`primary:`/`home:` 文档卷，复制到应用专属目录 + canonical 防穿越，按 URL 去重；移除 `MANAGE_EXTERNAL_STORAGE` 前置检查。
