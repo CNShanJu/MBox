@@ -96,6 +96,8 @@
   - **同时移除**:内容页(`fragment_grid.xml`/`GridFragment`)的断网横幅(`grid_offline_tip` 已删除);**保留**"恢复联网后自动补一次刷新"(断网期间列表通常是空的,自动出内容不必手动下拉)。
   - 文件:`core-network/.../{OkGoHelper,NetworkGuardInterceptor}.java`、`app/.../{util/NetworkIssueRouter,ui/activity/NoNetworkActivity,di/AppCompositionRoot,ui/fragment/GridFragment}.java`、`app/src/main/{AndroidManifest.xml,res/layout/{activity_no_network,fragment_grid}.xml,res/drawable/ic_no_network.xml,res/values/strings.xml}`。**待人工验证**:断网后发起请求→跳页;恢复网络自动返回;`我知道了`后本次断网不再弹;后台/看本地内容时不弹;主题换色后页面跟随。
 
+  - **贴补(同日,真机反馈后)**：① **按钮改用全局主题按钮样式** `BtnPrimary`/`BtnSecondary`(MaterialButton + 主题 `backgroundTint`/`cornerRadius`/`strokeColor`)—— 原来手写 `android:background` + `textColor` 会被 Material 的主题 tint 盖掉,次按钮出现"文字与底色同色、看不见字";② **判定口径放宽**：有网时仍只认典型断网异常,<b>已经没网时任何 `IOException` 都算</b>(覆盖解析被拦/连接被中间设备重置/读超时等非典型表现);③ **补决策日志**：`NetworkIssueRouter` 现在会打 `网络层报告: <原因>` / `不弹无网络页: <原因>` / `已拉起无网络页(原因: …)`(后者同时进 LogStore) —— 下次"断网了为什么没跳"先看有没有第一行：没有就是请求没走收口客户端或不是网络类失败(实测遇到的是**源站返回空内容**、jar 自己抛 `JSONException: End of input at character 0`,不属于断网)。
+
 - **hawk 全量退役完成**：`KeyValueStore` 类及全部 legacy 迁移分支已删除，运行权威统一 `PrefsDataStore`/文件；全仓零 `com.orhanobut.hawk` 依赖（mbox 包名隔离，无 Hawk 存量升级场景）。
 - **订阅本地导入改系统 SAF**：`SubscriptionActivity` 用 `ActivityResultContracts.OpenDocument` 替代 hedzr 反射，支持 `content://` 流、`primary:`/`home:` 文档卷，复制到应用专属目录 + canonical 防穿越，按 URL 去重；移除 `MANAGE_EXTERNAL_STORAGE` 前置检查。
 - **下载存储权限引导**：`DownloadDialogCoordinator` 无存储权限时弹 `ConfirmDialog` + `XXPermissions` 拉起系统授权（与「我的-本地视频」入口一致），不再仅 toast 提示。
