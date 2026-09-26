@@ -80,6 +80,8 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             PlayerHelper.getRenderName(PlayConfig.getRenderType())
 
         mBinding.switchPrivateBrowsing.setChecked(SystemConfig.isPrivateBrowsing())
+        // 口径已定(用户确认):无痕只覆盖"历史 + 搜索历史",收藏照常记录 —— 文案写清楚,免得当成 bug
+        mBinding.tvPrivateDesc.text = "不记历史与搜索(收藏照常)"
         mBinding.llPrivateBrowsing.setOnClickListener { view: View? ->
             val newConfig = !SystemConfig.isPrivateBrowsing()
             mBinding.switchPrivateBrowsing.setChecked(newConfig)
@@ -720,7 +722,9 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
 
     /** 局域网服务描述行:开关状态一目了然(开启需重启应用生效) */
     private fun updateLanServerDesc(enabled: Boolean) {
-        mBinding.tvLanServerDesc.text = if (enabled) "局域网可访问" else "仅本机"
+        // 口径已定(用户确认):令牌仍由本机下发(不改鉴权模型),但把风险写在界面上 ——
+        // 开启后同网段设备可访问控制台,管理型请求靠进程令牌保护(令牌本身经回环下发)
+        mBinding.tvLanServerDesc.text = if (enabled) "局域网可访问(同网设备可管理)" else "仅本机"
     }
 
     /** 忽略证书错误描述行 */
