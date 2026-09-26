@@ -22,9 +22,11 @@ import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -321,6 +323,11 @@ public class DownloadExecutor {
         // "重新解析地址(换线路)"或重试,不必白跑完剩下的几百片
         IOException lastSegErr = null;
         int consecutiveFail = 0;
+        /** 连续失败里"源侧永久失效"的片数(遇到一片非永久失败即清零):用来区分"线路挂了"与"这段分片源站就没有" */
+        int consecutiveGone = 0;
+        // "死片"记忆:已确认在源侧永久失效(HTTP 404/410)的分片序号。同一个地址再请求必然还是 404,
+        // 记下来后补片轮次直接跳过,不再浪费请求(实测 8 片死片曾被反复请求 144 次,补片毫无进展)
+        Set<Integer> goneSegments = new HashSet<>();
         // 只下载缺失的分片(跳过已存在且非空的分片),支持非连续缺失续传(如第3、7片被删)
         for (int i = 0; i < segments.size(); i++) {
             if (isInterrupted(t)) {
@@ -334,12 +341,14 @@ public class DownloadExecutor {
                 if (t.doneSegments <= i)
                     t.doneSegments = i + 1;
                 consecutiveFail = 0;
+                consecutiveGone = 0;
                 continue; // 已存在,跳过
             }
             long segDone = 0; // 缺失分片从头下(无残留字节)
             try {
-                downloadSegment(segments.get(i), segFile, segDone, t, segKeys.get(i), keyCache);
+                downloadSegment(i, segments.get(i), segFile, segDone, t, segKeys.get(i), keyCache);
                 consecutiveFail = 0;
+                consecutiveGone = 0;
             } catch (IOException e) {
                 if (isInterrupted(t)) {
                     // 本方暂停/取消导致的失败:与循环顶部的中断处理同语义,交给上层收尾
@@ -352,6 +361,12 @@ public class DownloadExecutor {
                     // 断网/超时:每片都会失败,整任务交给调度器按网络重试(带退避)处理
                     throw e;
                 }
+                if (DownloadErrors.isSegmentGone(e)) {
+                    goneSegments.add(i); // 死片:后面补片轮次不再对它发请求
+                    consecutiveGone++;
+                } else {
+                    consecutiveGone = 0;
+                }
                 lastSegErr = e;
                 consecutiveFail++;
                 Log.i("TVBox-Download", "分片失败(先跳过,交给补片重试): 片" + i + "/" + segments.size()
@@ -359,6 +374,16 @@ public class DownloadExecutor {
                 DownloadLog.LOG.warn(DownloadSubType.FAIL, "分片失败/片 " + i + ": " + DownloadErrors.reasonOf(e),
                         DownloadLog.extras(t.episodeId));
                 if (consecutiveFail >= MAX_CONSECUTIVE_SEGMENT_FAIL) {
+                    if (consecutiveGone >= MAX_CONSECUTIVE_SEGMENT_FAIL) {
+                        // 连续失败全是"源侧永久失效"(例如播放列表尾部那段分片 CDN 上根本不存在):
+                        // 后面每一片都会是同一个 404,不必把剩下的几百片白请求完 —— 记下死片就跳到校验/补片阶段,
+                        // 由"缺片能否算完成"统一裁决(见 MissingSegmentPolicy 的放宽档与快速失败)
+                        Log.i("TVBox-Download", "连续 " + consecutiveGone + " 片源侧永久失效,跳过剩余分片: " + t.fileName);
+                        DownloadLog.LOG.warn(DownloadSubType.SEGMENT,
+                                "连续 " + consecutiveGone + " 片源侧永久失效(HTTP 404/410),跳过剩余分片",
+                                DownloadLog.extras(t.episodeId));
+                        break;
+                    }
                     throw new IOException("连续 " + consecutiveFail + " 片下载失败(该线路的分片地址可能已失效): 最后错误 "
                             + DownloadErrors.reasonOf(lastSegErr), lastSegErr);
                 }
@@ -410,24 +435,39 @@ public class DownloadExecutor {
          */
         List<Integer> gapSegments = new ArrayList<>();
         while (!missing.isEmpty()) {
-            if (repair >= DownloadManager.MAX_SEGMENT_REPAIR) {
-                // 补片 3 轮仍缺:先看是不是"极少数分片在源侧永久失效"(CDN 上就是没有这个文件,
+            // 剩余缺片是否全部已确认"源侧永久失效":是则补片/换线路都毫无意义,须走放宽档或立刻失败,
+            // 不能一边明知拿不到、一边把 3 轮补片跑满(实测 8 片死片被反复请求 144 次、耗时几分钟却毫无进展)
+            boolean allGone = goneSegments.containsAll(missing);
+            if (repair >= DownloadManager.MAX_SEGMENT_REPAIR || allGone) {
+                // 补片 3 轮仍缺(或剩余缺片全是死片):先看是不是"极少数分片在源侧永久失效"(CDN 上就是没有这个文件,
                 // 重试与换线路都拿不到)—— 为几秒钟画面把整集判死,对用户是净损失:
                 // 按缺片完成,但必须在任务信息/日志里写清楚缺了几片,不允许静默;
-                // 缺得多(超 MissingSegmentPolicy 阈值)才算失败。
-                if (com.github.tvbox.osc.util.MissingSegmentPolicy.allowGapCompletion(missing.size(), segments.size())) {
+                // 缺得多(超 MissingSegmentPolicy 阈值)才算失败。全部永久失效时用放宽档(见 MissingSegmentPolicy)。
+                if (com.github.tvbox.osc.util.MissingSegmentPolicy.allowGapCompletion(
+                        missing.size(), segments.size(), allGone)) {
                     gapNote = "缺 " + missing.size() + " 片";
                     gapSegments.addAll(missing); // 合并阶段按此清单跳过(见 gapSegments 注释)
-                    Log.i("TVBox-Download", "补片 3 轮仍缺 " + missing.size() + " 片(源侧分片已失效),按缺片完成: "
-                            + t.fileName + " 缺失首片=" + missing.get(0));
-                    DownloadLog.LOG.warn(DownloadSubType.REPAIR, "缺片完成: 补片 " + DownloadManager.MAX_SEGMENT_REPAIR
-                            + " 轮后仍缺 " + missing.size() + " 片(共 " + segments.size() + " 片),该分片在源侧已失效:"
-                            + missingList(missing), DownloadLog.extras(t.episodeId));
+                    Log.i("TVBox-Download", "补片" + (allGone ? "前已确认剩余缺片全是死片" : "3 轮仍缺") + " " + missing.size()
+                            + " 片(源侧分片已失效),按缺片完成: " + t.fileName + " 缺失首片=" + missing.get(0));
+                    DownloadLog.LOG.warn(DownloadSubType.REPAIR, "缺片完成: " + missing.size() + " 片在源侧已失效(共 "
+                            + segments.size() + " 片)" + (allGone ? ",已确认补片/换线路均拿不到" : ",补片 "
+                            + DownloadManager.MAX_SEGMENT_REPAIR + " 轮未补齐") + ":" + missingList(missing),
+                            DownloadLog.extras(t.episodeId));
                     break;
                 }
                 // 补片 FAILED: 完整缺失清单落日志(不截断), 供事后核对; 保留碎片现场
-                DownloadLog.LOG.fail(DownloadSubType.REPAIR, "补片 FAILED: 第 " + DownloadManager.MAX_SEGMENT_REPAIR
-                        + " 轮仍缺失 " + missing.size() + " 片:" + missingList(missing), DownloadLog.extras(t.episodeId));
+                DownloadLog.LOG.fail(DownloadSubType.REPAIR, "补片 FAILED: " + (allGone ? "剩余缺片全是源侧永久失效" : "第 "
+                        + DownloadManager.MAX_SEGMENT_REPAIR + " 轮仍缺失") + " " + missing.size() + " 片:"
+                        + missingList(missing), DownloadLog.extras(t.episodeId));
+                if (allGone) {
+                    // 全是死片又超过放宽档:重试与重新解析地址都拿不到同一个 404,直接失败并说清原因,
+                    // 让用户尽早看到"这集在源站已残缺"并换源,而不是干等重试
+                    throw new IOException(
+                            DownloadErrors.ALL_SEGMENTS_GONE + "(HTTP 404):共 " + missing.size()
+                                    + " 片,超过可容忍范围(总计 " + segments.size()
+                                    + " 片),重试与换线路均无法补齐,建议换源重下",
+                            lastSegErr);
+                }
                 throw new IOException(
                         "碎片校验不一致,自动补下" + DownloadManager.MAX_SEGMENT_REPAIR + "轮后仍缺失(缺 " + missing.size() + " 片,如第"
                                 + missing.get(0) + "片)"
@@ -460,9 +500,15 @@ public class DownloadExecutor {
             for (int idx : missing) {
                 File segFile = new File(tmpDir, String.format("%05d.ts", idx));
                 if (!segFile.exists() || segFile.length() <= 0) {
+                    if (goneSegments.contains(idx)) {
+                        // 已确认在源侧永久失效:同一个 URL 再请求必然还是 404,不再浪费一次请求,留在缺失清单里
+                        stillMissing.add(idx);
+                        Log.i("TVBox-Download", "补片跳过死片(源侧已失效): 片" + idx);
+                        continue;
+                    }
                     attempt++;
                     try {
-                        downloadSegment(segments.get(idx), segFile, 0, t, segKeys.get(idx), keyCache);
+                        downloadSegment(idx, segments.get(idx), segFile, 0, t, segKeys.get(idx), keyCache);
                         // 单项补下成功: 片i 成功 bytes
                         DownloadLog.LOG.success(DownloadSubType.REPAIR, "补片/片 " + idx + " 成功 " + segFile.length() + "B",
                                 DownloadLog.extras(t.episodeId));
@@ -471,6 +517,10 @@ public class DownloadExecutor {
                         // 单项补下失败: 原因+HTTP码(留待下轮);同时记下最后原因,供最终失败提示带上
                         failCount++;
                         lastSegErr = e;
+                        if (DownloadErrors.isSegmentGone(e)) {
+                            // 死片:记下来,后面几轮不再对它发请求(否则 3 轮 × 每轮一次,同一片白请求多次)
+                            goneSegments.add(idx);
+                        }
                         Log.i("TVBox-Download", "补片失败(留待下轮): 片" + idx + " " + e.getMessage());
                         DownloadLog.LOG.fail(DownloadSubType.REPAIR, "补片/片 " + idx + " 失败 " + e.getMessage(),
                                 DownloadLog.extras(t.episodeId));
@@ -857,7 +907,13 @@ public class DownloadExecutor {
         return count;
     }
 
-    private void downloadSegment(String segUrl, File segFile, long segDone, DownloadTask t,
+    /**
+     * 下载单个分片。
+     *
+     * @param segIndex 分片序号(仅用于失败分类:404/410 抛 {@link DownloadErrors.SegmentGoneException} 时带上序号,
+     *                 让上层记住这片是"死片",不再重复请求)
+     */
+    private void downloadSegment(int segIndex, String segUrl, File segFile, long segDone, DownloadTask t,
             HlsKey key, Map<String, byte[]> keyCache) throws IOException {
         // 加密分片无法断点续传(AES-CBC 需从头整段解密),一律整段下
         if (key != null)
@@ -895,7 +951,14 @@ public class DownloadExecutor {
                 FileCleaner.deleteQuietly(segFile);
             } else if (code != 200 && code != 206) {
                 Log.i("TVBox-Download", "分片 HTTP " + code + " url=" + segUrl);
-                // 文案要求:可读 + 保留 "HTTP 404" 这种状态码 —— 调度器据此判定"地址可能过期"并自动重新解析地址(换线路),
+                // 404/410 = 这个分片在源侧就是没有了(网盘/图床文件被删或从未上传):重新解析地址拿到的
+                // 还是同一个 URL、还是 404,重试纯属浪费。单独抛"永久失效"让上层记住死片、跳过后续请求;
+                // 其余状态码(超时/5xx/403/451/断网)仍按"可补救"处理,该换线路换线路、该重试重试。
+                if (code == 404 || code == 410) {
+                    throw new DownloadErrors.SegmentGoneException(segIndex, "分片下载失败(HTTP " + code
+                            + ",该分片在" + DownloadErrors.SEGMENT_GONE_TEXT + ",重试与换线路均无法补齐)");
+                }
+                // 文案要求:可读 + 保留 "HTTP 403" 这种状态码 —— 调度器据此判定"地址可能过期"并自动重新解析地址(换线路),
                 // 提示里也要能看出是源的分片失效而不是本机问题
                 throw new IOException("分片下载失败(HTTP " + code + ")");
             }

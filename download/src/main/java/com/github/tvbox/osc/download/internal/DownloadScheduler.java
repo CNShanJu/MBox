@@ -313,7 +313,10 @@ public class DownloadScheduler {
                         if (isTaskStopped(t)) return; // 暂停(用户/调度/网络)或已取消,不再重试
                         // 断网/切网等网络错误:允许更多次重试 + 指数退避(最长约2分钟),并标记网络失败待恢复后自动续传
                         boolean netErr = isNetworkError(th);
-                        int maxRetry = netErr ? DownloadManager.MAX_NETWORK_RETRY : DownloadManager.MAX_RETRY;
+                        // 缺片全是"源侧永久失效":整任务重试等于把同一批 404 再请求一遍,直接失败并给出可读原因
+                        boolean goneErr = DownloadErrors.isPermanentlyGone(th);
+                        int maxRetry = goneErr ? 0
+                                : (netErr ? DownloadManager.MAX_NETWORK_RETRY : DownloadManager.MAX_RETRY);
                         // 地址可能过期(HTTP 403/404/410 等或 HTML 防盗链响应):重新解析地址后继续,
                         // 重置下载重试计数;解析次数有限制(MAX_RE_RESOLVE),避免无限重解析
                         if (!netErr && shouldReResolve(t, th) && t.reResolveCount < DownloadManager.MAX_RE_RESOLVE
@@ -357,7 +360,10 @@ public class DownloadScheduler {
                         }
                         t.state = DownloadTask.STATE_FAILED;
                         t.message = th.getMessage() == null ? th.toString() : th.getMessage();
-                        if (netErr) {
+                        if (goneErr) {
+                            // 死片类失败:重试/换线路都拿不到,提示用户换源而不是干等
+                            t.message = t.message + "(源站该分片已失效,可换源重下)";
+                        } else if (netErr) {
                             t.networkFailed = true; // 网络恢复后自动续传
                             t.message = t.message + "(网络恢复后自动继续)";
                         }
@@ -390,6 +396,9 @@ public class DownloadScheduler {
     private boolean shouldReResolve(DownloadTask t, Throwable th) {
         String msg = th.getMessage();
         if (msg == null) return false;
+        // 缺片全部是"源侧永久失效"(HTTP 404/410 且已确认补不回来):重新解析地址拿到的还是同一个 URL、
+        // 还是同一个 404,重解析纯属浪费(实测 8 片死片被重解析 3 轮 × 3 次),交给失败/缺片完成路径
+        if (DownloadErrors.isPermanentlyGone(th)) return false;
         String m = msg.toLowerCase();
         if (m.contains("html") || m.contains("防盗链") || m.contains("网页")) return true;
         // 内容根本不是音视频(分片返回的是图片/JSON/错误页):同样是"地址失效/被替换"的表现,
