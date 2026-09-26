@@ -63,8 +63,10 @@ public class GridFragment extends BaseLazyFragment {
     private boolean mEndReached = false;
     /** 是否正在加载更多(到底部 Lottie 显示依据) */
     private boolean mLoadMoreBusy = false;
-    /** 刷新轮次:看门狗与"断网收尾"按它作废在途的那一轮(见 startRefreshWatchdog) */
+    /** 刷新轮次:看门狗与"断网收尾"按它作废在途的那一轮(见 startLoadWatchdog) */
     private int mRefreshEpoch = 0;
+    /** 是否有一轮加载/刷新在途(用于"页面重新可见时是否该补一次加载"的判断) */
+    private boolean mLoadInFlight = false;
     /** 下拉刷新 + 到底了 装配门面 */
     private ListRefreshSupport mRefreshSupport = null;
     private boolean isTop = true;
@@ -114,6 +116,7 @@ public class GridFragment extends BaseLazyFragment {
      */
     private void stopLoadingForOffline() {
         mRefreshEpoch++; // 作废在途刷新的看门狗(同一轮才有意义)
+        mLoadInFlight = false;
         if (mRefreshSupport != null && mRefreshSupport.isRefreshing()) {
             mRefreshSupport.finishRefreshing();
         }
@@ -365,6 +368,16 @@ public class GridFragment extends BaseLazyFragment {
         // 页面重新可见时(例如用户从无网络页点了"返回/我知道了"回来)补一次收尾:
         // 断网事件可能在页面不可见期间就发过了,那时监听是注销的,转圈会一直留着
         if (mWasOffline) stopLoadingForOffline();
+        // 页面重新可见 + 从未成功加载过 + 当前没有加载在途 + 现在有网 → 补一次完整初始化。
+        // 为什么需要:"断网→恢复"的那次状态变化常常发生在页面不可见期间(无网络页盖住、切到别的页),
+        // 页面重新可见时它已经错过了,于是网络恢复了页面也不会自己去取数据(真机反馈:恢复后仍无内容,
+        // 而且 loading 视图盖着列表连下拉都点不动 —— 那半边已由 stopLoadingForOffline/看门狗修掉)。
+        if (!mWasOffline && !isLoad() && !mLoadInFlight
+                && (gridAdapter == null || gridAdapter.getData().isEmpty())
+                && (mRefreshSupport == null || !mRefreshSupport.isRefreshing())) {
+            android.util.Log.i("GridFragment", "页面重新可见且从未加载成功:补一次初始化");
+            initData();
+        }
         if (mNetBound) return;
         SystemStateMonitor.get().register(mNetListener, SystemStateMonitor.TYPE_NETWORK);
         mNetBound = true;
@@ -456,30 +469,38 @@ public class GridFragment extends BaseLazyFragment {
         gridAdapter.loadMoreComplete();
         gridAdapter.setEnableLoadMore(true);
         if (mRefreshSupport != null) mRefreshSupport.updateEndTip();
-        startRefreshWatchdog();
+        startLoadWatchdog();
         sourceViewModel.getList(sortData, page);
     }
 
-    /** 刷新看门狗:请求"没人回结果"时兜底收尾,别让首页 loading 永久转圈 */
-    private static final long REFRESH_WATCHDOG_MS = 45_000L;
+    /** 加载/刷新看门狗:请求"没人回结果"时兜底收尾,别让首页 loading 永久转圈 */
+    private static final long LOAD_WATCHDOG_MS = 45_000L;
 
     /**
      * 起一轮看门狗(带轮次号)。
-     * 为什么需要:结束刷新的唯一入口是 {@code listResult} 的观察者,而有些失败(网络被快速失败后异常被
-     * 上层吞掉、VM 内部超时等)根本不会发射数据 → 转圈永远不停。这里的兜底时间取得比 VM 侧所有超时
-     * 之和还长(typed 15s + 字符串通道 15s),正常慢请求不会被它打断;轮次号保证上一轮的看门狗
-     * 不会把下一轮的转圈停掉。
+     * <p>
+     * 为什么需要:结束"加载中/下拉刷新"的唯一入口是 {@code listResult} 的观察者,而有些失败
+     * (网络被快速失败后异常被上层吞掉、VM 侧提前 return、源自己抛异常等)根本不发射数据 →
+     * loading 永远不停;更糟的是 loading 视图会盖住列表,<b>用户连下拉刷新都点不动</b>
+     * (真机反馈:离线冷启动后首页一直转、恢复网络也无从刷新)。
+     * 兜底时间取得比 VM 侧所有超时之和还长(typed 15s + 字符串通道 15s),正常慢请求不会被打断;
+     * 轮次号保证上一轮的看门狗不会动到下一轮。
      */
-    private void startRefreshWatchdog() {
+    private void startLoadWatchdog() {
         final int epoch = ++mRefreshEpoch;
+        mLoadInFlight = true;
         if (mGridView == null) return;
         mGridView.postDelayed(() -> {
-            if (epoch != mRefreshEpoch) return;                     // 已进入下一轮/已收尾:本条作废
-            if (mRefreshSupport == null || !mRefreshSupport.isRefreshing()) return;
-            android.util.Log.w("GridFragment", "刷新看门狗触发:请求无结果,强制结束下拉刷新");
-            mRefreshSupport.finishRefreshing();
-            if (gridAdapter == null || gridAdapter.getData().isEmpty()) showEmpty();
-        }, REFRESH_WATCHDOG_MS);
+            if (epoch != mRefreshEpoch) return;                     // 已收到结果/已进入下一轮:本条作废
+            mLoadInFlight = false;
+            if (mRefreshSupport != null && mRefreshSupport.isRefreshing()) {
+                mRefreshSupport.finishRefreshing();
+            }
+            if (gridAdapter == null || gridAdapter.getData().isEmpty()) {
+                android.util.Log.w("GridFragment", "加载看门狗触发:请求无结果,强制收尾(显示空态)");
+                showEmpty();
+            }
+        }, LOAD_WATCHDOG_MS);
     }
 
     private void initViewModel() {
@@ -488,6 +509,9 @@ public class GridFragment extends BaseLazyFragment {
         sourceViewModel.listResult.observe(this, new Observer<AbsXml>() {
             @Override
             public void onChanged(AbsXml absXml) {
+                // 收到任何结果(数据/空/null)都算本轮结束:作废看门狗并清"在途"标记
+                mRefreshEpoch++;
+                mLoadInFlight = false;
                 // 刷新被用户打断:丢弃在途的第一页结果,维持下拉前旧列表
                 if (page == 1 && mRefreshSupport != null && mRefreshSupport.shouldDiscardArrival()) {
                     mLoadMoreBusy = false;
@@ -557,6 +581,7 @@ public class GridFragment extends BaseLazyFragment {
         isLoad = false;
         mEndReached = false;
         scrollTop();
+        startLoadWatchdog();
         sourceViewModel.getList(sortData, page);
     }
 

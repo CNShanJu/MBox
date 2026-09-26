@@ -260,7 +260,11 @@ public class SourceViewModel extends ViewModel {
                                         .categoryContent(homeSourceBean.getKey(), sortData.id, page + "", true, sortData.filterSelect),
                                 homeSourceBean.getKey());
                     } catch (Throwable th) {
+                        // 每条路径都必须让调用方收到"本轮结束":原来只 printStackTrace,
+                        // 首页既拿不到数据也等不到收尾 → loading 一直转、列表被 loading 视图盖住连下拉都点不动
+                        // (离线冷启动、源自己抛异常时必现)
                         th.printStackTrace();
+                        listResult.postValue(null);
                     }
                 }
             });
@@ -286,7 +290,13 @@ public class SourceViewModel extends ViewModel {
                     }
                     android.util.Log.i("SpiderBridge", "category(typed/http) 不可用,回退旧路径: key="
                             + homeSourceBean.getKey() + " tid=" + finalSortData.id + " pg=" + finalPage);
-                    fetchListHttpLegacy(homeSourceBean, type, finalSortData, finalPage);
+                    try {
+                        fetchListHttpLegacy(homeSourceBean, type, finalSortData, finalPage);
+                    } catch (Throwable th) {
+                        // 兜底:回退路径自身也炸时同样要收尾,别让调用方一直等
+                        th.printStackTrace();
+                        listResult.postValue(null);
+                    }
                 }
             });
         } else {
