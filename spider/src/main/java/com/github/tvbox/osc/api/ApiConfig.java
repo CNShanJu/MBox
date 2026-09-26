@@ -69,7 +69,7 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
     /** 局域网地址前缀（由 app 侧 ControlManager 初始化后注入，替代直接依赖） */
     private static volatile String lanBase = "";
 
-    /** App 启动时注入 context（配置缓存目录等用；同步给爬虫 loader / FileUtils / UA / JS 本地桥） */
+    /** App 启动时注入 context（配置缓存目录等用；同步给爬虫 loader / FileUtils / UA / JS 本地桥 / catvod Init） */
     public static void setAppContext(Context context) {
         appContext = context == null ? null : context.getApplicationContext();
         com.github.catvod.crawler.JarLoader.setContext(context);
@@ -77,6 +77,10 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
         com.github.tvbox.osc.util.FileUtils.setContext(context);
         com.github.tvbox.osc.util.UA.setContext(context);
         com.github.tvbox.osc.util.js.local.setContext(context);
+        // catvod.Init：合并 jar/JS 侧通用工具（Path.cache/files/asset、Util.androidId 等）都读它，
+        // 全仓原先零注入点 → Init.context() 恒 NPE；DoH 改动把它拉进 OkHttp 的静态初始化后，
+        // 直接炸成 ExceptionInInitializerError 并永久毒化该进程内的所有 JS/JAR 源网络请求
+        com.github.catvod.Init.set(context);
     }
 
     /** 局域网地址前缀注入（app 侧 ControlManager.get().getAddress(true) 设置） */
@@ -759,12 +763,15 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
             liveChannelGroup.setLiveChannels(new ArrayList<LiveChannelItem>());
             liveChannelGroup.setGroupIndex(groupIndex++);
             String groupName = ((JsonObject) groupElement).get("group").getAsString().trim();
+            // "分组名_密码" 是直播源里给分组设密码的约定写法,但分组名里带下划线也很常见
+            // (CCTV_高清 / 央视_4K / 港澳台_HD)：一律把后半段当密码会让这些分组"打不开"
+            // (要输一个用户不可能知道的后缀,LiveChannelAuth.needInputPassword 只看密码是否非空)。
+            // 故只把"纯 4~8 位数字"的后缀当密码(源里写 _8888/_1234 这类),其余保留下划线保留原名。
             String[] splitGroupName = groupName.split("_", 2);
-            liveChannelGroup.setGroupName(splitGroupName[0]);
-            if (splitGroupName.length > 1)
-                liveChannelGroup.setGroupPassword(splitGroupName[1]);
-            else
-                liveChannelGroup.setGroupPassword("");
+            String password = splitGroupName.length > 1 && looksLikeGroupPassword(splitGroupName[1])
+                    ? splitGroupName[1].trim() : "";
+            liveChannelGroup.setGroupName(password.isEmpty() ? groupName : splitGroupName[0]);
+            liveChannelGroup.setGroupPassword(password);
             channelIndex = 0;
             for (JsonElement channelElement : ((JsonObject) groupElement).get("channels").getAsJsonArray()) {
                 JsonObject obj = (JsonObject) channelElement;
@@ -826,6 +833,23 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
         return "http://127.0.0.1:" + FALLBACK_LOCAL_PORT + "/";
     }
 
+    /**
+     * 判断 "_" 后缀是不是分组密码:仅 4~8 位纯数字算密码。
+     * <p>
+     * 判定从严的理由:误判成"加密分组"的代价是该分组直接打不开(要输对后缀才显示频道),
+     * 而漏判的代价只是不做密码保护 —— 前者对用户伤害大得多。故 {@code CCTV_5}、{@code CCTV_高清}、
+     * {@code 央视_4K} 这类都保留原名、不设密码。
+     */
+    private static boolean looksLikeGroupPassword(String suffix) {
+        if (suffix == null) return false;
+        String s = suffix.trim();
+        if (s.length() < 4 || s.length() > 8) return false;
+        for (int i = 0; i < s.length(); i++) {
+            if (s.charAt(i) < '0' || s.charAt(i) > '9') return false;
+        }
+        return true;
+    }
+
     public String getSpider() {
         return spider;
     }
@@ -836,7 +860,16 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
         return jarLoader.getSpider(sourceBean.getKey(), sourceBean.getApi(), sourceBean.getExt(), sourceBean.getJar());
     }
 
+    @SuppressWarnings("unchecked")
     public Object[] proxyLocal(Map param) {
+        // do=js 的代理请求必须交给 JS 源：Global.js2Proxy 生成的正是 proxy?do=js&from=catvod，
+        // JsSpider.proxyLocal 也只认 from=catvod。原来无论什么都只转 jarLoader.proxyInvoke，
+        // 而 JsLoader.proxyInvoke 全仓零调用点 → JS 源的代理(含 Exo 走 127.0.0.1:9978/proxy?do=js)
+        // 恒为 null/500。
+        Object doParam = param == null ? null : param.get("do");
+        if ("js".equals(String.valueOf(doParam).trim())) {
+            return jsLoader.proxyInvoke((Map<String, String>) param);
+        }
         return jarLoader.proxyInvoke(param);
     }
 

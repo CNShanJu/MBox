@@ -22,6 +22,7 @@ import javax.net.ssl.SSLSocketFactory;
 
 import okhttp3.Cache;
 import okhttp3.ConnectionSpec;
+import okhttp3.Dns;
 import okhttp3.HttpUrl;
 import okhttp3.OkHttpClient;
 import okhttp3.dnsoverhttps.DnsOverHttps;
@@ -163,6 +164,44 @@ public class OkGoHelper {
     }
 
     /**
+     * 诊断用:当前网络实际生效的解析环境(系统下发的 DNS 服务器 + 私人 DNS)。
+     * <p>
+     * 用于"App 解析不到域名、浏览器却能打开"这类问题:此时必须知道手机当时用的是哪台 DNS ——
+     * 是路由器下发的、还是被【私人 DNS】(DoT 主机名)或 VPN 接管了。只读不写,任何异常一律返回空串,
+     * 绝不影响请求本身(纯诊断,调用方把结果拼进失败日志即可)。
+     * <p>
+     * 放在 :core-network 而不是 :spider:这类网络环境信息属网络基础设施的职责,且本模块已持有
+     * 注入的 application context(见 {@link #init(Context)})。
+     */
+    public static String dnsEnvHint() {
+        try {
+            Context ctx = appContext;
+            if (ctx == null) return "网络状态未初始化";
+            android.net.ConnectivityManager cm = (android.net.ConnectivityManager)
+                    ctx.getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm == null) return "无 ConnectivityManager";
+            android.net.Network net = cm.getActiveNetwork();
+            // 关键分支:断网时这里就是 null —— 必须显式写出来,否则日志只剩一句
+            // UnknownHostException,会把"手机没网"误判成"域名/DNS 有问题"
+            if (net == null) return "无活动网络";
+            android.net.LinkProperties lp = cm.getLinkProperties(net);
+            if (lp == null) return "无 LinkProperties";
+            StringBuilder sb = new StringBuilder();
+            java.util.List<java.net.InetAddress> servers = lp.getDnsServers();
+            if (servers != null && !servers.isEmpty()) sb.append("下发DNS=").append(servers);
+            else sb.append("下发DNS=空");
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                String privateDns = lp.getPrivateDnsServerName();
+                if (privateDns != null) sb.append(" 私人DNS=").append(privateDns);
+            }
+            return sb.toString();
+        } catch (Throwable th) {
+            // 权限/系统异常也要能看出来(原实现静默返回空串,等于这条诊断白加)
+            return "网络状态读不到:" + th.getClass().getSimpleName();
+        }
+    }
+
+    /**
      * 当前生效的 DNS 策略(关闭时为系统 DNS)。
      * <p>
      * 为什么不直接返回 {@code getDnsOverHttps()}:okhttp4 的 {@code Builder.dns()} 参数非空,
@@ -263,8 +302,41 @@ public class OkGoHelper {
      * 注意:OkHttpClient.newBuilder() 派生的客户端共享连接池属正常设计,
      * 这里合并的是"从不同根 Builder 各自重复初始化"的公共部分,避免重复创建配置。
      */
+    /**
+     * 当前是否有可用网络（供 {@link NetworkGuardInterceptor} 做"无网络快速失败"）。
+     * <p>
+     * 判定口径<b>故意宽松</b>：有任何带 {@code NET_CAPABILITY_INTERNET} 的网络就算有网，
+     * <b>不要求</b>"已验证可联网"——网络受限/切换瞬间仍可能请求成功，宁可漏拦也不误杀。
+     * 读不到（context 未注入、权限异常、系统实现差异）一律返回 true：守卫只是优化，
+     * 绝不能因为它自己出问题就把请求拦死。
+     */
+    public static boolean hasNetwork() {
+        try {
+            Context ctx = appContext;
+            if (ctx == null) return true;
+            android.net.ConnectivityManager cm = (android.net.ConnectivityManager)
+                    ctx.getSystemService(Context.CONNECTIVITY_SERVICE);
+            if (cm == null) return true;
+            if (cm.getActiveNetwork() != null) return true;
+            android.net.Network[] all = cm.getAllNetworks();
+            if (all == null) return true;
+            for (android.net.Network n : all) {
+                android.net.NetworkCapabilities caps = cm.getNetworkCapabilities(n);
+                if (caps != null && caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
+                    return true;
+                }
+            }
+            return false;
+        } catch (Throwable th) {
+            return true;
+        }
+    }
+
     public static OkHttpClient.Builder newBaseBuilder() {
         OkHttpClient.Builder builder = new OkHttpClient.Builder();
+        // 无网络快速失败:必须放在最前面(拦截器按加入顺序执行),断网时连日志拦截器都不进,
+        // 直接抛出 "当前无网络,请检查网络连接"(见 NetworkGuardInterceptor 上的说明)
+        builder.addInterceptor(new NetworkGuardInterceptor());
         HttpLoggingInterceptor loggingInterceptor = new HttpLoggingInterceptor();
 
         if (SystemConfig.isDebugOpen()) {
@@ -288,6 +360,18 @@ public class OkGoHelper {
         } catch (Throwable th) {
             th.printStackTrace();
         }
+        return builder;
+    }
+
+    /**
+     * DoH 解析专用客户端 Builder。
+     * <p>
+     * 与业务客户端共用日志/SSL/压缩/连接规格配置(一处维护),但 DNS 固定为系统 DNS ——
+     * 它要用来解析 DoH 服务自己的域名,装上 DoH 解析器会形成"用 DoH 解析 DoH 域名"的自锁。
+     */
+    public static OkHttpClient.Builder newDohClientBuilder() {
+        OkHttpClient.Builder builder = newBaseBuilder();
+        builder.dns(Dns.SYSTEM);
         return builder;
     }
 
