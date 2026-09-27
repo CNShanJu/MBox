@@ -75,8 +75,7 @@ public final class ThemeColorAliases {
             put(map, R.color.text_sub_foreground, "text_sub");
             put(map, R.color.disable_text, "text_disable");
             put(map, R.color.bg_gray, "bg_card");
-            // 卡片类目徽标的老名字(colors.xml 里是 card_category_bg 的别名,布局里还在用它)
-            put(map, R.color.poster_badge_bg, "card_category_bg");
+
             put(map, R.color.gray_darker, "text_sub");
             put(map, R.color.fab_stroke, "btn_stroke");
             put(map, R.color.md_primary, "text_accent");

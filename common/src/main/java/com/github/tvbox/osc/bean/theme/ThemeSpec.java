@@ -66,13 +66,13 @@ public final class ThemeSpec {
                 "页面层:卡片/标题栏/底栏/搜索框/占位/卡片里的行"));
         list.add(new ThemeKey("bg_float_alpha", ThemeKey.Group.SURFACE, ThemeKey.Kind.ALPHA, "浮层透明度",
                 "弹窗、抽屉、气泡、首页直播/筛选悬浮钮"));
-        // 卡片类目(海报卡角上的那个标签:来源名 / 年份 / 评分):底色与文字一对,
-        // 原来写死在 colors.xml 的 poster_badge_bg + @color/white(用户口径:"加两个,卡片类目背景色和卡片类目文字颜色")。
-        // poster_badge_bg 现在是 card_category_bg 的别名,布局一行都不用改。
+        // 卡片类目:底色与文字一对 —— **目前没有接到任何组件**(用户口径:"暂时我还没对组件使用")。
+        // 只把键与派生准备好,等用户明确指定用在哪再接线;别自己认领组件:
+        // 海报卡角上那个角标是**故意固定**的深底白字(见 res/values/colors.xml 的 poster_badge_bg)。
         list.add(new ThemeKey("card_category_bg", ThemeKey.Group.SURFACE, ThemeKey.Kind.COLOR, "卡片类目背景",
-                "海报卡右上/左上那个小标签(来源名、年份、评分)的底色"));
+                "卡片上的「类目」标签底色(暂未接到任何组件,等指定)"));
         list.add(new ThemeKey("card_category_text", ThemeKey.Group.SURFACE, ThemeKey.Kind.COLOR, "卡片类目文字",
-                "上面那个小标签里的文字颜色"));
+                "与上面那个底色成对(暂未接到任何组件,等指定)"));
 
         // ② 文字分级
         // **文字主色(brand)排在最前**:用户口径 —— "主题主色改成文字主色,并把文字主色调整到次要文字前面"。
