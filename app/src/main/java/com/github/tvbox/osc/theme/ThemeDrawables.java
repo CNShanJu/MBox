@@ -159,6 +159,60 @@ public final class ThemeDrawables {
     }
 
     /**
+     * 调试用:把一份 drawable 的圆角**按重建逻辑**解析成 px(与 {@code Builder#corners} 同一套规则)。
+     *
+     * <p>为什么要它:真机上"chip 8dp 圆角看着像全胶囊""抽屉 18dp 看着像 30dp"这类反馈,
+     * 光看 XML 无法判断是"观感错觉"还是"重建把半径放大了"。自检提示里带上这个值,
+     * 与 {@code dimens} 里的 dp 值一比就能定论。非 shape/读不到时返回 -1。
+     */
+    public static int shapeRadiusPx(int resId, Resources res) {
+        if (resId == 0 || res == null) return -1;
+        try (XmlResourceParser p = res.getXml(resId)) {
+            int event = p.getEventType();
+            while (event != XmlPullParser.START_TAG && event != XmlPullParser.END_DOCUMENT) {
+                event = p.next();
+            }
+            if (event != XmlPullParser.START_TAG) return -1;
+            int outer = p.getDepth();
+            int max = -1;
+            String[] names = {"radius", "topLeftRadius", "topRightRadius", "bottomLeftRadius", "bottomRightRadius"};
+            while (true) {
+                int ev = p.next();
+                if (ev == XmlPullParser.END_DOCUMENT) break;
+                if (ev == XmlPullParser.END_TAG && p.getDepth() <= outer) break;
+                if (ev != XmlPullParser.START_TAG || !"corners".equals(p.getName())) continue;
+                for (String n : names) {
+                    int v = readDimen(p, res, n);
+                    if (v > max) max = v;
+                }
+            }
+            return max;
+        } catch (Throwable th) {
+            return -1;
+        }
+    }
+
+    /** 与 Builder#optionalDimen 同规则(调试用,单独一份以免把 Builder 暴露出去) */
+    private static int readDimen(XmlResourceParser p, Resources res, String name) {
+        int resId = p.getAttributeResourceValue(NS, name, 0);
+        if (resId != 0) {
+            try {
+                return res.getDimensionPixelSize(resId);
+            } catch (Throwable ignored) {
+            }
+        }
+        String raw = p.getAttributeValue(NS, name);
+        if (raw == null) return -1;
+        try {
+            String v = raw.trim().toLowerCase(java.util.Locale.ROOT)
+                    .replace("dip", "").replace("dp", "");
+            return Math.round(Float.parseFloat(v) * res.getDisplayMetrics().density);
+        } catch (Throwable th) {
+            return -1;
+        }
+    }
+
+    /**
      * 清缓存(切换主题后调;理论上一套主题一次进程,但热更新/调试时会重新装)
      */
     public static void clearCache() {

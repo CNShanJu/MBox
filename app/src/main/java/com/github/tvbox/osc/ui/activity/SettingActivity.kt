@@ -800,12 +800,21 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             // 三条通道一起看:①派生出的色值对不对 ②drawable 重建通不通(卡片/弹窗背景就是它)
             // ③Resources 包装有没有装上(代码里 ContextCompat.getColor 那一类靠它)
             val wrapped = resources is com.github.tvbox.osc.theme.ThemeResources
+            // 圆角按"重建逻辑"解析出来的实际 px:与 dimens 里的 dp 一比,就能判断
+            // "chip 8dp 看着像全胶囊"到底是观感错觉还是重建把半径放大了
+            val chipR = com.github.tvbox.osc.theme.ThemeDrawables.shapeRadiusPx(
+                R.drawable.bg_r_common_stroke_primary, resources)
+            val drawerR = com.github.tvbox.osc.theme.ThemeDrawables.shapeRadiusPx(
+                R.drawable.bg_drawer, resources)
+            val density = resources.displayMetrics.density
             AppBubble.toastLong(
                 "主题自检:" + ThemeStore.activeDisplayName()
                     + " 面=" + Integer.toHexString(p.get("bg_surface"))
                     + " 浮层=" + Integer.toHexString(p.get("bg_float"))
                     + " 重建=" + (if (rebuilt != null) "OK" else "失败")
                     + " 包装=" + (if (wrapped) "OK" else "无")
+                    + " chip圆角=" + (chipR / density).toInt() + "dp"
+                    + " 抽屉圆角=" + (drawerR / density).toInt() + "dp"
             )
         }
     }
