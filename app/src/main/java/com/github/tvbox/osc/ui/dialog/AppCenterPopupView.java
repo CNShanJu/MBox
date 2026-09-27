@@ -62,6 +62,13 @@ public abstract class AppCenterPopupView extends CenterPopupView {
     @Override
     protected void onCreate() {
         super.onCreate();
+        // 换肤兜底:居中弹窗(主题颜色 / 加载动画 / 确认框…都走这里)创建时机晚于 Activity,
+        // Activity 那次补色扫描覆盖不到 —— 面板与里面的行只要还画着内置面,就在这里补成主题色。
+        // (上一轮只给"底部弹窗/抽屉"加了这一趟,漏了本类,用户口径:"弹窗还是没变")
+        try {
+            com.github.tvbox.osc.theme.ThemeSweep.apply(getPopupImplView());
+        } catch (Throwable ignored) {
+        }
         // 内容超高且不自带滚动区时,自动包一层 ScrollView:防止被 maxHeight 裁剪(纯文本/按钮弹窗兜底)
         if (!contentSelfScrollable()) {
             wrapContentInScrollIfOverflow();
