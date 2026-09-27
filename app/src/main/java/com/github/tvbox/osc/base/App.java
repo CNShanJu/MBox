@@ -59,7 +59,25 @@ public class App extends MultiDexApplication {
     public void onCreate() {
         super.onCreate();
         instance = this;
+        // 崩溃错误页跑在独立进程(:error_activity,见 thirdparty 的 manifest):它只显示一段崩溃文本,
+        // 不需要任何业务初始化。此前这里照跑全套 onCreate(QuickJS/P2P/Room/logcat 子进程),
+        // 而该进程既不装 CaocInitProvider 也没有兜底 handler,自身一崩就是静默消失 —— 直接最小化启动。
+        if (StartupGuard.isErrorActivityProcess()) {
+            // 错误页进程只在"主进程刚崩过"时才会被拉起 —— 这是**唯一**该计数的时机。
+            // (老口径是每次启动都计数、活够 20s 才算健康,于是装新包/切主题重载/退出再进
+            //  这类正常快速重启会被误判成"连续启动失败",第 3 次起每次启动都弹安全模式提示)
+            StartupGuard.noteCrash(this);
+            StartupGuard.installErrorProcessFallback(this);
+            return;
+        }
+        // 读崩溃计数:同一 5 分钟窗口内连续 3 次**真实崩溃** → 本次进安全模式(见 StartupGuard)
+        StartupGuard.noteBootAttempt(this);
+        // 崩溃兜底必须最先就位:下面 QuickJS(so)/P2P(so)/Room/爬虫任一环抛 Error 都要能落库 + 弹崩溃页;
+        // 而 LogStore.init 在 initParams 里,故 installCrashHandler 紧随 initParams(否则是 no-op 实例,崩溃丢日志)
+        initCrashConfig();
         initParams();
+        LogStore.get().installCrashHandler();
+        StartupGuard.scheduleHealthyMark(this);
         // OKGo: 全局 OkHttpClient 初始化(:core-network, context 注入); Exo/Picasso 初始化拆回 app 侧
         OkGoHelper.init(this);
         initPicasso();
@@ -89,17 +107,21 @@ public class App extends MultiDexApplication {
                 .setSupportSP(false)
                 .setSupportSubunits(Subunits.MM);
         PlayerHelper.init();
-        QuickJSLoader.init();
+        // 安全模式:连续启动失败后的降级启动路径。JS 引擎是 native so(System.loadLibrary),
+        // 缺失/损坏时是 UnsatisfiedLinkError(Error,不是 Exception),会直接死在启动路径上;
+        // 跳过它先把 App 拉起来,让用户能进设置自救(数据一律不动)。
+        if (StartupGuard.isSafeMode()) {
+            notifySafeMode();
+        } else {
+            QuickJSLoader.init();
+        }
         // 播放器缓存清理移出启动主线程:延迟到首屏后再由后台低优先级线程执行,且超过阈值才清(见 schedulePlayerCacheCleanup)
         schedulePlayerCacheCleanup();
-        initCrashConfig();
         Utils.initTheme();
         // 业务日志(系统类目):应用启动(旧 AppLog 文件通道已退役,统一走 LogStore 结构化日志)
         LogStore.log(Category.SYSTEM, "应用启动(Android " + android.os.Build.VERSION.RELEASE + ")");
         // 业务日志(系统类目):记录本机屏幕尺寸(宽×高,px),便于按机型定位布局/适配问题
         logDeviceScreenToBiz();
-        // 崩溃捕获:未捕获异常落库(log 模块)
-        LogStore.get().installCrashHandler();
         // 全局系统状态监控(网络/前后台/横竖屏/电量/磁盘, 基座层)必须先于下载模块初始化:
         // 下载模块在构造时会订阅网络事件(仅WiFi暂停/恢复),若监控未就绪订阅被跳过 → 切流量不停、恢复无法继续
         SystemStateMonitor.init(this);
@@ -378,7 +400,9 @@ public class App extends MultiDexApplication {
                 p = new P2PClass(instance.getExternalCacheDir().getAbsolutePath());
             }
             return p;
-        } catch (Exception e) {
+        } catch (Throwable e) {
+            // 必须兜 Throwable:P2PClass 的静态块是 System.loadLibrary("p2p"),
+            // so 缺失/ABI 不匹配时抛的是 ExceptionInInitializerError(Error),catch (Exception) 兜不住
             LOG.e(e.toString());
             return null;
         }
@@ -517,9 +541,13 @@ public class App extends MultiDexApplication {
                 .showErrorDetails(true) //是否显示错误详细信息
                 .showRestartButton(true) //是否显示重启按钮
                 .trackActivities(true) //是否跟踪Activity
+                // 这个窗口只做"抖动去重",真正的启动崩溃熔断在我们自己的 StartupGuard(按 5 分钟内连续崩溃次数),
+                // 因为用户点"重新启动"到新进程再走到这里必然超过任何几秒级窗口,靠时间窗永远不命中
                 .minTimeBetweenCrashesMs(2000) //崩溃的间隔时间(毫秒)
                 .errorDrawable(R.drawable.ic_crash) //错误图标(记录空空的,矢量)
                 .restartActivity(MainActivity.class) //重新启动后的activity
+                // 崩溃页"详细错误信息"里带上启动计数/安全模式状态,便于用户反馈时说明情况
+                .customCrashDataCollector(new StartupGuard.CrashStateCollector())
                 .apply();
         // 魅族系统(如 ContentCapture 线程的 com.meizu.internal.picker)存在已知 NPE bug,
         // 属于系统问题而非 App 代码,直接吞掉避免整个 App 被杀,其余异常仍走 CAOC
@@ -535,6 +563,24 @@ public class App extends MultiDexApplication {
                 }
             }
         });
+    }
+
+    /**
+     * 安全模式提示:连续崩溃才会走到这里,必须让用户知道"这次启动是降级的"以及怎么恢复
+     * (正常启动后计数清零,下次即恢复完整功能,不需要清数据)。
+     */
+    private void notifySafeMode() {
+        try {
+            LogStore.log(Category.SYSTEM, "安全模式启动:5 分钟内连续崩溃 "
+                    + StartupGuard.bootAttempts() + " 次,本次未加载 JS 引擎");
+        } catch (Throwable ignored) {
+        }
+        try {
+            android.widget.Toast.makeText(this,
+                    "连续崩溃 " + StartupGuard.bootAttempts() + " 次,已用安全模式启动(本次不加载 JS 源)",
+                    android.widget.Toast.LENGTH_LONG).show();
+        } catch (Throwable ignored) {
+        }
     }
 
     /** 判断是否为魅族系统内部的无害异常(系统线程 NPE 等),不应导致 App 崩溃 */

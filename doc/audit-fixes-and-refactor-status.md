@@ -285,8 +285,210 @@
 - `PlayFragment` 播放入口 bind 会话(仅日志观察:state/buffering/error/completion)、切集与销毁时释放,
   不改变现有 mVideoView/Controller 控制流;真机回归后再收敛为 session.play/pause/observe 全驱动。
 
-## 2. 待后续（需真机回归或架构决策）
+### 1.12 崩溃/资源审计清单（23 项，重编号）与第一批整改（2026-09-27）
 
+一次性全仓审计（启动即崩 / native / 资源耗尽 / 外部可控 / 兜底机制五类）共 23 项，**统一编号如下**
+（此前口头引用过 20/21/23、第 11 条、9→10→12→13，均以本表编号为准）。第一批（启动崩溃循环面）已落地代码，
+其余按批推进。
+
+| # | 问题（一句话） | 位置 | 状态 |
+|---|---|---|---|
+| 1 | 任务归一/对账循环在 try 之外，坏文件里出现 null 任务即 NPE → 开机死循环 | `download/internal/DownloadStore.load()` | ✅ 本批 |
+| 2 | 前台服务写成相对名 `.download.X`，解析到不存在的 `...download.download.X` | `download/src/main/AndroidManifest.xml` | ✅ 本批 |
+| 3 | minSdk 24 上裸调 API 26 的 `isInPictureInPictureMode()`，7.x 离开播放页必崩 | `DetailActivity`/`LocalPlayActivity`/`PipHelper` | ✅ 本批 |
+| 4 | 大图查看器用 XPopup 的 `SmartGlideImageLoader`，而 Glide 依赖已全仓移除 → 点图即崩 | `ui/dialog/VideoDetailDialog` | ✅ 本批 |
+| 5 | 崩溃兜底顺序倒挂（QuickJS/P2P 早于 CAOC/LogStore），且 `catch (Exception)` 兜不住 `Error` | `App.onCreate` / `App.getp2p` | ✅ 本批 |
+| 6 | `IjkPlayer.release()` 丢进裸线程、不清引用；`TextureRenderView` 未先 `setSurface(null)` 就释放 Surface → native SIGSEGV | `player/ijk/IjkPlayer`、`render/TextureRenderView` | ✅ 第二批 |
+| 7 | `SubtitleCoordinator` 的 `postDelayed(800ms)` 无 token、销毁后仍 seekTo | `util/player/SubtitleCoordinator` | ✅ 第二批 |
+| 8 | `Global.setTimeout` 失败分支在 Timer 线程 `func.release()` → `checkSameThread()` 抛异常杀进程 | `spider/util/js/Global` | ✅ 第二批 |
+| 9 | `assets.open("ua.db")` 与 `FileUtils.getAsOpen` 双流不关（后者在每个 JS 源/每次 import 上） | `spider/util/UA`、`spider/util/FileUtils` | ✅ 第三批 |
+| 10 | `JsLoader.spiders` 无上限/LRU：每源 1 个 QuickJSContext + 1 executor + 1 Timer | `spider/catvod/crawler/JsLoader` | ✅ 第三批 |
+| 11 | `NativeCleaner.clean()` 全仓从未调用，`hold()` 注册的 phantomReference 只增不减 | `thirdparty/wrapper/NativeCleaner` | ✅ 第三批 |
+| 12 | 无 contentLength 上限的响应体（`body().string()` / `.bytes()`）→ 单个超大响应即 OOM | `core-network/util/HttpClient`、`spider/util/js/Connect` | ✅ 第三批 |
+| 13 | `PicassoLoad.sessionLoaded` 无上限、无 clear（同文件 `sessionFailed` 有 500 上限 + LRU） | `util/PicassoLoad` | ✅ 第三批 |
+| 14 | 全仓 `onTrimMemory`/`onLowMemory` 零命中，上面的累积没有回收兜底 | 全仓 | 未做（见下） |
+| 15 | 坏 `tvbox-torrent:` 串 → NumberFormatException；`stop(true)` 已置 null 的列表仍直读 → NPE | `util/thunder/Thunder` | 待后续 |
+| 16 | `infoList.get(0).beanList.get(0)` 两级不判（运行在 Thunder 自建线程池、任务体无 try） | `viewmodel/SourceViewModel` | 待后续 |
+| 17 | JS 源 `proxy()` 返回 `["200",null]` → ClassCastException；`serve()` 整段无 try | `server/RemoteServer` | 待后续 |
+| 18 | 非线程安全集合跨线程读写（WebView 线程 add / 主线程 poll）+ detach 后 `requireActivity()` | `util/player/PlayParseCoordinator` | 待后续 |
+| 19 | 进程级单例把 1×1 WebView `addContentView` 到当前 Activity，全类无 remove/destroy；URL 集合普通 HashMap | `util/WebSniffResolver` | 部分修复（见 §1.13 四：空闲 60s 释放 + removeView + destroy + Cookie flush；`loadedUrls` 跨线程读写未动） |
+| 20 | 崩溃熔断只看"距上次崩溃 < 2s"，用户点重启到新进程必然超窗 → 熔断永不命中；无计数、无安全模式 | `App.initCrashConfig` | ✅ 本批 |
+| 21 | `:error_activity` 进程照跑完整 `App.onCreate`，且该进程不装 CAOC Provider、无兜底 handler | `App.onCreate` | ✅ 本批 |
+| 22 | `AppDataManager` 无 `fallbackToDestructiveMigration`，DB 损坏/迁移缺口时启动即崩无退路 | `core-storage/AppDataManager` | 本批有意未动（涉及清库=用户数据，另行确认） |
+| 23 | 崩溃只 `insertAllAsync`，紧接着被 `killProcess + System.exit` 带走 → 首次崩溃落不了库 | `log/internal/CrashReporter`(实为 `LogStore` 崩溃 sink) | ✅ 本批 |
+
+**第一批改了什么（本批已落地）**
+- **1**：`DownloadStore.load()` 除读盘外的两段（状态归位、磁盘对账）整体入 `try`（与 `DownloadArchive` 口径一致，
+  另对逐个任务的 tmpDir 迁移再兜一层），并在装载时**剔除列表里的 null 任务**（Gson 对 `[null]` 会产出 null 元素）。
+  基调：启动路径上的本地文件不可信；坏数据最多表现为"任务少了几条"，绝不能让 `onCreate` 抛异常。
+- **2**：清单改为全限定类名 `com.github.tvbox.osc.download.internal.DownloadForegroundService`（真实类所在的
+  `internal` 包与模块 `namespace` 不同，相对名必然解析错）。
+- **3**：新增 `PipHelper.isInPip(Activity)`（`SDK_INT < O` 直接 false + try 兜底），四处调用点统一改走它。
+- **4**：新增 `ui/dialog/PicassoImageLoader`（按 XPopup 2.10.0 的 `XPopupImageLoader` 契约用 Picasso 实现：
+  `loadImage` 进度圈跟随 + 失败切统一占位、`loadSnapshot` 复用缩略图 drawable 做转场首帧、"保存图片"经共享图片
+  客户端下载到 cache 并带 8MB 上限），`VideoDetailDialog` 换用它。
+- **5**：`App.onCreate` 改为「`initCrashConfig()` → `initParams()` → `LogStore.installCrashHandler()`」
+  最先就位，`PlayerHelper.init()`/`QuickJSLoader.init()` 等全部挪到兜底之后；`App.getp2p()` 的
+  `catch (Exception)` 改 `catch (Throwable)`（`P2PClass` 静态块是 `System.loadLibrary("p2p")`，
+  so 缺失抛的是 `ExceptionInInitializerError`）。
+- **20/21/23**：新增 `base/StartupGuard` 承载三件事——① **错误页进程最小化启动**（读 `/proc/self/cmdline`
+  判定 `:error_activity`，只装一个"留痕后安静退出"的兜底 handler，不再跑业务初始化）；② **启动崩溃熔断**
+  （同一 5 分钟窗口内连续 **3 次真实崩溃** → 本次进安全模式：跳过 `QuickJSLoader.init()` 的 native
+  加载、Toast + 业务日志告知用户；进入后**保持 10 分钟冷却期**，避免"三次崩换一次降级启动、然后又崩"的抖动，
+  健康启动清零计数、冷却期一过即恢复正常；计数用 `SharedPreferences.commit()` 同步落盘，同步提交是为了
+  进程随时可能死时计数不丢）；③ **崩溃日志阻塞落库**（`LogRepository.insertAllBlocking` →
+  `LogCollector.flushNowBlocking`，上限 1.5s，超时只影响日志不影响崩溃处理；写线程自己崩时直接同步写，
+  避免自己等自己），并把"分类开关"从 `force` 路径上摘掉——否则用户关掉"系统"分类后崩溃会被静默丢弃。
+  崩溃页「详细错误信息」里带上启动计数/安全模式状态。
+- 验证（机器侧）：`:app:assembleDebug :app:assembleRelease :app:testDebugUnitTest checkModuleDependencies`
+  全绿；新增 JVM 单测 `StartupGuardPolicyTest`（12 条：窗口内累计/窗口外重新计数/时钟回拨不清零/脏负数计数/
+  阈值边界/冷却期开启与不续期/冷却期内的健康启动仍走安全模式），合并后清单已核对为
+  `com.github.tvbox.osc.download.internal.DownloadForegroundService`（debug + release 均已确认）。
+  **真机行为（坏任务文件不再开机死循环、:download 前台服务通知、7.x 离开播放页、点缩略图看大图、
+  连续启动失败进安全模式、崩溃后能在日志页看到该次崩溃）一律待人工验证。**
+
+**第二批改了什么（native/时序，本批已落地）**
+- **6｜内核释放时序（真机最可能报的闪退）**：三处一起改，核心是"释放 Surface 之前必须先把播放器与 Surface
+  解绑"——① `AbstractPlayer` 新增 `detachSurface()`（`setSurface(null)`，在播放器还活着时调用是安全的）
+  与模块级共享的串行释放执行器 `releaseAsync()`（原来每次 release 各起一条裸线程，随换源/切集无界涨线程；
+  现改为单线程串行，AGENTS §六口径）；② `VideoView.release()`/`addDisplay()` 在 `mRenderView.release()`
+  **之前**先 `detachSurface()`（IJK 的 release 是异步的，而 `TextureRenderView.release()` 会立刻释放
+  Surface/SurfaceTexture —— 顺序反了就是原生输出线程往已释放窗口写 = SIGSEGV，触发点正是"播放中返回/切集/换源"）；
+  ③ `IjkPlayer.release()` 改为"先抓本地引用再异步释放"（原来匿名类里直接读字段，理论上会释放到之后新建的那一个）、
+  `catch (Throwable)`（native 释放失败抛的是 Error）；`AndroidMediaPlayer.release()` 同步改用共享执行器 + 解绑 Surface；
+  ④ `TextureRenderView.release()` 释放后把 `mSurface`/`mSurfaceTexture`/`mMediaPlayer` **置空**（否则重新 attach 时
+  `onSurfaceTextureAvailable` 会拿已释放的 SurfaceTexture 再 `setSurfaceTexture` 一次）。
+  `mMediaPlayer` 字段**有意不置空**：app 的 `IjkMediaPlayer` 子类 `setOptions()` 直接读它，置空会让每次
+  reset/起播都 NPE；且置空会把"原生侧空指针检查返回默认值"变成 Java NPE。
+- **7｜轨道切换后的进度恢复（800ms 延迟任务）**：原来两处 `new Handler().postDelayed(..., 800)` 不可取消、
+  任务体在外层 try 之外。现收口为 `SubtitleCoordinator.postTrackRestore()`：可被新增的 `release()` 取消
+  （宿主 `PlayFragment.onDestroyView` 调用）、按播放上下文 epoch 失效（800ms 内切集就不再拿旧进度 seek）、
+  执行前校验内核仍是当时那一个，任务体自带 try/catch(Throwable)。判定条件抽成纯策略
+  `TrackRestoreGuard.shouldRun()` + 单测 5 条。
+- **8｜JS 定时器的跨线程释放（外部可控杀进程）**：`Global.setTimeout` 的失败分支（`executor.isShutdown()`、
+  `submit` 被拒、`timer` 已 cancel）原来在 Timer 线程上直接 `func.release()`，而
+  `JSObject.release → QuickJSContext.freeValue` 有 `checkSameThread()` → 抛出未捕获 `QuickJSException` = 杀进程
+  （触发：源用了 setTimeout、此刻源正在销毁）。现改为 `releaseOnJsThread()`：执行器还活着就 hop 回 JS 线程释放，
+  已 shutdown 则**不释放**（同一线程上紧接着 `ctx.destroy()`，整块上下文一起回收，跨线程去碰才是崩因）；
+  另外给"JS 线程内"的释放加了 `safeRelease()`（finally/回调里的 release 在上下文已销毁时同样会抛，
+  逃出 JS 线程任务就是未捕获异常）。`_http` 失败分支、`submitComplete` 两处一并收敛。
+- 验证（机器侧）：`:app:assembleDebug :app:assembleRelease :app:testDebugUnitTest checkModuleDependencies`
+  全绿；新增单测 `TrackRestoreGuardTest`（5 条）。
+  **真机行为（播放中返回/切集/换源不再闪退、切音轨与内置字幕的进度恢复正常、退出播放页 800ms 内不崩、
+  批量换订阅/离开播放页时 JS 定时器不再杀进程）一律待人工验证。**
+
+**第三批改了什么（资源耗尽，本批已落地）**
+- **9｜fd 泄漏**：`UA.random()` 原来每次请求都 `assets.open("ua.db")` 且**两个流都不关**（catch 分支也不关），
+  调用点又正好在豆瓣热门的循环里（每条视频一个 UA）—— 现改为"首次读到内存缓存 + try-with-resources"，
+  顺带省掉每次请求重读 670KB 的开销（解析口径未变，只把"取第 N 条"拆成 `uaCount/uaAt` 两个纯函数好单测）；
+  `FileUtils.getAsOpen`（JS 源加载热路径：每个源、每次 import 都走）同样改为 try-with-resources，
+  并修掉原来 `available()` 估长 + 单次 `read()` 可能把模块文件读短的问题。顺带修了同类的
+  `BaseActivity.getAssetText`（该方法是仓内零调用的死代码，一并把资源处理修对）。
+- **10｜JS 源实例无上限**：`JsLoader` 增加常驻上限 `MAX_LIVE_SPIDERS = 16` + `LAST_USED` LRU，
+  创建新源后按"最久未用的**空闲**实例"回收（`JsSpider.isIdle()`，回收走既有的 `destroy()`：退役 +
+  空闲即销毁，晚到调用只会拿到 null 而不是踩已销毁的 QuickJS 上下文）。取 16 是因为聚合搜索/首页会同时
+  用到多个源，回收在跑的源会立刻触发秒级重建；真正冷下来的才回收。
+- **11｜NativeCleaner 只增不减**：`clean()`（把 GC 回收掉的 hold 引用对应的 `dupValue(+1)` 还回去）
+  在原库中从未被调用，于是 `phantomReferences` 只增不减、JS 侧对象也永不释放。现于
+  `QuickJSContext.hold()` 与 `QuickJSContext.call()`（都在 JS 线程上）各调一次
+  `cleanRecycledRefs()`：无对象可回收时只是一次引用队列 poll，代价可忽略。
+- **12｜无界响应体**：新增 `core-network` 的 `HttpBodyReader`（有 Content-Length 先快速拒绝、
+  分块传输按累计字节兜底；顺带保持 `string()` 原有的"Content-Type charset + 跳过 UTF-8 BOM"口径），
+  `HttpClient` 的异步 GET / `getSync` / `getQuietly` 三处改走文本上限 16MB，JS 源桥
+  `Connect.success` 改走二进制上限 24MB（原来的 `body().bytes()` 完全无上限）。两个模块共用同一份实现。
+- **13｜海报已加载表无上限**：`PicassoLoad.sessionLoaded` 由无界 Set 改为 1000 条 LRU
+  （与同文件 `sessionFailed` 的 500 条 LRU 同口径），淘汰只影响"滑回时是否再扫一次骨架屏"，不影响正确性。
+- **14｜未做**：`onTrimMemory/onLowMemory` 仍是零命中。它属于"再加一道兜底"，且要决定回收什么、
+  在哪些页面生效（涉及 Picasso 内存缓存与源实例缓存），本批先把各个泄漏源本身修掉。
+- 验证（机器侧）：全量门禁全绿；新增单测 `UaDbParseTest`（6 条：按索引取每一条/最后一条边界/单条库/
+  越界返回 null/残缺文件降级/上下文未注入走兜底）与 `HttpBodyReaderTest`（9 条：正常读取/跳过 BOM/
+  Content-Type charset/缺省 UTF-8/声明超限被拒/分块超限被拒/正好等于上限放行/空体/二进制上限独立生效）。
+  另核对 debug 与 release 两个 APK 的 dex 均含本批新增符号（`HttpBodyReader`/`isIdle`/`TrackRestoreGuard`/
+  `PicassoImageLoader`/`safe_mode_until`），确认产物是"改完之后"构建的。
+  **真机行为（长会话内存与线程数不再单调上涨、几百个源规模不再 Too many open files、超大响应不再 OOM）
+  一律待人工验证。**
+
+### 1.13 第二批审计（发热/耗电）整改（2026-09-27）
+
+同一轮审计的第二份清单，主题是"越用越烫/息屏也烫"。**注意这一批与 §1.12 的 23 条是两套编号**，
+下面用小节名（二/三/四）指代。
+
+**二｜骨架屏扫光会永久泄漏（已修）**
+- `PicassoShimmer`：那个 `ValueAnimator` 是 `INFINITE` 的，而"停止"原先只有 Picasso 的
+  onSuccess/onError 一条路 —— 请求被取消（Picasso 取消后不再回调）、延迟启动的 run 在图片已出图之后才跑到、
+  宿主被 detach 之后，动画器都会一直按 60fps tick，并通过 `Drawable → Callback` 强引用把 ImageView
+  （及其 Activity）一起留住。现补三道自愈：①宿主 detach / 窗口不可见 → 自停；②超过 30s 没人停 → 自停；
+  ③自停时摘掉 foreground，断开引用链。另外 `draw()` 里每帧 `new LinearGradient` + 两个颜色/位置数组
+  改为**按尺寸缓存渐变 + localMatrix 平移**（像素结果不变，每帧零分配）。
+- 两处"孤儿延迟任务"补严：`FastSearchAdapter.loadPoster` 排队新的延迟启动前先 `cancelShimmer`
+  （与 PicassoLoad 口径一致），并在 run 内校验"view 仍是这个 URL 且实图还没出图"；
+  `PicassoLoad.into` 的 run 内也补了同样的"实图已出图就不再叠扫光"判据。
+
+**三｜卡死的 JS 源线程（能做的都做了，并写清了做不到的部分）**
+- 结论先说：**这个 QuickJS 封装（预编译 .so）没有暴露中断接口**。我逐个核对了
+  `libquickjs-android-wrapper.so` 的 JNI 入口（只有 createRuntime/createContext/evaluate/call/compile/… ，
+  没有 setInterruptHandler 之类；QuickJS 自己的 `JS_SetInterruptHandler` 没被暴露到 Java），
+  所以"纯死循环（`while(1);`）"在进程内**没有任何办法真正打断**。原来代码注释里"漏一块 native 内存
+  而不是闪退"的选择仍然成立，本批做的是"防止它变得更糟 + 让用户看得见"：
+  - `JsSpider.createCtx` 给每个源的 QuickJS 设 **64MB 内存上限**：分配型跑飞（死循环里 push 数据）
+    会在 OOM 前被 QuickJS 抛 RangeError 打断，调用正常失败返回，线程得以释放（纯自旋型仍需下面的约束）。
+  - `JsSpider.isIdle()` 把**卡死的源排除在 LRU 之外**：卡死源若被回收，下次调用会**重建**实例 ——
+    新线程 + 新运行时，而旧的死循环线程并不会因此停下，等于多烧一个核。留在缓存里，后续调用命中
+    `wedged` 直接返回 null，不再新建、也不再堆任务。
+  - 卡死登记给 UI（`SpiderFaults.markUnavailable(siteKey, "该源脚本卡死(疑似死循环)…")`）：
+    页面给出说法而不是一直"暂无数据"，用户能据此换源；`cancelByTag()`（搜索页销毁/重载订阅）时撤掉登记，
+    作为一次"复活尝试"。销毁路径的超时不登记（那只是我们自己发起的销毁在等 JS 线程，误报会把好源说成坏源）。
+  - `destroyNow` 的注释写清代价：销毁等不到 → 那条 `js-spider-*` 线程会一直占一个核直到进程结束，
+    重载订阅只会换新实例、不会停它。
+- **待决策的根治方向**（都不在本批：需要真机回归或架构改动）：①给这个 wrapper 补一个
+  `setInterruptHandler` JNI 入口（需要上游源码 + NDK 重编 .so）；②把 JS 源跑在独立进程里，
+  卡死时直接杀进程重启该进程。
+
+**四｜次要放大项**
+- `LogcatCapture`（写路径三处）：`batch` 原来从不 `clear` —— 凑满 100 行后**每来一行都把整批重写一遍**，
+  写入量 O(n²) 且同一批内容在文件里被重复追加；现改为"写入成功才清空，失败保留重试（待重试行数有上界）"。
+  目录清理（list + 逐个 stat + 排序）从"每次追加"改为**60s 节流**（滚动检查仍每次做，8MB 上限不变）。
+  写失败原来用 `Log.e` 上报，而捕获读的正是本应用 E 级流 → 自放大回环；现降到 `Log.w` + 一次性守卫。
+  （`LogcatCapture.stop()` 仍零调用，属"错误日志常驻"的有意设计，未动。）
+- `DownloadManager`：进度落盘原来跟着 450ms 广播窗口走（整表 JSON + 写 .tmp + rename，≈2.2 次/秒）；
+  现改为**2s 间隔 + 进度指纹**两道闸（指纹覆盖进度回调会改的全部字段），结构性变更（入队/暂停/完成/删除/
+  改地址）仍走各自的强制 `persist()` 立即落盘。代价：进程被杀最多丢约 2s 的进度计数，
+  且续传启动还会用 `.part` 实际长度与磁盘分片对账，实际重下量极小。
+- `WebSniffResolver`：1×1 嗅探 WebView 原来"只重置不销毁"，它被 `addContentView` 挂在当时的 Activity 上，
+  等于把那个 Activity 钉在进程级单例上、页面 JS 也一直留着；现改为**空闲 60s 释放**（`removeView` → `destroy`，
+  销毁前 `CookieManager.flush()` 保住登录会话），新一轮嗅探开始前撤掉释放计时，一批连续嗅探的复用不受影响
+  （真被销毁了 `ensureWebView()` 也会按需重建）。
+- `PosterPlaceholderDrawable`：占位是海报的背景层，扫光每帧重绘都会走到"覆盖条避让高度"的判定
+  （`indexOfChild` + 遍历兄弟量几何 = 每帧遍历视图树）。现按"宿主几何 + 每个兄弟的身份/可见性/几何"做键缓存，
+  键没变直接复用上次结果；判定规则与结果完全不变（AGENTS §七 的覆盖条识别口径逐条保留）。
+- `ScrollThumbIndicator`：滚动指示条原来每帧 `setLayoutParams`（一动就 requestLayout = 整个弹窗每帧重新布局）；
+  现改为**几何真的变了才设**。
+- `PageBackgroundView`：全屏底图 + 单独一层全屏 scrim 子视图 → 改为在 `dispatchDraw` 里同一次绘制画遮罩色
+  （少一个全屏子视图的测量/布局/绘制与其 RenderNode；绘制次序仍是"图片之上"，像素等价）。
+- `UpdateBubbleView.onDraw`：每帧 `getResources().getDisplayMetrics()`（下载中气泡持续重绘）→ 改为缓存密度、
+  attach 时刷新。（这条是"少调一次 getResources"的确定性收益，与下面对 `getResources()` 本身的判定无关。）
+- **跑马灯（`MarqueeTextView`/`RoundChip`）：核对后判定"无需改"（原判断不成立）**。
+  API 34 的 `TextView` 源码里 `startMarquee()` 要求 `isAggregatedVisible()`，而
+  `onVisibilityAggregated`/`onFocusChanged`/`onWindowFocusChanged` 都会 start/stop，
+  `View.dispatchDetachedFromWindow()` 会触发 `onVisibilityAggregated(false)` ——
+  即**不可见/脱离窗口时框架自己就停了**，重新可见再启；`RoundChip` 内层还带默认重复次数上限。
+  唯一残留是"VISIBLE 但被非回收型容器滚出视口仍算 aggregated-visible"，属框架口径，非本类引入。
+- **`BaseActivity.getResources()`：核对后判定"原判断不成立"，未改**。`ThemeResources.syncFrom()` 的第一行是
+  `latest == this.base` 的**引用比较**——只要 `ContextThemeWrapper` 缓存住 `mResources`（API 34 源码：
+  资源建好后 `applyOverrideConfiguration` 直接抛异常，说明实例是稳定的），热点路径上就**没有**锁、
+  没有 Configuration/DisplayMetrics 读取、也没有 equals，只是一次引用比较。另外"只在配置变化时才同步"的
+  缓存在这里**并不安全**：`Configuration`/`DisplayMetrics` 会被 `Resources.updateConfiguration` 原地改写，
+  按对象身份做键会漏掉真实配置变化，而那个 `cur.equals(now)` 恰恰是唯一安全的变更检测。
+  → 结论：**先不改**。若真机 profiler 仍显示这里占帧时间，再按"记录上一次实测到的 Configuration 内容指纹
+  （而非对象身份）+ 复用同一个 theme 资源实例"的方案做，并需要真机复核换肤/字号/日夜切换后的观感。
+
+- 验证（机器侧）：`:app:assembleDebug :app:testDebugUnitTest` 全绿；新增单测
+  `DownloadProgressSignatureTest`（6 条：无变化不落盘/字节变化落盘/分片进度落盘/状态与合并文案落盘/
+  表结构变化落盘/null 项不抛异常）。
+  **真机行为（长时间下载与长时间浏览时的发热与电量、息屏后是否仍有持续 CPU、卡死源是否给出"脚本卡死"说法、
+  扫光在图片已出图/页面离开后是否彻底停、滚动指示条与占位图观感不变）一律待人工验证。**
+
+## 2. 待后续（需真机回归或架构决策）
 | 项 | 说明 |
 |---|---|
 | PlayFragment(~1.8k) 进一步拆分 | 字幕/播放器控制器与宿主深度耦合，无回归环境不强行搬移 |
