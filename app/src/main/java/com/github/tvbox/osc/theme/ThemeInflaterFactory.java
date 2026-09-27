@@ -84,9 +84,20 @@ public final class ThemeInflaterFactory implements LayoutInflater.Factory2 {
      * <p>换肤没介入时什么都不做(不装),让内置主题走原生路径。
      */
     public static void install(Activity activity) {
-        if (activity == null || !ThemeRuntime.active()) return;
-        LayoutInflater inflater = activity.getLayoutInflater();
-        if (inflater == null) return;
+        if (activity == null) return;
+        install(activity.getLayoutInflater());
+    }
+
+    /**
+     * 给任意一份 LayoutInflater 装上本工厂(幂等)。
+     *
+     * <p>为什么要按 inflater 而不是只按 Activity:视图是由**被 inflate 时那份 inflater** 决定的,
+     * 而除了 Activity 自己的 inflater,还有"应用上下文的 inflater"这条路 ——
+     * 部分适配器/第三方弹窗用 {@code LayoutInflater.from(appContext)} 造视图,那些视图
+     * 原来完全吃不到主题(现象:标题栏这类代码取色的变了,而某些布局属性的底仍是内置浅色面)。
+     */
+    public static void install(LayoutInflater inflater) {
+        if (inflater == null || !ThemeRuntime.active()) return;
         Object current = readField(inflater, "mFactory2");
         if (current instanceof ThemeInflaterFactory) return;
         LayoutInflater.Factory2 existing2 = current instanceof LayoutInflater.Factory2
@@ -96,26 +107,26 @@ public final class ThemeInflaterFactory implements LayoutInflater.Factory2 {
                 ? (LayoutInflater.Factory) current1 : null;
         ThemeInflaterFactory factory = new ThemeInflaterFactory(existing2, existing1);
         if (writeField(inflater, "mFactory2", factory)) {
-            log(activity, true);
+            log(inflater, true);
             return;
         }
         // 反射改不了(极少数 ROM/被加固的包):退回"二次设置"这条会被系统拒绝的路,失败即放弃
         try {
             inflater.setFactory2(factory);
-            log(activity, true);
+            log(inflater, true);
         } catch (Throwable ignored) {
             // 装不上 = 布局里那些 @color 引用不会跟着自定义主题走(只剩代码取色/窗口底色两条通道),
             // 页面上会表现为"主题只变了一部分"。写进日志,便于和"主题压根没生效"区分开
-            log(activity, false);
+            log(inflater, false);
         }
     }
 
     /** 把"注入器到底装上没有"写进运行日志(见 install 的说明) */
-    private static void log(Activity activity, boolean ok) {
+    private static void log(LayoutInflater inflater, boolean ok) {
         try {
             com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM,
                     "主题: 布局注入器" + (ok ? "已装 " : "未装上(反射被拦,布局里的颜色不会跟着主题走) ")
-                            + activity.getClass().getSimpleName());
+                            + inflater.getContext().getClass().getSimpleName());
         } catch (Throwable ignored) {
         }
     }

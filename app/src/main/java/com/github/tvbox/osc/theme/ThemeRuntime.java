@@ -209,6 +209,14 @@ public final class ThemeRuntime {
         if (activity == null) return;
         try {
             ThemeInflaterFactory.install(activity);
+            // **应用上下文的 inflater 也装一份**:视图是由"inflate 它的那份 inflater"决定的,
+            // 有些适配器/第三方弹窗用 LayoutInflater.from(appContext) 造视图 —— 那条路上的视图
+            // 原来完全吃不到主题(现象:标题栏这种代码取色的变了,而某些布局属性的底仍是内置浅色面,
+            // 用户口径:"二级页标题栏都变了,我的页卡片和底部导航栏却没变")。
+            android.content.Context app = activity.getApplicationContext();
+            if (app != null && app != activity) {
+                ThemeInflaterFactory.install(android.view.LayoutInflater.from(app));
+            }
         } catch (Throwable ignored) {
         }
     }
