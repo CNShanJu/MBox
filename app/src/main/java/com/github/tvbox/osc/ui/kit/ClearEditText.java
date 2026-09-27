@@ -56,6 +56,16 @@ public class ClearEditText extends EditText implements
             mClearDrawable = getResources().getDrawable(R.drawable.delete);
 //            throw new NullPointerException("You can add drawableRight attribute in XML");
         }
+        // 清除按钮(搜索框里那个「x」)统一按**提示文字**那一档着色:它是张位图、自带颜色、又不跟主题,
+        // 用户口径"删除搜索的 x 没走提示文本的配色"。取色走主题资源(自定义主题下 text_hint 会变),
+        // 所以这里按资源 id 取、而不是写死色值。
+        try {
+            mClearDrawable = mClearDrawable.mutate();
+            mClearDrawable.setTint(androidx.core.content.ContextCompat.getColor(
+                    getContext(), R.color.text_hint));
+        } catch (Throwable ignored) {
+            // 极端情况下(拿不到主题色)保持原样,不影响输入与清除
+        }
         //设置图标的位置以及大小,getIntrinsicWidth()获取显示出来的大小而不是原图片的带小
         mClearDrawable.setBounds(0, 0, mClearDrawable.getIntrinsicWidth(), mClearDrawable.getIntrinsicHeight());
         //默认设置隐藏图标
