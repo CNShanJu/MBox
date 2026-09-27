@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 局域网访问地址的一行:地址(可选中可复制) + 「复制」。
+     复制是**纯文字按钮**(不带底、不带描边),颜色走主题高亮色 text_highlight ——
+     与播放详情弹窗里的「复制」同一档色(那里也是 text_highlight 的裸文字),不再用带描边的 BtnGhost,
+     否则同一个"复制"在两处长得不一样。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:gravity="center_vertical"
+    android:orientation="horizontal">
+
+    <TextView
+        android:id="@+id/tvLanAddr"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:textColor="@color/text_foreground"
+        android:textIsSelectable="true"
+        android:textSize="14sp" />
+
+    <TextView
+        android:id="@+id/btnLanCopy"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="8dp"
+        android:background="?selectableItemBackgroundBorderless"
+        android:paddingHorizontal="10dp"
+        android:paddingVertical="6dp"
+        android:text="@string/lan_server_copy"
+        android:textColor="@color/text_highlight"
+        android:textSize="13sp"
+        android:textStyle="bold" />
+</LinearLayout>
