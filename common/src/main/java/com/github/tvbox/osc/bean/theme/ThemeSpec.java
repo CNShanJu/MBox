@@ -68,8 +68,9 @@ public final class ThemeSpec {
                 "弹窗、抽屉、气泡、首页直播/筛选悬浮钮"));
 
         // ② 文字分级
-        list.add(new ThemeKey("text_main", ThemeKey.Group.TEXT, ThemeKey.Kind.COLOR, "正文文字",
-                "正文、列表文字"));
+        // **正文颜色(text_main)的键已移除**:它与主题主色 brand 共用同一个值(用户口径:
+        // "正文颜色和主题主色共用,移除正文颜色的key")—— 资源名 text_main 仍然存在,由 brand 派生,
+        // 所以布局/代码里的 @color/text_main、@color/text_foreground 一处都不用改。
         list.add(new ThemeKey("text_sub", ThemeKey.Group.TEXT, ThemeKey.Kind.COLOR, "次要文字",
                 "说明、描述、副标题"));
         list.add(new ThemeKey("text_hint", ThemeKey.Group.TEXT, ThemeKey.Kind.COLOR, "占位文字",

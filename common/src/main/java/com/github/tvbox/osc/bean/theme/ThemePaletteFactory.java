@@ -78,7 +78,10 @@ public final class ThemePaletteFactory {
         // 浮层:弹窗·抽屉·气泡·悬浮钮同一个值(颜色同上,只有透明度不同)
         out.put("bg_float", floatBg);
 
-        out.put("text_main", color(in, "text_main", builtin.get("text_main")));
+        // 正文颜色与主色**共用**同一个值(用户口径:"正文颜色和主题主色共用,移除正文颜色的key"):
+        // 主题文件里已没有 text_main 这个键,资源名 text_main 仍由 brand 派生 ——
+        // 于是"改主色 = 正文文字一起变",按钮/chip/描边与正文天然同色
+        out.put("text_main", brand);
         out.put("text_sub", color(in, "text_sub", builtin.get("text_sub")));
         out.put("text_hint", color(in, "text_hint", builtin.get("text_hint")));
         out.put("text_disable", color(in, "text_disable", builtin.get("text_disable")));

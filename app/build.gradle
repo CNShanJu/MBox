@@ -283,7 +283,7 @@ def defaultRadii = [
 def defaultLightColors = [
         bg_body: '#faf8ff',
         bg_surface: '#ECECF4', bg_float_alpha: 92, bg_card_alpha: 60,
-        text_main: '#050505', text_sub: '#787878', text_hint: '#611C1B1F',
+        text_sub: '#787878', text_hint: '#611C1B1F',
         text_disable: '#b3b3b3', text_accent: '#1F2937', text_highlight: '#1890FF',
         brand: '#1F2937', brand_text: '#FFFFFF',
         btn_confirm_bg: '#1F2937', btn_confirm_text: '#FFFFFF',
@@ -294,7 +294,7 @@ def defaultLightColors = [
 def defaultNightColors = [
         bg_body: '#141218',
         bg_surface: '#211D28', bg_float_alpha: 10, bg_card_alpha: 100,
-        text_main: '#FFFFFF', text_sub: '#AFAFAF', text_hint: '#99E6E1E5',
+        text_sub: '#AFAFAF', text_hint: '#99E6E1E5',
         text_disable: '#b3b3b3', text_accent: '#E5E7EB', text_highlight: '#1890FF',
         brand: '#E5E7EB', brand_text: '#141218',
         btn_confirm_bg: '#00000000', btn_confirm_text: '#E5E7EB',
@@ -397,7 +397,8 @@ static def derivePalette(def c) {
             bg_surface       : toHex(cardBg),
             bg_card          : toHex(cardBg),
             bg_float         : toHex(floatBg),
-            text_main        : toHex(parseColor(c.text_main, 0xFF050505)),
+            // 正文颜色与主色共用同一个值(资源名 text_main 保留,但主题文件里已没有这个键)
+            text_main        : toHex(brand),
             text_sub         : toHex(parseColor(c.text_sub, 0xFF787878)),
             text_hint        : toHex(parseColor(c.text_hint, 0xFF611C1B1F)),
             text_disable     : toHex(parseColor(c.text_disable, 0xFFB3B3B3)),

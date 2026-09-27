@@ -85,6 +85,16 @@ public final class ThemeJson {
     private static final String SWAP_B = "text_accent";
 
     /** 这份 JSON 是不是旧键名的老文件(出现任意一个旧键名即认为是) */
+    /**
+     * 已取消的配置项:读到它们时给一句专门提示(比"不认识的项"好懂),值不参与派生、也不进识别计数。
+     *
+     * <p>{@code text_main}(正文文字)= 与主题主色 {@code brand} <b>合并</b>:两者永远同一个值,
+     * 所以不再单独配(用户口径:"正文颜色和主题主色共用,移除正文颜色的key")。
+     * 资源名 {@code text_main} 仍然存在,由 {@code brand} 派生 —— 布局与代码一行都不用改。
+     */
+    private static final java.util.Set<String> REMOVED_KEYS = new java.util.HashSet<>(
+            java.util.Arrays.asList("text_main"));
+
     private static boolean isLegacyFile(JsonObject o) {
         for (String k : LEGACY_RENAMES.keySet()) {
             if (o.has(k)) return true;
@@ -239,6 +249,8 @@ public final class ThemeJson {
                 }
                 def.setColor(target, raw);
                 recognized++;
+            } else if (REMOVED_KEYS.contains(key)) {
+                warnings.add("「" + key + "」已与「主题主色」合并,调主色即可(这一项已忽略)");
             } else if (!isMeta(key)) {
                 warnings.add("不认识的项「" + key + "」已忽略");
             }
