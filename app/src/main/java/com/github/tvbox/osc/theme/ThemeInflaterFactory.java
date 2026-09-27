@@ -231,6 +231,17 @@ public final class ThemeInflaterFactory implements LayoutInflater.Factory2 {
                 else tv.setLinkTextColor(csl);
                 return true;
             }
+            case "button": {
+                // CompoundButton 的勾选圈/单选圈:值是个 drawable(常见是"选中/未选中"两个矢量的 selector)。
+                // 这条属性注入器原来完全不碰 —— 圈的颜色/描边就永远停在内置配色
+                // (用户口径:弹窗列表里那些圈"颜色和主题对不上")。
+                // 取 themedDrawable:selector 本身没有主题色时它会退回系统那份并给内部矢量上主题 tint。
+                if (!(view instanceof android.widget.CompoundButton)) return false;
+                Drawable themed = ThemeDrawables.themedDrawable(resId, context.getResources());
+                if (themed == null) return false;
+                ((android.widget.CompoundButton) view).setButtonDrawable(themed);
+                return true;
+            }
             case "background":
                 return applyBackground(view, context, resId, palette);
             case "src":
