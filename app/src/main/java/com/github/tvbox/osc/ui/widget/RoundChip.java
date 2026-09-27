@@ -18,11 +18,11 @@ import com.github.tvbox.osc.util.TextLineHeight;
 
 /**
  * 统一的"圆角 + 文字"组件(选集格子/下载剧集格子等):
- * 选中 = 首页顶部导航栏的选中文字色 `colorPrimary`;未选中 = 它的未选中文字色 `text_sub_foreground`;
+ * 选中 = **文字主色**(与首页顶部导航栏的选中文字同色);未选中 = 它的未选中文字色 `text_sub_foreground`;
  * 禁用 = 次要文字色;失败 = 红。背景/描边由外部提供,组件只统一文字与选中态。
  * <p>
  * 注意:这里**不再用**专门的高亮色(text_highlight),而是与首页顶部 tab 的选中/未选中色保持一致 ——
- * 需要"更明显的选中"时改 colorPrimary 一处即可,别在各页面各写一套色。
+ * 要调整选中强度就改这一处,别在各页面各写一套色。
  * 选集依旧是"无边框无背景"(项目约定),选中只靠文字色区分。
  */
 public class RoundChip extends FrameLayout {
@@ -130,10 +130,10 @@ public class RoundChip extends FrameLayout {
     }
 
     private void updateColor(boolean selected) {
-        // 字重/字号:选中加粗 + 大一号;颜色:选中=首页顶部导航栏选中色(colorPrimary,跟随主题)
+        // 字重/字号:选中加粗 + 大一号;颜色:选中 = **文字主色**(与首页顶部导航栏选中色同一档 ——
         applyTextStyle(selected);
         if (selected) {
-            mTextView.setTextColor(ContextCompat.getColor(getContext(), R.color.colorPrimary));
+            mTextView.setTextColor(ContextCompat.getColor(getContext(), R.color.text_foreground));
             return;
         }
         if (mFailed) {

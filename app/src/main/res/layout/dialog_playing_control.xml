@@ -156,6 +156,7 @@
                 android:paddingVertical="4dp"
                 android:paddingHorizontal="10dp"
                 android:drawableRight="@drawable/ic_change_20"
+                app:drawableTint="@color/text_foreground"
                 app:drawableIconSize="20dp"
                 android:drawablePadding="8dp"
                 tools:text="16:9"
@@ -281,6 +282,7 @@
                     android:paddingVertical="4dp"
                     android:paddingHorizontal="10dp"
                     android:drawableRight="@drawable/ic_change_20"
+                    app:drawableTint="@color/text_foreground"
                     app:drawableIconSize="20dp"
                     android:drawablePadding="8dp"
                     tools:text="EXO" />
@@ -297,6 +299,7 @@
                     android:paddingVertical="4dp"
                     android:paddingHorizontal="10dp"
                     android:drawableRight="@drawable/ic_change_20"
+                    app:drawableTint="@color/text_foreground"
                     app:drawableIconSize="20dp"
                     android:drawablePadding="8dp"
                     tools:text="硬解" />

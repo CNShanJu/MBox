@@ -40,6 +40,7 @@
             android:layout_height="wrap_content"
             android:text="倒序"
             android:drawableRight="@drawable/ic_sort_18"
+            app:drawableTint="@color/text_foreground"
             app:drawableIconSize="18dp"
             android:textColor="@color/text_foreground"
             android:drawablePadding="4dp"
