@@ -114,6 +114,13 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
         }else {
             setContentView(getLayoutResID());
         }
+        // 换肤兜底:注入器抓不到的视图(实测 MainActivity 的底栏容器就属于这类),
+        // 按"背景色还是不是内置那份"再补一遍(见 theme/ThemeSweep)
+        try {
+            View content = getWindow() == null ? null : getWindow().getDecorView();
+            com.github.tvbox.osc.theme.ThemeSweep.apply(content);
+        } catch (Throwable ignored) {
+        }
         mContext = this;
         AppManager.getInstance().addActivity(this);
         // 全局页面背景层("body"底图):挂到内容容器最底层,所有页面透明处即显示背景图
@@ -387,9 +394,9 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
 
     protected String getAssetText(String fileName) {
         StringBuilder stringBuilder = new StringBuilder();
-        try {
-            AssetManager assets = getAssets();
-            BufferedReader bf = new BufferedReader(new InputStreamReader(assets.open(fileName)));
+        // try-with-resources:原来 BufferedReader 从不关闭,每调用一次泄一个 fd
+        // (注:本方法目前在仓内已无调用方,顺手把资源处理修对,避免以后接线时踩坑)
+        try (BufferedReader bf = new BufferedReader(new InputStreamReader(getAssets().open(fileName)))) {
             String line;
             while ((line = bf.readLine()) != null) {
                 stringBuilder.append(line);

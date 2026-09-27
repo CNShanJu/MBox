@@ -40,6 +40,12 @@ abstract class BaseVbFragment<T : ViewBinding> : Fragment(), CustomAdapt {
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        // 换肤兜底:Fragment 的布局由 Framework/AutoSize 那条路 inflate,注入器抓不全,
+        // 这里按"背景色还是不是内置那份"再补一遍(见 ThemeSweep 的说明)
+        try {
+            com.github.tvbox.osc.theme.ThemeSweep.apply(view)
+        } catch (ignored: Throwable) {
+        }
         init()
     }
 
