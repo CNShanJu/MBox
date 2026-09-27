@@ -113,7 +113,7 @@
                             android:src="@drawable/ic_private_browsing"
                             android:visibility="gone"
                             tools:visibility="visible"
-                            />
+                            app:tint="@color/text_foreground" />
                     </LinearLayout>
 
                     <LinearLayout

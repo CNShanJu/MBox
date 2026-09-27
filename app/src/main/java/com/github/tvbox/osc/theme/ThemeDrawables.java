@@ -227,16 +227,21 @@ public final class ThemeDrawables {
             String rootKey = ThemeColorAliases.paletteNameOf(rootTint);
             if (rootKey != null) return rootKey;
         }
-        // ② 退回到逐 path 看 fillColor(单色才认)
+        // ② 退回到逐 path 看颜色(单色才认):fillColor 与 strokeColor 都算 ——
+        //    纯描边型图标(如多选圆环 ic_select_ring:fill=transparent + stroke=select_fill)
+        //    只写 strokeColor,不看它就永远不跟主题走;@android:color/transparent 视作"没颜色"跳过,
+        //    其余"写死的颜色"仍按老规矩直接放弃(避免把多色/带白底的图标涂坏)。
         String found = null;
         int depth = 0;
+        String[] colorAttrs = {"fillColor", "strokeColor"};
         while (true) {
             int event = parser.next();
             if (event == XmlPullParser.END_DOCUMENT) break;
             if (event == XmlPullParser.START_TAG) {
                 depth++;
-                int colorRes = parser.getAttributeResourceValue(NS, "fillColor", 0);
-                if (colorRes != 0) {
+                for (String attr : colorAttrs) {
+                    int colorRes = parser.getAttributeResourceValue(NS, attr, 0);
+                    if (colorRes == 0 || colorRes == android.R.color.transparent) continue;
                     String key = ThemeColorAliases.paletteNameOf(colorRes);
                     if (key == null) return null; // 写死的颜色:不动
                     if (found == null) {

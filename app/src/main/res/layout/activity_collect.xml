@@ -20,7 +20,8 @@
         android:layout_marginVertical="10dp"
         android:visibility="gone"
         tools:visibility="visible"
-        android:text="长按取消收藏"/>
+        android:text="长按取消收藏"
+        android:textColor="@color/text_sub_foreground" />
 
     <FrameLayout
         android:layout_width="match_parent"
