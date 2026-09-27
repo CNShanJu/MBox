@@ -42,6 +42,37 @@ import com.google.android.material.navigation.NavigationBarMenuView;
  */
 public class FireworksBottomNavigationView extends BottomNavigationView {
 
+    /**
+     * 换肤:选中/未选中项的文字与图标色。
+     *
+     * <p>为什么写在这里:这两个色由 {@code app:itemTextColor} / {@code app:itemIconTint} 给,
+     * 值是 {@code @drawable/bottom_navigation_item_selector} —— 而实测**这个容器拿不到换肤注入**
+     * (它在 MainActivity 的布局里,注入器抓不到;同一个原因让这条底栏的"底"也一直是内置色,
+     * 后来靠 ThemeSweep 补色才修好)。所以在组件自己身上按主题色显式设一遍最稳、也不依赖 inflater。
+     */
+    @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        applyThemedItemColors();
+    }
+
+    /** 用主题色重建底栏的选择器,再塞回 Material 的两个入口(重建不出时退回系统那份) */
+    private void applyThemedItemColors() {
+        try {
+            if (!com.github.tvbox.osc.theme.ThemeRuntime.active()) return;
+            int selector = com.github.tvbox.osc.R.drawable.bottom_navigation_item_selector;
+            android.content.res.ColorStateList csl =
+                    com.github.tvbox.osc.theme.ThemeDrawables.rebuildColorStateList(selector, getResources());
+            if (csl == null) {
+                csl = androidx.core.content.ContextCompat.getColorStateList(getContext(), selector);
+            }
+            if (csl == null) return;
+            setItemIconTintList(csl);
+            setItemTextColor(csl);
+        } catch (Throwable ignored) {
+        }
+    }
+
     /** 与框架长按同一时长:触发时机和条目自身的震动反馈对得上 */
     private static final long LONG_PRESS_TIMEOUT = ViewConfiguration.getLongPressTimeout();
 
