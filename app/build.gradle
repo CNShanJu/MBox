@@ -284,8 +284,9 @@ def defaultRadii = [
 def defaultLightColors = [
         bg_body: '#faf8ff',
         bg_surface: '#ECECF4', bg_float_alpha: 92, bg_card_alpha: 60,
-        text_sub: '#787878', text_hint: '#611C1B1F',
-        text_disable: '#b3b3b3', text_accent: '#1F2937', text_highlight: '#1890FF',
+        card_category_bg: '#1F2937', card_category_text: '#FFFFFF',
+        text_hint: '#611C1B1F',
+        text_accent: '#1F2937', text_highlight: '#1890FF',
         brand: '#1F2937',
         btn_confirm_bg: '#1F2937', btn_confirm_text: '#FFFFFF',
         btn_cancel_bg: '#661F2937',
@@ -295,8 +296,9 @@ def defaultLightColors = [
 def defaultNightColors = [
         bg_body: '#141218',
         bg_surface: '#211D28', bg_float_alpha: 10, bg_card_alpha: 100,
-        text_sub: '#AFAFAF', text_hint: '#99E6E1E5',
-        text_disable: '#b3b3b3', text_accent: '#E5E7EB', text_highlight: '#1890FF',
+        card_category_bg: '#1F2937', card_category_text: '#FFFFFF',
+        text_hint: '#99E6E1E5',
+        text_accent: '#E5E7EB', text_highlight: '#1890FF',
         brand: '#E5E7EB',
         btn_confirm_bg: '#E5E7EB', btn_confirm_text: '#141218',
         btn_cancel_bg: '#66E5E7EB',
@@ -389,7 +391,13 @@ static int withAlpha(def colorRaw, def alphaRaw) {
 //   ③ 小组件按钮:未选中 = 只有边框(同 ②)+ 文字主色;选中 = 填充 btn_select_bg(忽略透明度)+ 文字 btn_confirm_text
 // 不派生的固定色:text_danger / swipe_red / swipe_red_text 已写死在 res/values/colors.xml(不随主题)
 static def derivePalette(def c) {
-    int brand = parseColor(c.brand, 0xFF1F2937)
+    // 文字主色**强制纯色**(alpha 归 100):用户口径"文字主色不允许设置透明度,只能纯色" ——
+    // 它是正文、空心与纯文字按钮的文字、勾选框与进度条填充,还是次要/禁用两级的计算来源。
+    int brand = withAlpha(parseColor(c.brand, 0xFF1F2937), 1f)
+    // 次要文字 / 禁用文字不再单独配:同一个值 = 文字主色 @60%(用户口径"这两块的文字颜色通过计算获得,
+    // 其值为文字主色透明度 60%")。资源名 text_sub / text_disable 照旧生成,布局与代码不用改。
+    // 注意 Gradle 侧 withAlpha 收的是 0..1 的比例(运行时 ThemePaletteFactory 收 0-100,两边必须同口径)
+    int textSub = withAlpha(brand, 0.6f)
     // 同上口径:纯色按钮的底与其"不透明版"描边/小组件选中填充
     int confirmBg = parseColor(c.btn_confirm_bg, brand)
     int confirmSolid = withAlpha(confirmBg, 100)
@@ -406,11 +414,14 @@ static def derivePalette(def c) {
             bg_surface       : toHex(cardBg),
             bg_card          : toHex(cardBg),
             bg_float         : toHex(floatBg),
+            // 卡片类目(海报卡角上的小标签:来源名/年份/评分):底色 + 文字一对
+            card_category_bg : toHex(parseColor(c.card_category_bg, 0xFF1F2937)),
+            card_category_text: toHex(parseColor(c.card_category_text, 0xFFFFFFFF)),
             // 正文颜色与主色共用同一个值(资源名 text_main 保留,但主题文件里已没有这个键)
             text_main        : toHex(brand),
-            text_sub         : toHex(parseColor(c.text_sub, 0xFF787878)),
+            text_sub         : toHex(textSub),
             text_hint        : toHex(parseColor(c.text_hint, 0xFF611C1B1F)),
-            text_disable     : toHex(parseColor(c.text_disable, 0xFFB3B3B3)),
+            text_disable     : toHex(textSub),
             text_accent   : toHex(parseColor(c.text_accent, brand)),
             text_highlight      : toHex(parseColor(c.text_highlight, 0xFF1890FF)),
             color_highlight  : toHex(brand),
@@ -508,6 +519,8 @@ task generateThemeColors {
             download_done  : '同 success(下载完成的正向状态色)',
             color_highlight: '派生自 brand(全局高亮填充)',
             select_fill    : '派生自 brand(勾选框填充)',
+            text_sub       : '派生自文字主色 @60%(次要文字:说明/描述/副标题)',
+            text_disable   : '派生自文字主色 @60%(禁用文字;与次要文字同值)',
             btn_plain_text : '派生自 brand 文字主色(空心按钮/纯文字按钮的文字)',
             btn_select_bg  : '派生自 btn_confirm_bg 的不透明版(小组件按钮选中态/chip 选中态的填充)',
             btn_select_text: '同 btn_confirm_text(选中填充上的文字 = 主按钮文字)',

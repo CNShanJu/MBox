@@ -36,7 +36,7 @@
                 android:padding="5dp"
                 android:singleLine="true"
                 tools:text="1970"
-                android:textColor="@color/white"
+                android:textColor="@color/card_category_text"
                 android:textSize="10dp" />
         </com.lihang.ShadowLayout>
 

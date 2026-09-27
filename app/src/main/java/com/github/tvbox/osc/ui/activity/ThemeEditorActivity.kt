@@ -49,8 +49,8 @@ import java.util.LinkedHashMap
  *       也能点色块开取色板。透明度项给数字(0-100),没有色板。</li>
  *   <li><b>背景</b>:图片(走既有背景图导入:体积上限 / 纠 EXIF 方向 / 转 WebP,并按内容 hash 去重)
  *       / 纯色 / 恢复默认(默认值按主题类型取内置主题,即纯色)。</li>
- *   <li><b>底部动作</b>:新建时是「取消 + 导入主题」,编辑已有主题时「取消」变成「删除」、「导入」变成「导出主题」——
- *       与用户口径一致。</li>
+ *   <li><b>底部动作</b>:新建时是「取消 + 导入主题」,编辑已有主题时换成「删除 + 导出主题」——
+ *       取消/删除是<b>两个按钮</b>(样式不同:取消=次按钮,删除=危险入口红字),导入/导出互斥显示。</li>
  * </ul>
  *
  * <p>保存:标题栏右侧「保存」。没有名字时弹命名弹窗(重名不许过、可取消);保存成功即返回上级页,
@@ -159,7 +159,8 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
             swatch.setOnClickListener {
                 FastClickCheckUtil.check(it)
                 // 注意:这里不能捕获 draft —— 导入主题包会整份换掉草稿,捕获的旧对象会把编辑写丢
-                ColorPickerDialog.show(this, key.label, draft?.color(key.key) ?: "") { hex ->
+                // key.opaqueOnly(目前是「文字主色」):取色板不给透明度那一行,只收纯色
+                ColorPickerDialog.show(this, key.label, draft?.color(key.key) ?: "", key.opaqueOnly) { hex ->
                     setValue(key, hex)
                 }
             }
@@ -199,7 +200,13 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
             val v = text.toIntOrNull() ?: return false
             v in 0..100
         } else {
-            text.replace("#", "").matches(Regex("(?i)[0-9a-f]{6}|[0-9a-f]{8}"))
+            val hex = text.replace("#", "").uppercase()
+            when {
+                !hex.matches(Regex("(?i)[0-9a-f]{6}|[0-9a-f]{8}")) -> false
+                // 只允许纯色的键(「文字主色」):写成 8 位时必须是不透明(FF 开头),否则就是"设了透明度",不接受
+                key.opaqueOnly && hex.length == 8 -> hex.startsWith("FF")
+                else -> true
+            }
         }
     }
 
@@ -207,6 +214,8 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
     private fun normalize(key: ThemeKey, text: String): String {
         if (key.isAlpha) return (text.toIntOrNull() ?: 0).coerceIn(0, 100).toString()
         val hex = text.replace("#", "").uppercase()
+        // 只允许纯色的键:即便用户写了 FF 开头的 8 位,也归一成 6 位纯色
+        if (key.opaqueOnly && hex.length == 8) return "#" + hex.substring(2)
         return "#$hex"
     }
 
@@ -443,14 +452,17 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
             FastClickCheckUtil.check(it)
             onSaveClicked()
         }
-        mBinding.btnCancelOrDelete.text = if (isNew) "取消" else "删除"
-        mBinding.btnCancelOrDelete.setOnClickListener {
+        // 取消(新建)与删除(已有)是两个按钮:样式不同 —— 取消=次按钮,删除=危险入口(无底色 + 红字),
+        // 共用一个按钮就没法各自套样式(用户口径:"删除按钮样式和主题都对不上")
+        mBinding.btnCancel.visibility = if (isNew) View.VISIBLE else View.GONE
+        mBinding.btnDelete.visibility = if (isNew) View.GONE else View.VISIBLE
+        mBinding.btnCancel.setOnClickListener {
             FastClickCheckUtil.check(it)
-            if (isNew) {
-                finish()
-            } else {
-                onDeleteClicked()
-            }
+            finish()
+        }
+        mBinding.btnDelete.setOnClickListener {
+            FastClickCheckUtil.check(it)
+            onDeleteClicked()
         }
         mBinding.btnImport.visibility = if (isNew) View.VISIBLE else View.GONE
         mBinding.btnExport.visibility = if (isNew) View.GONE else View.VISIBLE
@@ -504,7 +516,12 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
             if (!isValid(key, text)) {
                 if (firstBad == null) {
                     firstBad = key
-                    badText = if (key.isAlpha) "「${key.label}」请填 0-100 的整数" else "「${key.label}」请填 #RRGGBB 或 #AARRGGBB"
+                    badText = when {
+                        key.isAlpha -> "「${key.label}」请填 0-100 的整数"
+                        // 只允许纯色的键(「文字主色」)不给透明度写法
+                        key.opaqueOnly -> "「${key.label}」只收纯色,请填 #RRGGBB(不带透明度)"
+                        else -> "「${key.label}」请填 #RRGGBB 或 #AARRGGBB"
+                    }
                 }
                 continue
             }

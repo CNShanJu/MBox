@@ -4,7 +4,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * 主题文件(17 个可配置键)→ {@link ThemePalette}(25 个资源名)的派生。
+ * 主题文件(17 个可配置键)→ {@link ThemePalette}(27 个资源名)的派生。
  *
  * <p><b>这份规则必须与 {@code app/build.gradle} 的 {@code derivePalette} 完全一致</b>:
  * 内置主题在构建期被 Gradle 派生进 {@code res/values/theme_colors.xml}(首帧就是对的),
@@ -20,8 +20,9 @@ import java.util.Map;
  *       {@code bg_float}(弹窗·抽屉·气泡·悬浮钮)取同一个颜色 + {@code bg_float_alpha} ——
  *       颜色相同才不会同屏深浅不一,透明度分两层(**页面层 / 浮层**);</li>
  *   <li>同值别名(不占配置):{@code color_highlight} / {@code select_fill} / {@code btn_plain_text}
- *       = {@code brand}(文字主色);{@code btn_select_bg} = {@code btn_confirm_stroke}
+ *       = {@code brand}(文字主色,<b>强制纯色</b>);{@code btn_select_bg} = {@code btn_confirm_stroke}
  *       = {@code btn_confirm_bg} <b>的不透明版</b>;{@code btn_select_text} = {@code btn_confirm_text};
+ *       {@code text_sub} = {@code text_disable} = {@code brand} <b>@60%</b>(次要 / 禁用两级由主色算出来);
  *       {@code switch_track_on} = {@code download_done} = {@code success}(正向状态色);</li>
  *   <li>{@code btn_stroke} = {@code btn_cancel_bg}(空心按钮边框线颜色;历史资源名,值同源);</li>
  *   <li>{@code text_danger} / {@code swipe_red} / {@code swipe_red_text} <b>不在这里</b>:
@@ -49,7 +50,13 @@ public final class ThemePaletteFactory {
         if (builtin == null) builtin = emptyDefaults();
 
         // ---- 源头 ----
-        int brand = color(in, "brand", builtin.get("color_highlight"));
+        // 文字主色**强制纯色**(用户口径:"文字主色不允许设置透明度,只能纯色"):它是正文、空心/纯文字
+        // 按钮的文字、勾选框与进度条填充,还是下面次要/禁用两级的计算来源 —— 带透明度整片会发虚。
+        int brand = ThemePalette.withAlpha(color(in, "brand", builtin.get("color_highlight")), 100);
+        // 次要文字 / 禁用文字不再单独配:两级同一个值 = 文字主色 @60%(用户口径:"这两块的文字颜色
+        // 通过计算获得,其值为文字主色透明度 60%")。资源名 text_sub / text_disable 仍然生成,
+        // 布局与代码里那 90 多处引用一处都不用改。
+        int textSub = ThemePalette.withAlpha(brand, 60);
         // 按钮两族的口径(用户口径,一次说清):
         //   ① 纯色按钮:底 = btn_confirm_bg(可以带透明度);**描边 = 底色的不透明版**
         //      ——"纯色按钮也要给边框线,颜色就是主按钮背景的颜色;把它设成透明度百分百时边框线要不透明";
@@ -88,14 +95,17 @@ public final class ThemePaletteFactory {
         out.put("bg_card", cardBg);
         // 浮层:弹窗·抽屉·气泡·悬浮钮同一个值(颜色同上,只有透明度不同)
         out.put("bg_float", floatBg);
+        // 卡片类目(海报卡角上的小标签):底色 + 文字一对,可配置
+        out.put("card_category_bg", color(in, "card_category_bg", builtin.get("card_category_bg")));
+        out.put("card_category_text", color(in, "card_category_text", builtin.get("card_category_text")));
 
         // 正文颜色与主色**共用**同一个值(用户口径:"正文颜色和主题主色共用,移除正文颜色的key"):
         // 主题文件里已没有 text_main 这个键,资源名 text_main 仍由 brand 派生 ——
         // 于是"改主色 = 正文文字一起变",按钮/chip/描边与正文天然同色
         out.put("text_main", brand);
-        out.put("text_sub", color(in, "text_sub", builtin.get("text_sub")));
+        out.put("text_sub", textSub);
         out.put("text_hint", color(in, "text_hint", builtin.get("text_hint")));
-        out.put("text_disable", color(in, "text_disable", builtin.get("text_disable")));
+        out.put("text_disable", textSub);
         // 强调/选中文字没写就跟主色走(与 Gradle 侧一致)
         out.put("text_accent", color(in, "text_accent", brand));
         out.put("text_highlight", color(in, "text_highlight", builtin.get("text_highlight")));
@@ -137,6 +147,8 @@ public final class ThemePaletteFactory {
         d.put("text_hint", 0x611C1B1F);
         d.put("text_disable", 0xFFB3B3B3);
         d.put("text_highlight", 0xFF1890FF);
+        d.put("card_category_bg", 0xFF1F2937);
+        d.put("card_category_text", 0xFFFFFFFF);
         d.put("color_highlight", 0xFF1F2937);
         d.put("btn_select_text", 0xFFFFFFFF);
         d.put("download_done", 0xFF08CA2C);

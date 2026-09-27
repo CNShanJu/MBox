@@ -98,9 +98,13 @@ public final class ThemeJson {
      *
      * <p>{@code btn_cancel_text}(次按钮文字)= 已删除:空心按钮的文字走<b>文字主色</b>{@code brand}
      * (用户口径:"次按钮文字没有,空心按钮的文字颜色走文字主色")。
+     *
+     * <p>{@code text_sub}(次要文字)与 {@code text_disable}(禁用文字)= 已删除:两级改为<b>计算</b>得出
+     * —— 文字主色 @60% 不透明度(用户口径:"移除次要文件颜色和禁用文字颜色,这两块的文字颜色通过计算获得,
+     * 其值为文字主色透明度 60%")。资源名照旧生成,老文件里的值丢弃并给提示。
      */
     private static final java.util.Set<String> REMOVED_KEYS = new java.util.HashSet<>(
-            java.util.Arrays.asList("text_main", "brand_text", "btn_cancel_text"));
+            java.util.Arrays.asList("text_main", "brand_text", "btn_cancel_text", "text_sub", "text_disable"));
 
     private static boolean isLegacyFile(JsonObject o) {
         for (String k : LEGACY_RENAMES.keySet()) {

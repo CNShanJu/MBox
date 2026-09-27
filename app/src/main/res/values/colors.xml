@@ -89,7 +89,8 @@
 
     <!-- 海报角标(评分/年份/来源)背景:压在图片上,**不随主题**（亮/暗主题保持同一个深色 + 白字，
          否则暗色主题下浅底白字和亮色主题观感不一致）;别改成 btn_select_* 那对会随主题翻转的色 -->
-    <color name="poster_badge_bg">#1F2937</color>
+    <!-- 卡片类目(海报卡角上的小标签):主题键 card_category_bg 的别名 —— 别在这里写死色值 -->
+    <color name="poster_badge_bg">@color/card_category_bg</color>
 
     <!-- 开关轨道(switch_track_on/off)与圆点(switch_thumb)已上移到 assets/theme/theme_colors.json:
          开启=绿(#08CA2C,两主题一致)、关闭=亮色 #ccccd4 / 暗色 #3C3C46、圆点固定白色。

@@ -14,7 +14,7 @@ public final class ThemeKey {
     public enum Group {
         /** ①底色与面:页面底、组件/卡片底、悬浮面(含各自透明度) */
         SURFACE("底色与面"),
-        /** ②文字分级:正常/次要/占位/禁用/强调/高亮/危险 */
+        /** ②文字分级:主色(正文/空心按钮文字)/占位/强调/高亮/危险。次要与禁用两级由主色计算(alpha 60%),不再是键 */
         TEXT("文字分级"),
         /** ③主色与按钮:主色、主色上的字、主/次按钮底色与文字 */
         BRAND("主色与按钮"),
@@ -52,12 +52,27 @@ public final class ThemeKey {
     /** 编辑页那一行的说明(长,说清"这个颜色用在哪") */
     public final String desc;
 
+    /**
+     * 只允许纯色(不允许自带透明度)。
+     *
+     * <p>目前只有「文字主色」:它同时是正文色、空心与纯文字按钮的文字色、勾选框与进度条填充,
+     * 还是"次要文字 / 禁用文字"的计算来源 —— 一旦带透明度,这些派生出来的地方会整片发虚
+     * (用户口径:"文字主色不允许设置透明度,只能纯色")。派生时会把 alpha 强制归 100;
+     * 编辑页对它不给透明度滑杆,也只收 {@code #RRGGBB}。
+     */
+    public final boolean opaqueOnly;
+
     ThemeKey(String key, Group group, Kind kind, String label, String desc) {
+        this(key, group, kind, label, desc, false);
+    }
+
+    ThemeKey(String key, Group group, Kind kind, String label, String desc, boolean opaqueOnly) {
         this.key = key;
         this.group = group;
         this.kind = kind;
         this.label = label;
         this.desc = desc;
+        this.opaqueOnly = opaqueOnly;
     }
 
     /** 是否透明度项(编辑页给它一根滑杆而不是取色板) */

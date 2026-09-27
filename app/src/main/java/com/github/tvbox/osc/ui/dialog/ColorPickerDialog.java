@@ -42,6 +42,8 @@ public class ColorPickerDialog extends AppCenterPopupView {
 
     private final String title;
     private final String initialHex;
+    /** 只允许纯色:不显示"不透明度"那一行,取到的值一定是不透明的 {@code #RRGGBB} */
+    private final boolean opaqueOnly;
     private Listener listener;
 
     private ColorPlateView plate;
@@ -58,9 +60,17 @@ public class ColorPickerDialog extends AppCenterPopupView {
     private boolean suppressTextWatcher = false;
 
     public ColorPickerDialog(@NonNull @NotNull Context context, String title, String initialHex) {
+        this(context, title, initialHex, false);
+    }
+
+    /**
+     * @param opaqueOnly 只允许纯色(如「文字主色」):隐藏"不透明度"那一行,结果一定是不透明的 {@code #RRGGBB}
+     */
+    public ColorPickerDialog(@NonNull @NotNull Context context, String title, String initialHex, boolean opaqueOnly) {
         super(context);
         this.title = title == null ? "选择颜色" : title;
         this.initialHex = initialHex;
+        this.opaqueOnly = opaqueOnly;
     }
 
     @Override
@@ -81,6 +91,12 @@ public class ColorPickerDialog extends AppCenterPopupView {
         int parsed = ThemePalette.parseColor(initialHex, rgb);
         rgb = parsed & 0xFFFFFF;
         alpha = (parsed >>> 24) & 0xFF;
+        if (opaqueOnly) {
+            // 只收纯色:把透明度那一行藏掉,alpha 恒为不透明
+            alpha = 0xFF;
+            View alphaRow = findViewById(R.id.row_alpha);
+            if (alphaRow != null) alphaRow.setVisibility(View.GONE);
+        }
 
         ((TextView) findViewById(R.id.tv_title)).setText(title);
         plate.setColor(rgb);
@@ -222,7 +238,16 @@ public class ColorPickerDialog extends AppCenterPopupView {
 
     /** 统一弹出入口 */
     public static void show(Context context, String title, String initialHex, Listener listener) {
-        ColorPickerDialog dialog = new ColorPickerDialog(context, title, initialHex);
+        show(context, title, initialHex, false, listener);
+    }
+
+    /**
+     * 统一弹出入口。
+     *
+     * @param opaqueOnly 只允许纯色(不显示"不透明度",结果一定是 {@code #RRGGBB})——「文字主色」用它
+     */
+    public static void show(Context context, String title, String initialHex, boolean opaqueOnly, Listener listener) {
+        ColorPickerDialog dialog = new ColorPickerDialog(context, title, initialHex, opaqueOnly);
         dialog.setListener(listener);
         new XPopup.Builder(context)
                 .isDarkTheme(Utils.isAppDarkTheme())

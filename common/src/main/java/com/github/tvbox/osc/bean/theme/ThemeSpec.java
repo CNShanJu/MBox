@@ -66,21 +66,31 @@ public final class ThemeSpec {
                 "页面层:卡片/标题栏/底栏/搜索框/占位/卡片里的行"));
         list.add(new ThemeKey("bg_float_alpha", ThemeKey.Group.SURFACE, ThemeKey.Kind.ALPHA, "浮层透明度",
                 "弹窗、抽屉、气泡、首页直播/筛选悬浮钮"));
+        // 卡片类目(海报卡角上的那个标签:来源名 / 年份 / 评分):底色与文字一对,
+        // 原来写死在 colors.xml 的 poster_badge_bg + @color/white(用户口径:"加两个,卡片类目背景色和卡片类目文字颜色")。
+        // poster_badge_bg 现在是 card_category_bg 的别名,布局一行都不用改。
+        list.add(new ThemeKey("card_category_bg", ThemeKey.Group.SURFACE, ThemeKey.Kind.COLOR, "卡片类目背景",
+                "海报卡右上/左上那个小标签(来源名、年份、评分)的底色"));
+        list.add(new ThemeKey("card_category_text", ThemeKey.Group.SURFACE, ThemeKey.Kind.COLOR, "卡片类目文字",
+                "上面那个小标签里的文字颜色"));
 
         // ② 文字分级
         // **文字主色(brand)排在最前**:用户口径 —— "主题主色改成文字主色,并把文字主色调整到次要文字前面"。
         // 它同时是"正文默认色"与"填充/高亮色"(与 text_main 是同一个值,见 ThemePaletteFactory)。
+        // **不允许带透明度**(opaqueOnly):它是正文、空心按钮文字、勾选框填充,还是次要/禁用两级的计算来源,
+        // 一带透明度整片发虚 —— 派生时 alpha 强制归 100,编辑页也不给透明度滑杆。
         list.add(new ThemeKey("brand", ThemeKey.Group.TEXT, ThemeKey.Kind.COLOR, "文字主色",
-                "正文/列表文字的默认色;chip 选中填充、进度条、勾选框与描边也取它"));
+                "正文/列表文字的默认色;空心与纯文字按钮的文字、chip 选中填充、进度条、勾选框与描边也取它。"
+                        + "只能纯色(不允许设透明度)", true));
         // **正文颜色(text_main)的键已移除**:它与文字主色共用同一个值(用户口径:
         // "正文颜色和主题主色共用,移除正文颜色的key")—— 资源名 text_main 仍然存在,由 brand 派生,
         // 所以布局/代码里的 @color/text_main、@color/text_foreground 一处都不用改。
-        list.add(new ThemeKey("text_sub", ThemeKey.Group.TEXT, ThemeKey.Kind.COLOR, "次要文字",
-                "说明、描述、副标题"));
+        // **次要文字(text_sub)与禁用文字(text_disable)两个键也已移除**:用户口径 ——
+        // "这两块的文字颜色通过计算获得,其值为文字主色透明度 60%"。资源名同样保留(派生自 brand @60%),
+        // 于是 @color/text_sub / @color/text_sub_foreground / @color/text_disable / @color/disable_text
+        // 这些引用一处都不用改,只是不再单独配。
         list.add(new ThemeKey("text_hint", ThemeKey.Group.TEXT, ThemeKey.Kind.COLOR, "占位文字",
                 "底栏未选中项、搜索框里的「搜索」"));
-        list.add(new ThemeKey("text_disable", ThemeKey.Group.TEXT, ThemeKey.Kind.COLOR, "禁用文字",
-                "不可用状态的文字"));
         list.add(new ThemeKey("text_accent", ThemeKey.Group.TEXT, ThemeKey.Kind.COLOR, "强调文字",
                 "选中项、标题、tab 选中"));
         list.add(new ThemeKey("text_highlight", ThemeKey.Group.TEXT, ThemeKey.Kind.COLOR, "高亮文字",

@@ -37,6 +37,8 @@ public final class ThemePalette {
             "bg_surface",
             "bg_card",
             "bg_float",
+            "card_category_bg",
+            "card_category_text",
             "text_main",
             "text_sub",
             "text_hint",
