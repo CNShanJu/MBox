@@ -28,12 +28,16 @@
             android:padding="6dp"
             android:src="@drawable/ic_seek_left"
             app:tint="@color/text_foreground"/>
+        <!-- 输入框:文字/占位色必须显式写主题色 —— 不写就走主题里的 ?attr/textColorPrimary(编译期固定),
+             自定义主题下这里不会跟着变(用户口径:"搜索页面的输入框里文字没变") -->
         <com.github.tvbox.osc.ui.kit.ClearEditText
                 android:id="@+id/et_search"
                 android:layout_width="wrap_content"
                 android:layout_weight="1"
                 android:layout_height="match_parent"
                 android:hint="搜索"
+                android:textColor="@color/text_foreground"
+                android:textColorHint="@color/text_hint"
                 android:textSize="16sp"
                 android:layout_marginHorizontal="10dp"
                 android:background="@null"
