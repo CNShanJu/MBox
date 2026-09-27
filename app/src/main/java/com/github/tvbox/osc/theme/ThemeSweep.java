@@ -59,16 +59,38 @@ public final class ThemeSweep {
     }
 
     private static void recolor(View v, ThemePalette palette, ThemePalette builtin) {
+        // ① 背景:还是内置那份"面/浮层"色 → 换成主题的对应档
         Drawable bg = v.getBackground();
-        if (bg == null) return;
-        Integer now = solidColorOf(bg);
-        if (now == null) return;
-        if (now == builtin.get("bg_card") || now == builtin.get("bg_surface")) {
-            setSolidColor(bg, palette.get("bg_surface"));
-        } else if (now == builtin.get("bg_float")) {
-            setSolidColor(bg, palette.get("bg_float"));
+        if (bg != null) {
+            Integer now = solidColorOf(bg);
+            if (now != null) {
+                if (now == builtin.get("bg_card") || now == builtin.get("bg_surface")) {
+                    setSolidColor(bg, palette.get("bg_surface"));
+                } else if (now == builtin.get("bg_float")) {
+                    setSolidColor(bg, palette.get("bg_float"));
+                }
+            }
+        }
+        // ② 文字:还是内置那份文字档色 → 换成主题的同一档。
+        //    弹窗列表里的 item(MaterialCheckBox 那种)就是这么漏的 ——
+        //    它们写的是 @color/text_foreground,但视图本身没被注入到(用户口径:"弹窗里面的 item 没走主题色")。
+        if (v instanceof android.widget.TextView) {
+            android.widget.TextView tv = (android.widget.TextView) v;
+            int nowText = tv.getCurrentTextColor();
+            for (String key : TEXT_KEYS) {
+                if (nowText == builtin.get(key)) {
+                    tv.setTextColor(palette.get(key));
+                    break;
+                }
+            }
         }
     }
+
+    /** 参与"文字档"比对的键(顺序无关,命中即换) */
+    private static final String[] TEXT_KEYS = {
+            "text_main", "text_sub", "text_hint", "text_disable",
+            "text_accent", "text_highlight", "color_highlight", "btn_select_text",
+    };
 
     /** 取 drawable 的单一实色(渐变/层叠/多色返回 null,不去动它) */
     private static Integer solidColorOf(Drawable d) {
