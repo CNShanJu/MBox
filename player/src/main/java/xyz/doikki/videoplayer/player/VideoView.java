@@ -270,6 +270,8 @@ public class VideoView<P extends AbstractPlayer> extends FrameLayout
      */
     protected void addDisplay() {
         if (mRenderView != null) {
+            // 先与 Surface 解绑再释放旧渲染视图:旧 Surface 被释放时,原生输出线程可能还在往它上面写
+            if (mMediaPlayer != null) mMediaPlayer.detachSurface();
             mPlayerContainer.removeView(mRenderView.getView());
             mRenderView.release();
         }
@@ -369,6 +371,12 @@ public class VideoView<P extends AbstractPlayer> extends FrameLayout
      */
     public void release() {
         if (!isInIdleState()) {
+            // 释放渲染视图之前先把播放器与 Surface 解绑。顺序不能反:IJK 的 release() 是异步的
+            // (丢给内核释放线程),而 TextureRenderView.release() 会立刻释放 Surface/SurfaceTexture,
+            // 原生输出线程此时还挂着那块 Surface → 就是"播放中返回/切集/换源"时的 native SIGSEGV。
+            if (mRenderView != null && mMediaPlayer != null) {
+                mMediaPlayer.detachSurface();
+            }
             //释放播放器
             if (mMediaPlayer != null) {
                 mMediaPlayer.release();

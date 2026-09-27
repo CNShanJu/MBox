@@ -122,6 +122,9 @@ public class App extends MultiDexApplication {
         LogStore.log(Category.SYSTEM, "应用启动(Android " + android.os.Build.VERSION.RELEASE + ")");
         // 业务日志(系统类目):记录本机屏幕尺寸(宽×高,px),便于按机型定位布局/适配问题
         logDeviceScreenToBiz();
+        // 业务日志(系统类目):圆角"包内值 vs 主题文件值"自检 —— 圆角是编译期资源,而 AS 点 Run 的部署
+        // 链路不带资源,"改了圆角不生效"只能靠这一行对比说清楚(不一致 = 需要完整安装)。失败静默。
+        com.github.tvbox.osc.theme.RadiusCheck.report(this);
         // 全局系统状态监控(网络/前后台/横竖屏/电量/磁盘, 基座层)必须先于下载模块初始化:
         // 下载模块在构造时会订阅网络事件(仅WiFi暂停/恢复),若监控未就绪订阅被跳过 → 切流量不停、恢复无法继续
         SystemStateMonitor.init(this);

@@ -2,6 +2,7 @@ package com.github.tvbox.osc.util.js;
 
 import androidx.annotation.Keep;
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 
 import com.github.tvbox.osc.util.LOG;
@@ -325,7 +326,7 @@ public class Global {
         } catch (Throwable th) {
             // 请求构造失败(非法 URL 等):回调永远不会来,必须释放,并把失败明确回给 JS
             LOG.e("js-http", url + " 异步请求发起失败: " + th);
-            complete.release();
+            safeRelease(complete); // 这里本来就在 JS 线程上,就地释放即可
             return Connect.error(runtime);
         }
         return null;
@@ -343,7 +344,7 @@ public class Global {
                 @Override
                 public void run() {
                     if (executor.isShutdown()) {
-                        func.release();
+                        releaseOnJsThread(func);
                         return;
                     }
                     try {
@@ -355,18 +356,56 @@ public class Global {
                             } finally {
                                 // hold 必须成对 release:轮询型 JS 源(定时器 + 递归 setTimeout 很常见)
                                 // 从不释放会让 QuickJS 堆无界增长
-                                func.release();
+                                safeRelease(func);
                             }
                         });
                     } catch (Throwable th) {
                         // 执行器已关/队列满:这条回调不会跑了,同样要释放
-                        func.release();
+                        releaseOnJsThread(func);
                     }
                 }
             }, delayMs);
         } catch (Throwable th) {
             // 定时器已 cancel(源已销毁):必须释放,否则这条 JS 函数永远出不去
+            releaseOnJsThread(func);
+        }
+    }
+
+    /**
+     * 把一次 {@code hold()} 的释放送回 QuickJS 自己的线程执行。
+     * <p>
+     * 为什么必须这样:{@code JSObject.release()} → {@code QuickJSContext.freeValue()} 里有
+     * {@code checkSameThread()},在别的线程上调会抛 {@code QuickJSException};而本类的调用点在
+     * Timer 线程({@code js-timeout})与 OkHttp 回调线程上,那里抛出的未捕获异常会被当成 App 崩溃
+     * (默认 handler → 杀进程)。触发路径很常见:JS 源用了 setTimeout,而此刻源正在销毁
+     * (离开播放页/换订阅) —— 外部可控,一崩一个准。
+     * <p>
+     * 执行器已关(源已销毁)时<b>不释放</b>:此时 JS 线程上紧接着就会 {@code ctx.destroy()}
+     * (见 JsSpider.destroyNow),整块上下文一起回收,这条引用跟着一起没;跨线程去碰它才是崩溃来源。
+     */
+    private void releaseOnJsThread(@Nullable final JSFunction func) {
+        if (func == null) return;
+        try {
+            if (executor.isShutdown()) return; // 上下文即将销毁,交给 ctx.destroy 一起回收
+            executor.submit(() -> safeRelease(func));
+        } catch (Throwable th) {
+            // 与 shutdown 竞态被拒:同样不跨线程释放(理由同上),记一行便于排查
+            LOG.e("js-release", "回调释放未提交(执行器已关): " + th);
+        }
+    }
+
+    /**
+     * 就地释放(调用方必须已经在 QuickJS 自己的线程上)。
+     * <p>
+     * 即使线程对了,{@code release()} 仍可能抛(上下文已 destroyed → {@code checkDestroyed()}),
+     * 而它常常写在 finally 里/JS 线程任务里 —— 逃出去就是未捕获异常 = 杀进程,所以这里一律吞掉。
+     */
+    private static void safeRelease(@Nullable JSFunction func) {
+        if (func == null) return;
+        try {
             func.release();
+        } catch (Throwable th) {
+            LOG.e("js-release", th);
         }
     }
 
@@ -394,12 +433,13 @@ public class Global {
                 } catch (Throwable th) {
                     LOG.e("js-http", th);
                 } finally {
-                    complete.release();
+                    safeRelease(complete);
                 }
             });
         } catch (Throwable th) {
-            // 执行器已关(源已销毁):回调不会执行,同样要释放
-            complete.release();
+            // 执行器已关(源已销毁):回调不会执行,同样要释放 —— 但必须送回 JS 线程
+            // (OkHttp 回调线程上 release 会抛 checkSameThread 的 QuickJSException = 杀进程)
+            releaseOnJsThread(complete);
         }
     }
     @Keep

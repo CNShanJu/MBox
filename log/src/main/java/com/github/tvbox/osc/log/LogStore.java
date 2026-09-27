@@ -41,6 +41,9 @@ public final class LogStore {
     public static final int LEVEL_WARN = 2;
     public static final int LEVEL_ERROR = 3;
 
+    /** 崩溃日志落库等待上限:崩溃处理完就杀进程,等太久没意义,但要足够一次 Room 写入完成 */
+    private static final long CRASH_FLUSH_TIMEOUT_MS = 1_500L;
+
     private static volatile LogStore instance;
     /** 未初始化时的降级空实现（no-op）：任何模块在 :log 未 init/未引入时调用也安全，日志静默丢弃 */
     private static volatile LogStore noopInstance;
@@ -230,8 +233,10 @@ public final class LogStore {
         if (!force) {
             if (!enabled) return;
             if (level < minLevel) return;
+            // 分类开关只对普通业务日志生效:force(崩溃等)必须落库,否则用户关掉"系统"分类后
+            // 崩溃在这里被静默丢弃,真机出问题照样无栈可查(与"崩溃始终落库"的承诺相矛盾)
+            if (disabledCategories.contains(categoryName)) return;
         }
-        if (disabledCategories.contains(categoryName)) return;
         LogEntry e = new LogEntry();
         e.timestamp = System.currentTimeMillis();
         e.category = categoryName;
@@ -351,7 +356,12 @@ public final class LogStore {
             try {
                 log(Category.SYSTEM.name(), LEVEL_ERROR, "crash", "崩溃",
                         detail, "FAILURE", reason, null, null, true);
-                collector.flushNow();
+                // 必须等落库完成:这里返回后就是 CAOC 的 killProcess + System.exit,
+                // 异步 flush 会被一起带走(历史上"首次崩溃查不到栈"的根因);超时兜底见 flushNowBlocking
+                boolean ok = collector.flushNowBlocking(CRASH_FLUSH_TIMEOUT_MS);
+                if (!ok) {
+                    android.util.Log.e("LogStore", "崩溃日志未能在 " + CRASH_FLUSH_TIMEOUT_MS + "ms 内落库");
+                }
             } catch (Throwable ignored) {
             }
         });

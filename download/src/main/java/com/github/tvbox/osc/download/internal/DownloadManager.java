@@ -286,10 +286,25 @@ public class DownloadManager {
     /** 高频进度(直链窗口 / HLS 每分片 / 合并进度)落盘与广播的合并窗口(ms)。
      * 450ms ≈ 2.2Hz:网速/百分比文本保持约半秒级平滑刷新,同时落盘频率仍有上限。 */
     private static final long PROGRESS_FLUSH_MS = 450L;
+    /**
+     * 进度快照真正落盘的最小间隔(ms),与上面的"广播窗口"分开:UI 刷新要跟手,磁盘快照不必同样频繁。
+     * <p>
+     * 审计发现:下载中整表 JSON(内存全量序列化 + 写 .tmp + rename)每 450ms 就被重写一次(≈2.2 次/秒),
+     * 长时间下载时是持续的 CPU/IO 与发热来源。降到 2s 的代价是"进程被杀最多丢约 2s 的进度":
+     * 直链续传启动时还会用 {@code .part} 实际长度对账、HLS 以磁盘上已 rename 的分片为准,
+     * 实际能丢的只有这 2s 内的计数,重下量极小。
+     */
+    private static final long PROGRESS_PERSIST_MS = 2000L;
     /** 进度节流共享锁(多下载线程并发调用) */
     private final Object progressLock = new Object();
     /** 上次实际落盘时间戳 */
     private long lastProgressFlush = 0L;
+    /** 上次进度快照落盘时间(仅 progressLock 内读写) */
+    private long lastProgressPersist = 0L;
+    /** 上次落盘快照的进度指纹(仅 progressLock 内读写);见 {@link #progressSignature(List)} */
+    private long lastPersistSignature = 0L;
+    /** 是否已有指纹基线(false=第一次进度必落盘) */
+    private boolean hasPersistSignature = false;
     /** 窗口内最近一次进度的任务 id(兜底广播携带它,UI 据此局部刷新该行,不漏尾部) */
     private String pendingProgressTaskId = null;
     /** 是否已安排窗口末的兜底落盘定时器 */
@@ -311,8 +326,9 @@ public class DownloadManager {
      * 被节流的是"任务列表快照的磁盘落盘 + 进度广播"——进度字段(下载字节/分片数/网速等)
      * 由执行器线程直接写任务对象内存,其余代码读取时始终是最新内存值,不受节流影响。
      * <p>
-     * 策略:窗口(450ms)内多次调用只落盘/广播一次(窗口满后的调用立即执行);
-     * 窗口末尾由主线程定时器兜底一次,持续进度不漏尾部。
+     * 策略:窗口(450ms)内多次调用只广播一次(窗口满后的调用立即执行);
+     * 窗口末尾由主线程定时器兜底一次,持续进度不漏尾部;
+     * 落盘比广播更粗(另有 {@link #PROGRESS_PERSIST_MS} 间隔 + 进度指纹两道闸,见 persistProgressIfChanged)。
      * 暂停/失败/完成等终态事件不经过本方法,由调用方 persist+notifyChanged 立即强制落盘(不丢终态)。
      */
     void flushProgress(DownloadTask t) {
@@ -346,11 +362,63 @@ public class DownloadManager {
             id = pendingProgressTaskId;
             pendingProgressTaskId = null;
         }
-        persist();
+        persistProgressIfChanged();
         if (id != null) {
             EventSink s = eventSink;
             if (s != null) s.onTaskProgress(id);
         }
+    }
+
+    /**
+     * 进度快照落盘(两道闸,替代原先每次窗口都无条件 persist):
+     * ① 距上次落盘不足 {@link #PROGRESS_PERSIST_MS} 不写(把 2.2 次/秒压到 0.5 次/秒);
+     * ② 任务表的"进度指纹"与上次落盘的一致不写——缓冲/校验/等待重试等阶段回调照来,
+     *    但没有任何可持久化的变化,整表 JSON 重写纯属浪费(没有下载在推进时连一次写盘都没有)。
+     * <p>
+     * 只是"相等即跳过"的保守判断:指纹覆盖进度回调会改的全部字段(下载字节/分片数/合并文案等),
+     * 而结构性变更(入队/暂停/完成/删除/改地址)都有各自的强制 {@link #persist()},
+     * 不经过这里,所以跳过不会漏掉任何"立即落盘"的状态。
+     */
+    private void persistProgressIfChanged() {
+        synchronized (progressLock) {
+            if (System.currentTimeMillis() - lastProgressPersist < PROGRESS_PERSIST_MS) return;
+        }
+        List<DownloadTask> snapshot;
+        synchronized (tasks) {
+            snapshot = new ArrayList<>(tasks);
+        }
+        long signature = progressSignature(snapshot);
+        synchronized (progressLock) {
+            long now = System.currentTimeMillis();
+            if (now - lastProgressPersist < PROGRESS_PERSIST_MS) return; // 多下载线程并发进来的二次确认
+            if (hasPersistSignature && signature == lastPersistSignature) return;
+            lastProgressPersist = now;
+            lastPersistSignature = signature;
+            hasPersistSignature = true;
+        }
+        persist();
+    }
+
+    /**
+     * 进度指纹:进度回调(直链字节数 / HLS 已完成分片 / 合并百分比文案)会改的字段的轻量哈希。
+     * 只做内存比较(不序列化、不碰磁盘),用来判断"这次的窗口里到底有没有值得重写整表的变化"。
+     * <p>
+     * 包内可见(非 private)是为了可 JVM 单测:见 DownloadProgressSignatureTest。
+     */
+    static long progressSignature(List<DownloadTask> snapshot) {
+        long h = 1L;
+        for (DownloadTask t : snapshot) {
+            if (t == null) continue;
+            h = h * 31 + (t.id == null ? 0 : t.id.hashCode());
+            h = h * 31 + t.state;
+            h = h * 31 + t.downloadedBytes;
+            h = h * 31 + t.totalBytes;
+            h = h * 31 + t.doneSegments;
+            h = h * 31 + t.totalSegments;
+            h = h * 31 + t.segmentBytes;
+            h = h * 31 + (t.message == null ? 0 : t.message.hashCode());
+        }
+        return h;
     }
 
     /** 前台服务保活(可选增强):存在下载中/等待任务时拉起,全部结束停止;进度通知去抖由 persist 频控 */

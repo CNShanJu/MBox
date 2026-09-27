@@ -76,64 +76,89 @@ public class DownloadStore {
         }
     }
 
-    /** 启动加载:读任务文件+ 进程重启状态归位(下载中/等待/调度暂停 -> 用户暂停,待手动继续) */
+    /**
+     * 启动加载:读任务文件 + 进程重启状态归位(下载中/等待/调度暂停 -> 用户暂停,待手动继续)。
+     * <p>
+     * <b>整体兜底是硬要求</b>:本方法跑在 {@code Application.onCreate}(DownloadFacade.init → boot → load),
+     * 一旦抛异常就是"开机即崩";而任务文件已经落盘,下次启动会读到同一份坏数据继续崩 = 卸载重装才能救。
+     * 所以除读盘外,后面的状态归位/磁盘对账两段也必须包在 try 里(与 {@code DownloadArchive} 的口径一致),
+     * 且显式剔除列表里的 null 项(Gson 对 {@code [null]} 会产出 null 元素,后面 {@code t.state} 直接 NPE)。
+     */
     void load() {
+        List<DownloadTask> saved = null;
         try {
-            List<DownloadTask> saved = readTasksFile();
-            if (saved != null) dm.tasks.addAll(saved);
+            saved = readTasksFile();
         } catch (Throwable th) {
             th.printStackTrace(); // 存储损坏时兜底为空列表,不阻塞下载器启动
         }
-        boolean needPersist = false;
-        synchronized (dm.tasks) {
-            for (DownloadTask t : dm.tasks) {
-                if (t.state == DownloadTask.STATE_DOWNLOADING
-                        || t.state == DownloadTask.STATE_SYSTEM_PAUSED
-                        || t.state == DownloadTask.STATE_WAITING) {
-                    t.state = DownloadTask.STATE_PAUSED;
-                    t.needReResolve = true;
-                    needPersist = true;
-                }
-                t.speed = 0;
-                // 历史版本:公共 Download 下的 HLS 临时目录迁移到应用私有目录(碎片保留,续传不丢)
-                if (t.tmpDir != null) {
-                    String migrated = FileCleaner.migrateTmpDirToPrivate(t.tmpDir);
-                    if (migrated != null && !migrated.equals(t.tmpDir)) {
-                        t.tmpDir = migrated;
+        if (saved != null && !saved.isEmpty()) {
+            List<DownloadTask> usable = new ArrayList<>(saved.size());
+            for (DownloadTask t : saved) {
+                if (t != null) usable.add(t);
+            }
+            dm.tasks.addAll(usable);
+        }
+        try {
+            boolean needPersist = false;
+            synchronized (dm.tasks) {
+                for (DownloadTask t : dm.tasks) {
+                    if (t.state == DownloadTask.STATE_DOWNLOADING
+                            || t.state == DownloadTask.STATE_SYSTEM_PAUSED
+                            || t.state == DownloadTask.STATE_WAITING) {
+                        t.state = DownloadTask.STATE_PAUSED;
+                        t.needReResolve = true;
                         needPersist = true;
+                    }
+                    t.speed = 0;
+                    // 历史版本:公共 Download 下的 HLS 临时目录迁移到应用私有目录(碎片保留,续传不丢)
+                    // 单个任务的迁移失败不该打断整轮归位(逐个兜底)
+                    try {
+                        if (t.tmpDir != null) {
+                            String migrated = FileCleaner.migrateTmpDirToPrivate(t.tmpDir);
+                            if (migrated != null && !migrated.equals(t.tmpDir)) {
+                                t.tmpDir = migrated;
+                                needPersist = true;
+                            }
+                        }
+                    } catch (Throwable th) {
+                        th.printStackTrace();
                     }
                 }
             }
-        }
-        if (needPersist) {
-            dm.persist();
-            Log.i("TVBox-Download", "进程重启:未完成任务置为暂停,等待用户手动开始(继续时自动重新解析地址)");
-        }
-        // 启动磁盘对账(4.5):内存计数被杀后滞后,以磁盘实况修正
-        synchronized (dm.tasks) {
-            for (DownloadTask t : dm.tasks) {
-                if (t.state == DownloadTask.STATE_COMPLETED) continue;
-                // 直链:downloadedBytes 以 .part 实际长度为准(修复 Range 续传错位产生空洞)
-                if (t.partPath != null) {
-                    File part = new File(t.partPath);
-                    if (part.exists() && part.length() > 0) {
-                        t.downloadedBytes = part.length();
+            if (needPersist) {
+                dm.persist();
+                Log.i("TVBox-Download", "进程重启:未完成任务置为暂停,等待用户手动开始(继续时自动重新解析地址)");
+            }
+            // 启动磁盘对账(4.5):内存计数被杀后滞后,以磁盘实况修正
+            synchronized (dm.tasks) {
+                for (DownloadTask t : dm.tasks) {
+                    if (t.state == DownloadTask.STATE_COMPLETED) continue;
+                    // 直链:downloadedBytes 以 .part 实际长度为准(修复 Range 续传错位产生空洞)
+                    if (t.partPath != null) {
+                        File part = new File(t.partPath);
+                        if (part.exists() && part.length() > 0) {
+                            t.downloadedBytes = part.length();
+                        }
                     }
-                }
-                // HLS:丢弃残缺 .part(分片原子写后只信任 rename 的 .ts),避免被当成完整片
-                if (t.tmpDir != null) {
-                    File tmp = new File(t.tmpDir);
-                    File[] segs = tmp.listFiles();
-                    if (segs != null) {
-                        for (File seg : segs) {
-                            if (seg.isFile() && seg.getName().endsWith(".part")) {
-                                //noinspection ResultOfMethodCallIgnored
-                                seg.delete();
+                    // HLS:丢弃残缺 .part(分片原子写后只信任 rename 的 .ts),避免被当成完整片
+                    if (t.tmpDir != null) {
+                        File tmp = new File(t.tmpDir);
+                        File[] segs = tmp.listFiles();
+                        if (segs != null) {
+                            for (File seg : segs) {
+                                if (seg.isFile() && seg.getName().endsWith(".part")) {
+                                    //noinspection ResultOfMethodCallIgnored
+                                    seg.delete();
+                                }
                             }
                         }
                     }
                 }
             }
+        } catch (Throwable th) {
+            // 归位/对账失败只影响本次启动的任务状态呈现,不影响下载器可用;坏任务也已被剔除/不再抛出
+            th.printStackTrace();
+            Log.e("TVBox-Download", "启动任务归位/对账失败(已忽略):" + th);
         }
     }
 

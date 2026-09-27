@@ -3,8 +3,6 @@ package com.github.tvbox.osc.util;
 import android.content.Context;
 
 import java.io.DataInputStream;
-import java.io.FileNotFoundException;
-import java.io.IOException;
 import java.io.InputStream;
 import java.util.Random;
 
@@ -73,22 +71,83 @@ public class UA {
         return uas[key];
     }
 
+    /** ua.db 解析失败/上下文未注入时的兜底 UA(与原来 return 的那条一致) */
+    private static final String FALLBACK_UA =
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36";
+
+    /**
+     * assets/ua.db 的全量字节(约 670KB),首次用到时读一次。
+     * <p>
+     * 原来每次 {@link #random()} 都 {@code assets.open + 读整个文件}:
+     * ①两个流(AssetInputStream 与 DataInputStream)从不关闭,连 catch 分支也不关 —— 调用点在
+     * 豆瓣热门的循环里(每条视频一个 UA),一个列表就泄掉一批 fd,几百个源规模直接
+     * "Too many open files";②每次请求重读 670KB 纯属浪费。缓存 + try-with-resources 一起解决。
+     */
+    private static volatile byte[] uaDb;
+
     public static String random() {
-        try {
-            InputStream fis = context.getAssets().open("ua.db");
-            DataInputStream dis = new DataInputStream(fis);
+        byte[] db = uaDb();
+        if (db == null) return FALLBACK_UA;
+        int len = uaCount(db);
+        if (len <= 0) return FALLBACK_UA;
+        String ua = uaAt(db, new Random().nextInt(len));
+        return ua == null ? FALLBACK_UA : ua;
+    }
+
+    /**
+     * ua.db 里的 UA 条数;文件格式坏/长度为 0 时返回 0。
+     * <p>
+     * 解析拆成 {@code uaCount/uaAt} 两个纯函数是为了可 JVM 单测(见 UaDbParseTest):
+     * 这段"跳偏移表 → 跳数据块 → readUTF"的算术很绕,而且错了只会表现为"偶尔取到乱码 UA",
+     * 在真机上几乎不可能定位。
+     */
+    static int uaCount(byte[] db) {
+        if (db == null || db.length < 4) return 0;
+        try (DataInputStream dis = new DataInputStream(new java.io.ByteArrayInputStream(db))) {
             int len = dis.readInt();
-            int random = new Random().nextInt(len);
-            dis.skipBytes(random * 4);
+            return Math.max(len, 0);
+        } catch (Throwable e) {
+            return 0;
+        }
+    }
+
+    /** 取第 index 条 UA(越界/格式不符返回 null);解析口径与原实现一致 */
+    static String uaAt(byte[] db, int index) {
+        if (db == null || index < 0) return null;
+        try (DataInputStream dis = new DataInputStream(new java.io.ByteArrayInputStream(db))) {
+            int len = dis.readInt();
+            if (index >= len) return null;
+            dis.skipBytes(index * 4);
             int offset = dis.readInt();
-            dis.skipBytes((len - 1 - random) * 4 + offset);
-            String s = dis.readUTF();
-            return s;
-        } catch (FileNotFoundException e) {
-            e.printStackTrace();
-        } catch (IOException e) {
+            dis.skipBytes((len - 1 - index) * 4 + offset);
+            return dis.readUTF();
+        } catch (Throwable e) {
             e.printStackTrace();
         }
-        return "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36";
+        return null;
+    }
+
+    /** 读一次 ua.db 并缓存;context 未注入/文件缺失/读取失败都返回 null(由调用方走兜底) */
+    private static byte[] uaDb() {
+        byte[] cached = uaDb;
+        if (cached != null) return cached;
+        Context c = context;
+        if (c == null) return null;
+        synchronized (UA.class) {
+            if (uaDb != null) return uaDb;
+            try (InputStream in = c.getAssets().open("ua.db")) {
+                java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream(in.available() > 0 ? in.available() : 8192);
+                byte[] buf = new byte[8192];
+                int n;
+                while ((n = in.read(buf)) > 0) {
+                    bos.write(buf, 0, n);
+                }
+                uaDb = bos.toByteArray();
+            } catch (Throwable e) {
+                e.printStackTrace();
+                return null;
+            }
+            return uaDb;
+        }
     }
 }

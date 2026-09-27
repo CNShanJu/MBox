@@ -96,6 +96,49 @@ public abstract class AbstractPlayer {
     public abstract void release();
 
     /**
+     * 把播放器与当前 Surface 解绑(不动其它状态)。
+     * <p>
+     * <b>释放渲染视图的 Surface/SurfaceTexture 之前必须调它</b>:IJK 这类内核的原生输出线程
+     * 是按 Surface 持有的 ANativeWindow 直接写的,而 {@code release()} 是异步的(见 {@link #releaseAsync}),
+     * "先释放 Surface、后释放播放器"就是让原生线程往已经释放的窗口上写 —— 真机表现是 SIGSEGV(闪退),
+     * 触发点正是"播放中返回/切集/换源"。在播放器还活着的时候解绑这一步本身是安全的。
+     */
+    public void detachSurface() {
+        try {
+            setSurface(null);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /**
+     * 内核释放执行器(所有内核共用一条串行线程)。
+     * <p>
+     * 内核 {@code release()} 不能留在调用线程上:IJK/系统内核的释放要等原生输出线程收尾,
+     * 放在 UI 线程上会卡住界面(切集时的"顿一下");而"每次 release 各起一条裸线程"会随
+     * 换源/切集把线程数无界堆上去(见改进.txt §六:后台任务须走模块级共享执行器)。
+     */
+    private static final java.util.concurrent.ExecutorService RELEASE_EXECUTOR =
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "player-release");
+                t.setDaemon(true);
+                return t;
+            });
+
+    /** 异步执行内核释放(单线程串行:同一时刻只释放一个内核,不会出现两次释放并发) */
+    protected static void releaseAsync(Runnable task) {
+        if (task == null) return;
+        try {
+            RELEASE_EXECUTOR.execute(task);
+        } catch (Throwable th) {
+            // 执行器本身异常(极端情况):退回就地执行,至少别把这次释放丢掉
+            try {
+                task.run();
+            } catch (Throwable ignored) {
+            }
+        }
+    }
+
+    /**
      * 获取当前播放的位置
      */
     public abstract long getCurrentPosition();

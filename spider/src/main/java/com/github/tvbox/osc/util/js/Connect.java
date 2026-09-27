@@ -10,6 +10,7 @@ import com.whl.quickjs.wrapper.JSObject;
 import com.whl.quickjs.wrapper.JSUtils;
 import com.whl.quickjs.wrapper.QuickJSContext;
 
+import java.io.IOException;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -45,7 +46,7 @@ public class Connect {
             jsObject.set("headers", jsHeader);
             // status 便于 JS 侧区分"请求失败"与"200 空体"(原来 error() 与 200 空体长得一模一样)
             jsObject.set("status", response.code());
-            byte[] bytes = response.body() == null ? new byte[0] : response.body().bytes();
+            byte[] bytes = readBytesCapped(response.body());
             if (req.getBuffer() == 0) jsObject.set("content", new String(bytes, charset(req, response)));
             if (req.getBuffer() == 1) {
                 JSArray array = ctx.createJSArray();
@@ -59,6 +60,18 @@ public class Connect {
             LOG.e("Connect", "读取/解码响应失败: " + e);
             return error(ctx);
         }
+    }
+
+    /**
+     * 读响应体字节,带大小上限。
+     * <p>
+     * 不能直接用 {@code body().bytes()}:没有任何上限,而 JS 源请求的地址完全由订阅里的规则决定
+     * (可能被重定向到大文件或就是无限流),一个响应就能把内存吃穿。源请求的都是接口 JSON/HTML,
+     * 24MB 已远超正常量级;超限抛出的异常由 {@link #success} 的 catch 收成 error 返回给 JS。
+     */
+    private static byte[] readBytesCapped(okhttp3.ResponseBody body) throws IOException {
+        return com.github.tvbox.osc.util.HttpBodyReader.readBytes(
+                body, com.github.tvbox.osc.util.HttpBodyReader.MAX_BINARY_BYTES);
     }
 
     /**

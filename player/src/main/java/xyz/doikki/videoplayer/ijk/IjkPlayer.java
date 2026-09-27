@@ -143,22 +143,37 @@ public class IjkPlayer extends AbstractPlayer implements IMediaPlayer.OnErrorLis
 
     @Override
     public void release() {
-        mMediaPlayer.setOnErrorListener(null);
-        mMediaPlayer.setOnCompletionListener(null);
-        mMediaPlayer.setOnInfoListener(null);
-        mMediaPlayer.setOnBufferingUpdateListener(null);
-        mMediaPlayer.setOnPreparedListener(null);
-        mMediaPlayer.setOnVideoSizeChangedListener(null);
-        new Thread() {
+        // 先抓本地引用:释放是异步的(见 releaseAsync),匿名类里直接读字段会读到"之后新建的那一个"
+        // (VideoView 每次起播都会 new 一个新内核实例),把新内核释放掉 —— 表现就是换源/切集后起不来。
+        final IjkMediaPlayer player = mMediaPlayer;
+        if (player == null) return;
+        // 与 Surface 解绑必须在这里、且在异步释放之前做完:宿主紧接着就会释放渲染视图的
+        // Surface/SurfaceTexture(TextureRenderView.release),此刻原生输出线程若还挂在它上面就是 SIGSEGV。
+        // 这一步执行时播放器还活着,是安全的。
+        try {
+            player.setSurface(null);
+        } catch (Throwable ignored) {
+        }
+        player.setOnErrorListener(null);
+        player.setOnCompletionListener(null);
+        player.setOnInfoListener(null);
+        player.setOnBufferingUpdateListener(null);
+        player.setOnPreparedListener(null);
+        player.setOnVideoSizeChangedListener(null);
+        // mMediaPlayer 字段不置空:①子类(app 的 IjkMediaPlayer)的 setOptions() 直接读这个字段,
+        // 置空会让每次 reset/起播都 NPE;②置空还会让未做兜底的 isPlaying/getDuration 从
+        // "原生侧空指针检查后返回默认值"变成 Java 层 NPE。这里真正要保证的是"异步线程只释放它当时那一个"。
+        releaseAsync(new Runnable() {
             @Override
             public void run() {
                 try {
-                    mMediaPlayer.release();
-                } catch (Exception e) {
+                    player.release();
+                } catch (Throwable e) {
+                    // 必须兜 Throwable:native 释放失败会抛 Error,只 catch Exception 会让它逃到释放线程上
                     e.printStackTrace();
                 }
             }
-        }.start();
+        });
     }
 
     @Override

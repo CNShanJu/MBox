@@ -8,6 +8,8 @@ import com.github.tvbox.osc.util.MD5;
 import com.github.tvbox.osc.util.js.JsSpider;
 
 import java.io.File;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -38,6 +40,22 @@ public class JsLoader {
     private static final ConcurrentHashMap<String, String> CREATE_FAILED_REASON = new ConcurrentHashMap<>();
     private static final long CREATE_FAIL_COOLDOWN_MS = 5 * 60 * 1000L;
 
+    /**
+     * 常驻 JS 源实例上限。
+     * <p>
+     * 每个 {@link JsSpider} 都是"1 个 QuickJSContext(native 运行时 + 一整块 JS 堆)+ 1 条单线程
+     * executor + 1 个 Timer 线程"。原实现只增不减(只有重载订阅才会 {@link #load} 清空),
+     * 正常浏览几十个源就攒下几十套运行时与近百条线程,机器上表现为内存一路走高、
+     * 低配盒子上最终 Too many open files / OOM。
+     * <p>
+     * 取 16 而不是更小:聚合搜索/首页推荐会同时用到多个源,回收正在用的源会立刻触发重建
+     * (重建要重编译 JS 模块,是秒级卡顿);16 能覆盖一次会话里的活跃集,真正冷下来的才回收。
+     */
+    private static final int MAX_LIVE_SPIDERS = 16;
+
+    /** 源的最近使用时间(毫秒),LRU 依据;随源创建/命中更新，回收时同步清理 */
+    private static final ConcurrentHashMap<String, Long> LAST_USED = new ConcurrentHashMap<>();
+
     public static void load() {
         // 只"退役"不硬拆：源实例可能仍被首页/详情/播放器持有，立刻 shutdownNow+ctx.destroy
         // 会让那些调用撞 RejectedExecutionException 或踩已销毁的 QuickJS 上下文（见 JsSpider.destroy）
@@ -49,6 +67,7 @@ public class JsLoader {
         }
         spiders.clear();
         classs.clear();
+        LAST_USED.clear();
         CREATE_FAILED_AT.clear();
         CREATE_FAILED_REASON.clear();
         // 源实例整体重建:旧的"源不可用"结论作废
@@ -148,6 +167,7 @@ public class JsLoader {
         Spider cached = spiders.get(key);
         if (cached != null) {
             recentJarKey = key;
+            LAST_USED.put(key, System.currentTimeMillis());
             return cached;
         }
         Long failedAt = CREATE_FAILED_AT.get(key);
@@ -162,6 +182,7 @@ public class JsLoader {
             cached = spiders.get(key);
             if (cached != null) {
                 recentJarKey = key;
+                LAST_USED.put(key, System.currentTimeMillis());
                 return cached;
             }
             Class<?> classLoader = null;
@@ -186,9 +207,11 @@ public class JsLoader {
                     return new SpiderNull();
                 }
                 spiders.put(key, sp);
+                LAST_USED.put(key, System.currentTimeMillis());
                 CREATE_FAILED_AT.remove(key);
                 CREATE_FAILED_REASON.remove(key);
                 SpiderFaults.get().markAvailable(key);
+                trimLiveSpiders();
                 return sp;
             } catch (Throwable th) {
                 LOG.e("QuJs", th);
@@ -201,11 +224,61 @@ public class JsLoader {
         }
     }
 
-    private static void markCreateFailed(String key, String reason, Throwable th) {
-        CREATE_FAILED_AT.put(key, System.currentTimeMillis());
+    private static void markCreateFailed(String key, String reason, Throwable th) {        CREATE_FAILED_AT.put(key, System.currentTimeMillis());
         CREATE_FAILED_REASON.put(key, reason);
         SpiderFaults.get().markUnavailable(key, reason);
         LOG.e("QuJs", "源创建失败(" + key + ")，" + (CREATE_FAIL_COOLDOWN_MS / 60000) + " 分钟内不再重试：" + th);
+    }
+
+    /**
+     * 超出 {@link #MAX_LIVE_SPIDERS} 时按 LRU 回收<b>空闲</b>源实例。
+     * <p>
+     * 三条口径:
+     * <ul>
+     *   <li><b>只回收空闲的</b>({@link JsSpider#isIdle()}):正在跑的源被回收,页面会拿到空结果
+     *       (虽然不会崩,见 JsSpider.call 的 retired 判定),而全部都在跑时宁可不回收;</li>
+     *   <li><b>先摘 map 再 destroy</b>:摘掉之后晚到的调用会重新走创建路径(重建一个可用实例),
+     *       而 destroy 只是"退役",已发起的调用照旧跑完、空闲后才真正销毁(native 上下文只在 JS 线程上销毁);</li>
+     *   <li><b>回收失败不影响本次返回</b>:调用方拿到的是刚创建好的源,回收纯粹是内存治理。</li>
+     * </ul>
+     */
+    private static void trimLiveSpiders() {
+        int over = spiders.size() - MAX_LIVE_SPIDERS;
+        if (over <= 0) return;
+        try {
+            List<Map.Entry<String, Long>> idle = new ArrayList<>();
+            for (Map.Entry<String, Long> e : LAST_USED.entrySet()) {
+                Spider s = spiders.get(e.getKey());
+                if (s == null) {
+                    LAST_USED.remove(e.getKey()); // 已被移除的源(load/上次回收):顺手清掉记录,别让这张表也长起来
+                    continue;
+                }
+                if (s instanceof JsSpider && ((JsSpider) s).isIdle()) {
+                    idle.add(e);
+                }
+            }
+            if (idle.isEmpty()) return;
+            idle.sort((a, b) -> Long.compare(a.getValue(), b.getValue())); // 最久未用的排前面
+            int removed = 0;
+            for (Map.Entry<String, Long> e : idle) {
+                if (removed >= over) break;
+                String key = e.getKey();
+                Spider s = spiders.remove(key);
+                if (s == null) continue;
+                LAST_USED.remove(key);
+                removed++;
+                try {
+                    s.destroy();
+                } catch (Throwable th) {
+                    LOG.e("QuJs", "回收源实例失败(已从缓存移除)：" + key + " " + th);
+                }
+            }
+            if (removed > 0) {
+                LOG.i("QuJs", "源实例缓存回收 " + removed + " 个(上限 " + MAX_LIVE_SPIDERS + ",剩余 " + spiders.size() + ")");
+            }
+        } catch (Throwable th) {
+            LOG.e("QuJs", "源实例缓存回收异常：" + th);
+        }
     }
 
     public Object[] proxyInvoke(Map<String, String> params) {

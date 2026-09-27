@@ -62,4 +62,22 @@ public final class LogCollector {
         }
         repository.insertAllAsync(batch);
     }
+
+    /**
+     * 立即 flush 并<b>等它写完</b>（崩溃捕获专用）。
+     * <p>
+     * 未捕获异常处理完就会杀进程,异步 flush 大概率来不及 → 首次崩溃库里是空的。
+     * 这里阻塞到落库完成或超时(超时只影响日志,不影响崩溃处理本身)。
+     *
+     * @return true=已落库;false=超时未落库
+     */
+    public boolean flushNowBlocking(long timeoutMs) {
+        final List<LogEntry> batch;
+        synchronized (pendingLock) {
+            if (pending.isEmpty()) return true;
+            batch = new ArrayList<>(pending);
+            pending.clear();
+        }
+        return repository.insertAllBlocking(batch, timeoutMs);
+    }
 }

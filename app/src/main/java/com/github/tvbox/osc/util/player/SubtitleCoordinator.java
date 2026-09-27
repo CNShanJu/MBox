@@ -5,6 +5,7 @@ import android.app.Activity;
 import android.os.Build;
 import android.os.Environment;
 import android.os.Handler;
+import android.os.Looper;
 import android.text.TextUtils;
 import android.view.View;
 
@@ -50,9 +51,25 @@ import xyz.doikki.videoplayer.player.AbstractPlayer;
  */
 public final class SubtitleCoordinator {
 
+    /** 切换音轨/内置字幕后的进度恢复延迟:内核切轨道会自己快进几秒,等它落定再 seek 回原进度 */
+    private static final long TRACK_RESTORE_DELAY_MS = 800L;
+
     private final Activity mActivity;
     private final SubtitleController mController;
     private final PlayerSession mPlaySession;
+
+    /** 主线程延迟任务(轨道切换后的进度恢复);用它才能被 release() 取消 */
+    private final Handler mMainHandler = new Handler(Looper.getMainLooper());
+    /** 待执行的"轨道切换后恢复进度"任务(同一时刻最多一个,新的顶掉旧的) */
+    @Nullable
+    private Runnable mPendingTrackRestore;
+    /** 协调器是否已释放(宿主 onDestroyView):释放后任何延迟任务都不再碰内核 */
+    private volatile boolean mReleased;
+    /**
+     * 播放上下文版本:宿主每次切集/换源调 {@link #updateSubtitleContext} 时递增。
+     * 延迟任务执行前比对它,避免 800ms 内已经换了一集、却拿旧进度去 seek(会把新集拉到旧位置)。
+     */
+    private int mContextEpoch;
 
     /** 当前播放字幕上下文（每次播放结果变化由宿主 set 一次） */
     @Nullable
@@ -67,10 +84,56 @@ public final class SubtitleCoordinator {
         mPlaySession = playSession;
     }
 
+    /**
+     * 释放:取消所有待执行的延迟任务。宿主必须在 {@code onDestroyView} 调用。
+     * <p>
+     * 不取消的话,"点切轨道 → 800ms 内退出播放页/切集"这条路径上,任务照样会打到正在释放的内核上
+     * ({@code seekTo}/{@code start} 落到已释放的原生播放器 = native 崩),而且它是 post 在主线程的,
+     * 不受外层 try 保护。
+     */
+    public void release() {
+        mReleased = true;
+        cancelPendingTrackRestore();
+    }
+
     /** 更新当前剧集字幕上下文（playResult.subt / subtKey）；每次切集调用 */
     public void updateSubtitleContext(@Nullable String playSubtitle, @Nullable String subtitleCacheKey) {
         mPlaySubtitle = playSubtitle;
         mSubtitleCacheKey = subtitleCacheKey;
+        mContextEpoch++; // 新的一集:让在途的"轨道切换后恢复进度"任务失效,不再拿旧进度 seek
+    }
+
+    /**
+     * 排一个"切换轨道后恢复进度"的延迟任务。
+     * <p>
+     * 三条护栏:①可被 {@link #release()} 取消;②切集/换源后(epoch 变化)不执行;
+     * ③内核被替换或已释放时不执行。任务体自带 try/catch —— 它跑在 post 之后,外层 try 保护不到。
+     */
+    private void postTrackRestore(@Nullable final AbstractPlayer kernel, final Runnable body) {
+        cancelPendingTrackRestore();
+        final int epoch = mContextEpoch;
+        Runnable task = new Runnable() {
+            @Override
+            public void run() {
+                mPendingTrackRestore = null;
+                try {
+                    boolean sameKernel = kernel != null && mPlaySession.kernel() == kernel;
+                    if (!TrackRestoreGuard.shouldRun(mReleased, epoch, mContextEpoch, sameKernel)) return;
+                    body.run();
+                } catch (Throwable th) {
+                    LOG.e("轨道切换后恢复进度失败: " + th);
+                }
+            }
+        };
+        mPendingTrackRestore = task;
+        mMainHandler.postDelayed(task, TRACK_RESTORE_DELAY_MS);
+    }
+
+    private void cancelPendingTrackRestore() {
+        if (mPendingTrackRestore != null) {
+            mMainHandler.removeCallbacks(mPendingTrackRestore);
+            mPendingTrackRestore = null;
+        }
     }
 
     // ── 字幕装载（内核 prepared 后调用一次）──
@@ -310,13 +373,13 @@ public final class SubtitleCoordinator {
                     mediaPlayer.pause();
                     long progress = mediaPlayer.getCurrentPosition();//保存当前进度，ijk 切换轨道 会有快进几秒
                     PlayerTrackHelper.selectTrack(mediaPlayer, value);
-                    new Handler().postDelayed(new Runnable() {
+                    postTrackRestore(mediaPlayer, new Runnable() {
                         @Override
                         public void run() {
                             mediaPlayer.seekTo(progress);
                             mediaPlayer.start();
                         }
-                    }, 800);
+                    });
                     dialog.dismiss();
                 } catch (Exception e) {
                     LOG.e("切换音轨出错");
@@ -372,7 +435,7 @@ public final class SubtitleCoordinator {
 
                     // 轨道切换/进度恢复差异收敛到 PlayerTrackHelper,不感知内核
                     PlayerTrackHelper.selectTrack(mediaPlayer, value);
-                    new Handler().postDelayed(new Runnable() {
+                    postTrackRestore(mediaPlayer, new Runnable() {
                         @Override
                         public void run() {
                             mediaPlayer.seekTo(progress);
@@ -381,7 +444,7 @@ public final class SubtitleCoordinator {
                                 mController.startProgress();
                             }
                         }
-                    }, 800);
+                    });
                     dialog.dismiss();
                 } catch (Exception e) {
                     LOG.e("切换内置字幕出错");

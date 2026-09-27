@@ -130,16 +130,22 @@ public class AndroidMediaPlayer extends AbstractPlayer implements MediaPlayer.On
         stop();
         final MediaPlayer mediaPlayer = mMediaPlayer;
         mMediaPlayer = null;
-        new Thread() {
+        // 与 Surface 解绑后再异步释放:宿主随后会释放渲染视图的 Surface,原生输出线程不能还挂在上面
+        try {
+            mediaPlayer.setSurface(null);
+        } catch (Throwable ignored) {
+        }
+        releaseAsync(new Runnable() {
             @Override
             public void run() {
                 try {
                     mediaPlayer.release();
-                } catch (Exception e) {
+                } catch (Throwable e) {
+                    // 必须兜 Throwable:native 释放失败抛的是 Error,只 catch Exception 会逃到释放线程上
                     e.printStackTrace();
                 }
             }
-        }.start();
+        });
     }
 
     @Override

@@ -29,10 +29,20 @@ import okhttp3.Response;
 public class HttpClient {
     public static final long DEFAULT_MILLISECONDS = 10000;
 
+    /** 单次响应体读取上限(见 {@link HttpBodyReader#MAX_TEXT_BYTES}) */
+    static long maxBodyBytes() {
+        return HttpBodyReader.MAX_TEXT_BYTES;
+    }
+
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static volatile OkHttpClient client;
 
     private HttpClient() {
+    }
+
+    /** 读响应体文本,带大小上限(实现见 {@link HttpBodyReader#readText}) */
+    static String readBodyCapped(okhttp3.ResponseBody body) throws IOException {
+        return HttpBodyReader.readText(body);
     }
 
     public static OkHttpClient getClient() {
@@ -101,7 +111,7 @@ public class HttpClient {
                             postSuccess(callback, "");
                             return;
                         }
-                        postSuccess(callback, response.body().string());
+                        postSuccess(callback, readBodyCapped(response.body()));
                     } catch (Throwable th) {
                         postError(callback, th);
                     } finally {
@@ -145,7 +155,7 @@ public class HttpClient {
             if (!response.isSuccessful() || response.body() == null) {
                 throw new IOException("response not successful: " + response.code());
             }
-            return response.body().string();
+            return readBodyCapped(response.body());
         } finally {
             response.close();
         }
@@ -173,7 +183,7 @@ public class HttpClient {
             Response response = getProbeClient().newCall(builder.build()).execute();
             try {
                 if (!response.isSuccessful() || response.body() == null) return null;
-                return response.body().string();
+                return readBodyCapped(response.body());
             } finally {
                 response.close();
             }

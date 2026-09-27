@@ -242,13 +242,20 @@ public class FileUtils {
     }
 
     public static String getAsOpen(String name) {
-        try {
-            InputStream is = context
-                .getAssets()
-                .open(name);
-            byte[] data = new byte[is.available()];
-            is.read(data);
-            return new String(data, "UTF-8");
+        // try-with-resources 关流:本方法是 JS 源加载的热路径(每个源、每次 import 都会走
+        // loadModule/getModuleBytecode),不关就是"一个源一个 fd",几百个源直接 Too many open files。
+        // 同时不再用 available() 估长 + 单次 read():AssetInputStream 的 read 不保证一次填满,
+        // 原来会偶发把模块文件读短(表现为 JS 源"内容为空/语法错误")。
+        try (InputStream is = context
+            .getAssets()
+            .open(name);
+             java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream(8192)) {
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = is.read(buf)) > 0) {
+                bos.write(buf, 0, n);
+            }
+            return new String(bos.toByteArray(), "UTF-8");
         } catch (Exception e) {
             e.printStackTrace();
         }

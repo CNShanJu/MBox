@@ -318,6 +318,8 @@ public class QuickJSContext {
         checkSameThread();
         checkDestroyed();
 
+        // 本地补丁:每次真正发起 JS 调用时顺手回收一轮(这里必然是 JS 线程,见 cleanRecycledRefs)
+        cleanRecycledRefs();
         for (Object arg : args) {
             if (arg instanceof JSCallFunction) {
                 putCallFunction((JSCallFunction) arg);
@@ -336,8 +338,26 @@ public class QuickJSContext {
         checkSameThread();
         checkDestroyed();
 
+        // 本地补丁:hold 前先回收一轮被 GC 掉的引用(见 cleanRecycledRefs)
+        cleanRecycledRefs();
         dupValue(jsObj);
         nativeCleaner.register(jsObj, jsObj.getPointer());
+    }
+
+    /**
+     * 本地补丁:回收"被 Java GC 回收、但 {@code dupValue(+1)} 还没减掉"的 JS 引用。
+     * <p>
+     * {@code hold()} 会给 NativeCleaner 注册一条幻象引用,配套的 {@code freeDupValue(-1)}
+     * 只在两处发生:{@code forceClean()}(上下文销毁)与 {@code clean()}(GC 回收后从引用队列取出)。
+     * 而 {@code clean()} 在原库中<b>从来没有被调用过</b> —— 于是"hold 过、之后被 GC 回收"的对象,
+     * 其 +1 永远不还:{@code phantomReferences} 只增不减(Java 堆泄漏),JS 侧对象也永不释放
+     * (QuickJS 堆跟着涨)。JS 源里异步回调/定时器大量 hold,长会话下这就是内存一路走高。
+     * <p>
+     * 只在"注册新引用"与"发起一次 JS 调用"这两个天然节拍上做:代价是一次引用队列 poll
+     * (没有可回收对象时立即返回),收益是把增长限制在"两次节拍之间新增的引用数"。
+     */
+    private void cleanRecycledRefs() {
+        nativeCleaner.clean();
     }
 
     public JSObject createJSObject() {

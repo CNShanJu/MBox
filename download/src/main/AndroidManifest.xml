@@ -7,8 +7,10 @@
 
     <application>
         <!-- 下载保活前台服务:有任务下载中时运行,通知栏展示进度;无任务自动停止 -->
+        <!-- 类名必须写全:相对名 .download.X 会按模块 namespace(com.github.tvbox.osc.download)展开成
+             com.github.tvbox.osc.download.download.X,而真实类在 ...download.internal,服务永远起不来 -->
         <service
-            android:name=".download.DownloadForegroundService"
+            android:name="com.github.tvbox.osc.download.internal.DownloadForegroundService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
     </application>

@@ -1,5 +1,6 @@
 package com.github.tvbox.osc.util;
 
+import android.app.Activity;
 import android.app.ActivityManager;
 import android.app.PendingIntent;
 import android.app.PictureInPictureParams;
@@ -15,6 +16,7 @@ import android.os.Looper;
 import android.util.Rational;
 
 import androidx.activity.ComponentActivity;
+import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
 import androidx.lifecycle.Lifecycle;
 
@@ -98,6 +100,23 @@ public class PipHelper {
         return pipActive;
     }
 
+    /**
+     * 安全查询"当前是否在小窗中"。
+     * <p>
+     * {@code Activity.isInPictureInPictureMode()} 是 API 26(O) 才有的方法,而本 App minSdk 24:
+     * 7.0/7.1 机器上裸调会在 onStop/onPause/onConfigurationChanged 里直接 NoSuchMethodError 崩掉
+     * (离开播放页必崩)。统一走这里,低版本一律按"不在小窗"处理(低版本本来也没有小窗)。
+     */
+    public static boolean isInPip(@Nullable Activity activity) {
+        if (activity == null) return false;
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false;
+        try {
+            return activity.isInPictureInPictureMode();
+        } catch (Throwable th) {
+            return false;
+        }
+    }
+
     /** 进入小窗(画中画) */
     @RequiresApi(api = Build.VERSION_CODES.O)
     public void enterPip() {
@@ -153,7 +172,7 @@ public class PipHelper {
 
     /** 转发 Activity.onConfigurationChanged(兜底:部分设备点X关闭不触发上面的回调) */
     public void onConfigurationChanged() {
-        if (pipActive && !activity.isInPictureInPictureMode()) {
+        if (pipActive && !isInPip(activity)) {
             scheduleExitCheck();
         }
     }
@@ -269,7 +288,7 @@ public class PipHelper {
 
     /** 刷新小窗操作按钮(播放/暂停图标跟随播放状态) */
     private void refreshActions() {
-        if (!activity.isInPictureInPictureMode())
+        if (!isInPip(activity))
             return;
         try {
             activity.setPictureInPictureParams(new PictureInPictureParams.Builder()

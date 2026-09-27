@@ -42,8 +42,12 @@ public final class LogRepository {
     private final ExecutorService writeExecutor = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "tvbox-log-write");
         t.setDaemon(true);
+        writeThread = t;
         return t;
     });
+
+    /** 写通道线程引用：崩溃路径要"等落库完成",必须能识别"当前就在写线程上"(否则会自己等自己) */
+    private volatile Thread writeThread;
 
     /** 读通道：与写通道分离，查询不排队等写 */
     private final ExecutorService queryExecutor = Executors.newSingleThreadExecutor(r -> {
@@ -78,16 +82,45 @@ public final class LogRepository {
     /** 批量落库 + 超上限 trim（写 executor 串行执行）；降级模式空操作 */
     public void insertAllAsync(final List<LogEntry> batch) {
         if (db == null || batch == null || batch.isEmpty()) return;
-        writeExecutor.execute(() -> {
-            try {
-                db.logDao().insertAll(batch);
-                if (db.logDao().count() > MAX_ROWS) {
-                    db.logDao().trimTo(MAX_ROWS);
-                }
-            } catch (Throwable th) {
-                Log.e("LogRepository", "日志落库失败", th);
+        writeExecutor.execute(() -> insertBatch(batch));
+    }
+
+    /**
+     * 批量落库并<b>等待写完</b>（崩溃路径专用）。
+     * <p>
+     * 未捕获异常处理完紧接着就是 CAOC 的 {@code killProcess + System.exit}，异步落库几乎必然来不及,
+     * "首次崩溃查不到栈"就是这么来的。这里同步等一次,超时也返回(绝不因为写日志把崩溃处理卡死)。
+     *
+     * @param timeoutMs 最长等待毫秒数
+     * @return true=已落库(或降级模式无需落库);false=超时未完成
+     */
+    public boolean insertAllBlocking(final List<LogEntry> batch, long timeoutMs) {
+        if (db == null || batch == null || batch.isEmpty()) return true;
+        if (Thread.currentThread() == writeThread) {
+            // 极端情况:崩溃就发生在写线程上 —— 不能再往自己身上提交任务等它,直接同步写
+            insertBatch(batch);
+            return true;
+        }
+        Future<?> future = writeExecutor.submit(() -> insertBatch(batch));
+        try {
+            future.get(Math.max(1L, timeoutMs), TimeUnit.MILLISECONDS);
+            return true;
+        } catch (Throwable th) {
+            Log.e("LogRepository", "崩溃日志等待落库失败/超时", th);
+            return false;
+        }
+    }
+
+    /** 单线程写通道的实际写入体(异步/同步两条路径共用) */
+    private void insertBatch(List<LogEntry> batch) {
+        try {
+            db.logDao().insertAll(batch);
+            if (db.logDao().count() > MAX_ROWS) {
+                db.logDao().trimTo(MAX_ROWS);
             }
-        });
+        } catch (Throwable th) {
+            Log.e("LogRepository", "日志落库失败", th);
+        }
     }
 
     /** 按保留天数清理（异步）；降级模式空操作 */

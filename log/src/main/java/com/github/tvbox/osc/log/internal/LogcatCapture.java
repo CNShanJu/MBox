@@ -54,6 +54,16 @@ public final class LogcatCapture {
     private static final int BATCH_LINES = 100;
     private static final long FLUSH_MS = 1500;
     /**
+     * 目录清理(保留天数/总量上限)的最小执行间隔(ms)。见 {@link #cleanupThrottled()}:
+     * 清理要 list 目录 + 逐个 stat + 排序,不能跟着每一批日志跑。
+     */
+    private static final long CLEANUP_INTERVAL_MS = 60_000L;
+    /**
+     * 写失败时待重试行的上限。写失败(磁盘满/无权限)时这批行要留着下轮重试(不能丢),
+     * 但也不能无界增长(既吃内存、又让每次重试都重写越来越大的整批),超过后丢掉最旧的一半。
+     */
+    private static final int MAX_PENDING_LINES = BATCH_LINES * 10;
+    /**
      * 框架/系统"错误级"噪音特征(命中即不写入错误日志文件):
      * 这些不是应用的真实错误——资源 id 误探测(Invalid resource ID)、
      * hiddenapi 越权提示、ContentCapture/WebViewInfoPicker 视图探查、
@@ -119,6 +129,13 @@ public final class LogcatCapture {
     private static volatile Process process;
     private static volatile Thread thread;
     private static volatile Context appContext;
+    /** 上次执行目录清理的时间戳(仅 LOCK 内访问);目录清理节流用,见 {@link #cleanupThrottled()} */
+    private static long lastCleanupAt = 0L;
+    /**
+     * 写失败是否已上报过(仅 LOCK 内访问);防"写失败→Log.e→被自己抓回→再写失败"的自放大回环,
+     * 见 {@link #logWriteFailure(Throwable)}。写入恢复正常后重新置假。
+     */
+    private static boolean writeFailureReported = false;
 
     private LogcatCapture() {
     }
@@ -219,7 +236,15 @@ public final class LogcatCapture {
                         batch.add(line);
                         long now = System.currentTimeMillis();
                         if (batch.size() >= BATCH_LINES || now - lastFlush > FLUSH_MS) {
-                            appendLines(batch);
+                            // 只有确认落盘成功才清空这批行:原实现从不 clear,凑满 BATCH_LINES 之后
+                            // 每来一行都把整批重写一遍——写入量 O(n²)(错误流一密集就持续大量写盘,发热/耗电),
+                            // 而且同一批内容在文件里被重复追加 n 次。
+                            // 写失败(磁盘满/无权限)时保留这批行,下轮连同新行一起重试:不丢数据,也不重复写。
+                            if (appendLines(batch)) {
+                                batch.clear();
+                            } else if (batch.size() >= MAX_PENDING_LINES) {
+                                batch.subList(0, batch.size() / 2).clear(); // 持续失败时给待重试行数一个上界
+                            }
                             lastFlush = now;
                         }
                     }
@@ -398,8 +423,14 @@ public final class LogcatCapture {
         return false;
     }
 
-    private static void appendLines(List<String> lines) {
-        if (lines == null || lines.isEmpty()) return;
+    /**
+     * 把一批行追加到当日日志文件。
+     *
+     * @return true=已成功写入(调用方可清空这批行继续);false=写失败(调用方必须保留这批行,
+     *         下轮连同新行重试,既不丢也不重复)
+     */
+    private static boolean appendLines(List<String> lines) {
+        if (lines == null || lines.isEmpty()) return true;
         synchronized (LOCK) {
             try {
                 File dir = logDir();
@@ -419,12 +450,46 @@ public final class LogcatCapture {
                     } catch (Throwable ignored) {
                     }
                 }
+                // 滚动检查(只是一次 length() 调用)必须每次写都做,否则守不住单文件 8MB 上限;
+                // 目录清理要 list+逐个 stat+排序,按时间节流(见 cleanupThrottled)
                 rotateIfNeeded(file);
-                cleanupFiles();
+                cleanupThrottled();
+                writeFailureReported = false; // 写入恢复正常:重新武装失败上报,下次真故障仍可见
+                return true;
             } catch (Throwable th) {
-                Log.e("LogcatCapture", "写 logcat 文件失败", th);
+                logWriteFailure(th);
+                return false;
             }
         }
+    }
+
+    /**
+     * 目录清理节流:原实现把 {@link #cleanupFiles()} 挂在每一次追加之后,而清理要 list 目录、
+     * 对每个文件 stat、再排序(几十次系统调用);错误流密集时每次追加都扫一遍目录,
+     * 是"频繁报错就大量 IO"的热点。这里只把执行频率压到 {@link #CLEANUP_INTERVAL_MS} 一次,
+     * 保留天数与目录总量上限的语义完全不变(最坏只是超限多存在一分钟,与按天清理量级相比可忽略)。
+     * 仅可在 LOCK 内调用。
+     */
+    private static void cleanupThrottled() {
+        long now = System.currentTimeMillis();
+        if (now - lastCleanupAt < CLEANUP_INTERVAL_MS) return;
+        lastCleanupAt = now;
+        cleanupFiles();
+    }
+
+    /**
+     * 上报"写日志文件失败"(防自放大回环)。捕获读的是本应用 E 级流
+     * (见 {@link #buildCommand(boolean)},默认 {@code *:E}),所以这里若用 {@code Log.e} 上报,
+     * 这一行会被自己再抓回来 → 又写失败 → 又 Log.e:磁盘满/无权限时会形成持续自我放大的日志风暴
+     * (日志文件与写盘量双双爆炸,是本文件写路径上最危险的正反馈)。
+     * 因此:① 降到 W 级(默认 {@code *:E} 抓不到);
+     * ② 再加一次性守卫,即便把日志级别调到 DEBUG(全量抓取 V/D/I/W/E)也不会自我放大。
+     * 仅可在 LOCK 内调用。
+     */
+    private static void logWriteFailure(Throwable th) {
+        if (writeFailureReported) return;
+        writeFailureReported = true;
+        Log.w("LogcatCapture", "写 logcat 文件失败(同类失败不再重复上报,避免被自己抓回放大)", th);
     }
 
     /** 日志文件头(每个文件一次):时间 + 当时网络状态,用于给这一整段日志定上下文 */

@@ -68,11 +68,20 @@ public class TextureRenderView extends TextureView implements IRenderView, Textu
 
     @Override
     public void release() {
-        if (mSurface != null)
+        // 解绑由宿主负责(VideoView.release/addDisplay 在释放渲染视图之前调 player.detachSurface()),
+        // 这里只回收自己持有的 Surface/SurfaceTexture,并把字段置空 —— 不置空的话,重新 attach 后
+        // onSurfaceTextureAvailable 会拿这块"已释放的 SurfaceTexture"再 setSurfaceTexture 一次,直接崩在 native。
+        if (mSurface != null) {
             mSurface.release();
+            mSurface = null;
+        }
 
-        if (mSurfaceTexture != null)
+        if (mSurfaceTexture != null) {
             mSurfaceTexture.release();
+            mSurfaceTexture = null;
+        }
+
+        mMediaPlayer = null;
     }
 
     @Override
