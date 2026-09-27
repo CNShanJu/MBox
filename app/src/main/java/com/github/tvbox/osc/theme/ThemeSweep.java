@@ -105,7 +105,10 @@ public final class ThemeSweep {
     }
 
     private static void recolor(View v, ThemePalette palette, ThemePalette builtin) {
-        // ① 背景:还是内置那份"面/浮层"色 → 换成主题的对应档
+        // ① 背景:还是内置那份"面/浮层"色 → 换成主题的对应档;
+        //    如果是内置的"文字档"色(1dp 分割线这类拿 @color/text_foreground 当底的 View)→ 换同档文字色。
+        //    只有 TextView 那一支认文字色是不够的:分割线是裸 View,背景那一支原先只比对面/浮层色,
+        //    于是它永远停在编译期颜色(用户口径:"搜索页 x 后面的 | 分割线颜色没走主要文字色")。
         Drawable bg = v.getBackground();
         if (bg != null) {
             Integer now = solidColorOf(bg);
@@ -114,6 +117,13 @@ public final class ThemeSweep {
                     setSolidColor(bg, palette.get("bg_surface"));
                 } else if (now == builtin.get("bg_float")) {
                     setSolidColor(bg, palette.get("bg_float"));
+                } else {
+                    for (String key : TEXT_KEYS) {
+                        if (now == builtin.get(key)) {
+                            setSolidColor(bg, palette.get(key));
+                            break;
+                        }
+                    }
                 }
             }
         }
