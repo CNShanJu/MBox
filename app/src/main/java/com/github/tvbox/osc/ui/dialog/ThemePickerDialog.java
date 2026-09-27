@@ -344,6 +344,14 @@ public class ThemePickerDialog extends SelectDialog<ThemePickerDialog.Row> {
     public void refreshList() {
         try {
             ThemeStore.reload();
+            // 编辑页那边是"保存即选中"(直接落库):把草稿对齐到落盘状态,
+            // 否则关闭弹窗时会用打开时那份旧草稿,把这次选择又覆盖掉(用户看到的就是"改了没效果")
+            ThemeStore.Selection persisted = ThemeStore.selection();
+            if (!draft.sameAs(persisted)) {
+                draft = persisted;
+                selectionTouched = false;
+                defaultTouched = false;
+            }
             reload();
         } catch (Throwable ignored) {
         }

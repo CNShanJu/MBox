@@ -556,7 +556,18 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
                     AppBubble.toast(result.error ?: "保存失败")
                     return@post
                 }
-                AppBubble.toast("已保存,关闭主题弹窗后重启生效")
+                // **保存即选中**:用户进这一页就是在调"我这一套",保存完当然要用它。
+                // 只落盘不选中,关闭主题弹窗后只会白重启一次、界面一点不变 ——
+                // 这正是一开始"我自定义的主题没效果"的来源(用户口径)。
+                // 选择关系直接落库(草稿在弹窗那边,编辑页够不着);弹窗关闭时按新选择重启。
+                runCatching {
+                    val s = ThemeStore.selection()
+                    if (s.customId != result.id) {
+                        s.customId = result.id
+                        s.commit()
+                    }
+                }
+                AppBubble.toast("已保存并使用,关闭主题弹窗后重启生效")
                 setResult(RESULT_OK)
                 finish()
             }

@@ -58,8 +58,11 @@ public final class ThemeRuntime {
         ThemeType t = ThemeType.BRIGHT;
         ThemePalette p = null;
         String key = "";
+        String customId = "";
+        String trouble = "";
         try {
             t = ThemeStore.activeType();
+            customId = com.github.tvbox.osc.config.SystemConfig.getThemeCustomId();
             ThemeDef def = ThemeStore.resolveActive();
             if (def != null) {
                 p = ThemeStore.paletteOf(def);
@@ -67,22 +70,33 @@ public final class ThemeRuntime {
                 // 这种情况不介入比"换一半颜色"更好定位
                 if (!ThemeColorAliases.namesResolvable(p)) {
                     p = null;
+                    trouble = "调色板缺少别名表里的概念名";
                 }
+            } else if (!customId.isEmpty()) {
+                // 选中了自定义主题却解析不出来 = 主题文件不在了(被删/写坏),这也是"改了没效果"的一种原因
+                trouble = "选中的自定义主题[" + customId + "]找不到(主题文件缺失?)";
             }
             key = fingerprint(t, def);
         } catch (Throwable th) {
             p = null;
+            trouble = "解析异常:" + th.getClass().getSimpleName()
+                    + (th.getMessage() == null ? "" : (" " + th.getMessage()));
         }
         palette = p;
         type = t;
         snapshotKey = key;
         installed = true;
         // 让"换了主题却没看出变化"这类问题能在运行日志里一眼定位:
-        // 是"没生效"(解析出的还是内置/根本没选中自定义主题),还是"生效了但某处没跟着走"
+        // 是"没生效"(解析出的还是内置/根本没选中自定义主题/解析失败),还是"生效了但某处没跟着走"
         try {
-            com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM,
-                    "主题: 生效[" + (p == null ? "内置" : "自定义") + "] " + key
-                            + (p == null ? "" : ";换肤层已介入"));
+            String msg = "主题: 生效[" + (p == null ? "内置" : "自定义") + "] " + key;
+            if (p != null) {
+                msg += ";换肤层已介入,bg_float=" + Integer.toHexString(p.get("bg_float"))
+                        + " bg_surface=" + Integer.toHexString(p.get("bg_surface"));
+            } else {
+                msg += customId.isEmpty() ? "(未选中自定义主题)" : ";原因=" + trouble;
+            }
+            com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM, msg);
         } catch (Throwable ignored) {
         }
     }
@@ -127,6 +141,28 @@ public final class ThemeRuntime {
     /** 换肤层是否在介入(只影响"要不要多做一层包装",不影响正确性) */
     public static boolean active() {
         return palette != null;
+    }
+
+    /**
+     * 界面明暗是否"由系统说了算"(模式=跟随系统,且没选自定义主题)。
+     *
+     * <p>只有这种模式下,手机自己翻明暗才该带着界面一起变:
+     * <ul>
+     *   <li>显式选了浅色/深色 → 界面固定那套,系统怎么翻都跟本 App 无关;</li>
+     *   <li>选了自定义主题 → 它的类型就是答案(见 {@code Utils.initTheme} 把夜间模式强制成它的类型)。</li>
+     * </ul>
+     *
+     * <p>调用方是 {@code BaseActivity}:内置主题的颜色是 inflate 那一刻从
+     * {@code values/values-night} 取回来的资源,光换快照不够 —— 声明了 {@code uiMode} 的页面
+     * (主页/直播/详情)系统不会重建,不自己重建就一直是翻明暗之前那套(观感="跟随系统没生效")。
+     */
+    public static boolean followsSystem() {
+        try {
+            ThemeStore.Selection s = ThemeStore.selection();
+            return s.customId.isEmpty() && s.mode == ThemeStore.Selection.MODE_FOLLOW_SYSTEM;
+        } catch (Throwable th) {
+            return false;
+        }
     }
 
     /** 是否已经装配过(测试/调试用;没装配时一律按"不介入"处理) */
