@@ -13,6 +13,7 @@ import com.github.tvbox.osc.R;
 import com.github.tvbox.osc.databinding.DialogPlayingControlBinding;
 import com.github.tvbox.osc.player.MyVideoView;
 import com.github.tvbox.osc.player.controller.PlaybackSettingsController;
+import com.github.tvbox.osc.theme.ThemeDrawables;
 import com.github.tvbox.osc.ui.adapter.SelectDialogAdapter;
 import com.github.tvbox.osc.util.PlayerHelper;
 import com.lxj.xpopup.core.BasePopupView;
@@ -212,12 +213,12 @@ final class PlayingControlPanel {
             TextView tv = (TextView) mBinding.containerSpeed.getChildAt(i);
             boolean selected = String.valueOf(mPlayer.getSpeed()).equals(tv.getText().toString().replace("x", ""));
             if (selected) {
-                // 选中:实心填充 + 按钮选中文字色(与"设置背景图"页预设 chip 的选中态同一套色)
-                tv.setBackground(mBinding.getRoot().getResources().getDrawable(R.drawable.bg_r_common_solid_select));
+                // 选中:实心填充 + 按钮选中文字色(小组件按钮纯色档,圆角走 radius_widget_btn)
+                ThemeDrawables.applyBackground(tv, R.drawable.bg_widget_btn_solid);
                 tv.setTextColor(ContextCompat.getColor(ctx, R.color.btn_select_text));
             } else {
-                // 未选中:描边按钮样式(与抽屉里其他按钮一致)
-                tv.setBackground(mBinding.getRoot().getResources().getDrawable(R.drawable.bg_r_common_stroke_primary));
+                // 未选中:小组件按钮空心档(描边 + radius_widget_btn)
+                ThemeDrawables.applyBackground(tv, R.drawable.bg_widget_btn_stroke);
                 tv.setTextColor(ContextCompat.getColor(ctx, R.color.text_foreground));
             }
         }
