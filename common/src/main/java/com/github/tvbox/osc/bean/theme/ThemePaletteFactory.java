@@ -20,8 +20,9 @@ import java.util.Map;
  *       {@code bg_float}(弹窗·抽屉·气泡·悬浮钮)取同一个颜色 + {@code bg_float_alpha} ——
  *       颜色相同才不会同屏深浅不一,透明度分两层(**页面层 / 浮层**);</li>
  *   <li>同值别名(不占配置):{@code color_highlight} / {@code select_fill} / {@code btn_plain_text}
- *       = {@code brand}(文字主色,<b>强制纯色</b>);{@code btn_select_bg} = {@code btn_confirm_stroke}
- *       = {@code btn_confirm_bg} <b>的不透明版</b>;{@code btn_select_text} = {@code btn_confirm_text};
+ *       = {@code brand}(文字主色,<b>强制纯色</b>);{@code btn_confirm_stroke} = {@code btn_confirm_bg}
+ *       <b>的不透明版</b>;{@code btn_select_bg} = {@code btn_confirm_bg}(<b>保留透明度</b>);
+ *       {@code btn_select_text} = {@code btn_confirm_text};
  *       {@code text_sub} = {@code text_disable} = {@code brand} <b>@60%</b>(次要 / 禁用两级由主色算出来);
  *       {@code switch_track_on} = {@code download_done} = {@code success}(正向状态色);</li>
  *   <li>{@code btn_stroke} = {@code btn_cancel_bg}(空心按钮边框线颜色;历史资源名,值同源);</li>
@@ -66,7 +67,9 @@ public final class ThemePaletteFactory {
         //   ② 空心按钮:无填充、只有 1dp 描边,描边色 = 可配置键 btn_cancel_bg(标签「空心按钮边框线颜色」),
         //      文字走文字主色 brand —— 所以「次按钮文字」这个键已删除;
         //   ③ 小组件按钮:未选中 = 只有边框(同上描边色)+ 文字主色;
-        //      选中 = 填充纯色按钮底色的**不透明版**(btn_select_bg,即"忽略透明度")+ 文字 btn_confirm_text。
+        //      选中 = 填充**纯色按钮的底色本身**(btn_select_bg,<b>连透明度一起</b>)+ 文字 btn_confirm_text
+        //      —— 口径(2026-09-27 用户明确):"选中态是背景透明无色啊,文字白色" ——
+        //      所以主按钮底设成无色时,选中态也跟着无色,只剩描边与文字(不再强制"忽略透明度")。
         int confirmBg = color(in, "btn_confirm_bg", brand);
         int confirmSolid = ThemePalette.withAlpha(confirmBg, 100);
         int confirmText = color(in, "btn_confirm_text", builtin.get("btn_confirm_text"));
@@ -117,12 +120,13 @@ public final class ThemePaletteFactory {
         out.put("select_fill", brand);
         out.put("btn_confirm_bg", confirmBg);
         out.put("btn_confirm_text", confirmText);
-        // 纯色按钮的描边(也是小组件按钮选中态的填充):主按钮背景的不透明版
+        // 纯色按钮的描边:主按钮背景的不透明版(底色透明时边框线仍要实心)
         out.put("btn_confirm_stroke", confirmSolid);
         // 空心按钮的描边色(主题编辑页那个键);空心/纯文字按钮的文字走文字主色
         out.put("btn_cancel_bg", hollowStroke);
         out.put("btn_plain_text", brand);
-        out.put("btn_select_bg", confirmSolid);
+        // 选中态填充 = 纯色按钮的底色本身(透明就一起透明):暗色主题下主按钮无色,选中态也就无色
+        out.put("btn_select_bg", confirmBg);
         out.put("btn_select_text", confirmText);
         // btn_stroke 是"空心键描边"的历史资源名,现在与 btn_cancel_bg 同值(入口只有主题编辑页那个键)
         out.put("btn_stroke", hollowStroke);

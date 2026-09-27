@@ -103,16 +103,18 @@ public final class ThemeSpec {
         //    取色口径(用户口径):
         //      · 主按钮背景 = 纯色按钮的底;主按钮文字 = 纯色按钮的字
         //        (纯色按钮的**描边**由"主按钮背景的不透明版"派生,不单独配;
-        //         小组件按钮选中态的填充/文字也取这两个键);
+        //         小组件按钮/chip/直播选中条的**选中态填充与文字**也取这两个键 ——
+        //         填充 = 主按钮背景**本身(含透明度)**:主按钮设成无色时,选中态也是无色);
         //      · 空心按钮边框线颜色 = 空心按钮(无底色、只有 1dp 描边)的描边色,
         //        也是小组件按钮未选中时的边框色 —— 这个键原来叫"次按钮背景";
         //      · 「次按钮文字」已删除:空心按钮的文字走**文字主色**;
         //      · 「主色上的文字」(brand_text)已删除:它唯一的用途是派生 btn_select_text,
         //        而后者现在直接取主按钮文字。
         list.add(new ThemeKey("btn_confirm_bg", ThemeKey.Group.BRAND, ThemeKey.Kind.COLOR, "主按钮背景",
-                "纯色按钮(确定 / 开始下载 / 重置)的底色;描边按它的不透明版画,带透明也看得见边框"));
+                "纯色按钮(确定 / 开始下载 / 重置)的底色;描边按它的不透明版画,带透明也看得见边框;"
+                        + "选中态(小组件按钮/chip/直播选中条)的填充就是它本身,设成无色则选中态也无色"));
         list.add(new ThemeKey("btn_confirm_text", ThemeKey.Group.BRAND, ThemeKey.Kind.COLOR, "主按钮文字",
-                "纯色按钮上的字(小组件按钮选中态的文字也用它)"));
+                "纯色按钮上的字(选中态的文字也用它)"));
         list.add(new ThemeKey("btn_cancel_bg", ThemeKey.Group.BRAND, ThemeKey.Kind.COLOR, "空心按钮边框线颜色",
                 "空心按钮(取消这类无底色按钮)的 1dp 描边;小组件按钮未选中时的边框也用它"));
 
@@ -128,8 +130,9 @@ public final class ThemeSpec {
                 "开关上的圆点"));
         // 直播页"选中/聚焦那一条频道"的底原来是写死的蓝 accent_on_dark(唯一还在用那支蓝的地方),
         // 已按用户口径**移除**:直播页那两张列表的选中态现在走全站同一套主题色 ——
-        // 底 = btn_select_bg(= 主色 brand)、底上的字 = btn_select_text(见 drawable/item_bg_selector_right
-        // 那条链与 res/color/live_channel_text.xml)。所以主题文件里不再有 accent_on_dark 这个键。
+        // 底 = btn_select_bg(= 纯色按钮的底色,含透明度:暗色主题下主按钮无色,选中态也无色)、
+        // 底上的字 = btn_select_text(见 drawable/item_bg_selector_right 那条链与 res/color/live_channel_text.xml)。
+        // 所以主题文件里不再有 accent_on_dark 这个键。
         list.add(new ThemeKey("download_active", ThemeKey.Group.STATE, ThemeKey.Kind.COLOR, "下载中",
                 "下载中的状态色"));
 
