@@ -276,6 +276,7 @@ def defaultRadii = [
         radius_card      : '12dp',
         // 按钮圆角:radius_btn=常规按钮,radius_btn_large=大圆角按钮(chip/预设)
         radius_btn       : '12dp',
+    radius_widget_btn: '8dp',
         radius_btn_large : '25dp'
 ]
 
