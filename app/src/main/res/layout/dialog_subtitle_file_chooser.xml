@@ -63,10 +63,7 @@
 
         <ImageView
             android:id="@+id/iv_close"
-            android:layout_width="50dp"
-            android:layout_height="50dp"
-            android:padding="10dp"
-            android:src="@drawable/ic_close_24"
+            style="@style/DialogCloseButton"
             app:tint="@color/text_foreground" />
     </LinearLayout>
 

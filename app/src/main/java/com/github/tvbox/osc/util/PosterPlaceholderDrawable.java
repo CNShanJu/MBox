@@ -26,7 +26,7 @@ import com.github.tvbox.osc.R;
  *       {@code placeholder_poster} 同色同圆角同图标);</li>
  *   <li>{@link #failed} —— 失败/无封面:同上一块底,再叠一行"图片加载失败"。</li>
  * </ul>
- * 色值/圆角/图标与 XML 占位 {@code placeholder_poster} 同源(bg_component + radius_card + ic_placeholder_cat),
+ * 色值/圆角/图标与 XML 占位 {@code placeholder_poster} 同源(bg_card + radius_card + ic_placeholder_cat),
  * 布局里的 XML 是"静态形态"(首帧/未走统一加载入口的地方用),本类是"自适应形态"(统一加载入口用),
  * 两态观感一致,只是本类会按宿主尺寸缩放图标。
  *
@@ -89,7 +89,7 @@ public class PosterPlaceholderDrawable extends Drawable {
     private PosterPlaceholderDrawable(Context context, boolean withText) {
         this.withText = withText;
         density = context.getResources().getDisplayMetrics().density;
-        bgPaint.setColor(ContextCompat.getColor(context, R.color.bg_component));
+        bgPaint.setColor(ContextCompat.getColor(context, R.color.bg_card));
         cornerRadiusPx = context.getResources().getDimension(R.dimen.radius_card);
         icon = ContextCompat.getDrawable(context, R.drawable.ic_placeholder_cat);
         textSizePx = 12f * density;

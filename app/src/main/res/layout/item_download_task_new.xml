@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- 下载中条目:左滑露出右侧"暂停/继续/重试 + 删除"操作区(整条高度,主题蓝 + 舒适红)。
 
-     z 序与裁切的硬约束:前面信息卡(item_front,bg_swipe_front = bg_component,主题默认 alpha 60,
+     z 序与裁切的硬约束:前面信息卡(item_front,bg_swipe_front = bg_card,主题默认 alpha 60,
      即 60% 不透明的半透明卡片)**盖不住任何东西** —— 半透明卡片会把垫在它下面的色块按 40% 透出来
      (曾经的故障:整条铺在卡片下面 → 每行右侧一条浑浊的蓝/红色带,观感割裂)。
 
@@ -54,7 +54,7 @@
                 android:background="@drawable/bg_swipe_delete"
                 android:gravity="center"
                 android:text="删除"
-                android:textColor="@color/white"
+                android:textColor="@color/swipe_red_text"
                 android:textSize="14sp" />
         </LinearLayout>
     </FrameLayout>

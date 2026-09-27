@@ -6,7 +6,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="@color/bg_popup"
+    android:background="@color/bg_float"
     android:paddingTop="16dp"
     android:paddingBottom="12dp">
 
@@ -35,7 +35,7 @@
             android:layout_height="wrap_content"
             android:layout_marginRight="12dp"
             android:text="(已选 0)"
-            android:textColor="@color/text_highlight"
+            android:textColor="@color/text_accent"
             android:textSize="13sp" />
 
         <com.github.tvbox.osc.ui.kit.SizedIconTextView

@@ -1,8 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- 滚动指示条 thumb:半透明的主题色,亮/暗与自定义主题都跟着走(用户口径:"没兼容主题文件"是指
+     它以前是一条不透明实心灰条,在亮色面板上过重、在暗色面板上发白,跟面板格格不入)。
+     用 text_hint 而不是 text_sub:调色板里只有 text_hint 本身就是"半透明的文字色"
+     (亮 #611C1B1F / 暗 #99E6E1E5),当滚动条正好 —— 不透明度跟着主题文件走,不必在 drawable 里
+     另加 alpha(加了也只有内置主题吃得到,layer-list 的 android:alpha 走运行时重建会被丢掉)。
+     显示时机由 ScrollThumbIndicator 控制:只在滚动时出现,停手后淡出。 -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
-    <!-- 滚动指示条 thumb:半透明主题前景色,深浅主题均可见 -->
-    <solid android:color="@color/text_sub_foreground" />
+    <solid android:color="@color/text_hint" />
     <corners android:radius="1.5dp" />
     <size android:width="3dp" />
 </shape>

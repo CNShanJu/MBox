@@ -22,15 +22,17 @@
         tools:text="11111111111111111111111"
         android:textSize="16sp"/>
 
+    <!-- 关闭键:尺寸走共享 style;位置**与标题垂直居中对齐** ——
+         原来是 50dp 方框 + top_toTopOf=parent,中心比标题文字高约 9dp(标题自带 20dp padding),
+         看着就是"没对齐";改成约束在标题视图的上下边之间,标题 padding 对称 ⇒ 与文字中心一致,
+         字号/字体缩放变了也不会跑偏。 -->
     <ImageView
         android:id="@+id/iv_close"
-        android:layout_width="50dp"
-        android:layout_height="50dp"
-        android:src="@drawable/ic_close_24"
+        style="@style/DialogCloseButton"
+        app:layout_constraintBottom_toBottomOf="@id/title"
         app:layout_constraintRight_toRightOf="parent"
-        app:tint="@color/text_foreground"
-        android:padding="10dp"
-        app:layout_constraintTop_toTopOf="parent"/>
+        app:layout_constraintTop_toTopOf="@id/title"
+        app:tint="@color/text_foreground" />
 
     <com.owen.tvrecyclerview.widget.TvRecyclerView
         android:id="@+id/list"
@@ -61,10 +63,27 @@
         app:layout_constraintRight_toRightOf="@+id/list"
         app:layout_constraintTop_toTopOf="@+id/list" />
 
+    <!-- 可选固定页脚(默认隐藏):**不随列表滚动**的入口/动作(如主题弹窗的「自定义主题颜色」)。
+         底色与列表行一样用 bg_small_round_gray(= 卡片底色 bg_card),但不带勾选框、
+         内容整体居中,一眼可辨是动作而不是选项。
+         与列表之间的间距由 SelectDialog#renderFooter 按"有没有页脚"设 topMargin:
+         有页脚=10dp(否则最后一行会贴着页脚,滚动时看着像连成一片);没页脚=0(不留空)。 -->
+    <LinearLayout
+        android:id="@+id/ll_footer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginHorizontal="10dp"
+        android:orientation="vertical"
+        android:visibility="gone"
+        app:layout_constraintLeft_toLeftOf="parent"
+        app:layout_constraintRight_toRightOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/list"
+        tools:visibility="visible" />
+
     <View
         android:layout_width="match_parent"
         android:layout_height="@dimen/dp_30"
         app:layout_constraintLeft_toLeftOf="parent"
         app:layout_constraintRight_toRightOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/list" />
+        app:layout_constraintTop_toBottomOf="@+id/ll_footer" />
 </androidx.constraintlayout.widget.ConstraintLayout>

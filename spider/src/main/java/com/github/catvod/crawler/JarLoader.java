@@ -34,6 +34,14 @@ public class JarLoader {
     /** jar 下载失败冷却：失败后一段时间内不再重下（原实现每次调用都重下，弱网下反复白等） */
     private ConcurrentHashMap<String, Long> downloadFailedAt = new ConcurrentHashMap<>();
     private static final long DOWNLOAD_FAIL_COOLDOWN_MS = 5 * 60 * 1000L;
+    /**
+     * 源创建失败冷却（与 JsLoader 同语义）：插件缺类 / 初始化抛异常这类确定性失败，
+     * 冷却期内直接返回 SpiderNull，不再每次搜索/详情都重试一遍 loadClass 并把日志刷屏。
+     * 原因留在 {@link SpiderFaults} 里，冷却期内也会重新登记，保证页面拿得到说法。
+     */
+    private ConcurrentHashMap<String, Long> createFailedAt = new ConcurrentHashMap<>();
+    private ConcurrentHashMap<String, String> createFailedReason = new ConcurrentHashMap<>();
+    private static final long CREATE_FAIL_COOLDOWN_MS = 5 * 60 * 1000L;
     private volatile String recentJarKey = "";
 
     /**
@@ -42,13 +50,27 @@ public class JarLoader {
      * @param cache
      */
     public boolean load(String cache) {
-        spiders.clear();
+        clearSources();
         recentJarKey = "main";
+        return loadClassLoader(cache, "main");
+    }
+
+    /** 放掉全部源实例与缓存(jar 重载 / 换订阅都走这里);与 load 的差别:不重新加载任何 jar */
+    public void reset() {
+        clearSources();
+        recentJarKey = "";
+    }
+
+    private void clearSources() {
+        spiders.clear();
         proxyMethods.clear();
         classLoaders.clear();
         spiderJarKeys.clear();
         downloadFailedAt.clear();
-        return loadClassLoader(cache, "main");
+        createFailedAt.clear();
+        createFailedReason.clear();
+        // jar/订阅整体换了:旧的"插件不可用"结论一并作废(新 jar 里可能已经有那个类了)
+        SpiderFaults.get().clear();
     }
 
     private boolean loadClassLoader(String jar, String key) {
@@ -138,7 +160,7 @@ public class JarLoader {
      * 订阅里的 jar 多数没有 md5,下载端可能拿到错误页/登录页(HTML)并被当成 jar 存下来 →
      * DexClassLoader 加载失败,而用户只看到"这个源打不开"。这里把它挡在加载之前并留下日志。
      */
-    static boolean isLoadableArchive(File file) {
+    public static boolean isLoadableArchive(File file) {
         if (file == null || !file.exists() || file.length() < 4) return false;
         try (java.io.FileInputStream in = new java.io.FileInputStream(file)) {
             byte[] head = new byte[4];
@@ -218,6 +240,12 @@ public class JarLoader {
         if (cached != null) {
             return cached;
         }
+        Long failedAt = createFailedAt.get(key);
+        if (failedAt != null && System.currentTimeMillis() - failedAt < CREATE_FAIL_COOLDOWN_MS) {
+            // 冷却期内不再重试（每次重试都是 loadClass + 一行 E 日志）；原因重新登记一次,UI 仍能给出说法
+            SpiderFaults.get().markUnavailable(key, createFailedReason.get(key));
+            return new SpiderNull();
+        }
         // 慢路径:首次创建串行化(下载 jar / DexClassLoader / newInstance / init),避免并行创建相互踩踏
         synchronized (this) {
             cached = spiders.get(key);
@@ -236,12 +264,30 @@ public class JarLoader {
                 Spider sp = (Spider) classLoader.loadClass("com.github.catvod.spider." + clsKey).newInstance();
                 sp.init(context, ext);
                 spiders.put(key, sp);
+                // 创建成功:清掉该源的失败冷却与故障登记
+                createFailedAt.remove(key);
+                createFailedReason.remove(key);
+                SpiderFaults.get().markAvailable(key);
                 return sp;
             } catch (Throwable th) {
-                LOG.e("Csp", "源初始化失败：" + clsKey + " " + th);
+                // 日志必须带上站点 key 与 jar:原来只打类名,排查时根本不知道是哪个源、用的哪份 jar
+                // (线上实例:某订阅的 cc 站点声明 csp_XPathGuard,而它自己的 jar 里没有这个类)
+                LOG.e("Csp", "源初始化失败: key=" + key + " cls=csp_" + clsKey
+                        + " jar=" + jarDesc(jarKey, jarUrl) + " " + th);
+                String reason = SpiderFaults.isMissingClass(th)
+                        ? SpiderFaults.missingClassReason(clsKey)
+                        : SpiderFaults.initFailedReason(clsKey);
+                createFailedAt.put(key, System.currentTimeMillis());
+                createFailedReason.put(key, reason);
+                SpiderFaults.get().markUnavailable(key, reason);
             }
             return new SpiderNull();
         }
+    }
+
+    /** 日志用的 jar 标识:main 就是订阅主 jar(files/csp.jar),其余是站点自带 jar 的缓存文件 */
+    private static String jarDesc(String jarKey, String jarUrl) {
+        return "main".equals(jarKey) ? "main(files/csp.jar)" : jarUrl + " -> files/" + jarKey + ".jar";
     }
 
     public JSONObject jsonExt(String key, LinkedHashMap<String, String> jxs, String url) {

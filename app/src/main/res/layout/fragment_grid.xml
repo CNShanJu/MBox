@@ -25,7 +25,7 @@
             android:paddingBottom="70dp"
             android:clipToPadding="false"/>
 
-        <!-- 筛选悬浮按钮: 54dp 圆, 圆形裁剪(clipToOutline), 底色=悬浮色 bg_float(94%,与底栏/气泡一致),
+        <!-- 筛选悬浮按钮: 54dp 圆, 圆形裁剪(clipToOutline), 底色=悬浮色 bg_surface(94%,与底栏/气泡一致),
              不再单独叠一层主题遮罩(两层会把半透明盖实);marginBottom=78dp(58 悬浮底栏 + 20 间距), 不被底栏覆盖。
              **默认 gone**:该分类没有筛选项时压根不该出现,有内容才由代码置 VISIBLE(GridFragment.syncFilterButton),
              不要改成 visible 默认值,否则没筛选的分类会先闪一个点不动的按钮 -->
@@ -48,7 +48,7 @@
                 android:layout_height="20dp"
                 android:layout_gravity="center"
                 android:src="@drawable/ic_filter_list"
-                app:tint="@color/text_highlight" />
+                app:tint="@color/text_accent" />
         </FrameLayout>
 
         <!-- "到底了"悬浮提示:落在列表底部留白区内、贴近底部导航栏(见 item_view_end_tip) -->

@@ -9,7 +9,9 @@ import android.util.Log;
 
 import com.github.tvbox.osc.bean.DownloadTask;
 import com.github.tvbox.osc.download.DownloadSubType;
+import com.github.tvbox.osc.state.StorageSpace;
 import com.github.tvbox.osc.util.HlsMediaPlaylist;
+import com.github.tvbox.osc.util.HlsSizeEstimator;
 import com.github.tvbox.osc.util.HttpClient;
 import com.github.tvbox.osc.util.SegmentUnwrapper;
 import com.github.tvbox.osc.util.TsProbe;
@@ -198,6 +200,16 @@ public class DownloadExecutor {
                     throttle(t, n); // 5.4 增强: 每任务限速
                     long now = System.currentTimeMillis();
                     if (now - lastPersist > 500) {
+                        // 存储看门狗自检(1s 缓存,这里 500ms 一次不会变成"每块 statfs"):
+                        // 空间见底 → 看门狗已把本任务置为暂停并关闭连接,这里立即收尾退出
+                        // (否则会继续把 buf 里的字节写进已经没有空间的卷)
+                        if (dm.watchdog.checkWhileDownloading()) {
+                            os.flush();
+                            t.speed = 0;
+                            dm.persist();
+                            dm.notifyChanged();
+                            return;
+                        }
                         // 实时网速:按时间窗口内的字节增量计算
                         long delta = now - lastSpeedTime;
                         if (delta > 0) {
@@ -391,7 +403,8 @@ public class DownloadExecutor {
         Set<Integer> goneSegments = new HashSet<>();
         // 只下载缺失的分片(跳过已存在且非空的分片),支持非连续缺失续传(如第3、7片被删)
         for (int i = 0; i < segments.size(); i++) {
-            if (isInterrupted(t)) {
+            // 每片一个检查点:暂停(用户/调度/网络)或"存储空间见底(看门狗已暂停全部)"都立即收尾
+            if (isInterrupted(t) || dm.watchdog.checkWhileDownloading()) {
                 t.speed = 0;
                 dm.persist();
                 dm.notifyChanged();
@@ -441,7 +454,8 @@ public class DownloadExecutor {
                 consecutiveFail++;
                 Log.i("TVBox-Download", "分片失败(先跳过,交给补片重试): 片" + i + "/" + segments.size()
                         + " " + DownloadErrors.reasonOf(e));
-                DownloadLog.LOG.warn(DownloadSubType.FAIL, "分片失败/片 " + i + ": " + DownloadErrors.reasonOf(e),
+                DownloadLog.LOG.warn(DownloadSubType.FAIL, "分片失败/片 " + i + ": " + DownloadErrors.reasonOf(e)
+                        + " url=" + segUrlForLog(segments.get(i)),
                         DownloadLog.extras(t.episodeId));
                 if (consecutiveFail >= MAX_CONSECUTIVE_SEGMENT_FAIL) {
                     if (consecutiveGone >= MAX_CONSECUTIVE_SEGMENT_FAIL) {
@@ -614,7 +628,8 @@ public class DownloadExecutor {
                             goneSegments.add(idx);
                         }
                         Log.i("TVBox-Download", "补片失败(留待下轮): 片" + idx + " " + e.getMessage());
-                        DownloadLog.LOG.fail(DownloadSubType.REPAIR, "补片/片 " + idx + " 失败 " + e.getMessage(),
+                        DownloadLog.LOG.fail(DownloadSubType.REPAIR, "补片/片 " + idx + " 失败 " + e.getMessage()
+                                + " url=" + segUrlForLog(segments.get(idx)),
                                 DownloadLog.extras(t.episodeId));
                     }
                 }
@@ -671,8 +686,7 @@ public class DownloadExecutor {
             if (mergeSize > 0) {
                 File dir = new File(t.savePath).getParentFile();
                 if (dir != null && dir.exists()) {
-                    android.os.StatFs stat = new android.os.StatFs(dir.getAbsolutePath());
-                    long free = stat.getAvailableBytes();
+                    long free = StorageSpace.freeBytes(dir);
                     if (free - mergeSize < DownloadPolicy.MIN_FREE_SPACE) {
                         throw new IOException("磁盘空间不足,无法合并(完成后可用仅 "
                                 + formatSize(Math.max(0, free - mergeSize)) + ",需清理约 "
@@ -720,6 +734,12 @@ public class DownloadExecutor {
                     // 合并进度:每 20 片或最后一片更新一次(避免频繁写盘),"文件合并中(x%)"可见
                     // (否则几百MB拼接期间进度一直卡在 100% 不动,用户不知道进行到哪一步)
                     if (i % 20 == 0 || i == segments.size() - 1) {
+                        // 存储看门狗:合并要写整整一集的量,期间空间被别的应用/任务吃掉时立即停下
+                        // (抛 IOException 走合并失败路径:碎片保留、进度不丢;看门狗已把任务置为暂停,
+                        //  调度器看到"已停止"不会再重试,清理空间后用户点继续即重新合并)
+                        if (dm.watchdog.checkWhileDownloading()) {
+                            throw new IOException("存储空间不足,合并已中止(清理空间后继续即可)");
+                        }
                         int pct = (int) (mergedBytes * 100 / Math.max(1L, mergeSize));
                         t.message = DownloadManager.MSG_MERGING + "(" + pct + "%)";
                         // 合并进度同样节流:message 已实时更新,落盘/广播合并(终态完成会强制落盘)
@@ -778,7 +798,9 @@ public class DownloadExecutor {
         t.message = DownloadManager.MSG_REMUX;
         dm.persist();
         dm.notifyChanged();
-        if (remuxTsToMp4(finalFile)) {
+        /** 重封装失败回退 .ts 时的完成说明(空=没回退);让用户直接看到这集为何是 TS 而不是 MP4 */
+        String remuxNote = "";
+        if (remuxTsToMp4(t, finalFile)) {
             DownloadLog.LOG.success(DownloadSubType.REMUX, "重封装完成: " + t.fileName, DownloadLog.extras(t.episodeId));
         } else if (fmp4) {
             // fMP4 的拼接产物本身就是合法 MP4(init 段 ftyp/moov + 一串 moof/mdat),
@@ -796,6 +818,8 @@ public class DownloadExecutor {
                     t.fileName = tsFile.getName();
                 }
             }
+            // 用户能看到"为什么这集是 ts 而不是 mp4":回退不是静默的,完成信息里带上原因
+            remuxNote = "未封装为 MP4(保留 TS,原因见日志)";
             DownloadLog.LOG.warn(DownloadSubType.REMUX, "重封装失败,回退 .ts 后缀: " + t.fileName,
                     DownloadLog.extras(t.episodeId));
         }
@@ -813,6 +837,9 @@ public class DownloadExecutor {
             // 与播放一致:清单里被判为广告/占位的少数派分片没有下(也不该出现在成品里),如实告诉用户
             String filterNote = "已过滤 " + filteredSegments + " 片广告/占位分片";
             doneNote = doneNote.isEmpty() ? filterNote : doneNote + "," + filterNote;
+        }
+        if (!remuxNote.isEmpty()) {
+            doneNote = doneNote.isEmpty() ? remuxNote : doneNote + "," + remuxNote;
         }
         t.message = doneNote.isEmpty() ? "" : "已完成(" + doneNote + ")";
         t.state = DownloadTask.STATE_COMPLETED;
@@ -1247,6 +1274,15 @@ public class DownloadExecutor {
                     }
                     t.segmentBytes = written;
                     throttle(t, n); // 5.4 增强: 每任务限速
+                    // 存储看门狗自检(1s 缓存,每 64KB 一次调用也不会变成"每块 statfs"):
+                    // 空间见底立即停止写盘并收尾(不抛异常,交给上方"中断"分支统一处理:
+                    // 看门狗已把任务置为暂停,残留 .part 下次整段重下)
+                    if (dm.watchdog.checkWhileDownloading()) {
+                        os.flush();
+                        t.segmentBytes = written;
+                        dm.persist();
+                        return;
+                    }
                 }
                 // 流结束:头都没攒够(极短响应)时也要判一次,避免把错误页当分片收下
                 if (!decided) {
@@ -1339,6 +1375,28 @@ public class DownloadExecutor {
         // 文案要求:可读 + 保留 "HTTP 403" 这种状态码 —— 调度器据此判定"地址可能过期"并自动重新解析地址(换线路),
         // 提示里也要能看出是源的分片失效而不是本机问题
         return new IOException("分片下载失败(HTTP " + code + ")");
+    }
+
+    /** 分片失败日志里 URL 的最大保留长度(见 {@link #segUrlForLog}) */
+    static final int SEG_URL_LOG_MAX = 200;
+
+    /**
+     * 分片失败日志里带上"这一片到底是哪个地址"。
+     * <p>
+     * 为什么必须写进日志:先前分片失败只记片序号,用户报"下载一直 404"时分不清 404 是<b>源站</b>给的
+     * (CDN 上就没有这个文件,换哪个下载器都一样)还是<b>本机回源代理</b>给的
+     * ({@code 127.0.0.1:9978/proxy?do=...},那属于源 JS/代理的问题,能修)—— 两者的处置完全不同。
+     * 那条 {@code Log.i("TVBox-Download", "分片 HTTP 404 url=…")} 进不了"错误日志"Tab:logcat 捕获
+     * 默认只收 E 级(见 LogcatCapture.buildCommand),而这些行是 I 级,所以只有写进业务日志(Room)
+     * 用户才看得到。
+     * <p>
+     * 长度夹到 {@value #SEG_URL_LOG_MAX} 字符:带签名/令牌的地址能长到几百字符,
+     * 截断后 host 与前面一段路径仍在,足够认源。
+     */
+    static String segUrlForLog(String url) {
+        if (url == null) return "";
+        String u = url.trim();
+        return u.length() <= SEG_URL_LOG_MAX ? u : u.substring(0, SEG_URL_LOG_MAX) + "…";
     }
 
     /**
@@ -2175,7 +2233,28 @@ public class DownloadExecutor {
         }
     }
 
-    /** m3u8 集大小估算:主播放列表带 BANDWIDTH 时按"总时长 × 码率",否则退化"分片数 × 2MB";失败返回 0 */
+    /** 大小抽样探测的样本片数上限(为什么是这个量级见 :common {@link HlsSizeEstimator}) */
+    private static final int SIZE_SAMPLE_COUNT = HlsSizeEstimator.DEFAULT_SAMPLE_COUNT;
+    /** 抽样探测的整体时间预算(ms):用尽就用手上已有的样本推算,绝不把任务启动卡在预检上 */
+    private static final long SIZE_SAMPLE_BUDGET_MS = 20000L;
+    /** 单个抽样请求的硬超时(秒,含连接):CDN 挂住时不能让十几个样本串成十几分钟 */
+    private static final long SIZE_SAMPLE_CALL_TIMEOUT_SEC = 8L;
+
+    /**
+     * m3u8 集大小估算:<b>抽样探测 + 推算</b> —— 分层抽取若干分片拿它们的真实字节数,用平均片大小 × 片数。
+     *
+     * <p>为什么不再只用"码率 × 时长":主播放列表的 {@code BANDWIDTH} 是声明值(写峰值/写平均都有),
+     * 清单里没有它时旧口径直接退化成"片数 × 2MB"这类拍脑袋估值 —— 都是成倍误差,而下载前的磁盘预检
+     * 与下载页"约大小"都吃这个数。抽样拿的是**服务器实际给出的长度**,不受声明值影响。
+     *
+     * <p>三级口径(依次退化,任何一级失败都往下走,最终失败返回 0 = 不阻塞下载):
+     * <ol>
+     *   <li><b>抽样探测</b>:见 {@link #sampleSegmentSizes};字节范围清单({@code #EXT-X-BYTERANGE})
+     *       直接读范围长度求和,连请求都不用发;</li>
+     *   <li>{@code BANDWIDTH × 总时长}(原口径,EXTINF 累计);</li>
+     *   <li>分片数 × 2MB(最后兜底)。</li>
+     * </ol>
+     */
     private long estimateHlsBytes(DownloadTask t) {
         try {
             String url = t.url;
@@ -2184,13 +2263,14 @@ public class DownloadExecutor {
                 return 0;
             long bandwidth = 0;
             if (text.contains("#EXT-X-STREAM-INF")) {
-                // 主播放列表(多码率):与 fetchPlaylist 一致选第一个变体,并读取其 BANDWIDTH
+                // 主播放列表(多码率):与 fetchPlaylist 一致选第一个变体,并读取其 BANDWIDTH;
+                // 抽样要按**变体清单**里的分片地址去探(主列表里没有分片)
                 String base = url.substring(0, url.lastIndexOf('/') + 1);
                 boolean pending = false;
                 for (String raw : text.split("\n")) {
                     String line = raw.trim();
                     if (line.startsWith("#EXT-X-STREAM-INF")) {
-                        Matcher m = Pattern.compile("BANDWIDTH=(\\d+)").matcher(line);
+                        Matcher m = BANDWIDTH_PATTERN.matcher(line);
                         if (m.find()) {
                             try {
                                 bandwidth = Long.parseLong(m.group(1));
@@ -2199,9 +2279,12 @@ public class DownloadExecutor {
                         }
                         pending = true;
                     } else if (pending && !line.isEmpty() && !line.startsWith("#")) {
-                        text = fetchText(resolveUrl(url, base, line), t);
-                        if (text == null)
+                        // 变体清单地址:分片相对地址按它解析(与 fetchPlaylist 选第一个变体的口径一致)
+                        url = resolveUrl(url, base, line);
+                        String variant = fetchText(url, t);
+                        if (variant == null)
                             return 0;
+                        text = variant;
                         pending = false;
                         break;
                     }
@@ -2209,32 +2292,196 @@ public class DownloadExecutor {
                 if (pending)
                     return 0; // 主列表无有效变体,无法估算
             }
-            // 分片数(非注释行)与总时长(EXTINF 累计)
-            int segs = 0;
+            // 用与下载同一份解析器把清单读成"分片表"(真实地址 + 字节范围):
+            // 自己按文本行数数会在相对地址/字节范围/HTML 包裹这些形态上数错
+            HlsMediaPlaylist.Result parsed = HlsMediaPlaylist.parse(url, text);
+            int segs = parsed.ok() ? parsed.segments.size() : 0;
+            if (segs <= 0)
+                segs = countSegmentLines(text); // 解析器不认的清单:按行数近似(仍好过 0)
+            if (segs <= 0)
+                return 0;
+            // ① 抽样探测 + 推算(首选)
+            if (parsed.ok() && !parsed.segments.isEmpty()) {
+                long[] samples = sampleSegmentSizes(parsed, t);
+                int enough = Math.min(HlsSizeEstimator.MIN_USABLE_SAMPLES, segs);
+                if (samples.length >= enough) {
+                    long est = HlsSizeEstimator.estimateTotalBytes(samples, segs);
+                    if (est > 0) {
+                        Log.i("TVBox-Download", "大小抽样探测: " + samples.length + "/" + segs + " 片样本,均值 "
+                                + (est / segs) + "B/片 → 整集约 " + formatSize(est)
+                                + (t.fileName == null ? "" : " " + t.fileName));
+                        return est;
+                    }
+                }
+            }
+            // ② 退化:码率 × 时长(EXTINF 累计;没有则按每片 6s 兜底)
             double durationSec = 0;
-            Matcher dur = Pattern.compile("#EXTINF:\\s*([0-9]+(?:\\.[0-9]+)?)").matcher(text);
+            Matcher dur = EXTINF_PATTERN.matcher(text);
             while (dur.find()) {
                 try {
                     durationSec += Double.parseDouble(dur.group(1));
                 } catch (NumberFormatException ignored) {
                 }
             }
-            for (String line : text.split("\n")) {
-                String l = line.trim();
-                if (!l.isEmpty() && !l.startsWith("#") && !l.contains("<") && !l.contains(">"))
-                    segs++;
-            }
-            if (segs <= 0)
-                return 0;
             if (bandwidth > 0) {
-                double sec = durationSec > 0 ? durationSec : segs * 6.0; // 无 EXTINF 时按每片 6s 兜底
-                return Math.max(1L, (long) (sec * bandwidth / 8.0));
+                double sec = durationSec > 0 ? durationSec : segs * 6.0;
+                long byBandwidth = Math.max(1L, (long) (sec * bandwidth / 8.0));
+                Log.i("TVBox-Download", "大小估算退化到码率口径: " + bandwidth + "bps × " + (long) sec + "s → "
+                        + formatSize(byBandwidth));
+                return byBandwidth;
             }
+            // ③ 最后兜底:分片数 × 2MB
+            Log.i("TVBox-Download", "大小估算退化到兜底口径: " + segs + " 片 × 2MB");
             return segs * 2L * 1024 * 1024;
         } catch (Throwable th) {
             return 0;
         }
     }
+
+    /** {@code #EXTINF:<秒>} 取值(码率口径退化时才用);静态复用,不在每次估算里重建 */
+    private static final Pattern EXTINF_PATTERN = Pattern.compile("#EXTINF:\\s*([0-9]+(?:\\.[0-9]+)?)");
+
+    /** 主播放列表的 {@code BANDWIDTH=<bps>}(码率口径退化时才用);静态复用 */
+    private static final Pattern BANDWIDTH_PATTERN = Pattern.compile("BANDWIDTH=(\\d+)");
+
+    /**
+     * 抽样探测:分层抽取 {@link #SIZE_SAMPLE_COUNT} 片,逐片拿真实字节数(见 {@link #probeSegmentBytes}),
+     * 返回<b>有效样本</b>(>0)组成的数组 —— 探测失败/长度未知的样本被丢弃,个数可能少于抽取数。
+     *
+     * <p>抽哪几片由 {@link HlsSizeEstimator#sampleIndices} 决定(分层随机,铺满整份清单);
+     * 整体有时间预算({@link #SIZE_SAMPLE_BUDGET_MS}):CDN 慢/HEAD 挂住时到手多少样本就用多少,
+     * 绝不把"开始下载"卡在预检上。
+     */
+    private long[] sampleSegmentSizes(HlsMediaPlaylist.Result parsed, DownloadTask t) {
+        List<HlsMediaPlaylist.Segment> all = parsed.segments;
+        int[] idx = HlsSizeEstimator.sampleIndices(all.size(), SIZE_SAMPLE_COUNT, new java.util.Random());
+        long[] samples = new long[idx.length];
+        int ok = 0;
+        long deadline = System.currentTimeMillis() + SIZE_SAMPLE_BUDGET_MS;
+        for (int k = 0; k < idx.length; k++) {
+            HlsMediaPlaylist.Segment s = all.get(idx[k]);
+            // 字节范围清单:长度清单里就写着,精确值且零请求
+            long size = s.range != null ? s.range.length : probeSegmentBytes(s.url, t);
+            if (size > 0)
+                samples[ok++] = size;
+            if (System.currentTimeMillis() >= deadline)
+                break; // 预算用尽:拿已有的样本推算
+        }
+        return ok == samples.length ? samples : java.util.Arrays.copyOf(samples, ok);
+    }
+
+    /**
+     * 单片字节数:先 HEAD 取 {@code Content-Length};服务器不认 HEAD(405/501 等)或没给长度时,
+     * 退一步用 {@code Range: bytes=0-0} 读 {@code Content-Range} 的总长(200 忽略 Range 时用 Content-Length)。
+     * 都拿不到返回 0(该样本作废,不影响其它样本)。
+     */
+    private long probeSegmentBytes(String url, DownloadTask t) {
+        Map<String, String> headers = baseHeaders(t);
+        long byHead = probeHeadBytes(url, headers);
+        return byHead > 0 ? byHead : probeRangeBytes(url, headers);
+    }
+
+    /** HEAD 探测文件总长;失败/无长度返回 0 */
+    private long probeHeadBytes(String url, Map<String, String> headers) {
+        Response resp = null;
+        try {
+            Request.Builder builder = new Request.Builder().url(HttpClient.normalizeUrl(url)).head();
+            if (headers != null) {
+                for (Map.Entry<String, String> e : headers.entrySet()) {
+                    if (e.getKey() != null && e.getValue() != null) builder.header(e.getKey(), e.getValue());
+                }
+            }
+            resp = sizeProbeClient().newCall(builder.build()).execute();
+            if (!resp.isSuccessful())
+                return 0;
+            return parseLongQuiet(resp.header("Content-Length"));
+        } catch (Throwable th) {
+            return 0;
+        } finally {
+            if (resp != null) {
+                try {
+                    resp.close();
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+    }
+
+    /** Range 探测文件总长(HEAD 不可用时);失败/无长度返回 0 */
+    private long probeRangeBytes(String url, Map<String, String> headers) {
+        Response resp = null;
+        try {
+            Map<String, String> h = new HashMap<>(headers);
+            h.put("Range", "bytes=0-0");
+            Request.Builder builder = new Request.Builder().url(HttpClient.normalizeUrl(url));
+            for (Map.Entry<String, String> e : h.entrySet()) {
+                if (e.getKey() != null && e.getValue() != null) builder.header(e.getKey(), e.getValue());
+            }
+            resp = sizeProbeClient().newCall(builder.build()).execute();
+            if (!resp.isSuccessful())
+                return 0;
+            if (resp.code() == 206) {
+                String cr = resp.header("Content-Range"); // 206: bytes 0-0/123456
+                if (cr != null) {
+                    Matcher m = CONTENT_RANGE_TOTAL.matcher(cr);
+                    if (m.find()) {
+                        long total = parseLongQuiet(m.group(1));
+                        if (total > 0) return total;
+                    }
+                }
+                // 206 却给不出总长(如 Content-Range: bytes 0-0/*):这一片按"长度未知"作废。
+                // 注意**不能**退用 Content-Length —— 206 的 Content-Length 是"这段区间"的长度(这里是 1 字节),
+                // 拿它当整片大小会把平均片大小算成 1 字节,推算结果彻底跑偏
+                return 0;
+            }
+            // 200:服务器忽略了 Range,Content-Length 就是整个文件的长度,同样可用
+            return parseLongQuiet(resp.header("Content-Length"));
+        } catch (Throwable th) {
+            return 0;
+        } finally {
+            if (resp != null) {
+                try {
+                    resp.close(); // 只取长度,不读体;close 即撤销剩余传输
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+    }
+
+    /** {@code Content-Range: bytes 0-0/123456} 里的总长;静态复用 */
+    private static final Pattern CONTENT_RANGE_TOTAL = Pattern.compile("/(\\d+)\\s*$");
+
+    private static long parseLongQuiet(String s) {
+        if (s == null) return 0;
+        try {
+            return Long.parseLong(s.trim());
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    /**
+     * 抽样探测专用客户端:在下载客户端基础上加 {@code callTimeout}(单请求含连接的硬上限)。
+     * <p>不能直接用下载客户端:它的读超时是 60s,一个挂住的 CDN 能让 12 个样本串成十几分钟,
+     * 把"任务启动"整个卡住。{@code newBuilder()} 共享连接池/线程池,不在热路径上重建连接栈。
+     */
+    private okhttp3.OkHttpClient sizeProbeClient() {
+        okhttp3.OkHttpClient base = dm.downloadClient();
+        okhttp3.OkHttpClient cached = sizeProbeClient;
+        if (cached == null || sizeProbeBase != base) {
+            cached = base.newBuilder()
+                    .callTimeout(SIZE_SAMPLE_CALL_TIMEOUT_SEC, java.util.concurrent.TimeUnit.SECONDS)
+                    .build();
+            sizeProbeClient = cached;
+            sizeProbeBase = base;
+        }
+        return cached;
+    }
+
+    private volatile okhttp3.OkHttpClient sizeProbeClient;
+    /** 缓存对应的下载客户端实例:DoH 变更会换掉它,此时探测客户端要跟着重建 */
+    private volatile okhttp3.OkHttpClient sizeProbeBase;
+
 
     /** GET 完整文本响应(播放列表用);非 2xx/IO 失败返回 null */
     private String fetchText(String url, DownloadTask t) {
@@ -2448,9 +2695,21 @@ public class DownloadExecutor {
      * Bug3: 把 TS 拼接产物重封装为标准 MP4（MediaExtractor demux + MediaMuxer mux）。
      * Android MediaExtractor 支持 demux MPEG-TS，mux 出的 MP4 时长/缩略图正确（无需 ffmpeg）。
      *
+     * <p>两处"以前只能回退 .ts"的坑在本方法里收口:
+     * <ol>
+     *   <li><b>空间</b>:重封装要写一份和源文件同样大的新 mp4(192/204 重打包时还要再多一份),
+     *       而磁盘空间是真会不够的 —— 不够时 {@code MediaMuxer} 在 native 层写出错、{@code stop()} 报
+     *       {@code -1007},用户拿到的还是 .ts。改为<b>动手前先算空间</b>:不够就先释放本任务的分片目录
+     *       (合并产物已在,碎片已无用),仍不够则明确失败并说明原因(见 {@link #ensureRemuxSpace});</li>
+     *   <li><b>{@code stop()} 报错</b>:实测 {@code MPEG4Writer} 已经把 moov 写进文件、每一帧也都编码完了,
+     *       {@code stop()} 仍可能抛 "Error during stop(), muxer would have stopped already"(-1007)——
+     *       此时产物其实是<b>可用</b>的,旧实现一抛异常就整份丢弃回退 .ts。改为<b>先校验产物</b>
+     *       (见 {@link #mp4Usable}):可读、有时长、末尾样本还在 → 照旧采用;真的坏了才回退。</li>
+     * </ol>
+     *
      * @return true=重封装成功并已替换源文件;false=失败(调用方回退 .ts 后缀)
      */
-    private static boolean remuxTsToMp4(File src) {
+    private boolean remuxTsToMp4(DownloadTask t, File src) {
         MediaExtractor extractor = null;
         MediaMuxer muxer = null;
         File outTmp = null;
@@ -2464,6 +2723,9 @@ public class DownloadExecutor {
             // 识别出来先重打包成标准 188 再交给它;认不出来仍原样尝试(失败照旧回退 .ts)。
             TsProbe probe = probeHead(src);
             Log.i("TVBox-Download", "重封装自检: " + src.getName() + " -> " + probe.describe());
+            // 空间预检必须在"重打包"之前:重打包本身就要再写一份全量文件
+            if (!ensureRemuxSpace(t, src, probe))
+                return false;
             File remuxSrc = src;
             if (probe.needsRepack()) {
                 repacked = new File(src.getParentFile(), "repack_" + System.currentTimeMillis() + ".ts");
@@ -2495,6 +2757,8 @@ public class DownloadExecutor {
             }
             if (videoTrack < 0 && audioTrack < 0)
                 return false; // 无可用轨,无法重封装
+            // 源时长(校验 stop() 失败后的产物是否完整用;拿不到就 0 = 不做时长比对)
+            long srcDurationUs = maxDurationUs(videoFormat, audioFormat);
 
             outTmp = new File(src.getParentFile(), "remux_" + System.currentTimeMillis() + ".mp4");
             muxer = new MediaMuxer(outTmp.getAbsolutePath(), MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
@@ -2566,11 +2830,37 @@ public class DownloadExecutor {
                 }
                 extractor.advance();
             }
-            muxer.stop();
-            muxer.release();
+            // stop() 容错(见方法头 ②):MPEG4Writer 可能已经把 moov 写完、每一帧也都编码了,
+            // stop() 仍抛 "Error during stop(), muxer would have stopped already"(-1007)。
+            // 这时侯先把 muxer 收干净,再校验产物 —— 可用就照旧采用,真坏了才回退 .ts。
+            boolean stopFailed = false;
+            Throwable stopErr = null;
+            try {
+                muxer.stop();
+            } catch (Throwable th) {
+                stopFailed = true;
+                stopErr = th;
+            }
+            try {
+                muxer.release();
+            } catch (Throwable ignored) {
+            }
             muxer = null;
             extractor.release();
             extractor = null;
+            if (stopFailed) {
+                Log.w("TVBox-Download", "重封装:MediaMuxer.stop() 报错,校验产物是否可用 -> " + stopErr, stopErr);
+                if (!mp4Usable(outTmp, srcDurationUs)) {
+                    // 产物确实不可用(被截断/读不出来):保持原行为,回退 .ts
+                    return false;
+                }
+                Log.w("TVBox-Download", "重封装:stop() 报错但产物校验通过(时长/末尾样本都在),仍采用 MP4 成品: "
+                        + src.getName());
+                DownloadLog.LOG.warn(DownloadSubType.REMUX,
+                        "重封装:系统 stop() 报错(" + (stopErr == null ? "?" : stopErr.getMessage())
+                                + "),但成品校验通过,已按 MP4 采用: " + t.fileName,
+                        DownloadLog.extras(t.episodeId));
+            }
             // 用重封装产物替换原拼接文件
             if (!outTmp.renameTo(src)) {
                 if (src.exists()) {
@@ -2608,6 +2898,143 @@ public class DownloadExecutor {
             // 192/204 -> 188 的重打包临时件(成品已由 outTmp 覆盖回 src,它只是中间产物)
             if (repacked != null) {
                 FileCleaner.deleteQuietly(repacked);
+            }
+        }
+    }
+
+    /** stop() 报错后的产物校验:允许的时长缺口(源时长的百分比,低于它按"产物不完整"处理) */
+    private static final int REMUX_MIN_DURATION_PERCENT = 90;
+
+    /** 两组轨道格式里能拿到的最大时长(µs);都没有返回 0 */
+    private static long maxDurationUs(MediaFormat a, MediaFormat b) {
+        long d = 0;
+        if (a != null && a.containsKey(MediaFormat.KEY_DURATION)) {
+            try {
+                d = a.getLong(MediaFormat.KEY_DURATION);
+            } catch (Throwable ignored) {
+            }
+        }
+        if (b != null && b.containsKey(MediaFormat.KEY_DURATION)) {
+            try {
+                d = Math.max(d, b.getLong(MediaFormat.KEY_DURATION));
+            } catch (Throwable ignored) {
+            }
+        }
+        return d;
+    }
+
+    /**
+     * 重封装前的空间预检 + 释放碎片目录(见 {@link #remuxTsToMp4} 方法头 ①)。
+     *
+     * <p>需求 = 源文件大小 × (不重打包 2 / 重打包 3):不重打包时"源 .ts + 新 mp4"两份同时在;
+     * 192/204 重打包时还要多一份 repack 中间件。保底只要求绝对下限
+     * {@link DownloadPolicy#MIN_ABSOLUTE_FREE}(512MB),<b>不</b>按看门狗阈值(1GB)拦 ——
+     * 这是已经下完的文件的最后一步,为它回退 .ts(用户最不想要的结果)不划算,
+     * 真正把设备写满的风险由"动手前算得准 + 512MB 保底"兜住。
+     *
+     * <p>空间不够时先释放本任务的分片目录(合并产物已经在,碎片只是"失败可低成本重试"的保险,
+     * 这里拿它换空间);仍不够才失败并写清原因。**释放碎片是有代价的**:若此后档案写入失败导致整任务
+     * 重试,碎片已不在、需要重下 —— 这是"空间不够"下唯一可选的取舍,故落日志留痕。
+     *
+     * @return true = 空间够,可以继续重封装;false = 空间不足(调用方回退 .ts)
+     */
+    private boolean ensureRemuxSpace(DownloadTask t, File src, TsProbe probe) {
+        File dir = src == null ? null : src.getParentFile();
+        // 2 = 源 + 新 mp4;3 = 再加一份重打包中间件(重打包失败时按 2 也算够,这里偏保守无害)
+        long copies = probe != null && probe.needsRepack() ? 3 : 2;
+        long need = src == null ? 0 : src.length() * copies;
+        if (dir == null || need <= 0)
+            return true;
+        if (hasRoomFor(dir, need))
+            return true;
+        long freeBefore = freeBytesOf(dir);
+        if (t != null) {
+            deleteSegmentsDir(t);
+            Log.i("TVBox-Download", "重封装:空间不足,先释放碎片目录腾空间(" + formatSize(freeBefore) + " → "
+                    + formatSize(freeBytesOf(dir)) + "): " + t.fileName);
+            DownloadLog.LOG.warn(DownloadSubType.REMUX,
+                    "重封装:空间不足,已释放分片目录腾空间(该任务此后若失败重试需重下): " + t.fileName,
+                    DownloadLog.extras(t.episodeId));
+        }
+        if (hasRoomFor(dir, need))
+            return true;
+        long free = freeBytesOf(dir);
+        String why = "重封装:可用空间不足(写 MP4 需约 " + formatSize(need) + ",释放碎片后可用 " + formatSize(free)
+                + "),保留 .ts 成品";
+        Log.w("TVBox-Download", why + ": " + src.getAbsolutePath());
+        DownloadLog.LOG.warn(DownloadSubType.REMUX,
+                why + ": " + (t == null ? src.getName() : t.fileName),
+                DownloadLog.extras(t == null ? null : t.episodeId));
+        return false;
+    }
+
+    /** 该目录所在卷是否放得下 need 字节并留出绝对保底空间;测不出来(未知)一律放行 */
+    private static boolean hasRoomFor(File dir, long need) {
+        try {
+            long free = StorageSpace.freeBytes(dir);
+            if (free < 0) return true; // 测量失败按"未知"放行(与其余空间判定同一口径)
+            return free - need >= DownloadPolicy.MIN_ABSOLUTE_FREE;
+        } catch (Throwable th) {
+            return true;
+        }
+    }
+
+    /** 目录所在卷可用字节(未知返回 0,只用于日志文案) */
+    private static long freeBytesOf(File dir) {
+        try {
+            long free = StorageSpace.freeBytes(dir);
+            return free < 0 ? 0 : free;
+        } catch (Throwable th) {
+            return 0;
+        }
+    }
+
+    /**
+     * 校验 mux 出来的 MP4 是否<b>确实可用</b>(只在 {@code MediaMuxer.stop()} 报错后才走这里)。
+     * <p>
+     * 为什么要校验而不是直接采信失败:实测(魅族/MTK + 长剧集)日志里 {@code MPEG4Writer} 已经打出
+     * {@code Received total ... encoded N frames}(每帧都编码了)与 {@code MOOV atom was written to the file},
+     * 紧接着 {@code stop()} 才报 -1007 —— 文件其实是完整的,旧实现却因为一个异常把整个 MP4 丢掉、回退 .ts。
+     * 但也不能无条件采信异常后的产物(真被截断时用户会拿到"能打开、看着看着断掉"的文件),故三条硬校验:
+     * <ol>
+     *   <li>能开出提取器、有轨、报得出时长(&gt;0);</li>
+     *   <li>时长不短于源时长的 {@value #REMUX_MIN_DURATION_PERCENT}%(源时长拿不到时跳过这条);</li>
+     *   <li><b>末尾样本读得出来</b>:moov 里有时长、实际数据却被截断时,seek 到末尾再读会失败。</li>
+     * </ol>
+     * 任一条不满足 → 返回 false,调用方照旧回退 .ts(不静默交出可疑产物)。
+     */
+    private static boolean mp4Usable(File f, long expectDurationUs) {
+        if (f == null || !f.exists() || f.length() <= 0)
+            return false;
+        MediaExtractor ex = null;
+        try {
+            ex = openExtractor(f); // FD 优先:私有下载目录下媒体服务按路径读不到(见 openExtractor)
+            long dur = 0;
+            for (int i = 0; i < ex.getTrackCount(); i++) {
+                MediaFormat fmt = ex.getTrackFormat(i);
+                if (fmt.containsKey(MediaFormat.KEY_DURATION)) {
+                    dur = Math.max(dur, fmt.getLong(MediaFormat.KEY_DURATION));
+                }
+            }
+            if (dur <= 0)
+                return false;
+            if (expectDurationUs > 0 && dur < expectDurationUs * REMUX_MIN_DURATION_PERCENT / 100)
+                return false;
+            ex.seekTo(Math.max(0, dur - 1), MediaExtractor.SEEK_TO_CLOSEST_SYNC);
+            if (ex.getSampleTrackIndex() < 0)
+                return false;
+            // 直接缓冲:readSampleData 是 native 实现(堆缓冲取不到地址会抛异常,见 RemuxBufferContractTest)
+            ByteBuffer probe = ByteBuffer.allocateDirect(4096);
+            return ex.readSampleData(probe, 0) > 0;
+        } catch (Throwable th) {
+            Log.w("TVBox-Download", "重封装:stop() 报错后的产物校验失败 -> " + th);
+            return false;
+        } finally {
+            if (ex != null) {
+                try {
+                    ex.release();
+                } catch (Throwable ignored) {
+                }
             }
         }
     }

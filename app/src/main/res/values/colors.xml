@@ -2,37 +2,37 @@
 <resources>
 
 
-    <!--应用的主要色调,actionBar默认使用该颜色,Toolbar导航栏的底色(由 theme/theme_colors.json 的 text_highlight 控制)-->
-    <color name="colorPrimary">@color/text_highlight</color>
+    <!--应用的主要色调,actionBar默认使用该颜色,Toolbar导航栏的底色(由 theme/theme_colors.json 的 text_accent 控制)-->
+    <color name="colorPrimary">@color/text_accent</color>
     <!--CheckBox,RadioButton,SwitchCompat等一般控件的选中效果默认采用该颜色-->
     <!--    默认window窗口(activity)背景颜色(由 theme/theme_colors.json 的 bg_body 控制)-->
     <color name="windowBackground">@color/bg_body</color>
 
     <!-- ============ Material 3 色板(浅色,中性灰白系;主体色由 theme/theme_colors.json 控制) ============ -->
-    <color name="md_primary">@color/text_highlight</color>
+    <color name="md_primary">@color/text_accent</color>
     <color name="md_on_primary">@color/btn_select_text</color>
-    <color name="md_primary_container">@color/bg_component</color>
-    <color name="md_on_primary_container">@color/text_highlight</color>
+    <color name="md_primary_container">@color/bg_card</color>
+    <color name="md_on_primary_container">@color/text_accent</color>
     <color name="md_secondary">@color/text_sub</color>
     <color name="md_on_secondary">@color/btn_select_text</color>
-    <color name="md_secondary_container">@color/bg_component</color>
-    <color name="md_on_secondary_container">@color/text_highlight</color>
+    <color name="md_secondary_container">@color/bg_card</color>
+    <color name="md_on_secondary_container">@color/text_accent</color>
     <color name="md_tertiary">@color/text_sub</color>
     <color name="md_on_tertiary">@color/btn_select_text</color>
-    <color name="md_tertiary_container">@color/bg_component</color>
-    <color name="md_on_tertiary_container">@color/text_highlight</color>
+    <color name="md_tertiary_container">@color/bg_card</color>
+    <color name="md_on_tertiary_container">@color/text_accent</color>
     <color name="md_error">#B3261E</color>
     <color name="md_on_error">#FFFFFF</color>
     <color name="md_error_container">#F9DEDC</color>
     <color name="md_on_error_container">#410E0B</color>
     <color name="md_surface">@color/bg_body</color>
     <color name="md_on_surface">@color/text_main</color>
-    <color name="md_surface_variant">@color/bg_component</color>
+    <color name="md_surface_variant">@color/bg_card</color>
     <color name="md_on_surface_variant">@color/text_sub</color>
     <color name="md_outline">#9CA3AF</color>
     <!-- ============ Material 3 色板结束 ============ -->
 
-    <color name="bg_gray">@color/bg_component</color>
+    <color name="bg_gray">@color/bg_card</color>
     <color name="gray_darker">@color/text_sub</color>
     <!--    深灰点击透明度-->
     <color name="gray_darker_press_alpha">#3C808080</color>
@@ -42,16 +42,25 @@
     <color name="black">#000000</color>
     <color name="text_foreground">@color/text_main</color>
     <!-- 文字分级(全部由主题文件驱动,不再写死):正常=text_main / 次要灰=text_sub / 未选中·占位=text_hint /
-         禁用=text_disable / 强调·选中=text_highlight / 高亮(蓝)=text_accent -->
+         禁用=text_disable / 强调·选中=text_accent / 高亮(蓝)=text_highlight -->
     <color name="text_sub_foreground">@color/text_sub</color>
     <color name="light_gray_color">#e6e6e6</color>
     <!--    警示黄色-->
     <color name="warn">#ffcb6b</color>
     <color name="red">@color/swipe_red</color>
 
+    <!-- 危险操作三色:**固定字面量**,不进主题文件、不随自定义主题走(用户口径:"删除,对应组件固定就是这个颜色")。
+         以前它们是主题概念(text_danger / swipe_red / swipe_red_text),现在只在 res 里写死一次:
+         text_danger    = 不带底色的危险入口文字/图标(列表工具条的「删除」、条目上的删除图标、清空类按钮)
+         swipe_red      = 不可逆动作的红底(左滑删除、删除确认键)
+         swipe_red_text = 红底上的字 -->
+    <color name="text_danger">#E5484D</color>
+    <color name="swipe_red">#E5484D</color>
+    <color name="swipe_red_text">#FFFFFF</color>
+
     <color name="disable_text">@color/text_disable</color>
 
-    <!-- bg_popup(弹层/抽屉背景, 现为半透明可调) 已上移到 assets/theme/theme_colors.json 统一维护, 此处不再重复定义 -->
+    <!-- bg_float(弹层/抽屉背景, 现为半透明可调) 已上移到 assets/theme/theme_colors.json 统一维护, 此处不再重复定义 -->
 
     <!--    制定颜色-->
     <!--    页面背景色,activity.fragment等-->
@@ -62,11 +71,14 @@
 
     <color name="color_03DAC5">#03DAC5</color>
     <color name="title_fouse_n">#ffce7900</color>
-    <!-- color_highlight(全局高亮/选中色)与 accent_on_dark(固定深色面上的强调色)已上移到
-         assets/theme/theme_colors.json 统一维护,此处不再重复定义(重复会编译不过)。
-         color_highlight 现在与主按钮同色:亮色主题=页面主黑 #1F2937、暗色主题=#E5E7EB,
-         开关/chip 选中/选中文字/进度条等都跟着走;原 #1890FF 蓝只保留给不随主题的固定深色面
-         (直播页频道列表、播放控制抽屉、EPG 选中态),即 accent_on_dark。 -->
+    <!-- color_highlight(全局高亮/选中色)已上移到 assets/theme/theme_colors.json 统一维护,
+         此处不再重复定义(重复会编译不过)。它与主按钮同色:亮色主题=页面主黑 #1F2937、
+         暗色主题=#E5E7EB,开关/chip 选中/选中文字/进度条等都跟着走。
+         直播页"选中/聚焦那一条频道"的底**也走主题了**:原来是写死的蓝 accent_on_dark(该键已移除),
+         现在是 btn_select_bg(= 主色)+ 其上文字 btn_select_text(见 drawable/button_detail_quick_search 与
+         res/color/live_channel_text.xml)—— 所以单靠写死色会被明暗主题拉成"白底白字"的那类问题不再有。
+         唯一还写死的直播页聚焦色是**左侧"分组"列**的橙 title_fouse_n(#ffce7900,它在中灰区间,
+         两种主题下配 text_foreground 都看得清);要不要也纳入主题待定。 -->
     <color name="color_FFB6C1">#FFB6C1</color>
     <color name="color_66000000">#66000000</color>
     <color name="color_02F8E1">#02F8E1</color>
@@ -80,18 +92,19 @@
     <color name="poster_badge_bg">#1F2937</color>
 
     <!-- 开关轨道(switch_track_on/off)与圆点(switch_thumb)已上移到 assets/theme/theme_colors.json:
-         开启=蓝色(#1890FF,两主题一致)、关闭=该主题主色(亮色 #1F2937 / 暗色 #3C3C46)、圆点固定白色 -->
+         开启=绿(#08CA2C,两主题一致)、关闭=亮色 #ccccd4 / 暗色 #3C3C46、圆点固定白色。
+         (旧的说明写的是"开启=蓝色 #1890FF",与主题文件里的实际值对不上,已按文件订正。) -->
 
-    <!-- bg_float(底部导航栏磨砂遮罩)与 bg_float_fab(悬浮钮磨砂遮罩)已上移到 assets/theme/theme_colors.json
+    <!-- bg_surface(底部导航栏磨砂遮罩)与 bg_float(悬浮钮磨砂遮罩)已上移到 assets/theme/theme_colors.json
          统一维护(颜色+透明度), 生成到 theme_colors.xml, 此处不再重复定义。
-         两者是"同一个悬浮面"：底部导航栏/上次观看气泡用 bg_float，直播钮/筛选钮/更新悬浮圈用 bg_float_fab，
+         两者是"同一个悬浮面"：底部导航栏/上次观看气泡用 bg_surface，直播钮/筛选钮/更新悬浮圈用 bg_float，
          改色改透明度时必须同步(含各自的 _alpha)，否则同屏会看出深浅不一。
-         bg_float 同时是**全站"页面级面"的唯一色**:二级页标题栏(AppTitleBar 背景)、"我的"页选项卡片、
+         bg_surface 同时是**全站"页面级面"的唯一色**:二级页标题栏(AppTitleBar 背景)、"我的"页选项卡片、
          设置页内容块、各页面内容容器与面板(drawable bg_large_round_float)全部用它 —— 底栏/标题栏/卡片
          是同色同透明度的同一个面,改一处即全站同步。
          已知取舍:大面板半透明会把背后背景图的明暗差透出来(轻微噪斑,实测浅色下通道极差约 7 级、
          32×32 小块均值极差约 4.2 级)。这是"和底栏同一个面"的代价,已与用户确认取统一观感;
-         若要更干净只能整体改实色(bg_component),或给大面板加实时模糊层。 -->
+         若要更干净只能整体改实色(bg_card),或给大面板加实时模糊层。 -->
 
     <!-- 悬浮圆钮(直播/筛选)描边色:亮色用深色主文字 40% 透明度描边,
          避免 1dp 组件色描边在白底上几乎不可见, 与页面黑底融合 -->

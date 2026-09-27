@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 悬浮按钮圆形背景:底色用悬浮面统一色 bg_float_fab(与底部导航栏/气泡/页面卡片同一透明度),
+<!-- 悬浮按钮圆形背景:底色用悬浮面统一色 bg_float(与底部导航栏/气泡/页面卡片同一透明度),
      阴影由控件 elevation 提供。
      不要再加描边:圆形钮本来就压在内容上,再加一圈线看着很脏(用户已明确要求去掉)。
      注意:也不要叠"不透明底色 + 主题遮罩"两层——两层会把半透明盖实(历史就是这样做的)。 -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="oval">
-    <solid android:color="@color/bg_float_fab" />
+    <solid android:color="@color/bg_float" />
 </shape>

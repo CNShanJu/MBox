@@ -20,10 +20,11 @@
         android:id="@+id/tvChannelName"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:duplicateParentState="true"
         android:ellipsize="marquee"
         android:gravity="center"
         android:marqueeRepeatLimit="marquee_forever"
         android:singleLine="true"
-        android:textColor="@color/text_foreground"
+        android:textColor="@color/live_channel_text"
         tools:text="CCTV1"/>
 </LinearLayout>

@@ -34,6 +34,8 @@ public class JsLoader {
 
     /** 创建失败的源（含初始化超时）：冷却期内直接返回 SpiderNull，不再每次调用都白等一个超时 */
     private static final ConcurrentHashMap<String, Long> CREATE_FAILED_AT = new ConcurrentHashMap<>();
+    /** 与冷却配套的失败原因：冷却期内不再真的重试，但仍要把原因登记给 UI（见 SpiderFaults） */
+    private static final ConcurrentHashMap<String, String> CREATE_FAILED_REASON = new ConcurrentHashMap<>();
     private static final long CREATE_FAIL_COOLDOWN_MS = 5 * 60 * 1000L;
 
     public static void load() {
@@ -48,6 +50,9 @@ public class JsLoader {
         spiders.clear();
         classs.clear();
         CREATE_FAILED_AT.clear();
+        CREATE_FAILED_REASON.clear();
+        // 源实例整体重建:旧的"源不可用"结论作废
+        SpiderFaults.get().clear();
     }
 
     public static void stopAll() {
@@ -148,6 +153,8 @@ public class JsLoader {
         Long failedAt = CREATE_FAILED_AT.get(key);
         if (failedAt != null && System.currentTimeMillis() - failedAt < CREATE_FAIL_COOLDOWN_MS) {
             // 冷却期内不再重试：坏源重复创建会每次都白等一个初始化超时，把创建/调用的道一起占住
+            // （原因重新登记一次:详情页/列表页在整个冷却期都还能给出"这个源为什么不可用"）
+            SpiderFaults.get().markUnavailable(key, CREATE_FAILED_REASON.get(key));
             return new SpiderNull();
         }
         // 慢路径:同一源首次创建串行化(下载 jar / new JsSpider 编译 JS 模块 / 写模块缓存 / init)
@@ -175,21 +182,29 @@ public class JsLoader {
                     // 而实例从未进 map，load() 永远遍历不到它（反复导入含坏源的订阅即累积泄漏）
                     LOG.e("QuJs", th);
                     sp.destroy();
-                    markCreateFailed(key, th);
+                    markCreateFailed(key, SpiderFaults.jsLoadFailedReason(), th);
                     return new SpiderNull();
                 }
                 spiders.put(key, sp);
+                CREATE_FAILED_AT.remove(key);
+                CREATE_FAILED_REASON.remove(key);
+                SpiderFaults.get().markAvailable(key);
                 return sp;
             } catch (Throwable th) {
                 LOG.e("QuJs", th);
-                markCreateFailed(key, th);
+                String reason = SpiderFaults.isMissingClass(th)
+                        ? SpiderFaults.jsMissingClassReason(api)
+                        : SpiderFaults.jsLoadFailedReason();
+                markCreateFailed(key, reason, th);
             }
             return new SpiderNull();
         }
     }
 
-    private static void markCreateFailed(String key, Throwable th) {
+    private static void markCreateFailed(String key, String reason, Throwable th) {
         CREATE_FAILED_AT.put(key, System.currentTimeMillis());
+        CREATE_FAILED_REASON.put(key, reason);
+        SpiderFaults.get().markUnavailable(key, reason);
         LOG.e("QuJs", "源创建失败(" + key + ")，" + (CREATE_FAIL_COOLDOWN_MS / 60000) + " 分钟内不再重试：" + th);
     }
 

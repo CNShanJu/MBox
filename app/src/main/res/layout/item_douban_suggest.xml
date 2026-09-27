@@ -39,7 +39,7 @@
             android:layout_height="wrap_content"
             tools:text="评分"
             android:layout_marginTop="8dp"
-            android:textColor="@color/text_accent"
+            android:textColor="@color/text_highlight"
             android:lineSpacingExtra="2dp"
             />
     </LinearLayout>

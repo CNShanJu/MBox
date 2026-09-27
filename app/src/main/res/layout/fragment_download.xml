@@ -1,17 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- 注意外边距的归属:根布局**不留边** —— 底部"长按多选操作栏"要贴底整条,与本地视频页那条逐像素同款
+     (整块留边会让操作栏变成一条四边留白的方形浮块,和本地视频页那条对不上)。
+     10dp 的页面边距改由卡片自己带(layout_margin="10dp"),底部信息条另给左右/下边距。 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:layout_margin="10dp"
     android:orientation="vertical">
 
-    <!-- ============ 下载相关 box:独立圆角卡片(悬浮面 bg_float,与底栏/「我的」页同一个面),
+    <!-- ============ 下载相关 box:独立圆角卡片(悬浮面 bg_surface,与底栏/「我的」页同一个面),
          内容超出内部滚动 ============ -->
     <LinearLayout
         android:id="@+id/ll_download_box"
         android:layout_width="match_parent"
         android:layout_height="0dp"
+        android:layout_margin="10dp"
         android:layout_weight="1"
         android:background="@drawable/bg_large_round_float"
         android:orientation="vertical"
@@ -62,9 +65,9 @@
 
                     <ImageView
                         android:id="@+id/iv_nav_back"
-                        android:layout_width="20dp"
-                        android:layout_height="20dp"
-                        android:src="@drawable/ic_back"
+                        android:layout_width="10dp"
+                        android:layout_height="10dp"
+                        android:src="@drawable/ic_seek_left"
                         app:tint="@color/text_foreground" />
 
                     <TextView
@@ -159,89 +162,47 @@
             </LinearLayout>
         </FrameLayout>
 
-        <!-- 控件 box:长按多选时显示,吸底于下载 box 底部 -->
+        <!-- 控件 box:长按多选时的"批量动作"行(仅"正在下载"tab 多选时显示,吸底于下载 box 底部)。
+             注意:全选/删除/取消全选**不在这里** —— 那三个键走公共组件 select_action_bar,
+             显示时占用底部"可用空间·下载配置"条的位置(见 DownloadFragment.updateToolbar)。 -->
         <LinearLayout
-            android:id="@+id/ll_menu"
+            android:id="@+id/ll_toolbar_actions"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
+            android:orientation="horizontal"
+            android:paddingBottom="6dp"
             android:visibility="gone">
 
-            <LinearLayout
-                android:id="@+id/ll_toolbar_actions"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:paddingBottom="6dp"
-                android:visibility="gone">
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btn_pause_all"
+                style="@style/BtnSecondary"
+                android:layout_width="0dp"
+                android:layout_height="36dp"
+                android:layout_marginRight="8dp"
+                android:layout_weight="1"
+                android:minWidth="0dp"
+                android:paddingHorizontal="4dp"
+                android:text="全部暂停" />
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btn_pause_all"
-                    style="@style/BtnSecondary"
-                    android:layout_width="0dp"
-                    android:layout_height="36dp"
-                    android:layout_marginRight="8dp"
-                    android:layout_weight="1"
-                    android:minWidth="0dp"
-                    android:paddingHorizontal="4dp"
-                    android:text="全部暂停" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btn_start_all"
-                    style="@style/BtnPrimary"
-                    android:layout_width="0dp"
-                    android:layout_height="36dp"
-                    android:layout_weight="1"
-                    android:minWidth="0dp"
-                    android:paddingHorizontal="4dp"
-                    android:text="全部开始" />
-            </LinearLayout>
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal">
-
-                <TextView
-                    android:id="@+id/tv_all_check"
-                    android:layout_width="0dp"
-                    android:layout_height="44dp"
-                    android:layout_weight="1"
-                    android:foreground="?selectableItemBackgroundBorderless"
-                    android:gravity="center"
-                    android:text="全选"
-                    android:textColor="@color/colorPrimary" />
-
-                <TextView
-                    android:id="@+id/tv_delete"
-                    android:layout_width="0dp"
-                    android:layout_height="44dp"
-                    android:layout_weight="1"
-                    android:enabled="false"
-                    android:foreground="?selectableItemBackgroundBorderless"
-                    android:gravity="center"
-                    android:text="删除"
-                    android:textColor="@color/disable_text" />
-
-                <TextView
-                    android:id="@+id/tv_cancel_all_checked"
-                    android:layout_width="0dp"
-                    android:layout_height="44dp"
-                    android:layout_weight="1"
-                    android:foreground="?selectableItemBackgroundBorderless"
-                    android:gravity="center"
-                    android:text="取消全选"
-                    android:textColor="@color/colorPrimary" />
-            </LinearLayout>
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btn_start_all"
+                style="@style/BtnPrimary"
+                android:layout_width="0dp"
+                android:layout_height="36dp"
+                android:layout_weight="1"
+                android:minWidth="0dp"
+                android:paddingHorizontal="4dp"
+                android:text="全部开始" />
         </LinearLayout>
     </LinearLayout>
 
-    <!-- ============ 显示内存和其他信息 box:无背景色,文字居中 ============ -->
+    <!-- ============ 显示内存和其他信息 box:无背景色,文字居中(与下面的操作栏同一格,互斥显示) ============ -->
     <LinearLayout
         android:id="@+id/ll_storage_box"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="10dp"
+        android:layout_marginHorizontal="10dp"
+        android:layout_marginBottom="10dp"
         android:gravity="center"
         android:orientation="horizontal"
         android:paddingVertical="4dp">
@@ -256,5 +217,14 @@
             android:textColor="@color/text_sub_foreground"
             android:textSize="12sp" />
     </LinearLayout>
+
+    <!-- ============ 长按多选操作栏(公共组件):与上面的"可用空间·下载配置"条**同一格** ——
+         多选时把那条临时顶掉(用户口径),两者互斥显示,见 DownloadFragment.updateToolbar。
+         贴底整条、不留边、背景走主题悬浮面:与本地视频页那条是同一个组件、同一观感 ============ -->
+    <com.github.tvbox.osc.ui.kit.SelectActionBar
+        android:id="@+id/select_action_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:visibility="gone" />
 
 </LinearLayout>

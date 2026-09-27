@@ -16,6 +16,8 @@ public enum DownloadSubType implements SubType {
     REMUX("remux", "重封装"),
     SAVE("save", "落盘"),
     ARCHIVE("archive", "档案"),
+    /** 存储看门狗(可用空间见底 → 暂停全部任务),见 download/internal/StorageWatchdog */
+    STORAGE("storage", "存储"),
     CLEANUP("cleanup", "清理"),
     CANCEL("cancel", "取消"),
     DELETE("delete", "删除"),

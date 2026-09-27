@@ -48,8 +48,8 @@ class HistoryActivity : BaseVbActivity<ActivityHistoryBinding>() {
                 true
             }
 
-        mBinding.titleBar.setRightIconCustom(R.drawable.ic_clear, 16f, 16f, 12f)
-        mBinding.titleBar.rightView.setOnClickListener { view: View? ->
+        // 标题栏右侧"清空"图标:统一走 AppTitleBar(40dp 触区 + 主题色,与返回键同一套几何)
+        mBinding.titleBar.setRightIcon(R.drawable.ic_clear, 16f) {
             // 统一主题化确认弹窗(替代 XPopup 默认 asConfirm 库样式)
             com.github.tvbox.osc.ui.dialog.ConfirmDialog.show(this, "提示", "确定清空全部观看历史?", "清空", {
                 showLoadingDialog()

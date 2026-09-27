@@ -18,11 +18,16 @@
         android:layout_marginBottom="10dp"
         >
 
+        <!-- 返回:与其它二级页同一个箭头(播放器的快退 chevron),颜色走主题 ——
+             原来直接用 TitleBar 库自带的 bar_arrows_left_black(写死黑),暗色主题下几乎看不见。
+             24dp 的框 + 6dp 内边距 = 图标只画 12dp(与其他页同样"缩小一半"),点击区仍是 24dp -->
         <ImageView
             android:id="@+id/iv_back"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:src="@drawable/bar_arrows_left_black"/>
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:padding="6dp"
+            android:src="@drawable/ic_seek_left"
+            app:tint="@color/text_foreground"/>
         <com.github.tvbox.osc.ui.kit.ClearEditText
                 android:id="@+id/et_search"
                 android:layout_width="wrap_content"
@@ -201,7 +206,7 @@
 
         <!-- 来源列表(左页):固定 140dp,平时收在屏左外;内容区向右横滑整盒右移,松手吸附。
              无独立底色,与结果列表/页面背景一致,选中高亮由 DslTabLayout 自身绘制;
-             选中底色用 bg_small_round_float(= 悬浮面 bg_float,与底部导航栏同色同透明度 92%),
+             选中底色用 bg_small_round_float(= 悬浮面 bg_surface,与底部导航栏同色同透明度 92%),
              不要用不透明的 bg_small_round_gray,否则与底栏深浅/通透度不一致 -->
         <LinearLayout
             android:id="@+id/llWord"

@@ -80,4 +80,11 @@ public class HawkConfig {
      * 搜索记录
      */
     public static final String HISTORY_SEARCH = "history_search";
+    /**
+     * 当前订阅所用爬虫 jar 的地址(不含 img+ 前缀与 ;md5; 段)。
+     * <p>
+     * 只用于识别"订阅换了":地址变了就说明本地 files/csp.jar 属于上一份订阅,
+     * 必须清掉再下新的(否则旧 jar 会被当成可用缓存,站点声明的类不在里面 → 源初始化失败、整源空白)。
+     */
+    public static final String SPIDER_JAR_URL = "spider_jar_url";
 }

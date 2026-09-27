@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 长按气泡(附着在被长按的条目旁):气泡面 = 主题悬浮面 bg_surface(与底栏/标题栏/弹窗同一个面),
+     行文字颜色由代码按动作类型填(普通=text_main、危险=text_danger)。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/ll_actions"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_bubble"
+    android:minWidth="108dp"
+    android:orientation="vertical"
+    android:paddingVertical="4dp" />

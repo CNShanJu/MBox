@@ -31,6 +31,7 @@ import com.github.tvbox.osc.config.PrefsDataStore;
 import com.google.gson.reflect.TypeToken;
 import java.lang.reflect.Type;
 import com.github.tvbox.osc.spiderapi.CmsApiRules;
+import com.github.tvbox.osc.spiderapi.JarCachePolicy;
 import com.github.tvbox.osc.util.VideoParseRuler;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
@@ -310,21 +311,38 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
         File cache = new File(getAppContext().getFilesDir().getAbsolutePath() + "/csp.jar");
         LogStore.log(Category.SUBSCRIPTION, "订阅: 开始更新爬虫 jar " + jarUrl);
 
-        if (!md5.isEmpty() || useCache) {
-            if (cache.exists() && (useCache || MD5.getFileMd5(cache).equalsIgnoreCase(md5))) {
-                if (jarLoader.load(cache.getAbsolutePath())) {
-                    LogStore.success(Category.SUBSCRIPTION, "订阅: 使用缓存爬虫 jar " + jarUrl);
-                    callback.success();
-                } else {
-                    LogStore.fail(Category.SUBSCRIPTION, "订阅: 缓存爬虫 jar 加载失败 " + jarUrl);
-                    callback.error("");
-                }
-                return;
-            }
+        String realJarUrl = jarUrl.replace("img+", "");
+        boolean isJarInImg = jarUrl.startsWith("img+");
+        // 订阅换了吗(爬虫 jar 地址变了 = 本地这份 jar 属于别的订阅/别的仓库):
+        // 换了就先把本地 jar 全清掉 —— 旧 jar 里的类与当前站点列表无关,留着只会得到一批
+        // "源初始化失败"(线上实例:换订阅后仍加载上一份 jar,站点声明的类不在里面)
+        String lastJarUrl = legacyPrefs(HawkConfig.SPIDER_JAR_URL, "");
+        boolean subscriptionSwitched = JarCachePolicy.jarUrlChanged(lastJarUrl, realJarUrl);
+        if (subscriptionSwitched) {
+            clearSourceJarCache("订阅已更换(爬虫 jar 地址变了)");
+        }
+        if (!realJarUrl.equals(lastJarUrl)) {
+            PrefsDataStore.put(HawkConfig.SPIDER_JAR_URL, realJarUrl);
         }
 
-        boolean isJarInImg = jarUrl.startsWith("img+");
-        final String realJarUrl = jarUrl.replace("img+", "");
+        boolean cacheExists = cache.exists();
+        // md5 是订阅声明"这份 jar 应该是什么"的唯一凭据:配置里带了 md5 就必须校验通过,
+        // useCache(带缓存配置重启)只回答"允许用本地缓存",不能把 md5 不符的旧 jar 当可用(见 JarCachePolicy)
+        String cachedMd5 = cacheExists && !md5.isEmpty() ? MD5.getFileMd5(cache) : "";
+        if (JarCachePolicy.cacheUsable(cacheExists, md5, cachedMd5, useCache)) {
+            if (jarLoader.load(cache.getAbsolutePath())) {
+                LogStore.success(Category.SUBSCRIPTION, "订阅: 使用缓存爬虫 jar " + jarUrl);
+                callback.success();
+            } else {
+                LogStore.fail(Category.SUBSCRIPTION, "订阅: 缓存爬虫 jar 加载失败 " + jarUrl);
+                callback.error("");
+            }
+            return;
+        }
+        if (cacheExists && !md5.isEmpty()) {
+            LogStore.log(Category.SUBSCRIPTION, "订阅: 本地爬虫 jar 与订阅声明不符(md5),重新下载 " + jarUrl);
+        }
+
         Map<String, String> headers = new HashMap<>();
         headers.put("User-Agent", userAgent);
         headers.put("Accept", requestAccept);
@@ -336,44 +354,89 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
                         File cacheDir = cache.getParentFile();
                         if (!cacheDir.exists())
                             cacheDir.mkdirs();
+                        byte[] imgJar = getImgJar(respData);
+                        // 解出来不是包就别动本地那份:原来无条件 delete+覆盖,解码失败会把上一份
+                        // 可用 jar 一起毁掉(兜底也就没得兜了)
+                        if (imgJar == null || imgJar.length < 4 || imgJar[0] != 'P' || imgJar[1] != 'K') {
+                            LogStore.fail(Category.SUBSCRIPTION, "订阅: 爬虫 jar 图片套路解析失败(内容不是包) " + realJarUrl);
+                            fallbackToLocalJar(cache, cacheExists, realJarUrl, callback);
+                            return;
+                        }
                         if (cache.exists())
                             cache.delete();
-                        byte[] imgJar = getImgJar(respData);
                         FileOutputStream fos = new FileOutputStream(cache);
                         fos.write(imgJar);
                         fos.flush();
                         fos.close();
-                        onJarDownloaded(cache, callback, realJarUrl);
+                        onJarDownloaded(cache, md5, callback, realJarUrl);
                     } catch (Throwable th) {
                         th.printStackTrace();
                         LogStore.fail(Category.SUBSCRIPTION, "订阅: 爬虫 jar 图片套路解析失败 " + realJarUrl);
-                        callback.error("");
+                        fallbackToLocalJar(cache, cacheExists, realJarUrl, callback);
                     }
                 }
 
                 @Override
                 public void onError(Throwable e) {
                     LogStore.fail(Category.SUBSCRIPTION, "订阅: 爬虫 jar 下载失败 " + realJarUrl + " " + (e != null ? e.getMessage() : ""));
-                    callback.error("");
+                    fallbackToLocalJar(cache, cacheExists, realJarUrl, callback);
                 }
             });
         } else {
             HttpClient.download(realJarUrl, cache, headers, null, new FCallBack() {
                 @Override
                 public void onSuccess(File file) {
-                    onJarDownloaded(cache, callback, realJarUrl);
+                    onJarDownloaded(cache, md5, callback, realJarUrl);
                 }
 
                 @Override
                 public void onError(Throwable e) {
                     LogStore.fail(Category.SUBSCRIPTION, "订阅: 爬虫 jar 下载失败 " + realJarUrl + " " + (e != null ? e.getMessage() : ""));
-                    callback.error("");
+                    fallbackToLocalJar(cache, cacheExists, realJarUrl, callback);
                 }
             });
         }
     }
 
-    private void onJarDownloaded(File cache, LoadConfigCallback callback, String jarUrl) {
+    /**
+     * jar 下载/解码失败时的兜底:本地还有一份"像包"的 jar 就先顶上(否则本次一个 jar 源都用不了)。
+     * <p>
+     * 语义边界:只在"订阅没换、只是这次没拉下来"时兜底(地址换了的那份属于别的订阅,
+     * 顶上来只会得到一堆看不懂的失败,已在 {@link #loadJar} 开头清掉);
+     * 且无论成败都给用户失败提示 —— 用的可能不是订阅当前那份,不能装作一切正常。
+     */
+    private void fallbackToLocalJar(File cache, boolean cacheExists, String jarUrl, LoadConfigCallback callback) {
+        if (cacheExists && JarLoader.isLoadableArchive(cache) && jarLoader.load(cache.getAbsolutePath())) {
+            LogStore.log(Category.SUBSCRIPTION, "订阅: 爬虫 jar 更新失败,回退使用本地缓存(可能与订阅不一致,部分源会不可用) " + jarUrl);
+        }
+        callback.error("");
+    }
+
+    /**
+     * 清掉订阅作用域的本地爬虫 jar(files/csp.jar 与各站点自带 jar 的缓存 files/&lt;md5&gt;.jar)。
+     * 只在"订阅换了"时调用:这些文件与旧订阅的站点列表一一对应,留着既占地方,
+     * 又会在下次加载时被当成可用缓存(旧 jar 里没有新站点声明的类 → 整源空白)。
+     */
+    private void clearSourceJarCache(String why) {
+        try {
+            File dir = getAppContext().getFilesDir();
+            File[] files = dir == null ? null : dir.listFiles();
+            int removed = 0;
+            if (files != null) {
+                for (File f : files) {
+                    if (f == null || !f.isFile() || !f.getName().endsWith(".jar")) continue;
+                    if (f.delete()) removed++;
+                }
+            }
+            // 内存里的 DexClassLoader / 源实例同样作废(文件已删,别再用它们应答)
+            jarLoader.reset();
+            LogStore.log(Category.SUBSCRIPTION, "订阅: " + why + ",清理本地爬虫 jar " + removed + " 个");
+        } catch (Throwable th) {
+            th.printStackTrace();
+        }
+    }
+
+    private void onJarDownloaded(File cache, String md5, LoadConfigCallback callback, String jarUrl) {
         // 兼容图片套路:部分源把 jar 伪装成 .jpg,内容是 图片+**+base64(jar)(与配置同套路),需先解码
         try {
             if (!isZipFile(cache)) {
@@ -395,6 +458,13 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
             }
         } catch (Throwable th) {
             th.printStackTrace();
+        }
+        // 订阅给了 md5 就必须相符:否则多半是错误页/半截包(原实现下完直接加载,内容不对也照跑)
+        if (!md5.isEmpty() && !md5.equalsIgnoreCase(MD5.getFileMd5(cache))) {
+            LogStore.fail(Category.SUBSCRIPTION, "订阅: 爬虫 jar 校验失败(md5 不符) " + jarUrl);
+            cache.delete();
+            callback.error("");
+            return;
         }
         if (jarLoader.load(cache.getAbsolutePath())) {
             LogStore.success(Category.SUBSCRIPTION, "订阅: 爬虫 jar 加载成功 " + jarUrl);

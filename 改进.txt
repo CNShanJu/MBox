@@ -2,7 +2,7 @@
 
 不建议立即新增六七个模块全面重写。应先建立依赖规则，再按收益拆物理模块。
 
-现状（与 AGENTS.md §二 同步维护）：全仓 **9 个 Gradle 模块** —— :app、:common、:core-network、:core-storage、:log、:player、:spider、:download、:thirdparty。
+现状（与 AGENTS.md §二 同步维护）：全仓 **10 个 Gradle 模块** —— :app、:common、:core-network、:core-storage、:log、:player、:spider、:download、:share、:thirdparty。
 本文件下文提到的模块名有些已合并（下文历史/建议部分保留原样）：
 - :core-model + :core-utils + :state → :common（纯模型/算法工具/系统状态，包名不变）
 - :spider-api → :spider、:player-api → :player（契约与实现同模块，契约包名不变）
@@ -355,8 +355,8 @@ Java 大类逐步 Kotlin 化
 添加模块依赖检查和测试门禁
 
 
-八、建议的最终模块清单（目标清单；现状 9 模块见文首“现状”段）
-已落地（现状 9 个）：
+八、建议的最终模块清单（目标清单；现状 10 模块见文首“现状”段）
+已落地（现状 10 个）：
 :app                    应用入口、导航、依赖组装（含原 :ui-common 的主题与公共资源）
 :common                 纯模型 + 算法工具 + 系统状态（原 :core-model/:core-utils/:state）
 :core-network           网络策略和客户端
@@ -364,6 +364,8 @@ Java 大类逐步 Kotlin 化
 :log                    日志
 :spider                 爬虫实现 + 爬虫契约（原 :spider-api 已并入）
 :download               下载实现及 Facade
+:share                  分享/导入导出传输层（可插拔平台：storage.to 在线 / 局域网 / 本地文件；
+                        局域网 HTTP 服务在 :app，经 transport.lan.LanShareHost 桥接）
 :player                 播放内核实现 + 播放契约（原 :player-api 已并入）
 :thirdparty             纯第三方归堆（TabLayout/CustomActivityOnCrash/QuickJS，不依赖本仓模块）
 

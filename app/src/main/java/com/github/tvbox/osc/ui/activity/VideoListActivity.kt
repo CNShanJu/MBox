@@ -2,21 +2,20 @@ package com.github.tvbox.osc.ui.activity
 
 import android.os.Bundle
 import android.view.View
-import androidx.core.content.ContextCompat
+import android.widget.TextView
 import androidx.lifecycle.lifecycleScope
 import com.blankj.utilcode.util.FileUtils
 import com.blankj.utilcode.util.GsonUtils
 import com.blankj.utilcode.util.SPUtils
 import com.chad.library.adapter.base.BaseQuickAdapter
-import com.github.tvbox.osc.R
 import com.github.tvbox.osc.base.BaseVbActivity
 import com.github.tvbox.osc.bean.VideoInfo
 import com.github.tvbox.osc.constant.CacheConst
 import com.github.tvbox.osc.databinding.ActivityMovieFoldersBinding
 import com.github.tvbox.osc.ui.adapter.LocalVideoAdapter
+import com.github.tvbox.osc.ui.kit.SelectActionBar
 import com.github.tvbox.osc.util.FastClickCheckUtil
 import com.github.tvbox.osc.util.Utils
-import com.lxj.xpopup.XPopup
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -26,6 +25,10 @@ class VideoListActivity : BaseVbActivity<ActivityMovieFoldersBinding>() {
     private var mBucketDisplayName = ""
     private var mLocalVideoAdapter = LocalVideoAdapter()
     private var mSelectedCount = 0
+
+    /** 操作栏上的"删除"键:可用态由选中数决定(取色走组件) */
+    private lateinit var mDeleteAction: TextView
+
     override fun init() {
         mBucketDisplayName = intent.extras?.getString("bucketDisplayName")?:""
 
@@ -53,31 +56,16 @@ class VideoListActivity : BaseVbActivity<ActivityMovieFoldersBinding>() {
                 true
             }
 
-        mBinding.tvAllCheck.setOnClickListener { view: View? ->  //全选
+        // 长按多选操作栏:公共组件 ui/kit/SelectActionBar(与下载页同一款:主题面背景 + 危险键色),
+        // 页面只负责"加哪几个键、点了干什么",颜色/可用态由组件按主题与 Kind 决定
+        mBinding.selectActionBar.addAction("全选", SelectActionBar.Kind.NORMAL) { view: View? ->
             FastClickCheckUtil.check(view)
             mLocalVideoAdapter.selectAll()
         }
-
-        mBinding.tvCancelAllChecked.setOnClickListener { view: View? ->  //取消全选
+        mDeleteAction = mBinding.selectActionBar.addAction("删除", SelectActionBar.Kind.DANGER) { view: View? ->
             FastClickCheckUtil.check(view)
-            cancelAll()
-        }
-
-        mLocalVideoAdapter.setOnSelectCountListener { count: Int ->
-            mSelectedCount = count
-            if (mSelectedCount > 0) {
-                mBinding.tvDelete.isEnabled = true
-                mBinding.tvDelete.setTextColor(ContextCompat.getColor(this, R.color.colorPrimary))
-            } else {
-                mBinding.tvDelete.isEnabled = false
-                mBinding.tvDelete.setTextColor(ContextCompat.getColor(this, R.color.disable_text))
-            }
-        }
-
-        mBinding.tvDelete.setOnClickListener { view: View? ->
-            FastClickCheckUtil.check(view)
-            // 统一主题化确认弹窗(替代 XPopup 默认 asConfirm)
-            com.github.tvbox.osc.ui.dialog.ConfirmDialog.show(this, "提示", "确定删除所选视频吗？", "删除", {
+            // 统一主题化确认弹窗(替代 XPopup 默认 asConfirm);删除不可逆 → 确认键走危险色
+            com.github.tvbox.osc.ui.dialog.ConfirmDialog.showDanger(this, "提示", "确定删除所选视频吗？", "删除", {
                 showLoadingDialog()
                 lifecycleScope.launch(Dispatchers.IO) {
                     val data = mLocalVideoAdapter.data
@@ -110,11 +98,22 @@ class VideoListActivity : BaseVbActivity<ActivityMovieFoldersBinding>() {
                 }
             })
         }
+        mBinding.selectActionBar.addAction("取消全选", SelectActionBar.Kind.NORMAL) { view: View? ->
+            FastClickCheckUtil.check(view)
+            cancelAll()
+        }
+        // 没有选中项时"删除"置灰(取色由组件按 Kind 决定:text_danger / text_disable)
+        mBinding.selectActionBar.setActionEnabled(mDeleteAction, false)
+
+        mLocalVideoAdapter.setOnSelectCountListener { count: Int ->
+            mSelectedCount = count
+            mBinding.selectActionBar.setActionEnabled(mDeleteAction, mSelectedCount > 0)
+        }
     }
 
     private fun toggleListSelectMode(open: Boolean) {
         mLocalVideoAdapter.setSelectMode(open)
-        mBinding.llMenu.visibility = if (open) View.VISIBLE else View.GONE
+        mBinding.selectActionBar.visibility = if (open) View.VISIBLE else View.GONE
         if (!open) { // 开启时设置了当前item为选中状态已经刷新了.所以只在关闭刷新列表
             mLocalVideoAdapter.notifyDataSetChanged()
         }

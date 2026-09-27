@@ -45,22 +45,52 @@
         <item />
     </string-array>
 
-    <!-- 设置页说明文案:横排设置行塞不下(标题+状态+开关一行),改为长按标题弹 tip 看(见 TextTipDialog)。
-         文案只写"这个开关到底干啥、什么时候生效、有什么代价",不写实现细节。 -->
+    <!-- 设置页说明文案:横排设置行塞不下(标题+状态+开关一行),改为弹窗看(见 LanServerDialog:
+         开启时自动弹一次 + 标题长按随时再看)。文案只写"这个开关到底干啥、什么时候生效、有什么代价",
+         不写实现细节;地址本身由弹窗顶部按当前网络动态列出,不再在文案里写占位符。 -->
     <string name="setting_lan_server_tip">
-        开启后，同一局域网里的设备用浏览器打开「本机 IP:端口」即可访问本机服务：
+        用它做什么：在同一局域网里的设备（手机 / 电脑 / 平板）用浏览器打开上面的地址，就能：
         \n· 浏览并管理电视上的文件（上传 / 下载 / 删除 / 新建文件夹）
         \n· 点开文件可取到文件接口地址，别的设备或播放器直接用它播放 / 下载
         \n管理类操作需要令牌（页面会自动带上），别人只知道地址也改不了你的文件。
         \n关闭时服务只监听 127.0.0.1，仅本机可访问 —— 订阅、本地播放、代理都不受影响。
-        \n开关改动需要重启应用后生效。
+        \n开关改动需要重启应用后生效；换网络后本机 IP 会变，回这里看一眼新地址即可。
         \n注：网页上的「搜索 / 推送 / 接口」三个按钮目前未接线，暂时不生效。
              </string>
+
+    <!-- 局域网服务弹窗(LanServerDialog):标题/状态/地址块/按钮 -->
+    <string name="lan_server_title">局域网服务</string>
+    <string name="lan_server_state_active">已开启 · 局域网设备现在就能访问</string>
+    <string name="lan_server_state_pending">已开启 · 重启应用后才生效</string>
+    <string name="lan_server_state_pending_close">已关闭 · 重启应用后才会停止局域网访问</string>
+    <string name="lan_server_state_off">未开启 · 仅本机可访问</string>
+    <string name="lan_server_lead">同一 Wi-Fi 下，用别的设备的浏览器打开下面任一地址即可访问本机服务：</string>
+    <!-- 其余三种状态下地址"现在能不能用"不一样,文案必须跟着变(否则等于把没生效的地址说成能用) -->
+    <string name="lan_server_lead_pending">重启应用后，用别的设备的浏览器打开下面任一地址即可访问本机服务（先记下地址也行）：</string>
+    <string name="lan_server_lead_off">开启并重启应用后，用别的设备的浏览器打开下面任一地址即可访问本机服务：</string>
+    <string name="lan_server_lead_pending_close">开关已关，但下面的地址在重启应用前仍然可以访问：</string>
+    <string name="lan_server_addr_empty">没取到局域网 IP —— 请确认本机已连接 Wi-Fi（或已开热点）后回到这里重看。</string>
+    <string name="lan_server_copy">复制</string>
+    <string name="lan_server_copied">已复制地址</string>
+    <!-- 说明入口(收成一行可点文字,点开是 TextTipDialog 里的 setting_lan_server_tip 全文) -->
+    <string name="lan_server_help">用它做什么？</string>
+    <string name="lan_server_restart">立即重启应用</string>
+    <string name="lan_server_ok">知道了</string>
+
+    <!-- 公共空态(view_empty)默认文案:LoadSir 的空态视图全 App 复用,代码侧要能把它设回默认值 -->
+    <string name="empty_default_tip">暂无数据</string>
 
     <string name="setting_ignore_ssl_tip">
         只为个别自签名 / 证书异常的站点准备：开启后不再校验证书链与主机名。
         \n网页（WebView）里立即生效；订阅、搜索、图片、播放等网络请求要重启应用后生效。
         \n开启会明显降低传输安全性，平时请保持关闭。
+             </string>
+
+    <!-- 主题颜色的用法说明(横排设置行塞不下,由标题长按调出,与其它设置项同一套口径) -->
+    <string name="setting_theme_tip">
+        点一下选主题：浅色 / 深色 直接用内置那套；跟随系统才按系统明暗取「该类型的默认主题」——亮、暗各一份，可在列表里对自定义主题点「设为默认」换掉。
+        \n长按列表里的自定义主题：编辑 / 设为默认 / 删除；列表最下方「＋ 自定义主题颜色」是新建。
+        \n选择完成后关闭弹窗会重启应用生效；内置的浅色 / 深色不可修改、不可删除。
              </string>
 
     <!-- 网络不可用页(独立页面,见 NoNetworkActivity/NetworkIssueRouter:断网且发起过请求才拉起,有网自动返回) -->

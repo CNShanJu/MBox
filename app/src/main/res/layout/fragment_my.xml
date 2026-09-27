@@ -25,8 +25,9 @@
 
     <!-- 中间选项区:高度固定=吃满标题与底部版本号之间的剩余空间;选项行超出时在卡片内部滚动,
          版本号固定在页面底部不参与滚动。
-         卡片用实色(bg_component,与底栏 bg_float 同色):大面积半透明会把底图明暗差透成噪斑,
-         所以只有底栏/标题栏这类细条保留半透明悬浮面 -->
+         卡片用 bg_large_round_float(= 卡片与面板底色 bg_surface + bg_float_alpha):与底栏/标题栏/
+         各页内容块是**同一个面**,改一处全站同步(见 res/values/colors.xml 里那段说明)。
+         注意别再写成 bg_card —— 那是"卡片底色",给弹窗列表行/海报占位这类小块用的。 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
@@ -84,11 +85,11 @@
                     android:layout_weight="1" />
 
                 <ImageView
-                    android:layout_width="26dp"
-                    android:layout_height="26dp"
+                    android:layout_width="13dp"
+                    android:layout_height="13dp"
                     android:layout_gravity="center"
                     android:alpha="0.75"
-                    android:src="@drawable/ic_pre"
+                    android:src="@drawable/ic_seek_right"
                     app:tint="@color/text_foreground" />
 
             </LinearLayout>
@@ -128,11 +129,11 @@
                     android:layout_weight="1" />
 
                 <ImageView
-                    android:layout_width="26dp"
-                    android:layout_height="26dp"
+                    android:layout_width="13dp"
+                    android:layout_height="13dp"
                     android:layout_gravity="center"
                     android:alpha="0.75"
-                    android:src="@drawable/ic_pre"
+                    android:src="@drawable/ic_seek_right"
                     app:tint="@color/text_foreground" />
 
             </LinearLayout>
@@ -171,11 +172,11 @@
                     android:layout_weight="1" />
 
                 <ImageView
-                    android:layout_width="26dp"
-                    android:layout_height="26dp"
+                    android:layout_width="13dp"
+                    android:layout_height="13dp"
                     android:layout_gravity="center"
                     android:alpha="0.75"
-                    android:src="@drawable/ic_pre"
+                    android:src="@drawable/ic_seek_right"
                     app:tint="@color/text_foreground" />
 
             </LinearLayout>
@@ -214,11 +215,11 @@
                     android:layout_weight="1" />
 
                 <ImageView
-                    android:layout_width="26dp"
-                    android:layout_height="26dp"
+                    android:layout_width="13dp"
+                    android:layout_height="13dp"
                     android:layout_gravity="center"
                     android:alpha="0.75"
-                    android:src="@drawable/ic_pre"
+                    android:src="@drawable/ic_seek_right"
                     app:tint="@color/text_foreground" />
 
             </LinearLayout>
@@ -257,11 +258,11 @@
                     android:layout_weight="1" />
 
                 <ImageView
-                    android:layout_width="26dp"
-                    android:layout_height="26dp"
+                    android:layout_width="13dp"
+                    android:layout_height="13dp"
                     android:layout_gravity="center"
                     android:alpha="0.75"
-                    android:src="@drawable/ic_pre"
+                    android:src="@drawable/ic_seek_right"
                     app:tint="@color/text_foreground" />
 
             </LinearLayout>
@@ -300,11 +301,11 @@
                     android:layout_weight="1" />
 
                 <ImageView
-                    android:layout_width="26dp"
-                    android:layout_height="26dp"
+                    android:layout_width="13dp"
+                    android:layout_height="13dp"
                     android:layout_gravity="center"
                     android:alpha="0.75"
-                    android:src="@drawable/ic_pre"
+                    android:src="@drawable/ic_seek_right"
                     app:tint="@color/text_foreground" />
 
             </LinearLayout>
@@ -344,11 +345,11 @@
                     android:layout_weight="1" />
 
                 <ImageView
-                    android:layout_width="26dp"
-                    android:layout_height="26dp"
+                    android:layout_width="13dp"
+                    android:layout_height="13dp"
                     android:layout_gravity="center"
                     android:alpha="0.75"
-                    android:src="@drawable/ic_pre"
+                    android:src="@drawable/ic_seek_right"
                     app:tint="@color/text_foreground" />
 
             </LinearLayout>
@@ -387,11 +388,11 @@
                     android:layout_weight="1" />
 
                 <ImageView
-                    android:layout_width="26dp"
-                    android:layout_height="26dp"
+                    android:layout_width="13dp"
+                    android:layout_height="13dp"
                     android:layout_gravity="center"
                     android:alpha="0.75"
-                    android:src="@drawable/ic_pre"
+                    android:src="@drawable/ic_seek_right"
                     app:tint="@color/text_foreground" />
 
             </LinearLayout>
@@ -430,11 +431,11 @@
                     android:layout_weight="1" />
 
                 <ImageView
-                    android:layout_width="26dp"
-                    android:layout_height="26dp"
+                    android:layout_width="13dp"
+                    android:layout_height="13dp"
                     android:layout_gravity="center"
                     android:alpha="0.75"
-                    android:src="@drawable/ic_pre"
+                    android:src="@drawable/ic_seek_right"
                     app:tint="@color/text_foreground" />
 
             </LinearLayout>

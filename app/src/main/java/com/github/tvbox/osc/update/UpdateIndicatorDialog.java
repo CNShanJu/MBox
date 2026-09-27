@@ -4,6 +4,7 @@ import android.content.Context;
 import android.widget.ProgressBar;
 
 import androidx.annotation.NonNull;
+import androidx.core.content.ContextCompat;
 
 import com.github.tvbox.osc.R;
 import com.github.tvbox.osc.ui.dialog.AppCenterPopupView;
@@ -106,26 +107,32 @@ public class UpdateIndicatorDialog extends AppCenterPopupView implements UpdateM
 
             UpdateManager.State s = m.getState();
             String stateText;
+            // 状态行配色与「视频下载」同一套语义色(下载中=download_active、完成=download_done、失败=红)
+            int stateColor;
             switch (s) {
                 case DOWNLOADING:
                     stateText = "下载中 " + percent + "% (" + size(downloaded) + "/" + (total > 0 ? size(total) : "未知") + ")";
+                    stateColor = R.color.download_active;
                     btnPauseResume.setText("暂停");
                     btnPauseResume.setVisibility(android.view.View.VISIBLE);
                     btnInstall.setVisibility(android.view.View.GONE);
                     break;
                 case PAUSED:
                     stateText = "已暂停 " + percent + "% (" + size(downloaded) + "/" + (total > 0 ? size(total) : "未知") + ")";
+                    stateColor = R.color.download_active;
                     btnPauseResume.setText("继续");
                     btnPauseResume.setVisibility(android.view.View.VISIBLE);
                     btnInstall.setVisibility(android.view.View.GONE);
                     break;
                 case COMPLETED:
-                    stateText = "下载完成 (" + size(downloaded) + "),点击安装";
+                    stateText = "下载完成 (" + size(downloaded) + ")";
+                    stateColor = R.color.download_done;
                     btnPauseResume.setVisibility(android.view.View.GONE);
                     btnInstall.setVisibility(android.view.View.VISIBLE);
                     break;
                 case FAILED:
                     stateText = "下载失败: " + (m.getError() == null ? "未知错误" : m.getError());
+                    stateColor = R.color.red;
                     btnPauseResume.setVisibility(android.view.View.GONE);
                     btnPauseResume.setText("重试");
                     btnPauseResume.setVisibility(android.view.View.VISIBLE);
@@ -133,11 +140,19 @@ public class UpdateIndicatorDialog extends AppCenterPopupView implements UpdateM
                     break;
                 default:
                     stateText = "空闲";
+                    stateColor = R.color.text_sub_foreground;
                     btnPauseResume.setVisibility(android.view.View.GONE);
                     btnInstall.setVisibility(android.view.View.GONE);
                     break;
             }
             tvProgressText.setText(stateText);
+            int color = ContextCompat.getColor(getContext(), stateColor);
+            tvProgressText.setTextColor(color);
+            // 进度条与状态行**同色**(与更新气泡的"进度环/图标/百分比同色"一个口径):
+            // 下载中=download_active、完成=download_done 绿、失败=红。
+            // 以前这里只给文字上色,进度条写死蓝色(bg_update_progress),下载完成后
+            // 就出现"一条蓝杠 + 绿字",用户口径:"看着不协调"。
+            progressBar.setProgressTintList(android.content.res.ColorStateList.valueOf(color));
         } catch (Throwable ignored) {
         }
     }

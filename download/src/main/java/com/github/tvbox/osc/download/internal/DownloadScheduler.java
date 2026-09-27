@@ -216,6 +216,26 @@ public class DownloadScheduler {
                     }
                     return false;
                 }
+                // 存储看门狗闸门:可用空间低于兜底阈值(1GB)时不启动任何新任务。
+                // 这与"看门狗发现空间见底后暂停运行中任务"是同一条口径的两端 —— 停掉在跑的 + 不许新开,
+                // 缺任何一端都会留个口子(只停在跑:刚入队的任务立刻又把空间吃回去)。
+                // 同样给等待任务打上可读文案(否则用户看到的是"等待中"却不知道在等什么)。
+                if (dm.watchdog.isLow()) {
+                    boolean marked = false;
+                    for (DownloadTask tt : sorted) {
+                        if (tt.state == DownloadTask.STATE_WAITING || tt.state == DownloadTask.STATE_SYSTEM_PAUSED) {
+                            if (!com.github.tvbox.osc.download.DownloadFacade.MSG_WAIT_STORAGE.equals(tt.message)) {
+                                tt.message = com.github.tvbox.osc.download.DownloadFacade.MSG_WAIT_STORAGE;
+                                marked = true;
+                            }
+                        }
+                    }
+                    if (marked) {
+                        dm.persist();
+                        dm.notifyChanged();
+                    }
+                    return false;
+                }
                 // 并发调高:按调度顺序补足(队首=高优先级/被抢占者先恢复)
                 int toStart = dm.policy.getMaxConcurrent() - running;
                 boolean startedAny = false;
@@ -308,6 +328,8 @@ public class DownloadScheduler {
                     wakeWorker();
                     return;
                 }
+                // 存储看门狗:任务真正开跑时确保后台巡检在跑(全部停下后线程自行退出,不常驻)
+                dm.watchdog.ensureMonitor();
                 while (true) {
                     try {
                         // 4.6 任务对象化: 经注册表创建任务对象执行(直链/HLS 按特征分发,行为与 processTask 一致)
@@ -1134,6 +1156,41 @@ public class DownloadScheduler {
             resumeAllNetwork();
         }
         wakeWorker(); // 关闭时立即按新配置调度;开启但原本就在 WiFi 上无动作也无需等待
+    }
+
+    /**
+     * 存储看门狗:可用空间见底 → 暂停全部下载中/等待中/被抢占的任务(置用户暂停并写明原因)。
+     * 与 {@link #pauseAllPermission} 同一形态:只暂停不自动恢复(空间刚过线就自动续传会变成
+     * "清一点 → 又写满"的反复起停),用户清理空间后点"继续/全部开始"即按原进度续传。
+     *
+     * @return 是否有任务状态真的被改变(没有在跑的任务时返回 false,调用方据此避免重复落盘/广播)
+     */
+    boolean pauseAllStorage(String message) {
+        boolean changed = false;
+        synchronized (dm.tasks) {
+            for (DownloadTask t : dm.tasks) {
+                if (t.state == DownloadTask.STATE_DOWNLOADING
+                        || t.state == DownloadTask.STATE_WAITING
+                        || t.state == DownloadTask.STATE_SYSTEM_PAUSED) {
+                    t.state = DownloadTask.STATE_PAUSED;
+                    t.speed = 0;
+                    t.message = message;
+                    changed = true;
+                    Response r = dm.activeResponses.remove(t.id);
+                    if (r != null) {
+                        try {
+                            r.close();
+                        } catch (Throwable ignored) {
+                        }
+                    }
+                }
+            }
+        }
+        if (changed) {
+            dm.persist();
+            dm.notifyChanged();
+        }
+        return changed;
     }
 
     /**

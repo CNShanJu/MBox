@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- 全 App 图片统一加载占位组件(改此处一处,所有图片占位符一起生效):
-     主题灰底 @color/bg_component + 居中占位图标。当前使用新设计 ic_placeholder_cat
+     主题灰底 @color/bg_card + 居中占位图标。当前使用新设计 ic_placeholder_cat
      (来自 D:\Code\Video\icon\drawing (1).svg,已去背景,96dp 各密度切图)。
      原矢量 ic_image_placeholder.xml 保留未删,便于换回。 -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item>
         <shape android:shape="rectangle">
-            <solid android:color="@color/bg_component" />
+            <solid android:color="@color/bg_card" />
             <corners android:radius="@dimen/radius_card" />
         </shape>
     </item>

@@ -119,6 +119,24 @@ public class App extends MultiDexApplication {
     }
 
     /**
+     * 「跟随系统」下手机自己翻明暗:进程不会重启,但<b>生效主题</b>是按系统明暗解析出来的
+     * (该类型的默认主题,见 {@code ThemeStore.resolveActive()}),不重解析就会出现
+     * "资源已经是夜间、换肤层还按白天那套画(或压根没介入)"——弹窗、开关一类全错位。
+     * <p>Application 的这个回调早于 Activity 重建,所以在这里做最早一次刷新;
+     * {@code BaseActivity.attachBaseContext} 再兜一道(防某些 ROM 不派发应用级回调)。
+     */
+    @Override
+    public void onConfigurationChanged(android.content.res.Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        try {
+            com.github.tvbox.osc.theme.ThemeRuntime.refresh();
+            // 换主题顺带把"主题自带的默认背景"同步过去(明暗两套默认主题可以配不同的图)
+            com.github.tvbox.osc.storage.theme.ThemeStore.applyActiveBackground();
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /**
      * 记录本机屏幕尺寸到业务日志(系统类目,INFO):每次启动调用一次,便于按机型/分辨率定位
      * 布局与适配问题。用真实显示区域(含状态栏/导航栏,getRealMetrics);LogStore 未启用时静默丢弃。
      */
@@ -156,6 +174,16 @@ public class App extends MultiDexApplication {
         // 现代化偏好存储(Preferences DataStore;标量域逐步迁移,见 DownloadPolicy 试点)
         com.github.tvbox.osc.config.PrefsDataStore.init(this);
         com.github.tvbox.osc.config.PrefsDataStore.put(HawkConfig.DEBUG_OPEN, false);
+
+        // 主题系统:注入存储上下文 + 解析"这次启动用哪套配色"(自定义主题才有运行时换肤,
+        // 内置亮/暗直接走编译期资源,不受影响)。必须在任何 Activity 创建前完成。
+        com.github.tvbox.osc.storage.theme.ThemeStore.init(this);
+        com.github.tvbox.osc.theme.ThemeRuntime.install();
+        // 当前主题的默认背景同步给全局背景系统(用户显式设过底图时仍以他的为准,见 SystemConfig 的解析链)
+        try {
+            com.github.tvbox.osc.storage.theme.ThemeStore.applyActiveBackground();
+        } catch (Throwable ignored) {
+        }
 
         putDefault(HawkConfig.HOME_REC, 0);                  //推荐: 0=豆瓣热播, 1=站点推荐
         putDefault(HawkConfig.PLAY_TYPE, 2);                 //播放器: 0=系统, 1=IJK, 2=Exo

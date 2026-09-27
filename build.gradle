@@ -36,19 +36,22 @@ task clean(type: Delete) {
 // ------------------------------------------------------------------
 def forbiddenModuleDeps = [
         // 纯第三方归堆:不含任何本仓模块
-        ':thirdparty'     : [':app', ':common', ':core-network', ':core-storage', ':download', ':log', ':player', ':spider'],
+        ':thirdparty'     : [':app', ':common', ':core-network', ':core-storage', ':download', ':log', ':player', ':share', ':spider'],
         // 基础设施层
-        ':log'            : [':app', ':common', ':core-network', ':core-storage', ':download', ':player', ':spider', ':thirdparty'],
-        ':common'         : [':app', ':core-network', ':core-storage', ':download', ':player', ':spider', ':thirdparty'],
-        ':core-storage'   : [':app', ':download', ':player', ':spider', ':thirdparty'],
-        ':core-network'   : [':app', ':common', ':download', ':player', ':spider', ':thirdparty'],
+        ':log'            : [':app', ':common', ':core-network', ':core-storage', ':download', ':player', ':share', ':spider', ':thirdparty'],
+        ':common'         : [':app', ':core-network', ':core-storage', ':download', ':player', ':share', ':spider', ':thirdparty'],
+        ':core-storage'   : [':app', ':download', ':player', ':share', ':spider', ':thirdparty'],
+        ':core-network'   : [':app', ':common', ':download', ':player', ':share', ':spider', ':thirdparty'],
         // 业务实现层(契约与实现同模块)
-        ':spider'         : [':app', ':download', ':player'],
-        ':player'         : [':app', ':download', ':spider', ':thirdparty'],
-        ':download'       : [':app', ':thirdparty'],
+        ':spider'         : [':app', ':download', ':player', ':share'],
+        ':player'         : [':app', ':download', ':share', ':spider', ':thirdparty'],
+        ':download'       : [':app', ':share', ':thirdparty'],
+        // 分享/导入导出:传输层(在线平台 / 局域网 / 本地文件)。局域网 HTTP 服务在 :app,
+        // 经 transport.lan.LanShareHost 桥接注入,所以本模块不得依赖 :app。
+        ':share'          : [':app', ':download', ':player', ':spider', ':thirdparty'],
 ]
 def moduleDir = [
-        ':app' : 'app', ':common' : 'common', ':core-network' : 'core-network', ':core-storage' : 'core-storage', ':download' : 'download', ':log' : 'log', ':player' : 'player', ':spider' : 'spider', ':thirdparty' : 'thirdparty'
+        ':app' : 'app', ':common' : 'common', ':core-network' : 'core-network', ':core-storage' : 'core-storage', ':download' : 'download', ':log' : 'log', ':player' : 'player', ':share' : 'share', ':spider' : 'spider', ':thirdparty' : 'thirdparty'
 ]
 
 
@@ -60,6 +63,13 @@ def appSourceDirs = [
         new File(rootDir, 'app/src/test/java'),
 ]
 def forbiddenDownloadImports = ~/import\s+com\.github\.tvbox\.osc\.download\.internal\.\w+\s*;/
+
+// 源码级门禁 3:app/ui 层禁止 import 分享模块内部实现与具体在线平台实现。
+// 允许的公开面:com.github.tvbox.osc.share 下的契约与模型(ShareFacade/ShareTransport/
+// SharePackage/ShareLink/…)、transport.lan 的桥接契约(LanShareHost 由 :app 实现,必须能 import)、
+// transport.lan 的协议常量与模型。禁止:internal.*(归档/执行器/回调句柄等实现细节)、
+// online.*(storage.to 专有实现;换平台时 app 不该被牵连改动)、local.*(具体实现)。
+def forbiddenShareImports = ~/import\s+com\.github\.tvbox\.osc\.share\.(internal|online|local)\.\w+\s*;/
 
 tasks.register('checkModuleDependencies') {
     group = 'verification'
@@ -86,6 +96,19 @@ tasks.register('checkModuleDependencies') {
                     def src = f.getText('UTF-8')
                     if (forbiddenDownloadImports.matcher(src).find()) {
                         violations << "app 源码禁止 import 下载内部实现: ${f.path}"
+                    }
+                }
+            }
+        }
+        // app 源码不得直接 import 分享模块的内部实现/具体平台实现
+        // (只允许 share 根包契约与 transport.lan 的桥接契约;换在线平台时 app 不应被牵连)
+        appSourceDirs.each { dir ->
+            if (!dir.exists()) return
+            dir.eachFileRecurse(groovy.io.FileType.FILES) { f ->
+                if (f.name.endsWith('.java') || f.name.endsWith('.kt')) {
+                    def src = f.getText('UTF-8')
+                    if (forbiddenShareImports.matcher(src).find()) {
+                        violations << "app 源码禁止 import 分享内部/平台实现: ${f.path}"
                     }
                 }
             }

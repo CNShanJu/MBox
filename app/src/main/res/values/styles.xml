@@ -98,6 +98,28 @@
         <item name="cornerRadius">@dimen/radius_btn_large</item>
     </style>
 
+    <!-- 弹窗右上角关闭键(**全站统一**):40dp 方框 + 8dp 内边距 ⇒ 图标实际画 24dp,
+         与「检查更新」那个弹窗一致(用户口径"大小刚刚好")。以前每个弹窗各写一套
+         (50dp+10dp / 40dp+8dp / 32dp+7dp),同一个关闭键在不同弹窗里差一倍;
+         头部那一行再配 android:gravity="center_vertical"(ConstraintLayout 里用
+         constraintTop/Bottom_toXOf="@id/title"),才不会跟标题一高一低。
+         tint 故意**不放进这里**:换肤层 ThemeInflaterFactory 只遍历布局里**内联**写的属性,
+         写进 style 的 app:tint 它看不到 → 自定义主题下关闭键会停在编译期颜色。
+         所以布局里照旧保留一行 app:tint="@color/text_foreground"。 -->
+    <style name="DialogCloseButton">
+        <item name="android:layout_width">@dimen/dialog_close_size</item>
+        <item name="android:layout_height">@dimen/dialog_close_size</item>
+        <item name="android:padding">@dimen/dialog_close_padding</item>
+        <item name="android:src">@drawable/ic_close_24</item>
+    </style>
+
+    <!-- 危险按钮:不可逆动作的"执行"键(删除/清空确认),主题文件里的 swipe_red(红底)+ swipe_red_text(红底上的字)。
+         只给"确认执行"用 —— 危险动作的**入口**(列表工具条的「删除」、条目上的删除图标)走无底色的 @color/text_danger。 -->
+    <style name="BtnDanger" parent="BtnPrimary">
+        <item name="android:textColor">@color/swipe_red_text</item>
+        <item name="backgroundTint">@color/swipe_red</item>
+    </style>
+
     <!-- 次按钮:取消/重置/下载管理等次要动作(常规圆角) -->
     <style name="BtnSecondary" parent="@style/Widget.Material3.Button">
         <item name="android:textColor">@color/btn_cancel_text</item>

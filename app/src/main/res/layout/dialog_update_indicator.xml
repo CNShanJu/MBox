@@ -9,9 +9,12 @@
     android:orientation="vertical"
     android:padding="@dimen/dp_20">
 
+    <!-- 标题行:gravity=center_vertical —— 关闭键 40dp 比 16sp 的标题高,
+         不居中两者就会一高一低。本弹窗的关闭键尺寸是全站基准(见 styles.xml 的 DialogCloseButton) -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:gravity="center_vertical"
         android:orientation="horizontal">
 
         <TextView
@@ -27,10 +30,7 @@
 
         <ImageView
             android:id="@+id/iv_close"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:padding="8dp"
-            android:src="@drawable/ic_close_24"
+            style="@style/DialogCloseButton"
             app:tint="@color/text_foreground" />
     </LinearLayout>
 
@@ -47,16 +47,21 @@
         android:id="@+id/update_progress"
         style="?android:attr/progressBarStyleHorizontal"
         android:layout_width="match_parent"
-        android:layout_height="10dp"
+        android:layout_height="6dp"
         android:layout_marginTop="@dimen/dp_20"
         android:max="100"
         android:progressDrawable="@drawable/bg_update_progress" />
 
+    <!-- 下载状态行(下载中 x% / 已暂停 / 下载完成 / 下载失败):右对齐。
+         这一行同时承担"进度"和"完成"两种文案,统一靠右,与左侧版本号形成左右分栏的观感。
+         width 用 match_parent + gravity=end(而不是 wrap_content + layout_gravity=end):
+         文案长度随百分比与大小变化,固定贴右边缘才不会看着左右跳。 -->
     <TextView
         android:id="@+id/update_progress_text"
-        android:layout_width="wrap_content"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="@dimen/dp_10"
+        android:gravity="end"
         android:textColor="@color/text_foreground"
         android:textSize="13sp"
         tools:text="下载中 40% (12.3MB/30.5MB)" />

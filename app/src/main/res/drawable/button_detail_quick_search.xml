@@ -1,16 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- 直播页"选中/聚焦那一条"的底(圆角胶囊):
+     底 = btn_select_bg(= 主色 brand,全站统一的"选中填充"),聚焦时再叠一圈 btn_select_text 描边
+     —— 这两个是一对("选中填充 + 其上的对比色"),亮/暗主题下都保证看得见。
+     沿革:这里原来是写死的蓝 accent_on_dark(唯一还在用那支蓝的地方),按用户口径"移除,走主题"
+     改成主题色;主题文件里已没有 accent_on_dark 这个键。
+     注意文件名是历史遗留(它本是详情页"快速搜索"按钮的底,现在只被直播页的 item_bg_selector_right 用),
+     改不改名待定 —— 别再新增第二个同用途的 drawable。 -->
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:state_focused="true">
         <shape>
             <corners android:radius="@dimen/dp_20" />
-            <solid android:color="@color/accent_on_dark" />
-            <stroke android:width="2mm" android:color="@android:color/white" />
+            <solid android:color="@color/btn_select_bg" />
+            <stroke android:width="2mm" android:color="@color/btn_select_text" />
         </shape>
     </item>
     <item android:state_focused="false">
         <shape>
             <corners android:radius="@dimen/dp_20" />
-            <solid android:color="@color/accent_on_dark" />
+            <solid android:color="@color/btn_select_bg" />
         </shape>
     </item>
 </selector>

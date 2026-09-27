@@ -138,7 +138,7 @@
             android:paddingLeft="10dp"
             android:text="复制"
             android:textStyle="bold"
-            android:textColor="@color/text_accent" />
+            android:textColor="@color/text_highlight" />
     </LinearLayout>
 
     <!-- 简介标签:固定一行,不随简介内容滚动 -->
@@ -189,7 +189,7 @@
                 android:clickable="true"
                 android:focusable="true"
                 android:paddingTop="6dp"
-                android:textColor="@color/text_accent"
+                android:textColor="@color/text_highlight"
                 android:textStyle="bold"
                 android:textSize="13sp"
                 android:visibility="gone"

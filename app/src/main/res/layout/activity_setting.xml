@@ -9,11 +9,14 @@
     <com.github.tvbox.osc.ui.kit.AppTitleBar
         android:id="@+id/title_bar"
         android:layout_width="match_parent"
-        android:layout_height="45dp"
+        android:layout_height="wrap_content"
         app:title="设置"
-        app:titleStyle="bold"/>
+        app:titleBold="true"/>
 
-    <!-- 越界跟手回弹(rubber_target=container:整个容器一起回弹,拖到顶/底松手弹回) -->
+    <!-- 越界跟手回弹(rubber_target=container:整个容器一起回弹,拖到顶/底松手弹回)。
+         clipToPadding=true:滚动内容**不越过 padding**,即卡片最多滚到标题栏下方 8dp 处就截断 ——
+         之前是 false,卡片会一路滚到标题栏正下方;两者都是半透明的同一个面,叠在一起就像糊成一团
+         (用户口径:"贴着上方标题栏滚,重叠的时候看着很难受")。 -->
     <com.github.tvbox.osc.ui.kit.RubberBandScrollView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -21,7 +24,7 @@
         android:scrollbars="none"
         android:paddingTop="8dp"
         android:paddingBottom="8dp"
-        android:clipToPadding="false"
+        android:clipToPadding="true"
         >
 
         <LinearLayout
@@ -66,11 +69,11 @@
                         android:ellipsize="end" />
 
                     <ImageView
-                        android:layout_width="26dp"
-                        android:layout_height="26dp"
+                        android:layout_width="13dp"
+                        android:layout_height="13dp"
                         android:layout_gravity="center"
                         android:alpha="0.75"
-                        android:src="@drawable/ic_pre"
+                        android:src="@drawable/ic_seek_right"
                         app:tint="@color/text_foreground"/>
                 </LinearLayout>
 
@@ -104,11 +107,11 @@
                         android:ellipsize="end" />
 
                     <ImageView
-                        android:layout_width="26dp"
-                        android:layout_height="26dp"
+                        android:layout_width="13dp"
+                        android:layout_height="13dp"
                         android:layout_gravity="center"
                         android:alpha="0.75"
-                        android:src="@drawable/ic_pre"
+                        android:src="@drawable/ic_seek_right"
                         app:tint="@color/text_foreground"/>
                 </LinearLayout>
 
@@ -125,6 +128,7 @@
                     >
 
                     <TextView
+                        android:id="@+id/tvThemeTitle"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="主题颜色"
@@ -142,11 +146,11 @@
                         android:ellipsize="end" />
 
                     <ImageView
-                        android:layout_width="26dp"
-                        android:layout_height="26dp"
+                        android:layout_width="13dp"
+                        android:layout_height="13dp"
                         android:layout_gravity="center"
                         android:alpha="0.75"
-                        android:src="@drawable/ic_pre"
+                        android:src="@drawable/ic_seek_right"
                         app:tint="@color/text_foreground"/>
                 </LinearLayout>
 
@@ -179,11 +183,11 @@
                         android:ellipsize="end" />
 
                     <ImageView
-                        android:layout_width="26dp"
-                        android:layout_height="26dp"
+                        android:layout_width="13dp"
+                        android:layout_height="13dp"
                         android:layout_gravity="center"
                         android:alpha="0.75"
-                        android:src="@drawable/ic_pre"
+                        android:src="@drawable/ic_seek_right"
                         app:tint="@color/text_foreground"/>
                 </LinearLayout>
 
@@ -214,11 +218,11 @@
                         android:ellipsize="end" />
 
                     <ImageView
-                        android:layout_width="26dp"
-                        android:layout_height="26dp"
+                        android:layout_width="13dp"
+                        android:layout_height="13dp"
                         android:layout_gravity="center"
                         android:alpha="0.75"
-                        android:src="@drawable/ic_pre"
+                        android:src="@drawable/ic_seek_right"
                         app:tint="@color/text_foreground"/>
                 </LinearLayout>
             </LinearLayout>
@@ -355,11 +359,11 @@
                         android:ellipsize="end" />
 
                     <ImageView
-                        android:layout_width="26dp"
-                        android:layout_height="26dp"
+                        android:layout_width="13dp"
+                        android:layout_height="13dp"
                         android:layout_gravity="center"
                         android:alpha="0.75"
-                        android:src="@drawable/ic_pre"
+                        android:src="@drawable/ic_seek_right"
                         app:tint="@color/text_foreground"/>
                 </LinearLayout>
             </LinearLayout>
@@ -431,11 +435,11 @@
                         android:textSize="14sp"/>
 
                     <ImageView
-                        android:layout_width="26dp"
-                        android:layout_height="26dp"
+                        android:layout_width="13dp"
+                        android:layout_height="13dp"
                         android:layout_gravity="center"
                         android:alpha="0.75"
-                        android:src="@drawable/ic_pre"
+                        android:src="@drawable/ic_seek_right"
                         app:tint="@color/text_foreground"/>
                 </LinearLayout>
 
@@ -470,11 +474,11 @@
                         android:textSize="14sp"/>
 
                     <ImageView
-                        android:layout_width="26dp"
-                        android:layout_height="26dp"
+                        android:layout_width="13dp"
+                        android:layout_height="13dp"
                         android:layout_gravity="center"
                         android:alpha="0.75"
-                        android:src="@drawable/ic_pre"
+                        android:src="@drawable/ic_seek_right"
                         app:tint="@color/text_foreground"/>
                 </LinearLayout>
 
@@ -538,11 +542,11 @@
                         android:layout_weight="1" />
 
                     <ImageView
-                        android:layout_width="26dp"
-                        android:layout_height="26dp"
+                        android:layout_width="13dp"
+                        android:layout_height="13dp"
                         android:layout_gravity="center"
                         android:alpha="0.75"
-                        android:src="@drawable/ic_pre"
+                        android:src="@drawable/ic_seek_right"
                         app:tint="@color/text_foreground"/>
                 </LinearLayout>
 
@@ -575,11 +579,11 @@
                         android:ellipsize="end" />
 
                     <ImageView
-                        android:layout_width="26dp"
-                        android:layout_height="26dp"
+                        android:layout_width="13dp"
+                        android:layout_height="13dp"
                         android:layout_gravity="center"
                         android:alpha="0.75"
-                        android:src="@drawable/ic_pre"
+                        android:src="@drawable/ic_seek_right"
                         app:tint="@color/text_foreground"/>
                 </LinearLayout>
 
@@ -640,11 +644,11 @@
                         android:ellipsize="end" />
 
                     <ImageView
-                        android:layout_width="26dp"
-                        android:layout_height="26dp"
+                        android:layout_width="13dp"
+                        android:layout_height="13dp"
                         android:layout_gravity="center"
                         android:alpha="0.75"
-                        android:src="@drawable/ic_pre"
+                        android:src="@drawable/ic_seek_right"
                         app:tint="@color/text_foreground"/>
                 </LinearLayout>
 
@@ -677,11 +681,11 @@
                         android:ellipsize="end" />
 
                     <ImageView
-                        android:layout_width="26dp"
-                        android:layout_height="26dp"
+                        android:layout_width="13dp"
+                        android:layout_height="13dp"
                         android:layout_gravity="center"
                         android:alpha="0.75"
-                        android:src="@drawable/ic_pre"
+                        android:src="@drawable/ic_seek_right"
                         app:tint="@color/text_foreground"/>
                 </LinearLayout>
                 <LinearLayout
@@ -712,11 +716,11 @@
                         android:ellipsize="end" />
 
                     <ImageView
-                        android:layout_width="26dp"
-                        android:layout_height="26dp"
+                        android:layout_width="13dp"
+                        android:layout_height="13dp"
                         android:layout_gravity="center"
                         android:alpha="0.75"
-                        android:src="@drawable/ic_pre"
+                        android:src="@drawable/ic_seek_right"
                         app:tint="@color/text_foreground"/>
                 </LinearLayout>
 
@@ -748,11 +752,11 @@
                         android:ellipsize="end" />
 
                     <ImageView
-                        android:layout_width="26dp"
-                        android:layout_height="26dp"
+                        android:layout_width="13dp"
+                        android:layout_height="13dp"
                         android:layout_gravity="center"
                         android:alpha="0.75"
-                        android:src="@drawable/ic_pre"
+                        android:src="@drawable/ic_seek_right"
                         app:tint="@color/text_foreground"/>
                 </LinearLayout>
 
@@ -783,11 +787,11 @@
                         android:ellipsize="end" />
 
                     <ImageView
-                        android:layout_width="26dp"
-                        android:layout_height="26dp"
+                        android:layout_width="13dp"
+                        android:layout_height="13dp"
                         android:layout_gravity="center"
                         android:alpha="0.75"
-                        android:src="@drawable/ic_pre"
+                        android:src="@drawable/ic_seek_right"
                         app:tint="@color/text_foreground"/>
                 </LinearLayout>
 
@@ -918,11 +922,11 @@
                         android:layout_weight="1" />
 
                     <ImageView
-                        android:layout_width="26dp"
-                        android:layout_height="26dp"
+                        android:layout_width="13dp"
+                        android:layout_height="13dp"
                         android:layout_gravity="center"
                         android:alpha="0.75"
-                        android:src="@drawable/ic_pre"
+                        android:src="@drawable/ic_seek_right"
                         app:tint="@color/text_foreground"/>
                 </LinearLayout>
                 <LinearLayout
@@ -953,11 +957,11 @@
                         android:ellipsize="end" />
 
                     <ImageView
-                        android:layout_width="26dp"
-                        android:layout_height="26dp"
+                        android:layout_width="13dp"
+                        android:layout_height="13dp"
                         android:layout_gravity="center"
                         android:alpha="0.75"
-                        android:src="@drawable/ic_pre"
+                        android:src="@drawable/ic_seek_right"
                         app:tint="@color/text_foreground"/>
                 </LinearLayout>
 
@@ -986,11 +990,11 @@
                         android:layout_weight="1" />
 
                     <ImageView
-                        android:layout_width="26dp"
-                        android:layout_height="26dp"
+                        android:layout_width="13dp"
+                        android:layout_height="13dp"
                         android:layout_gravity="center"
                         android:alpha="0.75"
-                        android:src="@drawable/ic_pre"
+                        android:src="@drawable/ic_seek_right"
                         app:tint="@color/text_foreground"/>
                 </LinearLayout>
 

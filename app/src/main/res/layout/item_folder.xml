@@ -25,11 +25,20 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent">
 
+        <!-- 封面必须 centerCrop 铺满这个固定 120×72dp 的槽位,且不许"等比缩放留白":
+             缩略图是 MediaMetadataRetriever 取的关键帧,和槽位比例几乎不会一致(竖视频、宽幅视频尤其明显),
+             FIT_CENTER(此前 ImageView 没写 scaleType,走的就是这个默认值)会把画面缩成居中的一条,
+             背景层那份统一占位(灰底+居中图标)就从四周露出来 —— 观感就是"内容明明出来了,占位图还在"
+             (竖视频取到的帧偏宽,留白落在上下,于是成了"底部的占位图都显示出来了")。
+             clipToOutline 让实图跟着占位背景的圆角轮廓一起被裁,圆角卡片里不露直角。
+             src 不再放静态占位图(iv_video):统一占位只有一套,运行时一律由 FolderAdapter 经
+             PicassoLoad 铺在背景层(见 util/PosterPlaceholderDrawable)。 -->
         <ImageView
             android:id="@+id/iv"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:src="@drawable/iv_video" />
+            android:clipToOutline="true"
+            android:scaleType="centerCrop" />
 
     </com.lihang.ShadowLayout>
 

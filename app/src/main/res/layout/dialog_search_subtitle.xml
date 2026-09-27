@@ -10,7 +10,7 @@
     <com.lihang.ShadowLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        app:hl_layoutBackground="@color/bg_popup"
+        app:hl_layoutBackground="@color/bg_float"
         app:hl_cornerRadius="@dimen/radius_card"
         android:layout_marginHorizontal="10dp">
 

@@ -4,7 +4,6 @@ import android.animation.ValueAnimator;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.os.StatFs;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
@@ -31,6 +30,7 @@ import com.github.tvbox.osc.bean.VideoInfo;
 import com.github.tvbox.osc.databinding.FragmentDownloadBinding;
 import com.github.tvbox.osc.constant.CacheConst;
 import com.github.tvbox.osc.download.DownloadFacade;
+import com.github.tvbox.osc.state.StorageSpace;
 import com.github.tvbox.osc.util.DownloadDisplay;
 import com.github.tvbox.osc.util.DownloadGrouping;
 import com.github.tvbox.osc.util.PicassoLoad;
@@ -39,6 +39,7 @@ import com.github.tvbox.osc.ui.adapter.LocalVideoAdapter;
 import com.github.tvbox.osc.ui.dialog.ConfirmDialog;
 import com.github.tvbox.osc.ui.dialog.DeleteDownloadDialog;
 import com.github.tvbox.osc.ui.dialog.DialogCoordinator;
+import com.github.tvbox.osc.ui.kit.SelectActionBar;
 import com.github.tvbox.osc.util.Utils;
 
 import java.io.File;
@@ -100,6 +101,8 @@ public class DownloadFragment extends BaseVbFragment<FragmentDownloadBinding> {
     private boolean dlSelectMode = false;
     private final Set<String> selectedTaskIds = new LinkedHashSet<>();
     private int mSelectedCount = 0;
+    /** 操作栏上的"删除"键:可用态随选中数变化(取色走组件 SelectActionBar) */
+    private TextView mDeleteAction;
     /** 窄屏左滑已滑出的任务 id(下载中条目操作区保持展开,刷新重建后恢复) */
     private final Set<String> swipedTaskIds = new LinkedHashSet<>();
     /** 左滑操作区宽度缓存(px,<0 表示未计算) */
@@ -120,20 +123,12 @@ public class DownloadFragment extends BaseVbFragment<FragmentDownloadBinding> {
         // 顶部路径展示:点按返回聚合根级
         mBinding.llNav.setOnClickListener(v -> onBackPressed());
 
-        // 控件 box(吸底):全部暂停/全部开始(仅详情下载中多选)+ 全选/删除/取消全选
+        // 控件 box(吸底):全部暂停/全部开始(仅详情下载中多选)留在卡片里;
+        // 全选/删除/取消全选走公共组件 select_action_bar(与本地视频页同一款:主题面背景 + 危险键色),
+        // 它显示时占用底部"可用空间·下载配置"条的位置(见 updateToolbar)
         mBinding.btnPauseAll.setOnClickListener(v -> pauseSelected());
         mBinding.btnStartAll.setOnClickListener(v -> startSelected());
-        mBinding.tvAllCheck.setOnClickListener(v -> selectAllChecked());
-        mBinding.tvCancelAllChecked.setOnClickListener(v -> cancelAllChecked());
-        mBinding.tvDelete.setOnClickListener(v -> {
-            if (currentVodGroup == null) {
-                deleteSelectedAggregates();
-            } else if (currentTab == TAB_DOWNLOADING) {
-                deleteSelectedDownloading();
-            } else {
-                deleteChecked();
-            }
-        });
+        bindSelectActions();
 
         // ------------------------------------------------------------------
         // 聚合根级:剧集网格(收藏页样式;海报本地文件,左上角来源徽标/圆形多选框)
@@ -211,7 +206,7 @@ public class DownloadFragment extends BaseVbFragment<FragmentDownloadBinding> {
                     btnSwipe.setText(DownloadDisplay.swipeActionText(task));
                     float tx = swipedTaskIds.contains(task.id) ? -swipeRevealPx() : 0;
                     front.setTranslationX(tx);
-                    // 操作区只保留"已滑出的那一段"宽度:信息卡是半透明的(主题 bg_component alpha),
+                    // 操作区只保留"已滑出的那一段"宽度:信息卡是半透明的(主题 bg_card alpha),
                     // 整条铺在卡片下面会被透出来(见 item_download_task_new.xml 顶部说明)
                     setSwipeBehindWidth(swipeBehind, -tx);
                     attachSwipe(front, swipeBehind, task);
@@ -274,7 +269,7 @@ public class DownloadFragment extends BaseVbFragment<FragmentDownloadBinding> {
                         () -> {
                             DownloadFacade.get().remove(t, true);
                             refresh();
-                        }))
+                        }, true))
                         .show();
             }
         });
@@ -565,8 +560,12 @@ public class DownloadFragment extends BaseVbFragment<FragmentDownloadBinding> {
     private void updateStorageText() {
         try {
             File dir = DownloadFacade.get().getSaveDir();
-            StatFs stat = new StatFs(dir.getAbsolutePath());
-            long free = stat.getAvailableBytes();
+            // 可用空间统一问中控层(与下载看门狗/预检同一份测量,不再各页自己 new StatFs)
+            long free = StorageSpace.freeBytes(dir);
+            if (free < 0) {
+                mBinding.tvStorage.setText("");
+                return;
+            }
             String wifi = DownloadFacade.get().isWifiOnly() ? "仅Wi-Fi" : "Wi-Fi+流量";
             mBinding.tvStorage.setText("可用 " + DownloadDisplay.formatSize(free) + "  |  " + wifi + " · 并发 " + DownloadFacade.get().getMaxConcurrent());
         } catch (Throwable th) {
@@ -634,14 +633,16 @@ public class DownloadFragment extends BaseVbFragment<FragmentDownloadBinding> {
     // 控件 box(吸底):全选/删除/取消全选 + 全部暂停/全部开始(仅详情下载中)
     // ------------------------------------------------------------------
 
-    /** 刷新控件 box:可见性、全部暂停/全部开始可用态、删除按钮颜色(启用=红,深浅主题均清晰) */
+    /** 刷新控件 box:可见性、全部暂停/全部开始可用态、删除按钮颜色(启用=危险红,深浅主题均清晰) */
     private void updateToolbar() {
         boolean inDetail = currentVodGroup != null;
         boolean aggSel = !inDetail && aggSelectMode;
         boolean dlSel = inDetail && currentTab == TAB_DOWNLOADING && dlSelectMode;
         boolean doneSel = inDetail && currentTab == TAB_DONE && localVideoAdapter.isSelectMode();
         boolean show = aggSel || dlSel || doneSel;
-        mBinding.llMenu.setVisibility(show ? View.VISIBLE : View.GONE);
+        // 操作栏与底部"可用空间·下载配置"条**共用同一格**:多选时把那条临时顶掉(两者互斥显示)
+        mBinding.selectActionBar.setVisibility(show ? View.VISIBLE : View.GONE);
+        mBinding.llStorageBox.setVisibility(show ? View.GONE : View.VISIBLE);
         mBinding.llToolbarActions.setVisibility(dlSel ? View.VISIBLE : View.GONE);
         if (dlSel) {
             boolean canPause = false;
@@ -661,9 +662,28 @@ public class DownloadFragment extends BaseVbFragment<FragmentDownloadBinding> {
         boolean hasSel = aggSel ? !selectedAggKeys.isEmpty()
                 : dlSel ? !currentDlScope().isEmpty()
                 : doneSel && mSelectedCount > 0;
-        mBinding.tvDelete.setEnabled(hasSel);
-        mBinding.tvDelete.setTextColor(ContextCompat.getColor(mContext,
-                hasSel ? R.color.red : R.color.disable_text));
+        // 没有选中项时"删除"置灰:可用态只报"能不能点",取色由组件按 Kind(text_danger/disable)决定
+        mBinding.selectActionBar.setActionEnabled(mDeleteAction, hasSel);
+    }
+
+    /**
+     * 装配长按多选操作栏上的三个动作键(公共组件 ui/kit/SelectActionBar)。
+     * 三个键在"聚合级/下载中/下载完成"三种上下文里共用一份,点击时按当前上下文分派 ——
+     * 与旧布局里三个共享 TextView 的分工完全一致,只是样式(主题面背景/危险键色/可用态)收敛进了组件。
+     */
+    private void bindSelectActions() {
+        mBinding.selectActionBar.addAction("全选", SelectActionBar.Kind.NORMAL, v -> selectAllChecked());
+        mDeleteAction = mBinding.selectActionBar.addAction("删除", SelectActionBar.Kind.DANGER, v -> {
+            if (currentVodGroup == null) {
+                deleteSelectedAggregates();
+            } else if (currentTab == TAB_DOWNLOADING) {
+                deleteSelectedDownloading();
+            } else {
+                deleteChecked();
+            }
+        });
+        mBinding.selectActionBar.addAction("取消全选", SelectActionBar.Kind.NORMAL, v -> cancelAllChecked());
+        mBinding.selectActionBar.setActionEnabled(mDeleteAction, false);
     }
 
     /** 全选:聚合=全部剧集,详情下载中=该剧全部任务,详情下载完成=全部文件 */
@@ -818,7 +838,7 @@ public class DownloadFragment extends BaseVbFragment<FragmentDownloadBinding> {
                     }
                     exitDlSelectMode();
                     refresh();
-                }))
+                }, true))
         .show();
     }
 
@@ -1008,7 +1028,7 @@ public class DownloadFragment extends BaseVbFragment<FragmentDownloadBinding> {
 
     /**
      * 设置左滑操作区槽位宽度 = 卡片已让出的那一段(px)。
-     * <p>为什么是"动态宽度"而不是"整条铺着让卡片盖住":信息卡底色是主题 bg_component(alpha 60),
+     * <p>为什么是"动态宽度"而不是"整条铺着让卡片盖住":信息卡底色是主题 bg_card(alpha 60),
      * 半透明卡片盖不住下面垫着的色块,会按 40% 透出来(每行右侧一条浑浊蓝/红色带)。
      * 槽位宽度跟随位移后,卡片之外永远只有真正露出来的那一截,静止时宽度为 0 —— 垫在卡片下的像素恒为 0。
      */

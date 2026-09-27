@@ -91,7 +91,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 tools:text="优酷小程序"
-                android:textColor="@color/text_accent"
+                android:textColor="@color/text_highlight"
                 android:textSize="@dimen/search_card_text_size"
                 android:ellipsize="end"
                 android:singleLine="true"/>

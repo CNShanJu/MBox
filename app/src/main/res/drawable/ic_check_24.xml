@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 完成对勾:来自 LiteIcon 的「勾.svg」,path 原样搬过来(1024 视口 + 单路径)。
+     用途:更新悬浮气泡"下载完成"态的中心图标 —— 原来用 ic_check_circle(圈里一个勾),
+     放进气泡自己的圆盘里就成了"圈套圈",看着乱;纯勾才是这块盘面上该有的东西。
+     颜色不写死:视图按状态 tint(完成 = download_done 绿)。
+     注意 ic_check_circle 还被 button_checkbox 用着(勾选框的选中态),不要动那个文件。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="1024"
+    android:viewportHeight="1024">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M406.75 855.56c-40.96 0-79.57-17.85-106.12-49.13L79.25 545.61c-23.34-27.5-19.96-68.71 7.53-92.05 27.49-23.35 68.68-20 92.05 7.53L400.2 721.91c1.76 2.05 3.53 2.78 6.68 3.04 2.68-0.03 4.91-1.11 6.59-3.2l426.78-528.47c22.64-28.07 63.77-32.45 91.83-9.78 28.06 22.66 32.44 63.77 9.78 91.83L515.08 803.81c-26.15 32.38-65.01 51.23-106.61 51.74-0.57 0.01-1.15 0.01-1.72 0.01z" />
+</vector>

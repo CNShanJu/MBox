@@ -78,14 +78,16 @@
 			android:gravity="center"
 			android:layout_alignParentBottom="true">
 
+			<!-- 上一个/下一个线路:图标缩小一半(padding 吃掉一半),但**点击区域保持 30dp** ——
+			     这两个 ImageView 本身就是按钮(LiveActivity 里 setOnClickListener),不能靠缩 view 来缩小图标 -->
 			<ImageView
 				android:id="@+id/ic_pre_source"
 				android:layout_width="30dp"
 				android:layout_height="30dp"
-				android:src="@drawable/ic_pre"
+				android:src="@drawable/ic_seek_right"
 				app:tint="@color/text_foreground"
 				android:rotation="-180"
-				android:padding="4dp"
+				android:padding="10dp"
 				/>
 			<TextView
 				android:id="@+id/tv_source"
@@ -100,9 +102,9 @@
 				android:id="@+id/ic_next_source"
 				android:layout_width="30dp"
 				android:layout_height="30dp"
-				android:src="@drawable/ic_pre"
+				android:src="@drawable/ic_seek_right"
 				app:tint="@color/text_foreground"
-				android:padding="4dp"
+				android:padding="10dp"
 				/>
 		</LinearLayout>
 

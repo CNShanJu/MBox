@@ -21,6 +21,26 @@ public class ControlManager {
     private RemoteServer mServer = null;
     public static Context mContext;
 
+    /** 局域网服务状态:未开启 */
+    public static final int LAN_OFF = 0;
+    /** 局域网服务状态:开关已开,但当前运行的服务实例仍是"仅本机"绑定 —— 需要重启应用才生效 */
+    public static final int LAN_PENDING_RESTART = 1;
+    /** 局域网服务状态:已开启且当前实例已绑定所有网卡,局域网设备可访问 */
+    public static final int LAN_ACTIVE = 2;
+    /**
+     * 局域网服务状态:开关已关,但当前运行的实例<b>still</b>绑着所有网卡 —— 要重启才收回对外访问。
+     * <p>为什么要单独一种:关掉开关不会立刻关端口(同一个进程里服务还在跑),此时若显示"仅本机可访问"
+     * 就是把暴露面说小了;如实说明"重启后才会停止"才对得上用户按下开关的预期。
+     */
+    public static final int LAN_PENDING_CLOSE = 3;
+
+    /**
+     * 当前运行的 HTTP 服务实例是否按"局域网"绑定(构造时传 null hostname = 所有网卡)。
+     * <p>为什么单独记而不是现读开关:开关是**重启生效**的,"开关=开"只代表用户意愿,
+     * 不代表这个进程里的服务真的对外可达 —— 设置页要如实区分这两种情形(见 {@link #lanState()})。
+     */
+    private volatile boolean lanBound = false;
+
     private ControlManager() {
 
     }
@@ -40,17 +60,75 @@ public class ControlManager {
         mContext = context;
     }
 
+    /**
+     * 服务基址。服务未起(或已停)时不再抛 NPE:给一个端口正确的默认基址
+     * (App.onCreate 注入 ApiConfig.lanBase 时服务通常还没起,原来只能靠调用方 try/catch 兜)
+     */
     public String getAddress(boolean local) {
-        return local ? mServer.getLoadAddress() : mServer.getServerAddress();
+        RemoteServer s = mServer;
+        if (s != null) return local ? s.getLoadAddress() : s.getServerAddress();
+        String host = (local || mContext == null) ? "127.0.0.1" : RemoteServer.getLocalIPAddress(mContext);
+        return "http://" + host + ":" + RemoteServer.serverPort + "/";
+    }
+
+    /**
+     * 局域网服务当前状态({@link #LAN_OFF} / {@link #LAN_PENDING_RESTART} / {@link #LAN_ACTIVE} /
+     * {@link #LAN_PENDING_CLOSE}):按"开关 × 当前实例的真实绑定"如实回答,设置页据此说明
+     * "开了但还要重启 / 已经能访问了 / 关了但端口还开着(要重启才收回)"。
+     */
+    public int lanState() {
+        boolean enabled = SystemConfig.isLanServerEnabled();
+        RemoteServer s = mServer;
+        boolean running = s != null && s.isStarting();
+        if (enabled) return (running && lanBound) ? LAN_ACTIVE : LAN_PENDING_RESTART;
+        // 关闭方向:实例还在且仍绑着所有网卡 → 端口此刻其实还开着,必须如实说明
+        return (running && lanBound) ? LAN_PENDING_CLOSE : LAN_OFF;
+    }
+
+    /**
+     * 局域网访问地址列表(形如 {@code http://192.168.1.23:9978/})。
+     * <p>
+     * 开关没开、或开了但还没重启时**也照常给**:设置页要告诉用户"开起来重启后从哪个地址进来",
+     * 看不到地址正是"开了也不知道怎么访问"的根源。取不到内网地址(手机没连 Wi‑Fi)时返回空表,
+     * 由界面明说"没取到局域网 IP";退一步把 Wi‑Fi 接口报的地址也补上(少见的非 RFC1918 内网网段)。
+     */
+    public java.util.List<String> getLanAccessUrls() {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        for (String ip : RemoteServer.getLanIpv4Addresses()) {
+            String url = com.github.tvbox.osc.util.LanAddressRules.url(ip, RemoteServer.serverPort);
+            if (!url.isEmpty()) out.add(url);
+        }
+        if (out.isEmpty() && mContext != null) {
+            try {
+                String ip = RemoteServer.getLocalIPAddress(mContext);
+                String url = com.github.tvbox.osc.util.LanAddressRules.url(ip, RemoteServer.serverPort);
+                if (!url.isEmpty()) out.add(url);
+            } catch (Throwable ignored) {
+            }
+        }
+        return out;
     }
 
     public void startServer() {
-        if (mServer != null) {
-            return;
+        boolean lanEnabled = SystemConfig.isLanServerEnabled();
+        RemoteServer running = mServer;
+        if (running != null) {
+            // 已在跑且绑定方式就是当前配置:复用(本方法是幂等的,首页每次 init 都会调用)
+            if (running.isStarting() && lanBound == lanEnabled) {
+                return;
+            }
+            // 已停(首页销毁过)或绑定方式变了(开关改动后重启应用):必须停旧实例再重建。
+            // 历史实现只在 stopServer 里 stop 而不清引用,于是这里被 "mServer != null" 直接挡掉 ——
+            // 同一个进程里重启应用(CLEAR_TASK 重启:备份还原后、开启局域网服务后)会让本机服务
+            // 再也起不来(回环订阅/播放/proxy 全失效),是个潜伏已久的坑。
+            try {
+                running.stop();
+            } catch (Throwable ignored) {
+            }
+            mServer = null;
         }
         // 默认仅绑定本机回环:本 App 的订阅/本地播放/代理全部走 127.0.0.1,无需对局域网开放端口。
         // 需要局域网文件共享/远程管理(web 控制台)时,显式开启 HawkConfig.LAN_SERVER_ENABLE 后重启生效。
-        boolean lanEnabled = SystemConfig.isLanServerEnabled();
         final int preferredPort = RemoteServer.serverPort; // 首选端口(默认 9978);被占用时下面循环 +1 重试
         boolean started = false;
         do {
@@ -75,6 +153,7 @@ public class ControlManager {
             });
             try {
                 mServer.start();
+                lanBound = lanEnabled; // 记下本次实例的实际绑定方式(供 lanState 区分"已开但没重启")
                 IjkMediaPlayer.setDotPort(SystemConfig.getDohUrl() > 0, RemoteServer.serverPort);
                 // server 就绪后注入局域网地址(:spider 模块 ApiConfig 用,替代直接依赖本类)
                 try {
@@ -102,9 +181,22 @@ public class ControlManager {
         }
     }
 
+    /**
+     * 停止本机 HTTP 服务并<b>清掉实例引用</b>:下一次 {@link #startServer()} 才能按最新开关重建。
+     * <p>
+     * 清引用这一步不能省:首页销毁会走到这里,而 CLEAR_TASK 式的"重启应用"(备份还原后、开启
+     * 局域网服务后)用的是同一个进程 —— 引用留着会让新首页的 startServer 判定"已存在"而直接返回,
+     * 服务就一直是停的(订阅/本地播放/proxy 全部失效,直到用户手动杀掉进程)。
+     */
     public void stopServer() {
-        if (mServer != null && mServer.isStarting()) {
-            mServer.stop();
+        RemoteServer s = mServer;
+        mServer = null;
+        lanBound = false;
+        if (s != null && s.isStarting()) {
+            try {
+                s.stop();
+            } catch (Throwable ignored) {
+            }
         }
     }
 }

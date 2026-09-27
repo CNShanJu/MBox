@@ -1,6 +1,7 @@
 package com.github.tvbox.osc.ui.activity
 
 import android.content.DialogInterface
+import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
@@ -21,9 +22,13 @@ import com.github.tvbox.osc.util.ThrottlePolicy
 import com.github.tvbox.osc.ui.adapter.SelectDialogAdapter
 import com.github.tvbox.osc.ui.adapter.SelectDialogAdapter.SelectDialogInterface
 import com.github.tvbox.osc.ui.dialog.BackupDialog
+import com.github.tvbox.osc.ui.dialog.DialogCoordinator
+import com.github.tvbox.osc.ui.dialog.LanServerDialog
 import com.github.tvbox.osc.ui.dialog.LiveApiDialog
 import com.github.tvbox.osc.ui.dialog.SelectDialog
 import com.github.tvbox.osc.ui.dialog.TextTipDialog
+import com.github.tvbox.osc.ui.dialog.ThemePickerDialog
+import com.github.tvbox.osc.storage.theme.ThemeStore
 import com.github.tvbox.osc.util.FastClickCheckUtil
 import com.github.tvbox.osc.util.FileUtils
 import com.github.tvbox.osc.util.HeavyTaskUtil
@@ -32,7 +37,9 @@ import com.github.tvbox.osc.util.LoadingAnim
 import com.github.tvbox.osc.util.OkGoHelper
 import com.github.tvbox.osc.util.PlayerHelper
 import com.github.tvbox.osc.config.SystemConfig
+import com.github.tvbox.osc.server.ControlManager
 import com.github.tvbox.osc.util.Utils
+import com.blankj.utilcode.util.AppUtils
 import com.hjq.permissions.OnPermissionCallback
 import com.hjq.permissions.Permission
 import com.hjq.permissions.XXPermissions
@@ -54,6 +61,19 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
     /** init() 是否已跑完(onResume 刷新显示前要确认控件已就绪) */
     private var inited = false
 
+    /** 局域网服务弹窗引用:view 模式弹窗不接管返回键,由本页 onBackPressed 先关它(见文件末尾) */
+    private var lanDialog: com.lxj.xpopup.core.BasePopupView? = null
+
+    /** 主题颜色弹窗引用(编辑页返回后若它还开着,就地刷新列表) */
+    private var themeDialog: com.github.tvbox.osc.ui.dialog.ThemePickerDialog? = null
+    /** 进过主题编辑页并保存/删除过:弹窗关闭时要提交并重启生效(见 showThemePicker) */
+    private var themeEditedWhileOpen = false
+
+    private companion object {
+        /** 主题编辑页请求码 */
+        const val REQ_THEME_EDITOR = 0x0E10
+    }
+
     /** 设置操作业务日志:写结构化业务日志(SYSTEM) */
     private fun biz(msg: String) {
         com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM, "设置: " + msg)
@@ -61,7 +81,8 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
 
     override fun init() {
 
-        mBinding.titleBar.leftView.setOnClickListener { onBackPressed() }
+        // 返回键与系统返回同一口径(统一头部的返回行为在这里接管)
+        mBinding.titleBar.setOnBackClickListener { onBackPressed() }
         mBinding.tvMediaCodec.text = PlayConfig.getIjkCodec()
 
         // 下载设置:仅WiFi / 并发数 / 保存位置(与下载页标题栏齿轮共用 DownloadConfig,单一事实源)
@@ -90,11 +111,13 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
 
         // 局域网服务开关(默认关闭):关闭时 HTTP 服务仅监听 127.0.0.1(订阅/本地播放/代理不受影响);
         // 开启后局域网设备可访问 web 控制台与文件共享,管理型请求需携带进程令牌(见 RemoteServer)。
-        // 说明不写进设置行(横排塞不下),长按标题弹 tip 看"到底干啥"(见 R.string.setting_lan_server_tip)。
+        // 地址与说明一律不进设置行(横排"标题+开关"塞不下),全部放 LanServerDialog:
+        // ①开关由关变开时自动弹一次(此刻最需要知道"从哪个地址进来");
+        // ②标题长按随时再看(换网络后地址会变)。见 ui/dialog/LanServerDialog 与 R.string.setting_lan_server_tip。
         val lanEnabled = SystemConfig.isLanServerEnabled()
         mBinding.switchLanServer.setChecked(lanEnabled)
         mBinding.tvLanServerTitle.setOnLongClickListener {
-            showSettingTip("局域网服务", R.string.setting_lan_server_tip)
+            showLanServerDialog()
             true
         }
         mBinding.llLanServer.setOnClickListener { view: View? ->
@@ -103,9 +126,12 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             mBinding.switchLanServer.setChecked(newVal)
             SystemConfig.setLanServerEnabled(newVal)
             biz(if (newVal) "开启局域网服务(重启后生效)" else "关闭局域网服务(仅本机)")
-            AppBubble.toast(
-                if (newVal) "已开启局域网服务,重启应用后生效" else "已关闭局域网服务(仅本机),重启应用后生效"
-            )
+            if (newVal) {
+                // 开启后弹窗:把"访问地址 + 还需重启"一次说清,并给一键重启(否则用户只能自己去后台杀应用)
+                showLanServerDialog()
+            } else {
+                AppBubble.toast("已关闭局域网服务(仅本机),重启应用后生效")
+            }
         }
 
         // 忽略证书错误(默认关闭,会降低 TLS 安全性):个别自签名/证书异常站点打不开时再开启;
@@ -473,49 +499,20 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             mBinding.llTheme.visibility = View.GONE
         }
-        val oldTheme = SystemConfig.getTheme()
-        val themes = arrayOf("跟随系统", "浅色", "深色")
-        mBinding.tvTheme.text = themes[oldTheme]
+        updateThemeValue()
+        // 用法说明放标题长按(横排设置行塞不下长说明,与「忽略证书错误」等同一套口径)
+        mBinding.tvThemeTitle.setOnLongClickListener {
+            showSettingTip("主题颜色", R.string.setting_theme_tip)
+            true
+        }
         mBinding.llTheme.setOnClickListener(View.OnClickListener { view: View? ->
             FastClickCheckUtil.check(view)
-            val types = ArrayList<Int>()
-            types.add(0)
-            types.add(1)
-            types.add(2)
-            val dialog = SelectDialog<Int>(this@SettingActivity)
-            dialog.setTip("请选择")
-            dialog.setAdapter(object : SelectDialogInterface<Int?> {
-                override fun click(value: Int?, pos: Int) {
-                    mBinding.tvTheme.text = themes[value?:0]
-                    SystemConfig.setTheme(value ?: 0)
-                    biz("主题: " + themes[value ?: 0])
-                }
-
-                override fun getDisplay(value: Int?): String {
-                    return themes[value?:0]
-                }
-            }, object : DiffUtil.ItemCallback<Int>() {
-                override fun areItemsTheSame(oldItem: Int, newItem: Int): Boolean {
-                    return oldItem == newItem
-                }
-
-                override fun areContentsTheSame(oldItem: Int, newItem: Int): Boolean {
-                    return oldItem == newItem
-                }
-            }, types, oldTheme)
-            dialog.setOnDismissListener { dialog1: DialogInterface? ->
-                if (oldTheme != SystemConfig.getTheme()) {
-                    Utils.initTheme()
-                    val bundle = Bundle()
-                    bundle.putBoolean(IntentKey.CACHE_CONFIG_CHANGED, true)
-                    jumpActivity(MainActivity::class.java, bundle)
-                }
-            }
-            dialog.show()
+            showThemePicker()
         })
 
         // 背景图设置(二级页):展示当前背景图,支持换图/拖动缩放位置/调遮罩透明度/恢复默认
         updatePageBackgroundValue()
+        updatePageBackgroundVisibility()
         mBinding.llPageBackground.setOnClickListener(View.OnClickListener { view: View? ->
             FastClickCheckUtil.check(view)
             jumpActivity(BackgroundSettingActivity::class.java)
@@ -669,6 +666,12 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
     }
 
     override fun onBackPressed() {
+        // 局域网服务弹窗(地址/状态)是 view 模式的底部弹窗,不会自己吃掉返回键 —— 先关它再谈退出本页
+        val lan = lanDialog
+        if (lan != null && lan.isShow) {
+            lan.dismiss()
+            return
+        }
         if (homeRec != SystemConfig.getHomeRec() || dnsOpt != SystemConfig.getDohUrl()
             || currentLiveApi != SystemConfig.getLiveUrl()
         ) { // 首页类型/dns/doh/直播源有更改,需重载页面
@@ -689,13 +692,98 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
     override fun onResume() {
         super.onResume()
         // 背景图设置页返回后刷新取值(默认/自定义)
-        if (inited) updatePageBackgroundValue()
+        if (inited) {
+            updatePageBackgroundValue()
+            updatePageBackgroundVisibility()
+            updateThemeValue()
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 主题颜色:弹窗(列表 + 自定义入口) + 编辑页 + 关闭弹窗后重启生效
+    // ------------------------------------------------------------------
+
+    /** 设置页那一行显示的当前主题名(内置亮/暗显示"浅色/深色",自定义显示主题名) */
+    private fun updateThemeValue() {
+        mBinding.tvTheme.text = ThemeStore.activeDisplayName()
+    }
+
+    /**
+     * 主题颜色弹窗。<b>一切改动都只在弹窗关闭后一次性提交并重启生效</b>(用户口径):
+     * 主题切换本身要重启 App,提前生效会看到"弹窗还开着、界面已经变了"的半生效状态;
+     * 删除正在使用的主题更是必须等选中项一起落定。
+     */
+    private fun showThemePicker() {
+        val dialog = ThemePickerDialog(this)
+        dialog.setListener(object : ThemePickerDialog.Listener {
+            override fun onEditTheme(def: com.github.tvbox.osc.bean.theme.ThemeDef) {
+                startThemeEditor(def.id)
+            }
+
+            override fun onCreateTheme() {
+                startThemeEditor("")
+            }
+        })
+        dialog.setOnDismissListener {
+            val changed = dialog.commitIfDirty()
+            if (changed || themeEditedWhileOpen) {
+                themeEditedWhileOpen = false
+                updateThemeValue()
+                biz("主题: " + ThemeStore.activeDisplayName())
+                applyThemeAndRestart()
+            }
+        }
+        dialog.show()
+        themeDialog = dialog
+    }
+
+    /** 进主题编辑页(带结果返回:保存/删除过就要重新提交并重启) */
+    private fun startThemeEditor(themeId: String) {
+        val intent = Intent(this, ThemeEditorActivity::class.java)
+        intent.putExtra(ThemeEditorActivity.EXTRA_THEME_ID, themeId)
+        startActivityForResult(intent, REQ_THEME_EDITOR)
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQ_THEME_EDITOR) return
+        updateThemeValue()
+        // 编辑页保存/删除过:主题文件已经落盘,但"生效"要回到这里统一走重启。
+        // 弹窗若还在(XPopup 不会因为跳 Activity 自动关)就地刷新列表;不在了就重新弹一次 ——
+        // 用户口径是"保存后返回上级页面,主题弹窗还在,新主题插在自定义入口前面"。
+        if (resultCode == RESULT_OK) themeEditedWhileOpen = true
+        val popup = themeDialog
+        if (popup != null && popup.isShow) {
+            popup.refreshList()
+        } else if (resultCode == RESULT_OK) {
+            showThemePicker()
+        }
+    }
+
+    /**
+     * 生效:与既有的浅色/深色切换完全同一条链路 —— 先按主题解析出夜间模式,
+     * 再带"缓存配置已变"重载主页(这一步就是用户说的"重启应用")。
+     */
+    private fun applyThemeAndRestart() {
+        Utils.initTheme()
+        val bundle = Bundle()
+        bundle.putBoolean(IntentKey.CACHE_CONFIG_CHANGED, true)
+        jumpActivity(MainActivity::class.java, bundle)
     }
 
     /** 背景图取值:默认(跟随主题) / 自定义(用户自己设过,含显式纯色) */
     private fun updatePageBackgroundValue() {
         mBinding.tvPageBackground.text =
             if (SystemConfig.isPageBackgroundUserSet()) "自定义" else "默认"
+    }
+
+    /**
+     * 背景图入口只对内置主题显示:自定义主题自带背景(在主题编辑页设),生效时盖过全局背景图,
+     * 全局入口留着只会和主题自己的背景打架;切回内置浅色/深色(含跟随系统解析到内置)才放出来。
+     */
+    private fun updatePageBackgroundVisibility() {
+        mBinding.llPageBackground.visibility =
+            if (ThemeStore.resolveActive() == null) View.VISIBLE else View.GONE
     }
 
     private fun onClickClearCache(v: View) {
@@ -731,5 +819,53 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
         XPopup.Builder(this)
             .asCustom(TextTipDialog(this, title, getString(contentRes)))
             .show()
+    }
+
+    /**
+     * 局域网服务弹窗(地址 / 状态 / 一键重启):开关打开时自动弹一次,标题长按随时再看。
+     * 用 view 模式的底部弹窗(与其他底部弹窗同一套组装),返回键由本页 onBackPressed 负责关掉它。
+     */
+    private fun showLanServerDialog() {
+        val dialog = DialogCoordinator.bottom(
+            this,
+            LanServerDialog(this) { restartAppForLan() },
+            0
+        )
+        lanDialog = dialog
+        dialog.show()
+    }
+
+    /**
+     * 让「局域网服务」生效:重启应用(不杀进程,CLEAR_TASK 重建任务栈 —— 与备份还原后的重启同一套做法)。
+     * <p>
+     * 先显式 {@code stopServer()}:重启走的是同一个进程,旧的服务实例(仅本机绑定)如果还留着,
+     * 新首页的 startServer 会判定"已存在"而直接返回,服务就一直是停的(订阅/本地播放/proxy 全失效)。
+     */
+    private fun restartAppForLan() {
+        biz("局域网服务:重启应用使其生效")
+        try {
+            ControlManager.get().stopServer()
+        } catch (t: Throwable) {
+            Log.w("TVBox-Setting", "重启前停止本机服务失败", t)
+        }
+        try {
+            val launch = packageManager.getLaunchIntentForPackage(packageName)
+            if (launch != null) {
+                launch.addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK
+                            or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                            or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                )
+                startActivity(launch)
+                return
+            }
+        } catch (t: Throwable) {
+            Log.w("TVBox-Setting", "重启应用失败,改用兜底方式", t)
+        }
+        try {
+            AppUtils.relaunchApp(true)
+        } catch (t: Throwable) {
+            AppBubble.toast("重启失败,请手动退出并重新打开应用")
+        }
     }
 }

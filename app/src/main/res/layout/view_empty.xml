@@ -27,7 +27,7 @@
         android:layout_marginTop="8dp"
         android:gravity="center_horizontal"
         android:lineSpacingExtra="4dp"
-        android:text="暂无数据"
+        android:text="@string/empty_default_tip"
         android:textColor="@color/text_sub_foreground"
         android:textSize="14sp" />
 </LinearLayout>

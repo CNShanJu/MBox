@@ -14,7 +14,7 @@ import com.lxj.xpopup.core.BottomPopupView;
 
 /**
  * 统一的底部弹窗基类:
- * 背景统一使用 {@link R.drawable#bg_bottom_dialog}(顶部圆角 + bg_popup 主题色),
+ * 背景统一使用 {@link R.drawable#bg_bottom_dialog}(顶部圆角 + bg_float 主题色),
  * 最大高度统一按 {@link DialogHeightPolicy} 分档封顶(内容自适应,内容少时保持内容高);
  * 横屏时宽度限制为屏幕 55% 居中, 防全宽挤压。
  * 调主题背景/尺寸只改基类/常量,一处生效全部底部弹窗。
@@ -42,7 +42,7 @@ public abstract class AppBottomPopupView extends BottomPopupView {
     @Override
     protected void onCreate() {
         super.onCreate();
-        // 统一底部弹窗背景:顶部圆角 + 主题背景色(bg_popup 浅色白 / 暗色深)
+        // 统一底部弹窗背景:顶部圆角 + 主题背景色(bg_float 浅色白 / 暗色深)
         View root = getPopupImplView();
         if (root != null) {
             root.setBackgroundResource(R.drawable.bg_bottom_dialog);

@@ -9,7 +9,7 @@
      滑开时行右角与删除块的圆角完全重合,行左角在卡片滑走后也始终保持圆角。
 
      两个硬约束(改任一条都会失效):
-     1) solid 必须透明 —— 这一层叠在半透明信息卡(主题 bg_component alpha)下面,带颜色会让每张卡变深;
+     1) solid 必须透明 —— 这一层叠在半透明信息卡(主题 bg_card alpha)下面,带颜色会让每张卡变深;
      2) 必须用统一的 android:radius,不要写成 topLeftRadius/bottomLeftRadius 等分角形式 ——
         GradientDrawable.getOutline 对统一半径走 setRoundRect(干净的圆角矩形轮廓),
         分角写法会退化成 Path 轮廓(见 Android 34 源码 GradientDrawable#getOutline)。 -->

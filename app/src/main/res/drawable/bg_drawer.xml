@@ -3,5 +3,5 @@
     <corners
         android:topLeftRadius="@dimen/radius_dialog"
         android:bottomLeftRadius="@dimen/radius_dialog" />
-    <solid android:color="@color/bg_popup" />
+    <solid android:color="@color/bg_float" />
 </shape>

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 长按多选操作栏的内容行:容器与样式由 ui/kit/SelectActionBar 提供(按键由调用方现加),
+     这里只是一条等宽排布的行,别在各页面再复制一份同样的三连 TextView。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/sab_row"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:baselineAligned="false"
+    android:orientation="horizontal" />

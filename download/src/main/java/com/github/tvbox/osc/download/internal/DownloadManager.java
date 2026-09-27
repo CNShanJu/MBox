@@ -172,6 +172,11 @@ public class DownloadManager {
     final DownloadScheduler scheduler;
     final DownloadExecutor executor;
     final DownloadPolicy policy;
+    /**
+     * 存储看门狗(全下载链路唯一实现,见 {@link StorageWatchdog}):可用空间低于 1GB 时暂停全部任务。
+     * 由调度闸门(不许新开)、下载热路径(写循环自检)、后台巡检(2s 一轮)三处共用同一实例。
+     */
+    final StorageWatchdog watchdog;
     /** 已下载档案（长期保留，5.3） */
     final com.github.tvbox.osc.download.internal.DownloadArchive archive;
 
@@ -180,6 +185,7 @@ public class DownloadManager {
         scheduler = new DownloadScheduler(this);
         executor = new DownloadExecutor(this);
         policy = new DownloadPolicy(this);
+        watchdog = new StorageWatchdog(this);
         archive = com.github.tvbox.osc.download.internal.DownloadArchive.get();
     }
 
@@ -367,14 +373,15 @@ public class DownloadManager {
 
     /**
      * 任务大小异步预检(入队后调用,下载页尽早显示"约大小",启动前磁盘判断直接复用结果):
-     * 直链探测精确 Content-Length(写 totalBytes);m3u8 按码率×时长估算(写 estimatedBytes)。
+     * 直链探测精确 Content-Length(写 totalBytes);m3u8 由执行器抽样探测分片后推算(写 estimatedBytes)。
      * 单飞去重;完成后大小有变化才落盘并广播一次(驱动下载页行内大小展示)。
      */
     void probeSizeAsync(final DownloadTask t) {
         if (t == null || t.state == DownloadTask.STATE_COMPLETED || t.state == DownloadTask.STATE_CANCELLED) return;
-        // m3u8 不做入队预检:估算需要拉一次整份播放列表(大且带 sign),下载任务本身启动时也会拉一次并据此估算,
-        // 再预检会额外白拉一遍并增加 CDN 掐连接/资源未关闭的概率。m3u8 的"约大小/磁盘预检"由
-        // 启动时的阻塞探测(checkDiskSpace)负责;直链仅一个轻量 HEAD,保留入队异步预检。
+        // m3u8 不做入队预检:抽样探测要先拉一次整份播放列表(大且带 sign)再发十几个 HEAD,
+        // 而下载任务本身启动时也要拉同一份清单,再预检等于把这份开销翻倍、还多一次 CDN 掐连接的机会。
+        // m3u8 的"约大小/磁盘预检"由启动时的阻塞探测(checkDiskSpace → probeSizeBlocking)负责;
+        // 直链仅一个轻量 HEAD,保留入队异步预检。
         if (t.url != null && t.url.toLowerCase().contains(".m3u8")) return;
         probeExecutor.execute(() -> {
             try {

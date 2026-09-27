@@ -138,7 +138,7 @@ public final class UpdateCheck {
     /** 下载并安装:进度与控制交全局悬浮圈(UpdateFloatIndicator),与"关于"页手动更新动作一致 */
     private static void startDownload(final Context context, final Updater updater, final UpdateInfo info) {
         if (context == null || updater == null || info == null) return;
-        AppBubble.toast("已开始下载,进度可通过悬浮圆圈查看/控制");
+        AppBubble.toast("已开始下载,长按气泡可进入控制面板");
         updater.downloadAndInstall(context, info, new Updater.Callback() {
             @Override
             public void onCheckStart() {

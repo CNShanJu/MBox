@@ -55,4 +55,14 @@
     <declare-styleable name="SizedIconTextView">
         <attr name="drawableIconSize" format="dimension" />
     </declare-styleable>
+
+    <!-- 全站统一头部(ui/kit/AppTitleBar):标题 + 返回 + 右侧动作。
+         右侧动作 = 布局里的子 View(自动收进右容器、垂直居中、统一间距)。
+         只保留"内容"相关的三个属性,几何(字号/图标尺寸/间距/背景)一律由组件内部定义,
+         页面改不动 —— 以前正是各页自己写这些才导致"返回图标跟标题对不齐""关闭键大小不一"。 -->
+    <declare-styleable name="AppTitleBar">
+        <attr name="title" format="string" />
+        <attr name="titleBold" format="boolean" />
+        <attr name="showBack" format="boolean" />
+    </declare-styleable>
 </resources>

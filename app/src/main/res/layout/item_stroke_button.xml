@@ -32,7 +32,7 @@
         android:focusable="true"
         android:padding="12dp"
         android:src="@drawable/ic_delete"
-        app:tint="@color/red" />
+        app:tint="@color/text_danger" />
 
 </LinearLayout>
 

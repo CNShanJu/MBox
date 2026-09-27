@@ -25,7 +25,7 @@
             android:clipToPadding="false"
             />
 
-        <!-- 直播悬浮按钮: 54dp 圆, 圆形裁剪(clipToOutline), 底色=悬浮色 bg_float(94%,与底栏/气泡一致),
+        <!-- 直播悬浮按钮: 54dp 圆, 圆形裁剪(clipToOutline), 底色=悬浮色 bg_surface(94%,与底栏/气泡一致),
              不再单独叠一层主题遮罩(两层会把半透明盖实);marginBottom=78dp(58 悬浮底栏 + 20 间距), 不被底栏覆盖。
              **默认 gone**:频道列表为空(源没配直播)时压根不该出现,有内容才由代码置 VISIBLE(UserFragment.syncLiveButton),
              不要改成 visible 默认值,否则没直播的源会先闪一个点进去就退出的按钮 -->
@@ -48,7 +48,7 @@
                 android:layout_height="28dp"
                 android:layout_gravity="center"
                 android:src="@drawable/ic_live_tv_48"
-                app:tint="@color/text_highlight" />
+                app:tint="@color/text_accent" />
         </FrameLayout>
 
         <!-- "到底了"悬浮提示:落在列表底部留白区内、贴近底部导航栏(见 item_view_end_tip) -->

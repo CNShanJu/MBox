@@ -5,13 +5,16 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:background="@drawable/bg_small_round_gray"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
     android:paddingHorizontal="10dp">
 
     <com.google.android.material.checkbox.MaterialCheckBox
         android:id="@+id/tvName"
-        android:layout_width="match_parent"
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_gravity="center"
+        android:layout_weight="1"
         android:clickable="false"
         android:focusable="false"
         android:textColor="@color/text_foreground"
@@ -22,5 +25,20 @@
         android:text="@{name}"
         tools:text="Text"
         android:textSize="16sp"/>
+
+    <!-- 行尾标记(「亮色默认」/「暗色默认」/「使用中」):居右 + 垂直居中,由 adapter 按 getMarkers 填,空则隐藏。
+         字号压到 10sp:它是"附注"不是内容,大了会把行名字挤到换行(320dp 弹窗里一行要放下
+         "暗夜紫 + 暗色默认 / 使用中")。 -->
+    <TextView
+        android:id="@+id/tv_markers"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_vertical|end"
+        android:layout_marginStart="8dp"
+        android:textColor="@color/text_highlight"
+        android:textSize="10sp"
+        android:visibility="gone"
+        tools:text="暗色默认 / 使用中"
+        tools:visibility="visible" />
 </LinearLayout>
 

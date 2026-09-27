@@ -8,9 +8,12 @@
     android:orientation="vertical"
     android:padding="@dimen/dp_20">
 
+    <!-- 标题行:gravity=center_vertical —— 标题是 16sp 一行字、关闭键是 40dp 方框,
+         不居中两者就会一高一低(用户口径:"关闭按钮和标题没有垂直对齐") -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
+        android:gravity="center_vertical"
         android:orientation="horizontal">
 
         <TextView
@@ -27,10 +30,7 @@
 
         <ImageView
             android:id="@+id/note_close"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:padding="8dp"
-            android:src="@drawable/ic_close_24"
+            style="@style/DialogCloseButton"
             app:tint="@color/text_foreground" />
     </LinearLayout>
 
@@ -66,20 +66,21 @@
         android:layout_marginTop="16dp"
         android:orientation="horizontal">
 
-        <TextView
+        <!-- 「稍后」是次要动作,走共用样式 BtnSecondary —— 与局域网弹窗的「立即重启应用」同一套:
+             描边不填充 + 主题圆角 radius_btn + 主题色 btn_cancel_bg/btn_cancel_text,
+             换主题时和所有 Btn* 按钮一起变。
+             这里原本是手搓的 TextView + 一个描边 selector(旧文件 bg_btn_outline_selector.xml),三处与共用样式不一致:
+             圆角走硬编码的 common_corners(不跟主题)、字号 13sp 而右侧是 14sp、
+             还要靠 translationY="-1dp" 手动对齐隔壁的 MaterialButton。
+             全项目只有这一处用过那个 drawable,已随之删除。 -->
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/note_later"
+            style="@style/BtnSecondary"
             android:layout_width="0dp"
             android:layout_height="44dp"
             android:layout_weight="1"
-            android:background="@drawable/bg_btn_outline_selector"
-            android:clickable="true"
             android:focusable="true"
-            android:foreground="?android:selectableItemBackground"
-            android:gravity="center"
-            android:text="稍后"
-            android:textColor="@color/text_foreground"
-            android:textSize="13sp"
-            android:translationY="-1dp" />
+            android:text="稍后" />
         <com.google.android.material.button.MaterialButton
             android:id="@+id/note_update"
             style="@style/BtnPrimary"

@@ -17,6 +17,7 @@ import com.google.android.exoplayer2.LoadControl;
 import com.google.android.exoplayer2.PlaybackException;
 import com.google.android.exoplayer2.PlaybackParameters;
 import com.google.android.exoplayer2.Player;
+import com.google.android.exoplayer2.SeekParameters;
 import com.google.android.exoplayer2.Tracks;
 import com.google.android.exoplayer2.source.MediaSource;
 import com.google.android.exoplayer2.source.TrackGroupArray;
@@ -83,6 +84,15 @@ public class ExoMediaPlayer extends AbstractPlayer implements Player.Listener {
                 .setLoadControl(mLoadControl)
                 .setRenderersFactory(mRenderersFactory)
                 .setTrackSelector(mTrackSelector).build();
+
+        // seek 一律落到"目标之前的关键帧"(PREVIOUS_SYNC),不做精确 seek:
+        // Exo 对点播的默认 SeekParameters 是 EXACT —— seek 后视频渲染器必须从关键帧一路解码到目标位置
+        // 才允许出画,这中间的帧全被丢弃,而音频帧很小、几步就能对齐到目标继续响,
+        // 于是频繁拖动进度条时看到的就是"画面卡着不动、声音还在走"(上一次 seek 还没解码到目标,
+        // 就被下一次 seek flush 掉,画面永远追不上)。PREVIOUS_SYNC 让采样队列直接从关键帧开始、
+        // 解码出第一帧即出画,与 IJK 内核的口径一致(默认解码档带 fflags=fastseek +
+        // enable-accurate-seek=0,同样是关键帧 seek),seek 精度也不会越过用户落点(只向前对齐)。
+        mMediaPlayer.setSeekParameters(SeekParameters.PREVIOUS_SYNC);
 
         setOptions();
 

@@ -546,6 +546,52 @@ public class RemoteServer extends NanoHTTPD {
         return "0.0.0.0";
     }
 
+    /**
+     * 本机所有"局域网里别的设备能访问到"的 IPv4 地址(Wi‑Fi/以太网优先,其次是热点等),
+     * 按出现顺序去重;取不到返回空表。
+     *
+     * <p>为什么不复用 {@link #getLocalIPAddress}:那一个只回答"Wi‑Fi 的地址",取不到就退 eth0/wlan0、
+     * 最后兜个 {@code 0.0.0.0}(用户没法用它);而实际情形常常是多个可用:同时连 Wi‑Fi 与网线、
+     * 或本机开着热点(地址在 ap/swlan 网卡上)。设置页要告诉用户"从别的设备该访问哪个地址",
+     * 把可用的都列出来比只给一个更实用 —— 筛掉蜂窝/VPN/Wi‑Fi Direct 等够不到的网卡与非内网地址,
+     * 口径见 {@link com.github.tvbox.osc.util.LanAddressRules}(纯逻辑,带单测)。
+     */
+    public static List < String > getLanIpv4Addresses() {
+        List < String > preferred = new ArrayList < > ();
+        List < String > others = new ArrayList < > ();
+        try {
+            Enumeration < NetworkInterface > enumerationNi = NetworkInterface.getNetworkInterfaces();
+            while (enumerationNi != null && enumerationNi.hasMoreElements()) {
+                NetworkInterface networkInterface = enumerationNi.nextElement();
+                if (networkInterface == null) continue;
+                try {
+                    if (!networkInterface.isUp() || networkInterface.isLoopback()) continue;
+                } catch (Throwable th) {
+                    continue;
+                }
+                String ifaceName = networkInterface.getName();
+                for (InetAddress addr : java.util.Collections.list(networkInterface.getInetAddresses())) {
+                    if (!(addr instanceof Inet4Address)) continue;
+                    String ip = addr.getHostAddress();
+                    if (!com.github.tvbox.osc.util.LanAddressRules.isUsableLanIpv4(ifaceName, ip)) continue;
+                    if (preferred.contains(ip) || others.contains(ip)) continue;
+                    if (com.github.tvbox.osc.util.LanAddressRules.isPreferredInterface(ifaceName)) {
+                        preferred.add(ip);
+                    } else {
+                        others.add(ip);
+                    }
+                }
+            }
+        } catch (Throwable th) {
+            th.printStackTrace();
+        }
+        List < String > out = new ArrayList < > (preferred);
+        for (String ip : others) {
+            if (!out.contains(ip)) out.add(ip);
+        }
+        return out;
+    }
+
     String fileTime(long time, String fmt) {
         Calendar calendar = Calendar.getInstance();
         calendar.setTimeInMillis(time);

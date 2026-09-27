@@ -3,6 +3,7 @@ package com.github.tvbox.osc.ui.dialog;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.view.View;
+import android.view.ViewGroup;
 
 import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.DiffUtil;
@@ -39,6 +40,11 @@ public class SelectDialog<T> extends AppCenterPopupView {
     private int selectPos;
     private DialogInterface.OnDismissListener onDismissListener;
     private RecyclerView.LayoutManager listLayoutManager;
+    /** 可选:长按列表项 / 行样式(都透传给内部 adapter;不设时行为与以前完全一致) */
+    private SelectDialogAdapter.OnItemLongClickListener<T> itemLongClickListener;
+    private SelectDialogAdapter.RowStyle<T> rowStyle;
+    /** 可选固定页脚(不随列表滚动);见 {@link #setFooterView} */
+    private View footerView;
 
     /** 是否按“屏幕可用高度分档”动态调高(默认关闭;首页数据源等大列表场景经 setDynamicHeightByScreen(true) 开启) */
     private boolean dynamicHeightByScreen = false;
@@ -71,6 +77,10 @@ public class SelectDialog<T> extends AppCenterPopupView {
         if (tip != null) {
             setTip(tip);
         }
+        // 无条件走一次:有页脚=渲染 + 留出与列表的间距;没页脚=置 GONE + 清掉那段间距
+        // (GONE 的视图在 ConstraintLayout 里仍会带上自己的 margin,不清掉就会给所有
+        //  SelectDialog 白白多加一截空白)
+        renderFooter();
         if (selectInterface != null && itemCallback != null && data != null) {
             setAdapter(selectInterface, itemCallback, data, selectPos);
         }
@@ -180,8 +190,10 @@ public class SelectDialog<T> extends AppCenterPopupView {
      * 列表可用高 = maxHeight(动态分档 / 默认 70% 屏) - 固定区(标题+上下边距);
      * 用 UNSPECIFIED 量"自然内容高"判断是否超高(不受 XPopup 容器已钳高影响),
      * 超高时把列表压到可用高内,由 TvRecyclerView 自己滚动;未超高则保持 wrap,高度由内容撑开。
+     * <p>子类若在 {@code onCreate()} 里才补列表数据(基类的 onCreate 已按空列表量过一次),
+     * 补完数据后需要再调一次本方法,否则列表会一直用布局里的固定上限、在小屏上被弹窗裁掉。
      */
-    private void clampListHeightToFit() {
+    protected void clampListHeightToFit() {
         final android.view.View root = findViewById(R.id.cl_root);
         final android.view.View list = findViewById(R.id.list);
         if (root == null || list == null) return;
@@ -286,6 +298,7 @@ public class SelectDialog<T> extends AppCenterPopupView {
             return; // 尚未 inflate：onCreate 会再渲染
         }
         SelectDialogAdapter<T> adapter = new SelectDialogAdapter(sourceBeanSelectDialogInterface, sourceBeanItemCallback);
+        applyExtras(adapter);
         adapter.setData(data, select);
         TvRecyclerView tvRecyclerView = ((TvRecyclerView) findViewById(R.id.list));
         tvRecyclerView.setAdapter(adapter);
@@ -297,6 +310,98 @@ public class SelectDialog<T> extends AppCenterPopupView {
                 tvRecyclerView.setSelectionWithSmooth(select);
             }
         });
+    }
+
+    /**
+     * 可选:长按列表项(如"长按自定义主题出编辑/设为默认/删除气泡")。
+     * <p>与 {@link #setRowStyle} 一样是**追加能力**,不改动既有调用点的观感与行为。
+     */
+    public void setOnItemLongClickListener(SelectDialogAdapter.OnItemLongClickListener<T> l) {
+        this.itemLongClickListener = l;
+        SelectDialogAdapter<T> adapter = currentAdapter();
+        if (adapter != null) adapter.setOnItemLongClickListener(l);
+    }
+
+    /** 可选:行样式微调(目前只用来给行背景加一个居中的水印图标,如太阳/月亮表示主题亮暗);见 {@link SelectDialogAdapter.RowStyle} */
+    public void setRowStyle(SelectDialogAdapter.RowStyle<T> style) {
+        this.rowStyle = style;
+        SelectDialogAdapter<T> adapter = currentAdapter();
+        if (adapter != null) adapter.setRowStyle(style);
+    }
+
+    /**
+     * 可选:固定页脚(**不随列表滚动**)。用于放"动作入口"这类东西(如主题弹窗的「自定义主题颜色」)——
+     * 放在列表里会跟着一起滚,用户滚到底才看得见;放页脚则始终可见,而且不必伪装成"可勾选的选项行"。
+     * <p>页脚容器自带左右 10dp 外边距(与列表行对齐),内容自己在里面居中/排版。
+     */
+    public void setFooterView(View view) {
+        this.footerView = view;
+        View container = findViewById(R.id.ll_footer);
+        if (container == null) return; // 尚未 inflate：onCreate 会再渲染
+        renderFooter();
+    }
+
+    private void renderFooter() {
+        View container = findViewById(R.id.ll_footer);
+        if (!(container instanceof ViewGroup)) return;
+        ViewGroup group = (ViewGroup) container;
+        group.removeAllViews();
+        setFooterGap(group, footerView != null);
+        if (footerView == null) {
+            group.setVisibility(View.GONE);
+            return;
+        }
+        View parent = (View) footerView.getParent();
+        if (parent instanceof ViewGroup) ((ViewGroup) parent).removeView(footerView);
+        group.addView(footerView, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        group.setVisibility(View.VISIBLE);
+    }
+
+    /**
+     * 页脚与列表之间的间距:有页脚时留 10dp —— 否则列表最后一行会<b>贴着</b>页脚,
+     * 滚动时上半截是行、下半截是页脚,看着像连成一片(用户口径:"给点外边距")。
+     */
+    private void setFooterGap(ViewGroup group, boolean hasFooter) {
+        ViewGroup.LayoutParams lp = group.getLayoutParams();
+        if (!(lp instanceof ViewGroup.MarginLayoutParams)) return;
+        ViewGroup.MarginLayoutParams mlp = (ViewGroup.MarginLayoutParams) lp;
+        int gap = hasFooter
+                ? getResources().getDimensionPixelSize(R.dimen.dp_10)
+                : 0;
+        if (mlp.topMargin == gap) return;
+        mlp.topMargin = gap;
+        group.setLayoutParams(mlp);
+    }
+
+    /** 当前列表上的 adapter(还没渲染时为 null) */
+    @SuppressWarnings("unchecked")
+    protected SelectDialogAdapter<T> currentAdapter() {
+        View list = findViewById(R.id.list);
+        if (!(list instanceof RecyclerView)) return null;
+        RecyclerView.Adapter<?> a = ((RecyclerView) list).getAdapter();
+        return a instanceof SelectDialogAdapter ? (SelectDialogAdapter<T>) a : null;
+    }
+
+    /** 重排列表(改了数据/选中项后调用):沿用同一个 adapter,不重建列表 */
+    protected void refreshList(List<T> newData, int newSelect) {
+        SelectDialogAdapter<T> adapter = currentAdapter();
+        if (adapter == null) {
+            setAdapter(selectInterface, itemCallback, newData, newSelect);
+            return;
+        }
+        this.data = newData;
+        this.selectPos = newSelect;
+        adapter.setData(newData, newSelect);
+        View list = findViewById(R.id.list);
+        if (list instanceof TvRecyclerView) {
+            ((TvRecyclerView) list).setSelectedPosition(newSelect);
+        }
+    }
+
+    private void applyExtras(SelectDialogAdapter<T> adapter) {
+        if (itemLongClickListener != null) adapter.setOnItemLongClickListener(itemLongClickListener);
+        if (rowStyle != null) adapter.setRowStyle(rowStyle);
     }
 }
 

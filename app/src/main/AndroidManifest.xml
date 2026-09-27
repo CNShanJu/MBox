@@ -121,6 +121,12 @@
             android:name=".ui.activity.BackgroundSettingActivity"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:exported="false"/>
+        <!-- 自定义主题颜色编辑(设置-主题颜色-自定义主题颜色 / 长按主题「编辑」):
+             主题类型 + 25 个颜色项 + 背景 + 导入导出 -->
+        <activity
+            android:name=".ui.activity.ThemeEditorActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="false"/>
 
         <!-- DLNA 投屏服务已停用:依赖 com.github.devin1014.DLNA-Cast 从 JitPack 消失,待找到替代库后恢复 -->
         <!-- <service android:name="com.android.cast.dlna.dmc.DLNACastService"/> -->

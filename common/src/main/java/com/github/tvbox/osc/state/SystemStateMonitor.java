@@ -15,7 +15,6 @@ import android.net.NetworkRequest;
 import android.os.BatteryManager;
 import android.os.Handler;
 import android.os.Looper;
-import android.os.StatFs;
 import android.util.Log;
 import android.view.Display;
 
@@ -561,13 +560,14 @@ public final class SystemStateMonitor {
 
     private void checkDisk() {
         try {
-            StatFs stat = new StatFs(android.os.Environment.getDataDirectory().getAbsolutePath());
-            final long free = stat.getAvailableBytes();
+            // 测量统一走中控层 StorageSpace(全应用一处 new StatFs);轮询间隔远大于它的缓存 TTL,
+            // 所以这里每次拿到的都是新采样,不需要额外强制刷新
+            final long free = StorageSpace.freeBytes(android.os.Environment.getDataDirectory());
             // 事件统一在主线程派发(本类对外的约定):原来在 tvbox-disk 线程直接 emit,
             // 与注释/其它事件源不一致,监听方若碰 UI 就是隐雷
             mainHandler.post(() -> {
                 state.freeDiskBytes = free;
-                if (free < MIN_FREE_DISK) {
+                if (free >= 0 && free < MIN_FREE_DISK) {
                     log.warn(SystemSubType.DISK, "磁盘可用空间不足: " + (free / 1024 / 1024) + "MB", null);
                     emit(TYPE_DISK, "LOW:" + free);
                 }

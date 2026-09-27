@@ -22,8 +22,6 @@
         <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_gravity="end|center_vertical"
-            android:layout_marginRight="14dp"
             android:gravity="center_vertical"
             android:orientation="horizontal">
 
@@ -51,7 +49,7 @@
     </com.github.tvbox.osc.ui.kit.AppTitleBar>
 
     <!-- 卡片容器:悬浮面圆角底放在容器上(不放在列表上),这样列表越界回弹时只有内容在动、卡片不动
-         (与「我的」页/底栏同一个面 bg_float);clipToOutline 让回弹中的条目仍被圆角裁住 -->
+         (与「我的」页/底栏同一个面 bg_surface);clipToOutline 让回弹中的条目仍被圆角裁住 -->
     <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
@@ -105,7 +103,7 @@
             android:paddingVertical="8dp"
             android:paddingEnd="16dp"
             android:text="全选"
-            android:textColor="@color/text_accent"
+            android:textColor="@color/text_highlight"
             android:textSize="14sp"/>
 
         <TextView

@@ -356,7 +356,8 @@ class LogActivity : BaseVbActivity<ActivityLogBinding>() {
     }
 
     private fun confirmClear() {
-        com.github.tvbox.osc.ui.dialog.ConfirmDialog.show(this, "清空日志",
+        // 清空不可逆 → 确认键走危险色(与下载/本地视频的删除确认同一套)
+        com.github.tvbox.osc.ui.dialog.ConfirmDialog.showDanger(this, "清空日志",
             "确定清空${if (currentTab == 0) "业务日志" else "错误日志"}吗？", "清空", {
                 if (currentTab == 0) {
                     LogViewAssembler.clearBiz(LogStore.get())

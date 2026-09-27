@@ -9,9 +9,8 @@
     <com.github.tvbox.osc.ui.kit.AppTitleBar
         android:id="@+id/title_bar"
         android:layout_width="match_parent"
-        android:layout_height="60dp"
-        app:title="历史记录"
-        app:rightIcon="@drawable/ic_clear"/>
+        android:layout_height="wrap_content"
+        app:title="历史记录"/>
 
     <TextView
         android:id="@+id/top_tip"

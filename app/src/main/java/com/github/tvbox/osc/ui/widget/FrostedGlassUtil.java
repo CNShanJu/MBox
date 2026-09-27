@@ -12,11 +12,11 @@ import eightbitlab.com.blurview.BlurView;
 
 /**
  * 弹层/抽屉毛玻璃工具：给布局里打了 tag="glass_blur" 的 BlurView 挂到窗口上，
- * 实时模糊其后方（弹层覆盖的区域）内容，上方再由半透明主题色 bg_popup 叠色成毛玻璃质感。
+ * 实时模糊其后方（弹层覆盖的区域）内容，上方再由半透明主题色 bg_float 叠色成毛玻璃质感。
  * <p>
  * 用法：在弹层根布局里放
  * {@code <eightbitlab.com.blurview.BlurView ... android:tag="glass_blur"/>}
- * 和一个 {@code <View android:background="@color/bg_popup"/>}（半透明由 bg_popup_alpha 控制），
+ * 和一个 {@code <View android:background="@color/bg_float"/>}（半透明由 bg_float_alpha 控制），
  * 弹层基类 onCreate 时调用 {@link #attach(View, Context)} 即可，无该 tag 时静默跳过。
  */
 public final class FrostedGlassUtil {

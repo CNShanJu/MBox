@@ -13,9 +13,11 @@ import com.blankj.utilcode.util.ScreenUtils;
 import com.github.tvbox.osc.base.BaseVbActivity;
 import com.github.tvbox.osc.config.SystemConfig;
 import com.github.tvbox.osc.databinding.ActivityBackgroundSettingBinding;
+import com.github.tvbox.osc.storage.theme.ThemeStore;
 import com.github.tvbox.osc.ui.kit.BackgroundTuneView;
 import com.github.tvbox.osc.ui.kit.PageBackgroundView;
 import com.github.tvbox.osc.util.AppBubble;
+import com.github.tvbox.osc.util.BgImageImporter;
 import com.github.tvbox.osc.util.BgImageTransform;
 import com.github.tvbox.osc.util.FastClickCheckUtil;
 import com.github.tvbox.osc.util.HeavyTaskUtil;
@@ -52,6 +54,34 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
     /** 系统选图请求码 */
     private static final int REQ_PICK_IMAGE = 0x0B01;
 
+    // ------------------------------------------------------------------
+    // 主题模式(入口:主题编辑页的「选择/调整图片」)
+    // 同一个页面、同一套预览与手势,区别只在"改的是谁":普通模式改全局底图(SystemConfig),
+    // 主题模式改的是某个主题自己的背景(带摆放:缩放/位置/不透明度/遮罩),
+    // 确认时把结果经 Intent 交回主题编辑页的草稿(不直接落盘,落盘仍由编辑页的「保存」负责)。
+    // ------------------------------------------------------------------
+    /** true = 主题模式 */
+    public static final String EXTRA_THEME_MODE = "theme_bg_mode";
+    /** 主题类型(亮/暗):纯色预览与"恢复默认"要按它取内置值 */
+    public static final String EXTRA_THEME_DARK = "theme_bg_dark";
+    /** 进入时的图片绝对路径(空=当前不是图片背景) */
+    public static final String EXTRA_IN_PATH = "theme_bg_in_path";
+    /** 进入时的图片 ref(主题图库相对路径):只调摆放、不换图时原样带回,免得"确认"后把图弄丢 */
+    public static final String EXTRA_IN_REF = "theme_bg_in_ref";
+    public static final String EXTRA_IN_ZOOM = "theme_bg_in_zoom";
+    public static final String EXTRA_IN_ANCHOR_X = "theme_bg_in_anchor_x";
+    public static final String EXTRA_IN_ANCHOR_Y = "theme_bg_in_anchor_y";
+    public static final String EXTRA_IN_ALPHA = "theme_bg_in_alpha";
+    public static final String EXTRA_IN_SCRIM = "theme_bg_in_scrim";
+    /** 确认后的结果:是否用图片 + 图片在主题图库里的 ref(相对路径) + 摆放 */
+    public static final String EXTRA_OUT_IS_IMAGE = "theme_bg_out_is_image";
+    public static final String EXTRA_OUT_REF = "theme_bg_out_ref";
+    public static final String EXTRA_OUT_ZOOM = "theme_bg_out_zoom";
+    public static final String EXTRA_OUT_ANCHOR_X = "theme_bg_out_anchor_x";
+    public static final String EXTRA_OUT_ANCHOR_Y = "theme_bg_out_anchor_y";
+    public static final String EXTRA_OUT_ALPHA = "theme_bg_out_alpha";
+    public static final String EXTRA_OUT_SCRIM = "theme_bg_out_scrim";
+
     /** 抽屉展开/收起动画时长(ms) */
     private static final long PANEL_ANIM_MS = 200L;
 
@@ -78,6 +108,12 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
     private String draftPath = "";
     /** 草稿是否算"用户显式设置"(false=跟随主题默认背景,确认时不写用户设置) */
     private boolean draftUserSet = false;
+    /** 主题模式:true 时改的是某个主题自己的背景(结果经 Intent 交回编辑页草稿) */
+    private boolean themeMode = false;
+    /** 主题模式下的图片 ref(主题图库里的相对路径);选图后才有 */
+    private String draftRef = "";
+    /** 草稿是否被用户动过(主题模式下"返回=确认"只对动过的草稿生效,见 onBackPressed) */
+    private boolean draftTouched = false;
     private float draftZoom = 0f;
     /** 草稿位置:锚点比例 0~1(0=贴左/上、0.5=居中、1=贴右/下;与屏幕尺寸无关,横竖屏同一观感) */
     private float draftAnchorX = BgImageTransform.ANCHOR_CENTER;
@@ -107,6 +143,7 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
 
         @Override
         public void onTuneCommitted(float zoom, float anchorX, float anchorY) {
+            draftTouched = true;
             draftZoom = zoom;
             draftAnchorX = anchorX;
             draftAnchorY = anchorY;
@@ -117,6 +154,7 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
 
     @Override
     protected void init() {
+        themeMode = getIntent() != null && getIntent().getBooleanExtra(EXTRA_THEME_MODE, false);
         mBinding.tune.setCallback(tuneCallback);
         loadDraftFromConfig();
         initPanel();
@@ -125,8 +163,31 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
         initScrimSwitch();
         initButtons();
         applyDraft();
+        // 标题栏左箭头与系统返回键同一口径(否则箭头会绕过"返回=确认")
+        mBinding.titleBar.setOnBackClickListener(v -> onBackPressed());
+        if (themeMode) {
+            // 主题模式:同一页面、同一套预览与手势,标题点明改的是主题自己的背景;
+            // 并把底部面板**直接展开** —— 主题模式是"改完就走"的一次性流程,
+            // 面板收起时"确认背景"藏在手柄后面,用户很容易选完图直接返回,结果改动被丢掉(踩过)
+            mBinding.titleBar.setTitle("主题背景图");
+            applyPanelExpanded(true, false);
+        }
         // 面板默认收起,进页先提示一句怎么调(不然不知道能直接拖背景)
         //AppBubble.toast("单指拖动调整位置,双指等比缩放;调好后点\"确认背景\"");
+    }
+
+    /**
+     * 主题模式下"返回 = 确认"(所见即所得):主题背景是主题编辑页草稿的一部分,
+     * 用户选好图/拖好位置后直接返回时按丢弃处理,等于白选一张图(已踩过) ——
+     * 只有确实动过草稿才这么处理,没动过就单纯退出。普通模式仍按原口径(返回=丢弃草稿)。
+     */
+    @Override
+    public void onBackPressed() {
+        if (themeMode && draftTouched) {
+            confirmDraft();
+            return;
+        }
+        super.onBackPressed();
     }
 
     @Override
@@ -140,6 +201,21 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
     // ── 草稿 ──
 
     private void loadDraftFromConfig() {
+        if (themeMode) {
+            // 主题模式:入参就是"主题编辑页那份草稿"的当前值(不是落盘的主题,避免与编辑页草稿打架)
+            android.content.Intent in = getIntent();
+            draftPath = in == null ? "" : orEmpty(in.getStringExtra(EXTRA_IN_PATH));
+            // 带进来的 ref:只拖动/缩放(不换图)时原样带回,确认后方不会"图片丢了"
+            draftRef = in == null ? "" : orEmpty(in.getStringExtra(EXTRA_IN_REF));
+            draftUserSet = !draftPath.isEmpty();
+            draftZoom = in == null ? 0f : in.getFloatExtra(EXTRA_IN_ZOOM, 0f);
+            draftAnchorX = in == null ? BgImageTransform.ANCHOR_CENTER : in.getFloatExtra(EXTRA_IN_ANCHOR_X, BgImageTransform.ANCHOR_CENTER);
+            draftAnchorY = in == null ? BgImageTransform.ANCHOR_CENTER : in.getFloatExtra(EXTRA_IN_ANCHOR_Y, BgImageTransform.ANCHOR_CENTER);
+            draftAlpha = in == null ? SystemConfig.PAGE_BG_ALPHA_DEFAULT : in.getIntExtra(EXTRA_IN_ALPHA, SystemConfig.PAGE_BG_ALPHA_DEFAULT);
+            draftScrim = in == null || in.getBooleanExtra(EXTRA_IN_SCRIM, true);
+            draftLegacyOffsets = false;
+            return;
+        }
         // 生效图源 = 用户设置 > 主题默认(见 SystemConfig.getPageBackgroundPath);没显式设过就是"跟随主题"
         draftPath = SystemConfig.getPageBackgroundPath();
         draftUserSet = SystemConfig.isPageBackgroundUserSet();
@@ -156,6 +232,10 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
         }
         draftAlpha = SystemConfig.getPageBackgroundAlpha();
         draftScrim = SystemConfig.isPageBackgroundScrimEnabled();
+    }
+
+    private static String orEmpty(String s) {
+        return s == null ? "" : s;
     }
 
     /** 把草稿套到本页背景层(仅预览,不写配置) */
@@ -215,6 +295,10 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
      * (浅/深主题默认是纯色;以后新增内置主题/自定义主题则跟着该主题的默认背景走)。
      */
     private void confirmDraft() {
+        if (themeMode) {
+            confirmThemeDraft();
+            return;
+        }
         if (draftUserSet) {
             SystemConfig.setPageBackgroundPath(draftPath);
         } else {
@@ -228,6 +312,27 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
         SystemConfig.setPageBackgroundAlpha(draftAlpha);
         SystemConfig.setPageBackgroundScrimEnabled(draftScrim);
         AppBubble.toast("背景已保存");
+        finish();
+    }
+
+    /**
+     * 主题模式确认:把草稿(是否用图 / 图的 ref / 摆放)经 Intent 交回主题编辑页。
+     * <p>这里<b>不落盘</b>:主题的落盘统一由编辑页的「保存」负责 ——
+     * 否则"在背景页确认了、又回编辑页点取消"会留下一个半改的主题。
+     */
+    private void confirmThemeDraft() {
+        android.content.Intent out = new android.content.Intent();
+        boolean isImage = draftUserSet && draftPath != null && !draftPath.isEmpty();
+        out.putExtra(EXTRA_OUT_IS_IMAGE, isImage);
+        out.putExtra(EXTRA_OUT_REF, isImage ? draftRef : "");
+        float anchorX = draftLegacyOffsets ? BgImageTransform.ANCHOR_CENTER : draftAnchorX;
+        float anchorY = draftLegacyOffsets ? BgImageTransform.ANCHOR_CENTER : draftAnchorY;
+        out.putExtra(EXTRA_OUT_ZOOM, draftZoom);
+        out.putExtra(EXTRA_OUT_ANCHOR_X, anchorX);
+        out.putExtra(EXTRA_OUT_ANCHOR_Y, anchorY);
+        out.putExtra(EXTRA_OUT_ALPHA, draftAlpha);
+        out.putExtra(EXTRA_OUT_SCRIM, draftScrim);
+        setResult(RESULT_OK, out);
         finish();
     }
 
@@ -473,6 +578,7 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
             ax = anchor[0];
             ay = anchor[1];
         }
+        draftTouched = true;
         draftZoom = zoom;
         draftAnchorX = ax;
         draftAnchorY = ay;
@@ -527,6 +633,7 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
         slider.setValue(draftAlpha);
         updateAlphaLabel(draftAlpha);
         slider.addOnChangeListener((s, value, fromUser) -> {
+            draftTouched = true;
             draftAlpha = (int) value;
             PageBackgroundView layer = PageBackgroundView.find(this);
             if (layer != null) layer.setImageAlpha(draftAlpha);
@@ -539,6 +646,7 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
         mBinding.switchScrim.setChecked(draftScrim);
         mBinding.llScrim.setOnClickListener(v -> {
             FastClickCheckUtil.check(v);
+            draftTouched = true;
             draftScrim = !draftScrim;
             mBinding.switchScrim.setChecked(draftScrim);
             PageBackgroundView layer = PageBackgroundView.find(this);
@@ -555,8 +663,11 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
         mBinding.btnReset.setOnClickListener(v -> {
             FastClickCheckUtil.check(v);
             // 草稿恢复成"跟随主题默认背景"(浅/深主题即纯色) + 位置/透明度/遮罩回默认;确认后才真正生效
+            draftTouched = true;
             draftUserSet = false;
-            draftPath = SystemConfig.getThemeDefaultBackground();
+            draftRef = "";
+            // 主题模式下"默认"就是该主题类型的纯色(取内置亮/暗的页面底色),普通模式仍是跟随主题默认背景
+            draftPath = "";
             draftZoom = 0f;
             draftAnchorX = BgImageTransform.ANCHOR_CENTER;
             draftAnchorY = BgImageTransform.ANCHOR_CENTER;
@@ -598,6 +709,34 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
         // 校验/转码是磁盘与解码重活:放共享执行器后台做,期间给个加载提示
         showLoadingDialog("正在导入图片…");
         HeavyTaskUtil.getBigTaskExecutorService().execute(() -> {
+            if (themeMode) {
+                // 主题模式:与"设置背景图"页同一套导入管道(限大小/纠 EXIF/转 WebP/存储预检),
+                // 差别只在收编位置 —— 进主题图库(按内容 hash 去重,多个主题用同一张图只存一份)
+                BgImageImporter.Result imported = BgImageImporter.toWebp(getApplicationContext(), uri);
+                String ref = imported.ok() ? ThemeStore.registerBackground(imported.webp) : "";
+                final String error = imported.ok()
+                        ? (ref.isEmpty() ? "图片保存失败,换一张试试" : null)
+                        : (imported.error == null ? "图片导入失败" : imported.error);
+                mainHandler.post(() -> {
+                    dismissLoadingDialog();
+                    if (isFinishing()) return;
+                    if (error != null) {
+                        AppBubble.toast(error);
+                        return;
+                    }
+                    draftPath = ThemeStore.resolveBackgroundPath(ref);
+                    draftRef = ref;
+                    draftUserSet = true;
+                    draftTouched = true;
+                    draftZoom = 0f;
+                    draftAnchorX = BgImageTransform.ANCHOR_CENTER;
+                    draftAnchorY = BgImageTransform.ANCHOR_CENTER;
+                    draftLegacyOffsets = false;
+                    applyDraft();
+                    AppBubble.toast("已换图,可拖动调整位置;记得点\"确认背景\"");
+                });
+                return;
+            }
             final PageBackgroundStore.ImportResult result =
                     PageBackgroundStore.importFromUri(getApplicationContext(), uri);
             mainHandler.post(() -> {
@@ -610,6 +749,7 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
                 // 换新图进草稿:位置居中、缩放回到"自动"(普通图铺满屏幕,很小的图按原始像素显示)
                 draftPath = result.path;
                 draftUserSet = true;
+                draftTouched = true;
                 draftZoom = 0f;
                 draftAnchorX = BgImageTransform.ANCHOR_CENTER;
                 draftAnchorY = BgImageTransform.ANCHOR_CENTER;

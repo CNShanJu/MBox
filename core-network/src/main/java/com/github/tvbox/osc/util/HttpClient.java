@@ -269,7 +269,13 @@ public class HttpClient {
         }
     }
 
-    /** 异步下载到目标文件,成功/失败回调切主线程 */
+    /**
+     * 异步下载到目标文件,成功/失败回调切主线程。
+     * <p>
+     * 与 {@link #downloadSync} 同一套写法:先写同目录 .tmp、下载完整后再整体替换目标文件。
+     * 原来直接写目标文件,断流/中途失败会把<b>上一份可用文件</b>截断成半个包
+     * (订阅爬虫 jar 就是这么坏的:半截 jar 头仍是 "PK"、仍被当成缓存,加载失败后源全部不可用)。
+     */
     public static void download(final String url, final File dest, Map<String, String> headers, final Object tag, final FCallBack callback) {
         try {
             Request.Builder builder = new Request.Builder().url(HttpUrls.normalizeUrl(url)).tag(tag);
@@ -288,18 +294,22 @@ public class HttpClient {
 
                 @Override
                 public void onResponse(Call call, Response response) {
+                    File tmp = new File(dest.getAbsolutePath() + ".tmp");
                     try {
                         if (!response.isSuccessful() || response.body() == null) {
                             throw new IOException("download failed, code=" + response.code());
                         }
                         File parent = dest.getParentFile();
                         if (parent != null && !parent.exists()) parent.mkdirs();
+                        if (tmp.exists() && !tmp.delete()) {
+                            throw new IOException("cannot remove stale temp file: " + tmp);
+                        }
                         // 文件可能被置为只读(防止 dex 校验),覆盖前恢复可写
                         if (dest.exists() && !dest.canWrite()) {
                             dest.setWritable(true);
                         }
                         InputStream is = response.body().byteStream();
-                        OutputStream os = new FileOutputStream(dest);
+                        OutputStream os = new FileOutputStream(tmp);
                         try {
                             byte[] buffer = new byte[8192];
                             int length;
@@ -316,10 +326,24 @@ public class HttpClient {
                             } catch (IOException ignored) {
                             }
                         }
+                        if (tmp.length() <= 0) {
+                            throw new IOException("download empty body: " + url);
+                        }
+                        if (!tmp.renameTo(dest)) {
+                            // 极端情况(rename 跨文件系统等):退化为复制,失败则保留 tmp 报错
+                            try (InputStream in = new FileInputStream(tmp); OutputStream out = new FileOutputStream(dest)) {
+                                byte[] buffer = new byte[8192];
+                                int length;
+                                while ((length = in.read(buffer)) > 0) {
+                                    out.write(buffer, 0, length);
+                                }
+                            }
+                        }
                         postSuccess(callback, dest);
                     } catch (Throwable th) {
                         postError(callback, th);
                     } finally {
+                        if (tmp.exists()) tmp.delete();
                         response.close();
                     }
                 }

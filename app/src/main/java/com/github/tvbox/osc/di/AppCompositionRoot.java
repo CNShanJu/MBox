@@ -55,6 +55,9 @@ public final class AppCompositionRoot {
         // 强类型分类/首页视频(type3;失败自动回退字符串通道)
         com.github.tvbox.osc.spiderapi.SpiderHomeProviders.set(
                 com.github.catvod.crawler.SpiderHomeImpl.get());
+        // 源插件故障查询:插件缺类/初始化失败时,详情页等页面给出"该源不可用(原因)"而不是空白
+        com.github.tvbox.osc.spiderapi.SpiderFaultProviders.set(
+                com.github.catvod.crawler.SpiderFaults.get());
         // 直播频道配置契约:主/兜底分组读取、直播源重建,桥接 ApiConfig
         com.github.tvbox.osc.spiderapi.LiveChannelConfigProviders.set(new com.github.tvbox.osc.spiderapi.LiveChannelConfigApi() {
             @Override

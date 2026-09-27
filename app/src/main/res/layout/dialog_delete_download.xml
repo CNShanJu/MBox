@@ -62,7 +62,7 @@
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/tv_ok"
-            style="@style/BtnPrimary"
+            style="@style/BtnDanger"
             android:layout_width="0dp"
             android:layout_height="40dp"
             android:layout_weight="1"

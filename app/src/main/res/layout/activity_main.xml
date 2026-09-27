@@ -20,7 +20,7 @@
         android:layout_width="match_parent"
         android:layout_height="58dp"
         android:elevation="10dp"
-        android:background="@color/bg_float">
+        android:background="@color/bg_surface">
 
         <!-- 图标层:透明背景, 绘制在纯色(94% 透明度)遮罩上;
              用自定义底栏:长按条目不再弹系统 Tooltip 提示, 改为放一簇烟花(见 ui/kit/FireworksBottomNavigationView) -->

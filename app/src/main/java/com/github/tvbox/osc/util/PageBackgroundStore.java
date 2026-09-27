@@ -1,13 +1,7 @@
 package com.github.tvbox.osc.util;
 
 import android.content.Context;
-import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
-import android.graphics.Matrix;
 import android.net.Uri;
-import android.os.Build;
-
-import androidx.exifinterface.media.ExifInterface;
 
 import com.github.tvbox.osc.config.SystemConfig;
 import com.github.tvbox.osc.ui.kit.PageBackgroundView;
@@ -26,6 +20,9 @@ import java.util.Locale;
  * (照片走高质量有损、带透明通道的走无损,见 {@link BgImageImportRules#useLosslessWebp})→
  * 落到应用私有目录,配置里只存这个路径。
  * <p>
+ * 上面那串"选图 → WebP"的活<b>已经抽到 {@link BgImageImporter}</b>(与"自定义主题"的背景图共用同一份实现,
+ * 口径不许两套);本类只负责"落到自己的 {@code page_bg/} 目录 + 每次换图删旧副本"这件事。
+ * <p>
  * 这样做的好处:不依赖系统相册的临时授权;过大素材先压下来,不会把私有目录和内存顶爆;
  * 每次换图都是新文件名(带时间戳),路径一变页面才会重新加载,旧副本换图成功后删除(目录里最多一份)。
  */
@@ -35,8 +32,6 @@ public final class PageBackgroundStore {
     private static final String DIR = "page_bg";
     /** 副本固定前缀:换图后删同前缀旧文件,避免越攒越多 */
     private static final String PREFIX = "custom_bg";
-    /** 复制阶段的临时文件名(转码完成后删除) */
-    private static final String TEMP = "import_tmp";
 
     private PageBackgroundStore() {
     }
@@ -66,73 +61,18 @@ public final class PageBackgroundStore {
         File dir = new File(context.getFilesDir(), DIR);
         if (!dir.exists() && !dir.mkdirs()) return new ImportResult(null, "存储不可用");
 
-        String mime = null;
+        // 选图 → 校验/纠方向/限尺寸/转 WebP(与自定义主题背景图同一份实现;含存储预检)
+        BgImageImporter.Result imported = BgImageImporter.toWebp(context, uri);
+        if (!imported.ok()) return new ImportResult(null, imported.error);
+
+        File out = new File(dir, PREFIX + "_" + System.currentTimeMillis() + ".webp");
         try {
-            mime = context.getContentResolver().getType(uri);
-        } catch (Throwable ignored) {
-        }
-        if ("image/gif".equalsIgnoreCase(mime)) {
-            return new ImportResult(null, "不支持 GIF,请用静态图片");
-        }
-
-        File temp = new File(dir, TEMP);
-        long bytes = 0L;
-        // 1) 先复制到临时文件:顺便卡体积上限,后面解码/读 EXIF 都基于这个文件
-        try (InputStream in = context.getContentResolver().openInputStream(uri)) {
-            if (in == null) return new ImportResult(null, "图片打不开,换一张试试");
-            byte[] buf = new byte[64 * 1024];
-            try (OutputStream os = new FileOutputStream(temp)) {
-                int n;
-                while ((n = in.read(buf)) > 0) {
-                    bytes += n;
-                    if (bytes > BgImageImportRules.MAX_BYTES) {
-                        delete(temp);
-                        return new ImportResult(null, "图片超过 30MB,请换一张小一点的");
-                    }
-                    os.write(buf, 0, n);
-                }
+            if (out.exists() && !out.delete()) return new ImportResult(null, "图片处理失败,换一张试试");
+            if (!imported.webp.renameTo(out)) {
+                // 跨卷 rename 失败(缓存目录与私有目录极少数情况下不在同一卷):退回复制
+                if (!copy(imported.webp, out)) return new ImportResult(null, "图片处理失败,换一张试试");
             }
-        } catch (Throwable th) {
-            delete(temp);
-            return new ImportResult(null, "图片读取失败,换一张试试");
-        }
-
-        byte[] header = readHeader(temp);
-        String reject = BgImageImportRules.rejectReason(bytes, mime, header);
-        if (reject != null) {
-            delete(temp);
-            return new ImportResult(null, reject);
-        }
-
-        // 2) 解头拿尺寸:确认确实是图片(改扩展名的假图在这里被拦下)
-        BitmapFactory.Options bounds = new BitmapFactory.Options();
-        bounds.inJustDecodeBounds = true;
-        BitmapFactory.decodeFile(temp.getAbsolutePath(), bounds);
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
-            delete(temp);
-            return new ImportResult(null, "这不是有效的图片文件");
-        }
-
-        // 3) 按上限采样解码(大图不整张进内存)
-        BitmapFactory.Options opts = new BitmapFactory.Options();
-        opts.inSampleSize = BgImageImportRules.sampleSizeFor(bounds.outWidth, bounds.outHeight,
-                BgImageImportRules.MAX_LONG_SIDE);
-        opts.inPreferredConfig = Bitmap.Config.ARGB_8888;
-        Bitmap bitmap = null;
-        File out = null;
-        try {
-            bitmap = BitmapFactory.decodeFile(temp.getAbsolutePath(), opts);
-            if (bitmap == null) {
-                delete(temp);
-                return new ImportResult(null, "图片解码失败,换一张试试");
-            }
-            bitmap = applyExifOrientation(temp, bitmap);
-            out = new File(dir, PREFIX + "_" + System.currentTimeMillis() + ".webp");
-            boolean encoded;
-            try (OutputStream os = new FileOutputStream(out)) {
-                encoded = compressToWebp(bitmap, os);
-            }
-            if (!encoded || !out.exists() || out.length() <= 0) {
+            if (!out.exists() || out.length() <= 0) {
                 delete(out);
                 return new ImportResult(null, "图片转换失败,换一张试试");
             }
@@ -142,89 +82,19 @@ public final class PageBackgroundStore {
             delete(out);
             return new ImportResult(null, "图片处理失败,换一张试试");
         } finally {
-            if (bitmap != null && !bitmap.isRecycled()) bitmap.recycle();
-            delete(temp);
+            delete(imported.webp); // 收编完成,临时文件清掉
         }
     }
 
-    /** WebP 编码:不透明图(照片)走高质量有损,带透明通道的走无损 */
-    private static boolean compressToWebp(Bitmap bitmap, OutputStream os) {
-        boolean lossless = BgImageImportRules.useLosslessWebp(bitmap.hasAlpha());
-        if (lossless && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            return bitmap.compress(Bitmap.CompressFormat.WEBP_LOSSLESS, 100, os);
-        }
-        // API 30 以下没有 WEBP_LOSSLESS:WEBP + quality 100 即无损;照片走 90 有损
-        return bitmap.compress(Bitmap.CompressFormat.WEBP, lossless ? 100 : BgImageImportRules.WEBP_QUALITY, os);
-    }
-
-    /** 相机拍的照片方向常写在 EXIF 里,重新编码前必须纠正,否则落盘后是横的 */
-    private static Bitmap applyExifOrientation(File file, Bitmap bitmap) {
-        int orientation;
-        try {
-            ExifInterface exif = new ExifInterface(file.getAbsolutePath());
-            orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL);
+    private static boolean copy(File src, File dst) {
+        try (InputStream in = new java.io.FileInputStream(src);
+             OutputStream os = new FileOutputStream(dst)) {
+            byte[] buf = new byte[64 * 1024];
+            int n;
+            while ((n = in.read(buf)) > 0) os.write(buf, 0, n);
+            return dst.length() > 0;
         } catch (Throwable th) {
-            return bitmap;
-        }
-        int degrees;
-        boolean mirror;
-        switch (orientation) {
-            case ExifInterface.ORIENTATION_ROTATE_90:
-                degrees = 90;
-                mirror = false;
-                break;
-            case ExifInterface.ORIENTATION_ROTATE_180:
-                degrees = 180;
-                mirror = false;
-                break;
-            case ExifInterface.ORIENTATION_ROTATE_270:
-                degrees = 270;
-                mirror = false;
-                break;
-            case ExifInterface.ORIENTATION_FLIP_HORIZONTAL:
-                degrees = 0;
-                mirror = true;
-                break;
-            case ExifInterface.ORIENTATION_FLIP_VERTICAL:
-                degrees = 180;
-                mirror = true;
-                break;
-            case ExifInterface.ORIENTATION_TRANSPOSE:
-                degrees = 90;
-                mirror = true;
-                break;
-            case ExifInterface.ORIENTATION_TRANSVERSE:
-                degrees = 270;
-                mirror = true;
-                break;
-            default:
-                return bitmap;
-        }
-        try {
-            Matrix matrix = new Matrix();
-            if (mirror) matrix.postScale(-1f, 1f);
-            if (degrees != 0) matrix.postRotate(degrees);
-            Bitmap rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
-            if (rotated != bitmap && !bitmap.isRecycled()) bitmap.recycle();
-            return rotated;
-        } catch (Throwable th) {
-            return bitmap;
-        }
-    }
-
-    /** 读文件头 16 字节(格式识别/GIF 判定用) */
-    private static byte[] readHeader(File file) {
-        try (InputStream in = new java.io.FileInputStream(file)) {
-            byte[] head = new byte[16];
-            int read = 0;
-            while (read < head.length) {
-                int n = in.read(head, read, head.length - read);
-                if (n <= 0) break;
-                read += n;
-            }
-            return head;
-        } catch (Throwable th) {
-            return null;
+            return false;
         }
     }
 

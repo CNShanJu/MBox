@@ -4,10 +4,10 @@ import android.content.Context;
 import android.net.ConnectivityManager;
 import android.net.Network;
 import android.net.NetworkCapabilities;
-import android.os.StatFs;
 
 
 import com.github.tvbox.osc.bean.DownloadTask;
+import com.github.tvbox.osc.state.StorageSpace;
 import com.github.tvbox.osc.state.SystemEvent;
 import com.github.tvbox.osc.state.SystemStateMonitor;
 import com.github.tvbox.osc.config.PrefsDataStore;
@@ -157,14 +157,16 @@ public class DownloadPolicy {
     }
 
     /**
-     * 下载前磁盘空间预检:估算文件大小(直链精确 Content-Length / m3u8 码率×时长估算,由
-     * DownloadExecutor 预检写入任务,入队时已异步探测;此处大小未知才补一次阻塞探测),
-     * 检查保存目录所在磁盘剩余空间。
+     * 下载前磁盘空间预检:估算文件大小(直链精确 Content-Length;m3u8 由 DownloadExecutor 抽样探测后
+     * 推算,见 :common HlsSizeEstimator),检查保存目录所在磁盘剩余空间。
      *
-     * <p>预留口径 = **1× 成品大小**(不做峰值倍数)。原因:m3u8 的大小是"码率×时长"估算,本身不准,
-     * 再乘 2 会大量误伤(把本来够用的机器拒之门外);而真到合并/重封装阶段空间不够时,退化是**优雅**的
-     * —— 合并失败保留碎片可重试、重封装失败只是回退 `.ts` 后缀(成品仍可播),不会损坏已下内容。
-     * 想要更保守的话,把 {@link #SPACE_PEAK_FACTOR} 调成 2 即可(hls 场景)。
+     * <p>预留口径 = **1× 成品大小**(不做峰值倍数)。原因:m3u8 的大小终究是<b>推算</b>(抽样均值 × 片数),
+     * 本身有偏差,再乘 2 会大量误伤(把本来够用的机器拒之门外);而真到合并/重封装阶段空间不够时,
+     * 每一处都有自己的把关,退化都是**优雅**的:
+     * 合并前按"成品 + {@link #MIN_FREE_SPACE}"再算一次,不够则失败并保留碎片可重试;
+     * 重封装前按"源文件 × 2(重打包时 ×3)+ {@link #MIN_ABSOLUTE_FREE}"再算一次,不够先释放本任务碎片目录、
+     * 仍不够才回退 `.ts`(成品仍可播)。
+     * 下载过程中的兜底另有存储看门狗(可用空间 &lt; 1GB 暂停全部任务,见 StorageWatchdog)。
      *
      * @return null=空间充足;否则返回错误提示文案
      */
@@ -178,8 +180,9 @@ public class DownloadPolicy {
             if (size <= 0) return null; // 无法确定大小(探测失败/服务器不返回),不阻塞,下载中按实际进度判定
             File dir = new File(t.savePath).getParentFile();
             if (dir == null || !dir.exists()) return null;
-            StatFs stat = new StatFs(dir.getAbsolutePath());
-            long free = stat.getAvailableBytes();
+            // 测量统一走中控层 StorageSpace(全应用一处 new StatFs);这里保留下载自己的
+            // "启动前门槛"口径 MIN_FREE_SPACE(1.5GB),它比看门狗底线(1GB)高一档
+            long free = StorageSpace.freeBytes(dir);
             long need = size * SPACE_PEAK_FACTOR;
             long needAfter = free - need; // 预留后的剩余
             if (needAfter < MIN_FREE_SPACE) {
@@ -195,7 +198,8 @@ public class DownloadPolicy {
 
     /**
      * 空间预检的倍数(1 = 只预留成品大小)。实测口径下 1 就够:分片/合并产物/重封装产物虽然会同时存在,
-     * 但空间真不够时是优雅退化(回退 .ts / 保留碎片),不值得为不确定的估算去误伤用户。
+     * 但每一处收尾环节都有自己的空间把关(合并前、重封装前各算一次,不够就释放碎片或优雅回退),
+     * 并且下载过程中还有存储看门狗兜底 —— 不值得为不确定的估算去误伤用户。
      */
     private static final int SPACE_PEAK_FACTOR = 1;
 

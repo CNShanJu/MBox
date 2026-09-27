@@ -51,7 +51,7 @@
             android:layout_height="wrap_content"
             android:layout_marginRight="12dp"
             android:text="(已选 0)"
-            android:textColor="@color/text_highlight"
+            android:textColor="@color/text_accent"
             android:textSize="13sp" />
 
         <com.github.tvbox.osc.ui.kit.SizedIconTextView

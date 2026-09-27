@@ -18,17 +18,15 @@
     <com.github.tvbox.osc.ui.kit.AppTitleBar
         android:id="@+id/title_bar"
         android:layout_width="match_parent"
-        android:layout_height="45dp"
+        android:layout_height="wrap_content"
         app:title="背景图"
-        app:titleStyle="bold">
+        app:titleBold="true">
 
         <!-- 更换图片:放标题栏右侧(不再塞进底部按钮行) -->
         <TextView
             android:id="@+id/tv_pick"
             android:layout_width="wrap_content"
             android:layout_height="match_parent"
-            android:layout_gravity="end|center_vertical"
-            android:layout_marginEnd="12dp"
             android:background="@drawable/ripple_round_background"
             android:gravity="center"
             android:paddingHorizontal="12dp"
@@ -37,7 +35,7 @@
             android:textSize="14sp" />
     </com.github.tvbox.osc.ui.kit.AppTitleBar>
 
-    <!-- 底部抽屉面板:与底栏同一个面(bg_float 半透明圆角卡片)。
+    <!-- 底部抽屉面板:与底栏同一个面(bg_surface 半透明圆角卡片)。
          内边距统一 8dp:行内点击态高亮(胶囊)四周都留 8dp,不贴面板边、也不贴圆角,
          文字再由各行自己的 8dp 内边距顶到 16dp,与全 App 其余页面一致 -->
     <LinearLayout
@@ -78,9 +76,9 @@
 
             <TextView
                 android:id="@+id/tv_panel_state"
+                android:layout_marginEnd="4dp"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginEnd="4dp"
                 android:text="展开"
                 android:textColor="@color/text_sub_foreground"
                 android:textSize="12sp"

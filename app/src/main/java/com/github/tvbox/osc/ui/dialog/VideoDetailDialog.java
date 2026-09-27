@@ -176,7 +176,7 @@ public class VideoDetailDialog extends SheetResizableBottomPopup {
             // 长文本:预渲染汇总后进入“可展开”
             descFoldable = true;
             // "… 展开 / 收回"用文字高亮色(蓝色):color_highlight 是主题主色(近黑/近白),压在正文上看着"没高亮"
-            mLinkColor = ContextCompat.getColor(getContext(), R.color.text_accent);
+            mLinkColor = ContextCompat.getColor(getContext(), R.color.text_highlight);
             mCollapsedSpan = InlineExpandableText.buildCollapsed(
                     mDescText, paint, width, spacing, DESC_MIN_LINES,
                     "… 展开", this::toggleFold, mLinkColor);

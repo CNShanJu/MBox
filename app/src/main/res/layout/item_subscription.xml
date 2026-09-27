@@ -52,7 +52,7 @@
         android:src="@drawable/dkplayer_ic_action_close"
         android:layout_alignParentRight="true"
         android:layout_alignParentTop="true"
-        app:tint="@color/red"/>
+        app:tint="@color/text_danger"/>
 
     <ImageView
         android:id="@+id/iv_pushpin"

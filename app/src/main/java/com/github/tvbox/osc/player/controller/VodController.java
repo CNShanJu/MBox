@@ -1007,8 +1007,8 @@ public class VodController extends BaseController implements PlaybackSettingsCon
     @Override
     protected void updateSeekUI(int curr, int seekTo, int duration) {
         super.updateSeekUI(curr, seekTo, duration);
-        // 快进/快退图标统一置白:ic_back 是黑色矢量,ic_pre 为浅色 png,
-        // 叠加白色滤镜保证快退/快进在灰色进度浮层上一律白显
+        // 快进/快退用播放器那对 chevron(ic_seek_right / ic_seek_left,矢量、fillColor 为白),
+        // 再叠一层白色滤镜:保证快退/快进在灰色进度浮层上一律白显
         mProgressIcon.setColorFilter(0xFFFFFFFF);
         if (seekTo > curr) {
             mProgressIcon.setImageResource(R.drawable.ic_seek_right);

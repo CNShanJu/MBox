@@ -752,12 +752,29 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
                         mBinding.previewPlayer.setVisibility(View.GONE);
                     }
                 } else {
-                    showEmpty();
+                    showEmpty(emptyTipForSource());
                     mBinding.previewPlayerPlace.setVisibility(View.GONE);
                     mBinding.previewPlayer.setVisibility(View.GONE);
                 }
             }
         });
+    }
+
+    /**
+     * 详情拉不到时的空态文案:能说清原因就说原因,说不清才退回默认「暂无数据」。
+     * <p>
+     * 动机(线上实例):订阅里某个站点声明的类在其 jar 里并不存在(如 csp_XPathGuard),
+     * 该源每次调用只会拿到 SpiderNull → 详情页永远空白,用户看到的和"这个片没资源"一模一样,
+     * 无从判断是源坏了还是 App 坏了。原因由 :spider 侧登记(SpiderFaults),
+     * 这里只经契约读;源已从订阅里消失(订阅换了/被删)也单独给个说法。
+     */
+    private String emptyTipForSource() {
+        String reason = com.github.tvbox.osc.spiderapi.SpiderFaultProviders.unavailableReason(sourceKey);
+        if (!TextUtils.isEmpty(reason)) return reason;
+        if (com.github.tvbox.osc.spiderapi.SourceConfigProviders.get().getSource(sourceKey) == null) {
+            return "该源已不在当前订阅中（可能已被移除或改名）";
+        }
+        return null;
     }
 
     private void initData() {

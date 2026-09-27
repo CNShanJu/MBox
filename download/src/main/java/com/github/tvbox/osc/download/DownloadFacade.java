@@ -41,6 +41,8 @@ public final class DownloadFacade {
     public static final String MSG_REPAIRING = "补片中";
     /** 仅WiFi开启且当前非WiFi时,等待任务的状态文案(让用户知道为何等待,而非莫名"等待中") */
     public static final String MSG_WAIT_WIFI = "等待Wi-Fi";
+    /** 存储看门狗发现可用空间见底时,等待任务的文案(与"等待Wi-Fi"同性质:说清为何没在下载) */
+    public static final String MSG_WAIT_STORAGE = "存储空间不足,清理后继续下载";
 
     public interface DownloadStatusListener {
         /** 下载状态/进度变化（去抖 500ms 合并后回调，主线程） */
