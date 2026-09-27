@@ -59,7 +59,8 @@ public class AttachActionDialog extends AttachPopupView {
 
     @Override
     protected void onCreate() {
-        // 换肤兜底:本类直接继承 XPopup 的 *PopupView,没走 AppBottom/Center/Drawer 那层壳,
+        super.onCreate();
+// 换肤兜底:本类直接继承 XPopup 的 *PopupView,没走 AppBottom/Center/Drawer 那层壳,
         // 面板底不会被换肤注入覆盖到 —— 这里补同一趟"内置面 → 主题面"扫描
         // (用户口径:"切换布局气泡的背景色没走卡片与悬浮层颜色")。
         try {
@@ -67,7 +68,6 @@ public class AttachActionDialog extends AttachPopupView {
             com.github.tvbox.osc.theme.ThemeSweep.watchItems(getPopupImplView());
         } catch (Throwable ignored) {
         }
-        super.onCreate();
         LinearLayout container = findViewById(R.id.ll_actions);
         if (container == null) return;
         container.removeAllViews();

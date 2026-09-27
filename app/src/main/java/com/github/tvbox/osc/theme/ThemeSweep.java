@@ -139,6 +139,32 @@ public final class ThemeSweep {
                     break;
                 }
             }
+            // ③ compound drawable 的着色(图标):同样是"内置那份文字色"→ 换主题同档。
+            //    不补这一支的话,同一个控件会出现"文字跟着主题走了、图标还停在编译期颜色"。
+            android.content.res.ColorStateList tint = tv.getCompoundDrawableTintList();
+            if (tint != null) {
+                int nowTint = tint.getDefaultColor();
+                for (String key : TEXT_KEYS) {
+                    if (nowTint == builtin.get(key)) {
+                        tv.setCompoundDrawableTintList(android.content.res.ColorStateList.valueOf(palette.get(key)));
+                        break;
+                    }
+                }
+            }
+        }
+        // ④ ImageView 的着色(气泡/抽屉里那些独立图标):同一套比对
+        if (v instanceof android.widget.ImageView) {
+            android.widget.ImageView iv = (android.widget.ImageView) v;
+            android.content.res.ColorStateList tint = iv.getImageTintList();
+            if (tint != null) {
+                int nowTint = tint.getDefaultColor();
+                for (String key : TEXT_KEYS) {
+                    if (nowTint == builtin.get(key)) {
+                        iv.setImageTintList(android.content.res.ColorStateList.valueOf(palette.get(key)));
+                        break;
+                    }
+                }
+            }
         }
     }
 
