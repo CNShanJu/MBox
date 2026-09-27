@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- 小组件按钮 · 空心档(日志分类键 / 背景图调整键 / 搜索页历史·热词·联想键 / 播放器设置键都用它):
-     圆角**只走 radius_widget_btn**(主题资产,默认 8dp),描边取主题的 colorPrimary。
+     圆角**只走 radius_widget_btn**(主题资产,默认 16dp),描边取主题的 colorPrimary。
      与"纯色/空心按钮"那条线分开,正是为了不让"小键"套上按钮的 12dp 圆角。 -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">

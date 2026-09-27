@@ -274,10 +274,10 @@ def defaultRadii = [
         radius_background: '25dp',
         radius_dialog    : '12dp',
         radius_card      : '12dp',
-        // 按钮圆角:radius_btn=常规按钮,radius_btn_large=大圆角按钮(chip/预设)
+        // 圆角档:radius_btn=按钮(纯色/空心/纯文字三型共用这一档),
+        //          radius_widget_btn=小组件按钮(搜索历史·热词·联想 / 日志分类 / 背景图调整键 / 播放器设置里的组件 / chip 预设)
         radius_btn       : '12dp',
-    radius_widget_btn: '8dp',
-        radius_btn_large : '25dp'
+        radius_widget_btn: '16dp'
 ]
 
 // 主题文件缺失时的兜底(与仓库内文件同值)
