@@ -70,6 +70,13 @@ public abstract class BaseLazyFragment extends Fragment implements CustomAdapt {
             rootView = inflater.inflate(getLayoutResID(), container, false);
         }
         isViewCreated = true;
+        // 换肤兜底:本基类不走 BaseVbFragment 那条路(懒加载页面 —— 首页的「直播」/「筛选」悬浮钮
+        // 就在这些页面里)。少了这一趟扫描,页面里"没被换肤注入到"的元素就停在编译期颜色,
+        // 用户口径:"首页的直播气泡和筛选气泡,颜色没有使用卡片和悬浮层背景"。
+        try {
+            com.github.tvbox.osc.theme.ThemeSweep.apply(rootView);
+        } catch (Throwable ignored) {
+        }
         return rootView;
     }
 

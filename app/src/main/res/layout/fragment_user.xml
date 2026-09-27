@@ -48,7 +48,7 @@
                 android:layout_height="28dp"
                 android:layout_gravity="center"
                 android:src="@drawable/ic_live_tv_48"
-                app:tint="@color/text_accent" />
+                app:tint="@color/text_foreground" />
         </FrameLayout>
 
         <!-- "到底了"悬浮提示:落在列表底部留白区内、贴近底部导航栏(见 item_view_end_tip) -->
