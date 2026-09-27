@@ -812,6 +812,10 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             // 不等 = 那条链路对某些控件(例如 MaterialCheckBox)没生效 —— 用来给"弹窗 item 文字不跟主题"定性
             val tvHex = Integer.toHexString(mBinding.tvTheme.currentTextColor)
             val expectHex = Integer.toHexString(p.get("text_main"))
+            // 主题文件里**存的值**(不是派生结果):用它区分"文件里就没存对"与"存对了但派生/渲染不对"
+            val def = ThemeStore.resolveActive()
+            val src = if (def == null) "(内置)" else
+                "底色" + def.color("bg_surface") + " 卡片α" + def.color("bg_card_alpha") + " 浮层α" + def.color("bg_float_alpha")
             AppBubble.toastLong(
                 "主题自检:" + ThemeStore.activeDisplayName()
                     + " 面=" + Integer.toHexString(p.get("bg_surface"))
@@ -821,6 +825,7 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
                     + " 文本=" + tvHex + (if (tvHex == expectHex) "(=主题)" else "(期望 $expectHex)")
                     + " chip圆角=" + (chipR / density).toInt() + "dp"
                     + " 抽屉圆角=" + (drawerR / density).toInt() + "dp"
+                    + " 文件=" + src
             )
         }
     }
