@@ -43,7 +43,7 @@
             tools:listitem="@layout/item_source"
             android:layout_marginTop="20dp"
             android:paddingTop="8dp"
-            android:paddingBottom="8dp"
+            android:paddingBottom="16dp"
             android:clipToPadding="false" />
     </LinearLayout>
 

@@ -36,6 +36,7 @@
                 android:drawablePadding="6dp"
                 android:singleLine="true"
                 android:drawableRight="@drawable/ic_arrow_down"
+                app:drawableTint="@color/text_foreground"
                 app:drawableIconSize="24dp"
                 android:ellipsize="marquee"
                 android:marqueeRepeatLimit="marquee_forever"
