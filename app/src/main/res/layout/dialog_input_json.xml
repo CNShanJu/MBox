@@ -36,7 +36,7 @@
             android:paddingEnd="8dp"
             android:paddingTop="4dp"
             android:paddingBottom="4dp"
-            android:background="@drawable/bg_r_25_stroke_primary"/>
+            android:background="@drawable/bg_widget_btn_stroke"/>
     </RelativeLayout>
 
     <!-- 说明与格式示例分两行:比塞进输入框 hint 更清楚,也不会在框里折行显得像"输出了两遍" -->
