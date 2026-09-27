@@ -9,10 +9,10 @@
     app:hl_bindTextView="@+id/filterValue"
     app:hl_cornerRadius="@dimen/common_corners"
     app:hl_layoutBackground="@android:color/transparent"
-    app:hl_layoutBackground_true="@color/colorPrimary"
+    app:hl_layoutBackground_true="@color/color_highlight"
     app:hl_shapeMode="selected"
     app:hl_textColor="@color/text_foreground"
-    app:hl_textColor_true="#fff">
+    app:hl_textColor_true="@color/btn_select_text">
 
     <TextView
         android:id="@+id/filterValue"
