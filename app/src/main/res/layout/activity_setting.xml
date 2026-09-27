@@ -66,7 +66,8 @@
                         android:layout_weight="1"
                         android:gravity="end"
                         android:maxLines="1"
-                        android:ellipsize="end" />
+                        android:ellipsize="end"
+                android:textColor="@color/text_foreground" />
 
                     <ImageView
                         android:layout_width="13dp"
@@ -104,7 +105,8 @@
                         android:layout_weight="1"
                         android:gravity="end"
                         android:maxLines="1"
-                        android:ellipsize="end" />
+                        android:ellipsize="end"
+                android:textColor="@color/text_foreground" />
 
                     <ImageView
                         android:layout_width="13dp"
@@ -143,7 +145,8 @@
                         android:layout_weight="1"
                         android:gravity="end"
                         android:maxLines="1"
-                        android:ellipsize="end" />
+                        android:ellipsize="end"
+                android:textColor="@color/text_foreground" />
 
                     <ImageView
                         android:layout_width="13dp"
@@ -180,7 +183,8 @@
                         android:layout_weight="1"
                         android:gravity="end"
                         android:maxLines="1"
-                        android:ellipsize="end" />
+                        android:ellipsize="end"
+                android:textColor="@color/text_foreground" />
 
                     <ImageView
                         android:layout_width="13dp"
@@ -215,7 +219,8 @@
                         android:layout_weight="1"
                         android:gravity="end"
                         android:maxLines="1"
-                        android:ellipsize="end" />
+                        android:ellipsize="end"
+                android:textColor="@color/text_foreground" />
 
                     <ImageView
                         android:layout_width="13dp"
@@ -356,7 +361,8 @@
                         android:layout_weight="1"
                         android:gravity="end"
                         android:maxLines="1"
-                        android:ellipsize="end" />
+                        android:ellipsize="end"
+                android:textColor="@color/text_foreground" />
 
                     <ImageView
                         android:layout_width="13dp"
@@ -576,7 +582,8 @@
                         android:layout_weight="1"
                         android:gravity="end"
                         android:maxLines="1"
-                        android:ellipsize="end" />
+                        android:ellipsize="end"
+                android:textColor="@color/text_foreground" />
 
                     <ImageView
                         android:layout_width="13dp"
@@ -641,7 +648,8 @@
                         android:layout_weight="1"
                         android:gravity="end"
                         android:maxLines="1"
-                        android:ellipsize="end" />
+                        android:ellipsize="end"
+                android:textColor="@color/text_foreground" />
 
                     <ImageView
                         android:layout_width="13dp"
@@ -678,7 +686,8 @@
                         android:layout_weight="1"
                         android:gravity="end"
                         android:maxLines="1"
-                        android:ellipsize="end" />
+                        android:ellipsize="end"
+                android:textColor="@color/text_foreground" />
 
                     <ImageView
                         android:layout_width="13dp"
@@ -713,7 +722,8 @@
                         android:layout_weight="1"
                         android:gravity="end"
                         android:maxLines="1"
-                        android:ellipsize="end" />
+                        android:ellipsize="end"
+                android:textColor="@color/text_foreground" />
 
                     <ImageView
                         android:layout_width="13dp"
@@ -749,7 +759,8 @@
                         android:layout_weight="1"
                         android:gravity="end"
                         android:maxLines="1"
-                        android:ellipsize="end" />
+                        android:ellipsize="end"
+                android:textColor="@color/text_foreground" />
 
                     <ImageView
                         android:layout_width="13dp"
@@ -784,7 +795,8 @@
                         android:layout_weight="1"
                         android:gravity="end"
                         android:maxLines="1"
-                        android:ellipsize="end" />
+                        android:ellipsize="end"
+                android:textColor="@color/text_foreground" />
 
                     <ImageView
                         android:layout_width="13dp"
@@ -954,7 +966,8 @@
                         android:layout_weight="1"
                         android:gravity="end"
                         android:maxLines="1"
-                        android:ellipsize="end" />
+                        android:ellipsize="end"
+                android:textColor="@color/text_foreground" />
 
                     <ImageView
                         android:layout_width="13dp"
