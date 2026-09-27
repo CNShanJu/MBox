@@ -797,11 +797,15 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             val p = ThemeStore.activePalette()
             val rebuilt = com.github.tvbox.osc.theme.ThemeDrawables.rebuild(
                 R.drawable.bg_dialog, resources)
+            // 三条通道一起看:①派生出的色值对不对 ②drawable 重建通不通(卡片/弹窗背景就是它)
+            // ③Resources 包装有没有装上(代码里 ContextCompat.getColor 那一类靠它)
+            val wrapped = resources is com.github.tvbox.osc.theme.ThemeResources
             AppBubble.toastLong(
                 "主题自检:" + ThemeStore.activeDisplayName()
                     + " 面=" + Integer.toHexString(p.get("bg_surface"))
                     + " 浮层=" + Integer.toHexString(p.get("bg_float"))
                     + " 重建=" + (if (rebuilt != null) "OK" else "失败")
+                    + " 包装=" + (if (wrapped) "OK" else "无")
             )
         }
     }

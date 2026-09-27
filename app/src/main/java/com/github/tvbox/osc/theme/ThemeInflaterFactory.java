@@ -39,7 +39,11 @@ import java.util.Map;
  *       (重建保留 {@code @android:id/progress} 等 layer id,所以随后的 {@code setProgressTintList} 照样生效);</li>
  *   <li>第三方控件自定义的属性(如 TitleBar 的 {@code titleColor}、ShadowLayout 的
  *       {@code hl_layoutBackground}):按属性名反射找 {@code setXxx(int)} 同名 setter 兜底
- *       (调用点很少,失败就跳过,不影响其它属性)。</li>
+ *       (调用点很少,失败就跳过,不影响其它属性);</li>
+ *   <li><b>值是色值选择器的属性</b>({@code itemTextColor} / {@code itemIconTint} / {@code tabTextColor}
+ *       / {@code chipStrokeColor} …):这些 setter 收的是 {@link ColorStateList},不是 int ——
+ *       按 setter 名 + 参数的几种组合找(如 {@code setItemIconTintList} / {@code setTabTextColors}),
+ *       塞进去的是"按主题重建过的"色值选择器。底栏选中色、顶部导航选中色就靠这条。</li>
  * </ul>
  *
  * <p>怎么装进去:AppCompat 已经在 Activity 的 LayoutInflater 上装过它的 Factory2(负责把
@@ -52,6 +56,9 @@ public final class ThemeInflaterFactory implements LayoutInflater.Factory2 {
 
     /** 按属性名缓存的反射 setter(第三方控件兜底路径用) */
     private static final Map<String, Method> SETTER_CACHE = new HashMap<>();
+
+    /** 样式属性名(非命名空间属性,{@code style="@style/X"});由 {@link ThemeStyles} 那趟单独处理 */
+    private static final String STYLE_ATTR = "style";
 
     private final LayoutInflater.Factory2 delegate2;
     private final LayoutInflater.Factory delegate1;
@@ -135,10 +142,13 @@ public final class ThemeInflaterFactory implements LayoutInflater.Factory2 {
         if (view == null || attrs == null) return;
         ThemePalette palette = ThemeRuntime.palette();
         if (palette == null) return;
+        // 先按 ThemeStyles 补一遍"写在样式里"的颜色(布局里只有一句 style="…",本工厂看不到它内部),
+        // 再跑内联属性 —— 顺序不能反:内联优先(如日志页「清空」= 样式给底色 + 内联给 text_danger)
+        applyStyleAttrs(view, context, attrs, palette);
         int count = attrs.getAttributeCount();
         for (int i = 0; i < count; i++) {
             String attrName = attrs.getAttributeName(i);
-            if (attrName == null) continue;
+            if (attrName == null || STYLE_ATTR.equals(attrName)) continue; // style 由上面那一趟处理
             int resId = attrs.getAttributeResourceValue(i, 0);
             if (resId == 0) continue;
             try {
@@ -149,6 +159,46 @@ public final class ThemeInflaterFactory implements LayoutInflater.Factory2 {
                 // 单个属性失败不影响其它属性,更不该影响视图创建
             }
         }
+    }
+
+    /**
+     * 样式通道:布局里的 {@code style="@style/BtnSecondary"} 把颜色写在共享样式里,
+     * 本工厂遍历 {@code attrs} 只看得到"这一句 style",看不到它内部的颜色 ——
+     * 于是自定义主题下按钮会停在编译期那套颜色(用户口径:"删除按钮样式和主题都对不上")。
+     * 这里按 {@link ThemeStyles} 的表把该样式里随主题走的属性补一遍。
+     *
+     * <p>布局内联写了同名属性的**跳过**(内联是用户在这一处显式写的,优先级更高;
+     * 且内联的值可能是 {@code text_danger} 这类不随主题走的固定字面量,盖掉就错了)。
+     */
+    private void applyStyleAttrs(View view, Context context, AttributeSet attrs, ThemePalette palette) {
+        int styleRes = 0;
+        int count = attrs.getAttributeCount();
+        for (int i = 0; i < count; i++) {
+            if (STYLE_ATTR.equals(attrs.getAttributeName(i))) {
+                styleRes = attrs.getAttributeResourceValue(i, 0);
+                break;
+            }
+        }
+        if (styleRes == 0) return;
+        java.util.List<ThemeStyles.Attr> list = ThemeStyles.of(styleRes);
+        if (list.isEmpty()) return;
+        for (ThemeStyles.Attr attr : list) {
+            if (hasInlineAttr(attrs, attr.name)) continue;
+            try {
+                applyAttribute(view, context, attr.name, attr.resId, palette);
+            } catch (Throwable ignored) {
+                // 单个属性失败不影响其它属性
+            }
+        }
+    }
+
+    /** 布局里内联写过这个属性吗(样式通道据此让位) */
+    private static boolean hasInlineAttr(AttributeSet attrs, String name) {
+        int count = attrs.getAttributeCount();
+        for (int i = 0; i < count; i++) {
+            if (name.equals(attrs.getAttributeName(i))) return true;
+        }
+        return false;
     }
 
     /**
@@ -251,10 +301,19 @@ public final class ThemeInflaterFactory implements LayoutInflater.Factory2 {
                 return true;
             }
             case "strokeColor": {
-                Integer color = colorOf(resId, palette);
-                if (color == null || !(view instanceof com.google.android.material.card.MaterialCardView)) return false;
-                ((com.google.android.material.card.MaterialCardView) view).setStrokeColor(color);
-                return true;
+                ColorStateList csl = colorStateList(resId, context, palette);
+                if (csl == null) return false;
+                if (view instanceof com.google.android.material.card.MaterialCardView) {
+                    ((com.google.android.material.card.MaterialCardView) view).setStrokeColor(csl);
+                    return true;
+                }
+                // 按钮的描边也要跟着主题走:暗色主题下按钮本身就是"无底色 + 1dp 描边",
+                // 描边不换色 = 按钮在深色底上直接消失(线宽由样式里的 strokeWidth 给,这里只换色)
+                if (view instanceof com.google.android.material.button.MaterialButton) {
+                    ((com.google.android.material.button.MaterialButton) view).setStrokeColor(csl);
+                    return true;
+                }
+                return false;
             }
             case "boxStrokeColor": {
                 Integer color = colorOf(resId, palette);
@@ -263,7 +322,7 @@ public final class ThemeInflaterFactory implements LayoutInflater.Factory2 {
                 return true;
             }
             default:
-                return applyBySetter(view, attrName, resId, palette);
+                return applyBySetter(view, context, attrName, resId, palette);
         }
     }
 
@@ -302,26 +361,55 @@ public final class ThemeInflaterFactory implements LayoutInflater.Factory2 {
      * (库前缀 + 下划线分段)。所以按"去前缀 / 去下划线 / 逐段首字母大写"几种写法各试一次,
      * 命中就用;都不命中就跳过(那一处保持内置配色,不影响其它属性)。
      */
-    private boolean applyBySetter(View view, String attrName, int resId, ThemePalette palette) {
+    private boolean applyBySetter(View view, Context context, String attrName, int resId, ThemePalette palette) {
+        // 1) 单色属性(值是随主题走的纯色):塞给收 int 的 setter
         Integer color = colorOf(resId, palette);
-        if (color == null) return false;
-        Method m = findSetter(view.getClass(), attrName);
-        if (m == null) return false;
+        if (color != null) {
+            Method m = findSetter(view.getClass(), attrName, int.class);
+            if (m != null && invokeQuietly(m, view, color)) return true;
+        }
+        // 2) **色值选择器属性**({@code itemTextColor} / {@code itemIconTint} / {@code tabTextColor} /
+        //    {@code chipStrokeColor} 这类 Material 属性):值是个 {@code <selector>},
+        //    setter 收的是 {@link ColorStateList} —— 以前只找 int setter,这类属性一个都改不到。
+        //    底栏「选中那一项的文字/图标颜色」就是这么漏掉的(用户口径:"底部导航栏的文字选中颜色为啥没走")。
+        ColorStateList csl = themedColorStateList(context, resId, palette);
+        if (csl != null) {
+            Method m = findSetter(view.getClass(), attrName, ColorStateList.class);
+            if (m != null && invokeQuietly(m, view, csl)) return true;
+        }
+        return false;
+    }
+
+    /** 把资源解析成"按主题重建过"的 ColorStateList;与主题无关/不是色值选择器时返回 null */
+    private ColorStateList themedColorStateList(Context context, int resId, ThemePalette palette) {
+        Integer color = colorOf(resId, palette);
+        if (color != null) return ColorStateList.valueOf(color);
+        ColorStateList rebuilt = ThemeDrawables.rebuildColorStateList(resId, context.getResources());
+        if (rebuilt != null) return rebuilt;
+        // 兜底交给系统:自定义主题生效时,Resources 被包装过,取到的也是主题色
         try {
-            m.invoke(view, color);
+            return androidx.core.content.ContextCompat.getColorStateList(context, resId);
+        } catch (Throwable th) {
+            return null;
+        }
+    }
+
+    private static boolean invokeQuietly(Method m, View view, Object arg) {
+        try {
+            m.invoke(view, arg);
             return true;
         } catch (Throwable th) {
             return false;
         }
     }
 
-    private Method findSetter(Class<?> clazz, String attrName) {
-        String cacheKey = clazz.getName() + "#" + attrName;
+    private Method findSetter(Class<?> clazz, String attrName, Class<?> param) {
+        String cacheKey = clazz.getName() + "#" + attrName + "#" + param.getSimpleName();
         synchronized (SETTER_CACHE) {
             if (SETTER_CACHE.containsKey(cacheKey)) return SETTER_CACHE.get(cacheKey);
             Method found = null;
             for (String candidate : setterCandidates(attrName)) {
-                found = findMethod(clazz, candidate);
+                found = findMethod(clazz, candidate, param);
                 if (found != null) break;
             }
             SETTER_CACHE.put(cacheKey, found);
@@ -329,10 +417,21 @@ public final class ThemeInflaterFactory implements LayoutInflater.Factory2 {
         }
     }
 
-    /** 由属性名推出几个可能的 setter 名(见 {@link #applyBySetter} 的说明) */
+    /**
+     * 由属性名推出几个可能的 setter 名(见 {@link #applyBySetter} 的说明)。
+     *
+     * <p>后缀变体是给 Material 那批属性用的:属性名与 setter 名并不一一对应 ——
+     * {@code itemIconTint} → {@code setItemIconTintList}、{@code tabTextColor} → {@code setTabTextColors}。
+     * 名字都不命中就跳过(那一处保持内置配色,不影响其它属性)。
+     */
     private static java.util.List<String> setterCandidates(String attrName) {
-        java.util.List<String> out = new java.util.ArrayList<>(4);
-        out.add("set" + capitalize(attrName));
+        java.util.List<String> out = new java.util.ArrayList<>(8);
+        String cap = capitalize(attrName);
+        out.add("set" + cap);
+        out.add("set" + cap + "List");
+        out.add("set" + cap + "s");
+        out.add("set" + cap + "Colors");
+        out.add("set" + cap + "ColorStateList");
         String[] parts = attrName.split("_");
         if (parts.length > 1) {
             StringBuilder sb = new StringBuilder("set");
@@ -357,11 +456,11 @@ public final class ThemeInflaterFactory implements LayoutInflater.Factory2 {
         return Character.toUpperCase(s.charAt(0)) + s.substring(1);
     }
 
-    /** 沿继承链找一个"只吃一个 int"的公开/私有方法 */
-    private static Method findMethod(Class<?> clazz, String name) {
+    /** 沿继承链找一个"只吃一个 {@code param} 参数"的公开/私有方法 */
+    private static Method findMethod(Class<?> clazz, String name, Class<?> param) {
         for (Class<?> c = clazz; c != null && c != Object.class; c = c.getSuperclass()) {
             try {
-                Method m = c.getDeclaredMethod(name, int.class);
+                Method m = c.getDeclaredMethod(name, param);
                 m.setAccessible(true);
                 return m;
             } catch (Throwable ignored) {
