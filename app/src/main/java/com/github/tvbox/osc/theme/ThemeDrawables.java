@@ -138,6 +138,27 @@ public final class ThemeDrawables {
     }
 
     /**
+     * 代码里设底的**安全入口**(代替 {@code View.setBackgroundResource})。
+     *
+     * <p>三级兜底,保证"绝不会把底弄丢":按主题重建那份 → 系统那份 → 直接
+     * {@link android.view.View#setBackgroundResource(int)}(理论上到不了这一步)。
+     * {@code resId == 0} 表示清掉背景。
+     */
+    public static void applyBackground(android.view.View view, int resId) {
+        if (view == null) return;
+        if (resId == 0) {
+            view.setBackground(null);
+            return;
+        }
+        Drawable themed = themedDrawable(resId, view.getResources());
+        if (themed != null) {
+            view.setBackground(themed);
+        } else {
+            view.setBackgroundResource(resId);
+        }
+    }
+
+    /**
      * 清缓存(切换主题后调;理论上一套主题一次进程,但热更新/调试时会重新装)
      */
     public static void clearCache() {

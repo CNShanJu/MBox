@@ -210,8 +210,7 @@ public class ThemePickerDialog extends SelectDialog<ThemePickerDialog.Row> {
         // 原来用 bg_small_round_gray(卡片底色 + 卡片圆角):在主题色偏亮/偏红时,
         // 这块就是一大坨实心色块,而且卡片圆角放在 ~48dp 高的动作行上看着像胶囊
         // (用户口径:"这个按钮样式又出来了…看着奇奇怪怪的")。
-        row.setBackground(com.github.tvbox.osc.theme.ThemeDrawables.themedDrawable(
-                R.drawable.bg_r_common_stroke_primary, ctx.getResources()));
+        com.github.tvbox.osc.theme.ThemeDrawables.applyBackground(row, R.drawable.bg_r_common_stroke_primary);
         int padV = dp(13);
         row.setPadding(dp(12), padV, dp(12), padV);
 

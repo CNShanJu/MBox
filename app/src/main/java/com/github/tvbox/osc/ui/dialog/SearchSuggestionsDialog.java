@@ -65,8 +65,7 @@ public class SearchSuggestionsDialog extends PartShadowPopupView {
                             mFl, false);
                     // 联想标签在统一色调的弹层上改描边式,避免与弹层背景同色不可辨;
                     // 描边色(colorPrimary)也要跟主题走,故走 themedDrawable(用户清单第 7 条:边框颜色固定)
-                    tv.setBackground(com.github.tvbox.osc.theme.ThemeDrawables.themedDrawable(
-                            R.drawable.bg_r_common_stroke_primary, tv.getResources()));
+                    com.github.tvbox.osc.theme.ThemeDrawables.applyBackground(tv, R.drawable.bg_r_common_stroke_primary);
                     tv.setText(s);
                     return tv;
                 }

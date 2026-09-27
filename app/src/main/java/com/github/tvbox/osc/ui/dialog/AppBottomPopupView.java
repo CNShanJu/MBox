@@ -48,8 +48,7 @@ public abstract class AppBottomPopupView extends BottomPopupView {
             // 统一底部弹窗背景:顶部圆角 + 主题背景色(bg_float 浅色白 / 暗色深)。
             // **不能直接 setBackgroundResource** —— 那按编译期资源取色,会把换肤注入好的主题底
             // 又覆盖回内置色(用户口径:"弹窗的透明度怎么都不变");走 themedDrawable 才认自定义主题。
-            root.setBackground(com.github.tvbox.osc.theme.ThemeDrawables.themedDrawable(
-                    R.drawable.bg_bottom_dialog, root.getResources()));
+            com.github.tvbox.osc.theme.ThemeDrawables.applyBackground(root, R.drawable.bg_bottom_dialog);
             // 横屏适配:内容宽度限 屏幕55% 并居中(竖屏保持全宽), 防横屏被拉全宽挤压
             if (ScreenUtils.isLandscape()) {
                 ViewGroup.LayoutParams lp = root.getLayoutParams();
