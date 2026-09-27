@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- 底栏"选中项文字/图标"的颜色。按主题文档的口径:①填充/控件高亮 = color_highlight(= 主题主色 brand)、
+     ②文字强调 = text_accent;底栏选中项属于①(它是"被选中的那个控件"),原来错用了 text_accent ——
+     用户口径:"导航栏选中文字和icon没有变成主题主色"。未选中仍取占位色 text_hint。 -->
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <item android:color="@color/text_accent" android:state_checked="true" />
+    <item android:color="@color/color_highlight" android:state_checked="true" />
     <item android:color="@color/text_hint" android:state_checked="false" />
 </selector>
