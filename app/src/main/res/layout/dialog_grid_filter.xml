@@ -1,57 +1,55 @@
 <?xml version="1.0" encoding="utf-8"?>
-<com.lihang.ShadowLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<!-- 主页分类筛选抽屉的内容层。
+     **面板底不在这里给**:本布局是 AppBottomPopupView(公共底部抽屉壳)的实现层,
+     壳会在 onCreate 里统一铺 bg_bottom_dialog(bg_float 主题色 + 主题圆角档,
+     见 ui/dialog/AppBottomPopupView)—— 抽屉的面板底/圆角只该有一个来源。
+     原来这里是 com.lihang.ShadowLayout + hl_layoutBackground="@color/bg_float" +
+     hl_cornerRadius_leftTop/rightTop="6dp":自画一层不透明面板把壳铺的主题底盖住,
+     圆角还写死 6dp(全站已统一 8dp),用户口径"主页筛选的抽屉没共用抽屉组件"就是它。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
-    android:orientation="vertical"
-    app:hl_cornerRadius_leftTop="6dp"
-    app:hl_cornerRadius_rightTop="6dp"
-    app:hl_layoutBackground="@color/bg_float">
+    android:orientation="vertical">
+
+    <LinearLayout
+        android:id="@+id/filterRoot"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:minHeight="200dp"
+        android:layout_gravity="bottom"
+        android:orientation="vertical"
+        android:padding="@dimen/dp_20"
+        android:layout_marginTop="10dp">
+
+    </LinearLayout>
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical">
+        android:orientation="horizontal"
+        android:paddingHorizontal="30dp">
 
-        <LinearLayout
-            android:id="@+id/filterRoot"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:minHeight="200dp"
-            android:layout_gravity="bottom"
-            android:orientation="vertical"
-            android:padding="@dimen/dp_20"
-            android:layout_marginTop="10dp">
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_reset"
+            style="@style/BtnPrimary"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="36dp"
+            app:cornerRadius="@dimen/radius_dialog"
+            android:layout_marginRight="20dp"
+            android:text="重置"
+            android:layout_marginBottom="14dp"/>
 
-        </LinearLayout>
-
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:paddingHorizontal="30dp">
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btn_reset"
-                style="@style/BtnPrimary"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_height="36dp"
-                app:cornerRadius="@dimen/radius_dialog"
-                android:layout_marginRight="20dp"
-                android:text="重置"
-                android:layout_marginBottom="14dp"/>
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btn_confirm"
-                style="@style/BtnPrimary"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_height="36dp"
-                app:cornerRadius="@dimen/radius_dialog"
-                android:text="筛选"
-                android:layout_marginBottom="14dp"/>
-        </LinearLayout>
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_confirm"
+            style="@style/BtnPrimary"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="36dp"
+            app:cornerRadius="@dimen/radius_dialog"
+            android:text="筛选"
+            android:layout_marginBottom="14dp"/>
     </LinearLayout>
 
-</com.lihang.ShadowLayout>
+</LinearLayout>

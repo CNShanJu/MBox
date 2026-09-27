@@ -288,6 +288,10 @@ public class SelectDialog<T> extends AppCenterPopupView {
         }
     }
 
+    /**
+     * @param select 默认选中项下标;传 <b>-1</b> 表示"动作列表"(没有默认选中项,每一行都可点,
+     *               如详情页截图后的"跳转哪个 App"),其余场景传当前项下标。
+     */
     public void setAdapter(SelectDialogAdapter.SelectDialogInterface<T> sourceBeanSelectDialogInterface,
                            DiffUtil.ItemCallback<T> sourceBeanItemCallback, List<T> data, int select) {
         this.selectInterface = sourceBeanSelectDialogInterface;
@@ -302,14 +306,20 @@ public class SelectDialog<T> extends AppCenterPopupView {
         adapter.setData(data, select);
         TvRecyclerView tvRecyclerView = ((TvRecyclerView) findViewById(R.id.list));
         tvRecyclerView.setAdapter(adapter);
-        tvRecyclerView.setSelectedPosition(select);
-        tvRecyclerView.post(new Runnable() {
-            @Override
-            public void run() {
-                tvRecyclerView.smoothScrollToPosition(select);
-                tvRecyclerView.setSelectionWithSmooth(select);
-            }
-        });
+        // select < 0 = "动作列表"语义(没有默认选中项,如截图后的"跳转哪个 App"):
+        // 此时一**行都不打勾**,也不该把 -1 丢给 TvRecyclerView 选位置/滚动(库内按位置取视图,
+        // 负值没有对应条目)。适配器那边 position == select 永远不成立,所以每一行都可点 ——
+        // 这正是动作列表要的:选择列表才需要"已选项点不动"。
+        if (select >= 0) {
+            tvRecyclerView.setSelectedPosition(select);
+            tvRecyclerView.post(new Runnable() {
+                @Override
+                public void run() {
+                    tvRecyclerView.smoothScrollToPosition(select);
+                    tvRecyclerView.setSelectionWithSmooth(select);
+                }
+            });
+        }
     }
 
     /**
@@ -394,7 +404,7 @@ public class SelectDialog<T> extends AppCenterPopupView {
         this.selectPos = newSelect;
         adapter.setData(newData, newSelect);
         View list = findViewById(R.id.list);
-        if (list instanceof TvRecyclerView) {
+        if (newSelect >= 0 && list instanceof TvRecyclerView) { // 同 setAdapter:负值 = 无默认选中项
             ((TvRecyclerView) list).setSelectedPosition(newSelect);
         }
     }

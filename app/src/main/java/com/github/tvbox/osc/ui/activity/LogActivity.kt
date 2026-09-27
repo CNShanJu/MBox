@@ -16,8 +16,6 @@ import com.github.tvbox.osc.R
 import com.github.tvbox.osc.base.BaseVbActivity
 import com.github.tvbox.osc.databinding.ActivityLogBinding
 import com.github.tvbox.osc.util.LogViewAssembler
-import com.github.tvbox.osc.util.Utils
-import com.lxj.xpopup.XPopup
 import java.io.File
 import java.util.Locale
 
@@ -180,23 +178,21 @@ class LogActivity : BaseVbActivity<ActivityLogBinding>() {
         }.start()
     }
 
-    /** 底部抽屉选择日期 */
+    /** 底部抽屉选择日期:走公共抽屉组件(见 ui/dialog/BottomListDialog 的类注释) */
     private fun showDatePicker() {
         if (dayFiles.isEmpty()) {
             AppBubble.toast("暂无日志")
             return
         }
-        val display = Array(dayFiles.size) { i -> LogViewAssembler.dayLabel(dayFiles[i].name) }
-        XPopup.Builder(this)
-            .isDarkTheme(Utils.isAppDarkTheme()) // 底部抽屉跟随 App 主题(直读主题设置,避免 ROM uiMode 不同步误判浅色)
-            .asBottomList("选择日期", display) { position, _ ->
-                if (position in dayFiles.indices) {
-                    selectedFile = dayFiles[position]
-                    mBinding.tvSelectedDay.text = display[position]
-                    refreshContent()
-                }
+        val display = dayFiles.map { LogViewAssembler.dayLabel(it.name) }
+        val selected = dayFiles.indexOf(selectedFile).coerceAtLeast(0)
+        com.github.tvbox.osc.ui.dialog.BottomListDialog(this, "选择日期", display, selected) { position, _ ->
+            if (position in dayFiles.indices) {
+                selectedFile = dayFiles[position]
+                mBinding.tvSelectedDay.text = display[position]
+                refreshContent()
             }
-            .show()
+        }.show()
     }
 
     private fun scrollBottom() {

@@ -1,15 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 主题编辑页色值/透明度输入框:只保留底部 1dp 边框线(聚焦换前景色做反馈)。
+<!-- 主题编辑页色值/透明度输入框(含取色板弹窗里的色值框):只保留底部一条<b>细</b>边框线,聚焦换前景色做反馈。
      画法与 input_dialog_api_input 同源:描边矩形用负内缩把上/左/右三边推出视图裁掉,
-     只剩底边那条线(底边内缩 1dp,让 1dp 描边完整落在视图内)。
+     只剩底边那条线(底边内缩 0.5dp,让描边完整落在视图内、贴住输入框底边)。
+     线宽用 **0.5dp** 而不是 1dp:用户口径"输入框的底部边框线太粗了,细一点" ——
+     1dp 在高密度屏上是 3px 一条实线,配 12~13sp 的小字显重;0.5dp 走抗锯齿,观感是发丝线。
+     (重建路径见 theme/ThemeDrawables#parseDimension,它按像素四舍五入,0.5dp 同样吃得下。)
      不用 layer-list item gravity + size 画线 —— 真机上那条"线"会铺满整个输入框。 -->
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
 
     <item android:state_focused="true">
         <layer-list>
-            <item android:bottom="1dp" android:left="@dimen/dp_20_" android:right="@dimen/dp_20_" android:top="@dimen/dp_20_">
+            <item android:bottom="0.5dp" android:left="@dimen/dp_20_" android:right="@dimen/dp_20_" android:top="@dimen/dp_20_">
                 <shape android:shape="rectangle">
-                    <stroke android:width="1dp" android:color="@color/text_foreground" />
+                    <stroke android:width="0.5dp" android:color="@color/text_foreground" />
                     <solid android:color="@android:color/transparent" />
                 </shape>
             </item>
@@ -17,9 +20,9 @@
     </item>
     <item>
         <layer-list>
-            <item android:bottom="1dp" android:left="@dimen/dp_20_" android:right="@dimen/dp_20_" android:top="@dimen/dp_20_">
+            <item android:bottom="0.5dp" android:left="@dimen/dp_20_" android:right="@dimen/dp_20_" android:top="@dimen/dp_20_">
                 <shape android:shape="rectangle">
-                    <stroke android:width="1dp" android:color="@color/btn_stroke" />
+                    <stroke android:width="0.5dp" android:color="@color/btn_stroke" />
                     <solid android:color="@android:color/transparent" />
                 </shape>
             </item>

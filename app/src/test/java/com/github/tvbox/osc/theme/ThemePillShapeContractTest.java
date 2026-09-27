@@ -38,11 +38,11 @@ public class ThemePillShapeContractTest {
      *
      * <p>判定时逐条看过:
      * <ul>
-     *   <li>{@code fragment_home.xml:search} —— 首页搜索框,36dp 高 + radius_background(18dp)= 50%,
-     *       本来就是个胶囊造型的搜索条(设计如此,不是漏改);</li>
-     *   <li>背景图设置页那两行(panel_handle / ll_scrim)是 44dp + radius_background = 41%,
-     *       低于阈值不再报;该 drawable(ripple_round_background)自己的注释里就写明
-     *       "44dp 高的行会被裁成胶囊,看起来是柔和的一条",属于有意为之。</li>
+     *   <li>{@code fragment_home.xml:search} —— 首页搜索框,36dp 高 + {@code radius_search}(18dp)= 50%:
+     *       <b>它本来就是"胶囊造型的搜索条",用户明确确认过这个圆角是对的</b>
+     *       (2026-09-27 我按"全站统一小圆角"改面板档时误伤了它,已改回并把这条豁免恢复)。
+     *       它现在走**独立圆角档** {@code radius_search}(不再是 {@code radius_background}),
+     *       所以以后调页面卡片/抽屉面板的圆角不会再牵连到它 —— 这条豁免只为它的"胶囊造型"本身而留。</li>
      * </ul>
      */
     private static final String[] ALLOW = {
@@ -88,11 +88,17 @@ public class ThemePillShapeContractTest {
         return null; // wrap_content / match_parent / 0dp(由父级决定)不评估
     }
 
-    /** 这份 drawable 的圆角(dp);多层取最大,解析不出返回 null */
+    /**
+     * 这份 drawable 的圆角(dp);多层取最大,解析不出返回 null。
+     *
+     * <p>**ripple 的 mask 不算**:mask 只决定按下时那层高亮的形状,平时这个 View 根本没有可见的底,
+     * 谈不上"画成药丸"({@code ripple_round_background} 就是这种:只有 mask,注释里写明高亮要裁成柔和的一条)。
+     * 所以先把 mask 那段剥掉再找圆角;剥完什么都不剩 → 这份 drawable 没有可见底 → 返回 null。
+     */
     private static Double radiusDp(String drawableName, Map<String, Double> dimens) throws Exception {
         File xml = new File(repoRoot(), "app/src/main/res/drawable/" + drawableName + ".xml");
         if (!xml.isFile()) return null;
-        String text = read(xml);
+        String text = withoutRippleMask(read(xml));
         Double max = null;
         Matcher m = Pattern.compile("android:(?:radius|topLeftRadius|topRightRadius|bottomLeftRadius|bottomRightRadius)=\"([^\"]+)\"")
                 .matcher(text);
@@ -101,6 +107,21 @@ public class ThemePillShapeContractTest {
             if (d != null && (max == null || d > max)) max = d;
         }
         return max;
+    }
+
+    /** 去掉 {@code <item android:id="@android:id/mask"> … </item>} 那一段(它不是可见的底) */
+    private static String withoutRippleMask(String text) {
+        Matcher m = Pattern.compile(
+                "<item\\b[^>]*/>|<item\\b(?:(?!</?item\\b)[\\s\\S])*?</item>",
+                Pattern.DOTALL).matcher(text);
+        StringBuilder sb = new StringBuilder(text.length());
+        int from = 0;
+        while (m.find()) {
+            if (!m.group().contains("@android:id/mask")) continue;
+            sb.append(text, from, m.start());
+            from = m.end();
+        }
+        return sb.append(text.substring(from)).toString();
     }
 
     @Test
@@ -152,9 +173,93 @@ public class ThemePillShapeContractTest {
         return false;
     }
 
+    /**
+     * 小组件键(chip)的圆角必须跟「键高」配套 —— 这是用户反复看到"上下圆角不一致/像胶囊"的根因。
+     *
+     * <p>{@code style/WidgetBtn} 的 minHeight 是 34dp,而 {@code radius_widget_btn} 是**全站共用**的一档:
+     * 一旦 ≥ 半高(17dp),上下两段圆弧就把直边吃光,GradientDrawable 画出来就是胶囊/半圆 ——
+     * 2026-09-27 用户把该档设成 16dp(= 34dp 的 47%)后又复现了一次,口径是
+     * "圆角为什么只对顶部有效,底部没生效 / 看着像胶囊"。
+     *
+     * <p>所以钉两条:① {@code radius_widget_btn ≤ minHeight × 45%};② 边框粗细必须走主题键
+     * {@code stroke_widget_btn}(不许在 drawable 里写死 1dp/2mm —— 2mm 那处曾经厚得像块板子)。
+     */
+    @Test
+    public void widgetButtonRadiusAndStrokeFitTheKeyHeight() throws Exception {
+        Map<String, Double> dimens = dimens();
+
+        Double minHeight = null;
+        Matcher style = Pattern.compile("<style name=\"WidgetBtn\"[^>]*>(.*?)</style>", Pattern.DOTALL)
+                .matcher(read(new File(repoRoot(), "app/src/main/res/values/styles.xml")));
+        if (style.find()) {
+            Matcher item = Pattern.compile("<item name=\"android:minHeight\">([^<]+)</item>").matcher(style.group(1));
+            if (item.find()) minHeight = dp(item.group(1).trim(), dimens);
+        }
+        assertTrue("在 styles.xml 的 WidgetBtn 里找不到 minHeight,这条绊线要跟着改", minHeight != null && minHeight > 0);
+
+        Double radius = dimens.get("radius_widget_btn");
+        assertTrue("生成资源里没有 radius_widget_btn(检查 theme_radii.json 与 build.gradle 的 defaultRadii)", radius != null);
+        double ratio = radius / minHeight;
+        assertTrue(String.format(java.util.Locale.ROOT,
+                        "radius_widget_btn 圆角 %.0fdp / 键高 %.0fdp = %.0f%%,超过上限 %.0f%% —— "
+                                + "该类键在高密度屏上会圆成药丸/半圆(用户口径「看着像胶囊、上下圆角不一致」);"
+                                + "要么把这一档调小(34dp 键的安全上限约 15dp,建议 12dp),要么加大 WidgetBtn 的 minHeight",
+                        radius, minHeight, ratio * 100, MAX_RATIO * 100),
+                ratio <= MAX_RATIO);
+
+        assertTrue("生成资源里没有 stroke_widget_btn:小组件键的边框线粗细必须走主题键",
+                dimens.containsKey("stroke_widget_btn"));
+        for (String drawable : new String[]{"selector_widget_btn", "button_detail_quick_search"}) {
+            Matcher w = Pattern.compile("android:width=\"([^\"]+)\"").matcher(
+                    read(new File(repoRoot(), "app/src/main/res/drawable/" + drawable + ".xml")));
+            while (w.find()) {
+                assertTrue(drawable + " 里还有写死的描边宽度 " + w.group(1) + "(应走 @dimen/stroke_widget_btn)",
+                        w.group(1).startsWith("@dimen/"));
+            }
+        }
+    }
+
     /** 取元素开标签里的某个属性值 */
     private static String attr(String attrs, String name) {
         Matcher m = Pattern.compile(Pattern.quote(name) + "=\"([^\"]*)\"").matcher(attrs);
         return m.find() ? m.group(1) : null;
+    }
+
+    /**
+     * {@code build.gradle} 的兜底表 {@code defaultRadii} 必须与主题文件同值。
+     *
+     * <p>为什么钉它:兜底表只在**主题文件缺失/解析失败**时生效 ——
+     * 一旦命中,全站圆角整体跳到另一套(而不会有任何报错),现象是"什么都没改,圆角全变了";
+     * 2026-09-27 实测两处已经漂了五档(radius_dialog 16 vs 10、radius_btn 16 vs 12、
+     * radius_widget_btn 6 vs 12、common_corners 8 vs 12、radius_search 18 vs 16),
+     * 而源码注释写的正是"必须与仓库内那份同值"。
+     */
+    @Test
+    public void defaultRadiiMatchesThemeFile() throws Exception {
+        Map<String, String> fromFile = new HashMap<>();
+        Matcher j = Pattern.compile("\"(\\w+)\"\\s*:\\s*\"([0-9.]+(?:dp|dip|px))\"")
+                .matcher(read(new File(repoRoot(), "app/src/main/assets/theme/theme_radii.json")));
+        while (j.find()) fromFile.put(j.group(1), j.group(2));
+
+        String gradle = read(new File(repoRoot(), "app/build.gradle"));
+        int start = gradle.indexOf("def defaultRadii = [");
+        assertTrue("build.gradle 里找不到 defaultRadii,绊线要跟着改", start > 0);
+        int end = gradle.indexOf("\n]", start);
+        assertTrue("defaultRadii 块没有闭合", end > start);
+        Map<String, String> fromGradle = new HashMap<>();
+        Matcher g = Pattern.compile("(\\w+)\\s*:\\s*'([0-9.]+(?:dp|dip|px))'")
+                .matcher(gradle.substring(start, end));
+        while (g.find()) fromGradle.put(g.group(1), g.group(2));
+
+        assertTrue("theme_radii.json 一个圆角档都没解析到", fromFile.size() >= 5);
+        assertTrue("defaultRadii 与 theme_radii.json 的键不一致:文件 " + fromFile.keySet()
+                        + " / 兜底 " + fromGradle.keySet(),
+                fromFile.keySet().equals(fromGradle.keySet()));
+        for (Map.Entry<String, String> e : fromFile.entrySet()) {
+            assertTrue("圆角兜底值与主题文件不一致:" + e.getKey() + " 文件=" + e.getValue()
+                            + " 兜底=" + fromGradle.get(e.getKey())
+                            + "(主题文件一旦缺失/解析失败,全站圆角会静默跳到另一套)",
+                    e.getValue().equals(fromGradle.get(e.getKey())));
+        }
     }
 }

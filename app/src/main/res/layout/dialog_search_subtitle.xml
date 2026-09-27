@@ -7,11 +7,14 @@
     xmlns:tools="http://schemas.android.com/tools"
     >
 
+    <!-- 面板底由这份布局自己给(ShadowLayout 壳):圆角必须走**弹窗/抽屉面板档** radius_dialog,
+         与同屏的选择框/提示框、以及所有抽屉完全同档(2026-09-27:原来挂在 radius_card 上,
+         于是"搜索字幕"这个弹窗比其它弹窗和抽屉都更圆)。 -->
     <com.lihang.ShadowLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         app:hl_layoutBackground="@color/bg_float"
-        app:hl_cornerRadius="@dimen/radius_card"
+        app:hl_cornerRadius="@dimen/radius_dialog"
         android:layout_marginHorizontal="10dp">
 
         <LinearLayout

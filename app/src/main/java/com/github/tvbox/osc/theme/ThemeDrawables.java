@@ -5,6 +5,7 @@ import android.content.res.Resources;
 import android.content.res.XmlResourceParser;
 import android.graphics.drawable.ClipDrawable;
 import android.graphics.drawable.Drawable;
+import android.graphics.drawable.DrawableContainer;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.InsetDrawable;
 import android.graphics.drawable.LayerDrawable;
@@ -87,10 +88,68 @@ public final class ThemeDrawables {
         Scan scan = scan(resId, res);
         if (scan.state == null) return null;
         try {
-            return scan.state.newDrawable(res);
+            Drawable out = scan.state.newDrawable(res);
+            keepCompiledCorners(resId, res, out);
+            return out;
         } catch (Throwable th) {
             return null;
         }
+    }
+
+    /**
+     * **圆角一律以"编译期那份 drawable"为准**。
+     *
+     * <p>为什么(2026-09-27,用户口径:"搜索页历史搜索那块 chip,系统内置主题四角正常,一切到自定义主题就不正常"):
+     * 内置主题直接用资源里那份 drawable —— 圆角由框架 native 解析;自定义主题走本类的重建,
+     * 圆角是我们在 Java 侧**把 {@code <corners android:radius="@dimen/…">} 再解析一遍**拼出来的
+     * ({@code res.getDimensionPixelSize} + {@link GradientDrawable#setCornerRadii})。两条路只要有一点偏差,
+     * 就是"同一个 chip 换个主题圆角就变样"。
+     *
+     * <p>既然"内置那份画出来是对的",就把它当唯一事实源:重建完成后把**每个状态的圆角**照抄过来
+     * (只抄圆角;颜色/描边/渐变仍走主题)。结构对不上(子项数量不同)时一个字都不改,宁可保持重建结果。
+     */
+    private static void keepCompiledCorners(int resId, Resources res, Drawable rebuilt) {
+        if (rebuilt == null) return;
+        try {
+            copyCorners(res.getDrawable(resId), rebuilt);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** 结构一致时把 compiled 的圆角逐层抄给 rebuilt(selector/layer-list/ripple 逐个子项配对) */
+    private static void copyCorners(Drawable compiled, Drawable rebuilt) {
+        if (compiled == null || rebuilt == null) return;
+        if (compiled instanceof GradientDrawable && rebuilt instanceof GradientDrawable) {
+            float[] radii = radiiOf((GradientDrawable) compiled);
+            GradientDrawable to = (GradientDrawable) rebuilt;
+            if (radii == null) {
+                to.setCornerRadius(0f); // 编译期那份是直角 → 重建的也必须是直角
+            } else {
+                to.setCornerRadii(radii);
+            }
+            return;
+        }
+        Drawable.ConstantState a = compiled.getConstantState();
+        Drawable.ConstantState b = rebuilt.getConstantState();
+        if (!(a instanceof DrawableContainer.DrawableContainerState)
+                || !(b instanceof DrawableContainer.DrawableContainerState)) {
+            return;
+        }
+        DrawableContainer.DrawableContainerState sa = (DrawableContainer.DrawableContainerState) a;
+        DrawableContainer.DrawableContainerState sb = (DrawableContainer.DrawableContainerState) b;
+        if (sa.getChildCount() != sb.getChildCount()) return; // 结构不同就不配对,免得把兄弟抄错
+        for (int i = 0; i < sa.getChildCount(); i++) {
+            copyCorners(sa.getChild(i), sb.getChild(i));
+        }
+    }
+
+    /** 读一个圆角矩形的四角半径(px);{@code null} = 直角 */
+    private static float[] radiiOf(GradientDrawable g) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+            return g.getCornerRadii();
+        }
+        float r = g.getCornerRadius(); // API 24 以下没有 getCornerRadii,对称圆角用标量足够
+        return r > 0f ? new float[]{r, r, r, r, r, r, r, r} : null;
     }
 
     /**

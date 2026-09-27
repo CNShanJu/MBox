@@ -1,10 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- 直播页频道名颜色(按条目状态取色):
        未选中 = text_foreground(主题正文色,坐在 bg_large_round_float 那个面板上,亮/暗都看得清);
-       选中/按下/聚焦 = btn_select_text —— 此时底下是 btn_select_bg(= 主色)的胶囊,
-       用"选中填充上的对比色",亮/暗主题下都不会出现"白底白字 / 黑底黑字"。
-     为什么需要它:直播页选中态的底已从写死的蓝 accent_on_dark 改成主题主色(用户口径"移除,走主题"),
-     而主题主色在亮色下是深色(#1F2937)、暗色下是浅色(#E5E7EB),单靠一个写死的文字色必然有一边看不清。
+       选中/按下/聚焦 = btn_select_text —— 压在"选中态的底"上(那个底 = btn_select_bg,
+       与纯色按钮**同一个底色、连透明度一起**:亮色下是深底(配白字)、暗色主题下它是无色,
+       字直接坐在面板上,同样是白的,亮/暗都不会出现"白底白字 / 黑底黑字")。
+     为什么需要它:直播页选中态的底已从写死的蓝 accent_on_dark 改成主题色(用户口径"移除,走主题"),
+     而主题的主按钮底在亮色下是深色(#1F2937)、暗色下是无色(白字白边),单靠一个写死的文字色必然有一边看不清。
      条目根 LinearLayout 才带 selected/pressed/focused,所以 item_live_channel_new 的 TextView
      必须 android:duplicateParentState="true" 才吃得到这些状态。 -->
 <selector xmlns:android="http://schemas.android.com/apk/res/android">

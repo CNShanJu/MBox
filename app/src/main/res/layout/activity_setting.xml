@@ -895,12 +895,17 @@
                         android:layout_height="wrap_content"
                         android:layout_weight="1" />
 
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="›"
-                        android:textColor="@color/text_sub_foreground"
-                        android:textSize="20sp"/>
+                    <!-- 与其它设置行统一:同一套矢量箭头 + 同一个主题色 tint。
+                         原来这里是一个文字符号 「›」(text_sub_foreground / 20sp):
+                         字形、粗细、大小、颜色都跟着字体与字号走,和旁边那套 13dp 矢量箭头不是一回事 ——
+                         观感就是"这一行的图标跟别的不一个风格",也不随主题的图标色走。 -->
+                    <ImageView
+                        android:layout_width="13dp"
+                        android:layout_height="13dp"
+                        android:layout_gravity="center"
+                        android:alpha="0.75"
+                        android:src="@drawable/ic_seek_right"
+                        app:tint="@color/text_foreground"/>
                 </LinearLayout>
             </LinearLayout>
 

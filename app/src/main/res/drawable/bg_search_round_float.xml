@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 搜索框专用底(= 页面面 bg_surface + 搜索框自己那一档圆角 radius_search)。
+     为什么要单独一份、不复用 bg_large_round_float:首页搜索框是「胶囊造型的搜索条」,
+     用户明确确认过那个圆角是对的 —— 但它原来跟页面卡片/抽屉面板共用 radius_background,
+     于是"调面板圆角"会把搜索框一起改掉(2026-09-27 我按"全站统一"改面板档时就这么误伤了它)。
+     拆出独立一档后:面板圆角随便调,搜索框保持自己那一档。 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+	android:shape="rectangle">
+	<solid
+			android:color="@color/bg_surface" />
+
+	<corners
+			android:radius="@dimen/radius_search" />
+
+</shape>

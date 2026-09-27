@@ -7,7 +7,7 @@
     android:paddingHorizontal="30dp"
     android:orientation="vertical"
     android:paddingVertical="20dp"
-    android:background="@drawable/bg_large_round_popup">
+    android:background="@drawable/bg_dialog">
 
     <TextView
         android:id="@+id/tv_title"

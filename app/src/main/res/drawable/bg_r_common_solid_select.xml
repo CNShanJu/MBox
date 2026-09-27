@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- "已选中"的实心按钮底:与背景图设置页预设 chip 的选中态同色(btn_select_bg),
+<!-- "已选中"的填充:与背景图设置页预设 chip、以及纯色按钮同色(btn_select_bg,
+      **连透明度一起** —— 主按钮设成无色时这里也跟着无色,只剩文字),
      圆角与描边按钮一致(common_corners)—— 播放器抽屉的倍速按钮选中时用它 -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">

@@ -49,6 +49,40 @@ public final class ThemeSweep {
     }
 
     /**
+     * 把某个视图**已有的**纯色底就地改成当前主题的浮层面({@code bg_float}),圆角/描边/尺寸原样保留。
+     *
+     * <p>与 {@link #apply(View)} 的区别:那一趟只换"颜色还等于内置那份"的视图(按值比对,防止误伤
+     * 有意写死的颜色);而有些底**按设计就是浮层面**,只是它的颜色是别人在 native 资源解析里取的
+     * 编译期那份 —— 典型是 XPopup 的 {@code AttachPopupView#applyBg}:它把 impl 视图的背景搬到外层容器,
+     * 搬过去的是它自己 Resources 重新解析出来的 drawable,换肤注入拦不到,按值比对又可能因为
+     * 日夜档位不同而不命中(现象:"气泡的圆角对了,颜色又不走卡片/悬浮层的颜色")。
+     * 这种地方就该直接说"这块面是 bg_float",而不是猜它原来是不是内置色。
+     *
+     * <p>只动纯色底(渐变/多层/无底一律不碰),并且 {@code mutate()} 后再改,不会串到同一份 drawable 的其它使用者。
+     * <p>和 {@link #apply(View)} 一样补两趟(当场 + 布局之后):{@code apply} 自己也会 {@code post} 一趟,
+     * 两趟的顺序不能保证"面"排在最后 —— 主题的 bg_float 恰好等于内置的 bg_surface/bg_card 时,
+     * 后跑的那一趟会把它当内置面换掉(浮层透明度就丢了)。这一趟 post 在 apply 之后入队,必然后跑。
+     */
+    public static void applyFloatFace(View v) {
+        if (v == null) return;
+        forceFloatFace(v);
+        try {
+            v.post(() -> forceFloatFace(v));
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private static void forceFloatFace(View v) {
+        ThemePalette palette = ThemeRuntime.palette();
+        if (palette == null) return;
+        try {
+            if (solidColorOf(v.getBackground()) == null) return;
+            setSolidColor(v.getBackground(), palette.get("bg_float"));
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /**
      * 给列表挂"子项挂载即补色":RecyclerView 的 item 可能在任何时刻被复用/新造出来
      * (首帧之后、滚动时、数据刷新后),靠一次性扫描盖不全。
      */
@@ -132,23 +166,30 @@ public final class ThemeSweep {
         //    它们写的是 @color/text_foreground,但视图本身没被注入到(用户口径:"弹窗里面的 item 没走主题色")。
         if (v instanceof android.widget.TextView) {
             android.widget.TextView tv = (android.widget.TextView) v;
-            int nowText = tv.getCurrentTextColor();
-            for (String key : TEXT_KEYS) {
-                if (nowText == builtin.get(key)) {
-                    tv.setTextColor(palette.get(key));
-                    break;
+            String textKey = builtinTextKeyOf(tv.getCurrentTextColor(), builtin);
+            if (textKey != null) {
+                tv.setTextColor(palette.get(textKey));
+            }
+            // ②b 提示/占位文字(EditText 的 hint):
+            //     用户口径"搜索框里的提示文本没走文字主色(的透明度)"就是这么漏的 ——
+            //     两个搜索框的视图类(首页 SizedIconTextView、搜索页 ClearEditText)在布局里写的是**全限定类名**,
+            //     框架走 createView 反射兜底路径造它们,布局注入器拿不到那次 onCreateView,只能靠这趟补色;
+            //     而本类原来只补"正文色",于是同一个框里"正文跟着主题变了、提示文字还是内置那档灰"。
+            //     口径与正文完全一致:仍是内置那一档文字色才换(不是内置色的说明是别人有意设的,不动)。
+            android.content.res.ColorStateList hint = tv.getHintTextColors();
+            if (hint != null) {
+                String hintKey = builtinTextKeyOf(hint.getDefaultColor(), builtin);
+                if (hintKey != null) {
+                    tv.setHintTextColor(palette.get(hintKey));
                 }
             }
             // ③ compound drawable 的着色(图标):同样是"内置那份文字色"→ 换主题同档。
             //    不补这一支的话,同一个控件会出现"文字跟着主题走了、图标还停在编译期颜色"。
             android.content.res.ColorStateList tint = tv.getCompoundDrawableTintList();
             if (tint != null) {
-                int nowTint = tint.getDefaultColor();
-                for (String key : TEXT_KEYS) {
-                    if (nowTint == builtin.get(key)) {
-                        tv.setCompoundDrawableTintList(android.content.res.ColorStateList.valueOf(palette.get(key)));
-                        break;
-                    }
+                String tintKey = builtinTextKeyOf(tint.getDefaultColor(), builtin);
+                if (tintKey != null) {
+                    tv.setCompoundDrawableTintList(android.content.res.ColorStateList.valueOf(palette.get(tintKey)));
                 }
             }
         }
@@ -157,12 +198,9 @@ public final class ThemeSweep {
             android.widget.ImageView iv = (android.widget.ImageView) v;
             android.content.res.ColorStateList tint = iv.getImageTintList();
             if (tint != null) {
-                int nowTint = tint.getDefaultColor();
-                for (String key : TEXT_KEYS) {
-                    if (nowTint == builtin.get(key)) {
-                        iv.setImageTintList(android.content.res.ColorStateList.valueOf(palette.get(key)));
-                        break;
-                    }
+                String key = builtinTextKeyOf(tint.getDefaultColor(), builtin);
+                if (key != null) {
+                    iv.setImageTintList(android.content.res.ColorStateList.valueOf(palette.get(key)));
                 }
             }
         }
@@ -173,6 +211,22 @@ public final class ThemeSweep {
             "text_main", "text_sub", "text_hint", "text_disable",
             "text_accent", "text_highlight", "color_highlight", "btn_select_text",
     };
+
+    /**
+     * 当前颜色是否"仍然是内置主题的某一档文字色";是则返回该档的键,否则 {@code null}。
+     *
+     * <p>整类补色的判据就一句话:<b>只换"还是内置那一档"的颜色</b> —— 不是内置色的,
+     * 说明是代码或布局里有意的取值(例如 {@code text_danger} 这种写死字面量),不能动。
+     * 抽成纯函数一是四处共用(正文/hint/compound 图标/ImageView 图标),二是可 JVM 单测这条判据
+     * (见 ThemeSweepMatchTest:命中内置档才换、非内置色一律放过)。
+     */
+    static String builtinTextKeyOf(int color, ThemePalette builtin) {
+        if (builtin == null) return null;
+        for (String key : TEXT_KEYS) {
+            if (color == builtin.get(key)) return key;
+        }
+        return null;
+    }
 
     /** 取 drawable 的单一实色(渐变/层叠/多色返回 null,不去动它) */
     private static Integer solidColorOf(Drawable d) {

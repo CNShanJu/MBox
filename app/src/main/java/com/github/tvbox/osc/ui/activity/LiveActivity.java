@@ -295,6 +295,19 @@ public class LiveActivity extends BaseActivity implements LiveLineSelectHost, Li
         }
     }
 
+    /**
+     * 「跟随系统」翻明暗时的重建:正在放直播就先不重建 —— 翻明暗不该把正在看的直播重建掉;
+     * 那次重建会记下来,等本页空闲回到前台时由 {@code BaseActivity.onResume} 补做。
+     */
+    @Override
+    protected boolean allowRecreateOnNightChange() {
+        try {
+            return mVideoView == null || !mVideoView.isPlaying();
+        } catch (Throwable th) {
+            return true;
+        }
+    }
+
 
     @Override
     protected void onPause() {

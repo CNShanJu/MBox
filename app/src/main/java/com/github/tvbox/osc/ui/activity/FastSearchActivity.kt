@@ -32,6 +32,7 @@ import com.github.tvbox.osc.bean.SourceBean
 import com.github.tvbox.osc.databinding.ActivityFastSearchBinding
 import com.github.tvbox.osc.spiderapi.SourceConfigProviders
 import com.github.tvbox.osc.spiderapi.SourceLoaderProviders
+import com.github.tvbox.osc.theme.ThemeDrawables
 import com.github.tvbox.osc.log.Category
 import com.github.tvbox.osc.log.LogStore
 import com.github.tvbox.osc.ui.RefreshUiEnvFactory
@@ -63,8 +64,7 @@ import com.google.gson.reflect.TypeToken
 import com.lxj.xpopup.XPopup
 import com.lxj.xpopup.core.BasePopupView
 import com.lxj.xpopup.interfaces.SimpleCallback
-import com.zhy.view.flowlayout.FlowLayout
-import com.zhy.view.flowlayout.TagAdapter
+import com.github.tvbox.osc.ui.kit.FlowTagLayout
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -192,6 +192,15 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
                     closeSourceDrawer() // 选中来源后收起抽屉,结果区回到全屏
                 }
         }
+        // 选中来源那一行的底(库的 tab 指示器)同样要按主题给:它来自 XML 属性
+        // app:tab_indicator_drawable="@drawable/bg_small_round_float",而库内是
+        // typedArray.getDrawable() 取的 —— **属性里的 drawable 是 native 取法**,换肤通道
+        // (ThemeResources/ThemeInflaterFactory/ThemeDrawables 的自动注入)都拦不到,
+        // 自定义主题下它会停在编译期的 bg_surface,与同一行已经按主题取色的文字不同底。
+        // 这里显式取"按主题重建过"的那份(只换颜色,圆角/描边/尺寸原样保留;
+        // 内置主题下返回的就是系统那份,观感不变 —— 见 ThemeDrawables#themedDrawable)。
+        mBinding.tabLayout.tabIndicator.indicatorDrawable =
+            ThemeDrawables.themedDrawable(R.drawable.bg_small_round_float, resources)
         mBinding.mGridView.setHasFixedSize(true)
         mBinding.mGridView.adapter = searchAdapter
         mBinding.mGridViewFilter.adapter = searchAdapterFilter
@@ -536,8 +545,8 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
     private fun initHistorySearch() {
         val mSearchHistory: List<String> = SubscriptionConfig.getSearchHistory()
         mBinding.llHistory.visibility = if (mSearchHistory.isNotEmpty()) View.VISIBLE else View.GONE
-        mBinding.flHistory.adapter = object : TagAdapter<String?>(mSearchHistory) {
-            override fun getView(parent: FlowLayout, position: Int, s: String?): View {
+        mBinding.flHistory.adapter = object : FlowTagLayout.TagAdapter<String?>(mSearchHistory) {
+            override fun getView(parent: FlowTagLayout, position: Int, s: String?): View {
                 val tv: TextView = LayoutInflater.from(this@FastSearchActivity).inflate(
                     R.layout.item_search_word_hot,
                     mBinding.flHistory, false
@@ -548,13 +557,14 @@ tv.text = s
                 return tv
             }
         }
-        mBinding.flHistory.setOnTagClickListener { _: View?, position: Int, _: FlowLayout? ->
+        mBinding.flHistory.setOnTagClickListener { _, position, _ ->
             search(mSearchHistory[position])
             true
         }
         findViewById<View>(R.id.iv_clear_history).setOnClickListener { view: View ->
             SubscriptionConfig.clearSearchHistory()
-            //FlowLayout及其adapter貌似没有清空数据的api,简单粗暴重置
+            // 自研 FlowTagLayout 同样没有"清空数据"的 API(adapter 是外部数据的视图),
+            // 简单粗暴重置:重新 setAdapter 一次(旧的 TagFlowLayout 也是这么干的)
             view.postDelayed({ initHistorySearch() }, 300)
         }
     }
@@ -584,9 +594,12 @@ tv.text = s
                                     .dropLastWhile { it.isEmpty() }
                                     .toTypedArray()[0])
                             }
-                            mBinding.flHot.adapter = object : TagAdapter<String?>(hots as List<String?>?) {
+                            // 热词为空/拿不到时,标题一起收起来 —— 否则页面上会留一个「热门搜索」空标题、
+                            // 下面什么都没有(用户截图实测)。布局里默认就是 gone,这里只在有词时显示。
+                            mBinding.tvHotTitle.visibility = if (hots.isEmpty()) View.GONE else View.VISIBLE
+                            mBinding.flHot.adapter = object : FlowTagLayout.TagAdapter<String?>(hots as List<String?>?) {
                                 override fun getView(
-                                    parent: FlowLayout,
+                                    parent: FlowTagLayout,
                                     position: Int,
                                     s: String?
                                 ): View {
@@ -601,12 +614,13 @@ tv.text = s
                                     return tv
                                 }
                             }
-                            mBinding.flHot.setOnTagClickListener { _: View?, position: Int, _: FlowLayout? ->
+                            mBinding.flHot.setOnTagClickListener { _, position, _ ->
                                 search(hots.get(position))
                                 true
                             }
                         } catch (th: Throwable) {
                             // 热词接口返回异常内容时静默忽略(不刷屏、不影响页面;热词为空即可)
+                            mBinding.tvHotTitle.visibility = View.GONE
                             LogUtils.d("热词解析失败: " + th.message)
                         }
                     }

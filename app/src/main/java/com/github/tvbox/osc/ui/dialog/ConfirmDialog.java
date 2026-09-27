@@ -15,7 +15,7 @@ import org.jetbrains.annotations.NotNull;
 
 /**
  * 主题化确认弹窗(标题 + 消息 + 取消/确定):
- * 弹窗背景直接来自布局根(dialog_confirm = bg_large_round_popup → 主题色 bg_float,
+ * 弹窗背景直接来自布局根(dialog_confirm = bg_dialog → 主题色 bg_float,
  * 半透明度由 theme_colors 的 bg_float_alpha 控制, 深浅色随主题),圆角走主题圆角档 radius_dialog,
  * 与 DeleteDownloadDialog 等下载相关弹窗视觉一致(替代 XPopup 默认 asConfirm 的库内固定圆角)。
  *
@@ -78,7 +78,7 @@ public class ConfirmDialog extends AppCenterPopupView {
     @Override
     protected void onCreate() {
         super.onCreate();
-        // 弹窗背景由布局根 dialog_confirm 提供(bg_large_round_popup → 主题 bg_float,含 bg_float_alpha 透明度)
+        // 弹窗背景由布局根 dialog_confirm 提供(bg_dialog → 主题 bg_float,含 bg_float_alpha 透明度)
 
         TextView tvTitle = findViewById(R.id.tv_title);
         TextView tvMessage = findViewById(R.id.tv_message);

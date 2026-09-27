@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <shape xmlns:android="http://schemas.android.com/apk/res/android">
     <solid android:color="@color/title_fouse_n"/>
-    <corners android:radius="10dp"/>
+    <!-- 圆角走主题维度(全站统一 8dp):原来写死 10dp,与旁边的 20dp 版本凑成"一行一个圆角" -->
+    <corners android:radius="@dimen/radius_card"/>
     <stroke android:width="0dp"
         android:color="@color/title_fouse_n"/>
 </shape>

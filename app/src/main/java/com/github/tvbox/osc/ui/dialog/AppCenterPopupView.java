@@ -14,7 +14,13 @@ import com.lxj.xpopup.core.CenterPopupView;
 /**
  * 统一的居中弹窗基类:
  * <ul>
- *   <li>背景统一 {@link R.drawable#bg_large_round_popup}(全圆角 + bg_float 主题色)——由布局根设置,
+ *   <li>背景统一 {@link R.drawable#bg_dialog}(全圆角 + bg_float 主题色)——由布局根设置,
+ *       <b>圆角档只有一个来源</b>:居中弹窗那层面 = 弹窗/抽屉面板档 {@code radius_dialog},
+ *       与底部面板(bg_bottom_dialog)、右侧抽屉(bg_drawer)完全同档。
+ *       2026-09-27 之前这里分裂过:8 个弹窗布局挂着 {@code bg_large_round_popup}
+ *       (那是 {@code radius_background} = 页面卡片/大面板档),于是"确认框比抽屉更圆、而选择框跟抽屉一样"
+ *       —— 用户口径"弹窗的圆角和抽屉的圆角,设置出来显示效果不一致"。两份 drawable 只差一行 corners 引用,
+ *       现已合并成一份 bg_dialog;</li>
  *       基类不强设避免与 XPopup 默认容器叠加产生四角异常;</li>
  *   <li>最大宽度统一 {@link DialogStyle#CENTER_MAX_WIDTH_DP},窄屏自适应;</li>
  *   <li>最大高度统一按 {@link DialogHeightPolicy} 分档封顶(内容自适应,超高自动包 ScrollView 内部滚动);</li>

@@ -79,7 +79,11 @@ public class MyFragment extends BaseVbFragment<FragmentMyBinding> {
         mBinding.llSubscription.setOnClickListener(v -> jumpActivity(SubscriptionActivity.class));
 
         mBinding.llAbout.setOnClickListener(v -> {
-            DialogCoordinator.center(mActivity, new AboutDialog(mActivity)).show();
+            // AboutDialog 是 AppBottomPopupView(底部抽屉):必须走 DialogCoordinator.bottom —— 它带的
+            // isViewMode(true) + hasNavigationBar(false) 才是"和其它抽屉同款"的弹法(贴底、不留导航栏缝、
+            // 手势条不闪)。原来走 center(...)(它只是 asCustom,不改位置但**少了这两个参数**),
+            // 结果是同一个抽屉面板在不同入口下弹出位置/底边观感不一致(用户口径:"关于的抽屉圆角和别的抽屉不一致")。
+            DialogCoordinator.bottom(mActivity, new AboutDialog(mActivity), 0).show();
         });
     }
 

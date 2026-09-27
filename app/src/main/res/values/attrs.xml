@@ -65,4 +65,13 @@
         <attr name="titleBold" format="boolean" />
         <attr name="showBack" format="boolean" />
     </declare-styleable>
+
+    <!-- 自研流式标签容器(ui/kit/FlowTagLayout,替代第三方 flowlayout-lib):
+         一行放不下就换行,行高把子视图的上下外边距算进去(所以标签的圆角永远不会被容器裁掉)。
+         标签间距 = 条目布局自己的 layout_margin,容器不再另设 spacing。
+         max_select > 0 时点击标签会切换选中态(单选)并同步 view.setSelected(驱动 selector_widget_btn);
+         0(默认)= 纯点击列表,只回调不记选中。 -->
+    <declare-styleable name="FlowTagLayout">
+        <attr name="max_select" format="integer" />
+    </declare-styleable>
 </resources>

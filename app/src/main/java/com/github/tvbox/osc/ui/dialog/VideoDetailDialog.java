@@ -20,7 +20,6 @@ import com.github.tvbox.osc.databinding.DialogVideoDetailBinding;
 import com.github.tvbox.osc.ui.kit.InlineExpandableText;
 import com.github.tvbox.osc.util.DefaultConfig;
 import com.lxj.xpopup.XPopup;
-import com.lxj.xpopup.util.SmartGlideImageLoader;
 
 /**
  * 详情抽屉(底部):头部固定(海报/信息/链接),简介区按内容/抽屉状态展示:
@@ -97,8 +96,10 @@ public class VideoDetailDialog extends SheetResizableBottomPopup {
         com.github.tvbox.osc.util.PicassoLoad.into(binding.ivThum, picUrl);
         if (!TextUtils.isEmpty(picUrl)) {
             binding.llThum.setOnClickListener(view -> {
+                // 大图查看器必须传自己的图片加载器:XPopup 自带的 SmartGlideImageLoader 依赖 Glide,
+                // 而 Glide 已从本仓移除 → 点缩略图即 NoClassDefFoundError 崩溃(见 PicassoImageLoader)
                 new XPopup.Builder(getContext())
-                        .asImageViewer(binding.ivThum, picUrl, new SmartGlideImageLoader())
+                        .asImageViewer(binding.ivThum, picUrl, new PicassoImageLoader())
                         .show();
             });
         }

@@ -30,14 +30,17 @@ public class LiveChannelGroupNewAdapter extends BaseQuickAdapter<LiveChannelGrou
         TextView tvGroupName = holder.getView(R.id.tvChannelGroupName);
         tvGroupName.setText(item.getGroupName());
         int groupIndex = item.getGroupIndex();
+        // 字色走 Resources(getColor → 换肤包装,跟着主题);底必须走 ThemeDrawables.applyBackground ——
+        // 原来用 getResources().getDrawable(...) 拿的是编译期那份,自定义主题下"底没变、字变了",
+        // 与中间那栏是同一个毛病(见 LiveChannelItemNewAdapter.convert 的说明)。
         if (groupIndex == selectedGroupIndex && groupIndex != focusedGroupIndex) {
             // 选中态与全局"已选中"实心样式一致(背景图设置页那几个预设 chip 同款):
             // 底 = btn_select_bg(主题主色),字 = btn_select_text(主色上的文字)—— 不再用各页面自配色
             tvGroupName.setTextColor(mContext.getResources().getColor(R.color.btn_select_text));
-            root.setBackground(mContext.getResources().getDrawable(R.drawable.bg_r_common_solid_select));
+            com.github.tvbox.osc.theme.ThemeDrawables.applyBackground(root, R.drawable.bg_r_common_solid_select);
         } else {
             tvGroupName.setTextColor(mContext.getResources().getColor(R.color.text_foreground));
-            root.setBackground(mContext.getResources().getDrawable(R.drawable.bg_transparent));
+            com.github.tvbox.osc.theme.ThemeDrawables.applyBackground(root, R.drawable.bg_transparent);
         }
     }
 

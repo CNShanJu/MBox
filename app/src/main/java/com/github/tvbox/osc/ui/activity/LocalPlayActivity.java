@@ -409,7 +409,8 @@ public class LocalPlayActivity extends BaseVbActivity<ActivityLocalPlayBinding> 
     protected void onPause() {
         super.onPause();
         // 进入小窗也会触发 onPause,此时不能暂停视频
-        if (!isInPictureInPictureMode()) {
+        // (PipHelper.isInPip:API 26 方法,低版本按"不在小窗"处理,避免 7.x 上 NoSuchMethodError)
+        if (!PipHelper.isInPip(this)) {
             mVideoView.pause();
         }
     }

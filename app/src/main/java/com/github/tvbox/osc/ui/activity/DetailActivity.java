@@ -42,6 +42,7 @@ import com.github.tvbox.osc.databinding.ActivityDetailBinding;
 import com.github.tvbox.osc.player.api.PlayConfig;
 import com.github.tvbox.osc.service.PlayService;
 import com.github.tvbox.osc.ui.adapter.ParseAdapter;
+import com.github.tvbox.osc.ui.adapter.SelectDialogAdapter;
 import com.github.tvbox.osc.ui.adapter.SeriesAdapter;
 import com.github.tvbox.osc.ui.adapter.SeriesFlagAdapter;
 import com.github.tvbox.osc.ui.dialog.AllVodSeriesBottomDialog;
@@ -50,6 +51,7 @@ import com.github.tvbox.osc.ui.dialog.CastListDialog;
 import com.github.tvbox.osc.ui.dialog.DialogCoordinator;
 import com.github.tvbox.osc.ui.dialog.DownloadDialogCoordinator;
 import com.github.tvbox.osc.ui.dialog.QuickSearchDialog;
+import com.github.tvbox.osc.ui.dialog.SelectDialog;
 import com.github.tvbox.osc.ui.dialog.VideoDetailDialog;
 import com.github.tvbox.osc.ui.fragment.PlayFragment;
 import com.github.tvbox.osc.ui.kit.LinearSpacingItemDecoration;
@@ -65,7 +67,6 @@ import com.github.tvbox.osc.config.SystemConfig;
 import com.github.tvbox.osc.util.Utils;
 import com.github.tvbox.osc.viewmodel.SourceViewModel;
 import com.gyf.immersionbar.ImmersionBar;
-import com.lxj.xpopup.XPopup;
 import com.lxj.xpopup.core.BasePopupView;
 import com.owen.tvrecyclerview.widget.V7LinearLayoutManager;
 
@@ -255,7 +256,8 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
         // 兜底暂停:Activity 真正不可见且不在小窗中时暂停播放,防止"关闭小窗/退出页面后后台一直出声"。
         // 例外:后台播放=开启(类型1,onUserLeaveHint 已置 openBackgroundPlay=true)时不暂停,
         // 由 PlayService 继续后台播放;进入小窗时 isInPictureInPictureMode() 为 true 也不会误暂停
-        if (!isInPictureInPictureMode() && !openBackgroundPlay
+        // (走 PipHelper.isInPip:API 26 方法,低版本按"不在小窗"处理,避免 7.x 上 NoSuchMethodError)
+        if (!PipHelper.isInPip(this) && !openBackgroundPlay
                 && playFragment != null && playFragment.getPlayer() != null) {
             if (playFragment.getPlayer().isPlaying()) {
                 playFragment.getController().togglePlay();
@@ -334,7 +336,10 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
         }
 
         findViewById(R.id.ll_title).setOnClickListener(view -> {
-            DialogCoordinator.center(this, new VideoDetailDialog(this, this, vodInfo)).show();
+            // VideoDetailDialog 是 SheetResizableBottomPopup(底部可伸缩抽屉):与 AboutDialog/接口历史抽屉
+            // 同属底部抽屉族,统一走 bottom(...) —— 它带的 isViewMode(true) + hasNavigationBar(false)
+            // 才算"和其它抽屉同款"(原来用 center(...) 只做 asCustom,位置虽对但少了这两个参数)
+            DialogCoordinator.bottom(this, new VideoDetailDialog(this, this, vodInfo), 0).show();
         });
         findViewById(R.id.tvDownload).setOnClickListener(new View.OnClickListener() {
             @Override
@@ -761,6 +766,20 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     }
 
     /**
+     * 「跟随系统」翻明暗时的重建:本页正在播(预览播放器)就先不重建 —— 翻明暗不该把正在看的片子
+     * 重建掉;那次重建会记下来,等本页空闲回到前台时由 {@code BaseActivity.onResume} 补做。
+     */
+    @Override
+    protected boolean allowRecreateOnNightChange() {
+        try {
+            return playFragment == null || playFragment.getPlayer() == null
+                    || !playFragment.getPlayer().isPlaying();
+        } catch (Throwable th) {
+            return true;
+        }
+    }
+
+    /**
      * 详情拉不到时的空态文案:能说清原因就说原因,说不清才退回默认「暂无数据」。
      * <p>
      * 动机(线上实例):订阅里某个站点声明的类在其 jar 里并不存在(如 csp_XPathGuard),
@@ -1116,34 +1135,40 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
 
                 if (playFragment.getPlayer().isInPlaybackState())return;
 
-                new XPopup.Builder(this)
-                        .isDarkTheme(Utils.isDarkTheme())
-                        .asCenterList("",new String[]{"跳转阿狸","跳转优汐","跳转夸父","关闭"}, null, (position, text) -> {
-                            String pkg = "";
-                            String cls = "";
-                            switch (position){
-                                case 0:
-                                    pkg = "com.alicloud.databox";
-                                    cls = "com.alicloud.databox.launcher.splash.SplashActivity";
-                                    break;
-                                case 1:
-                                    pkg = "com.UCMobile";
-                                    cls = "com.uc.browser.InnerUCMobile";
-                                    break;
-                                case 2:
-                                    pkg = "com.quark.browser";
-                                    cls = "com.ucpro.MainActivity";
-                                    break;
-                                case 3:
-                                    return;
-                            }
-                            try {
-                                startActivity(new Intent().setComponent(new ComponentName(pkg, cls)));
-                            }catch (Exception e){
-                                AppBubble.toast("未找到应用");
-                            }
-                        })
-                        .show();
+                // 截图后弹"跳转到哪个 App":统一走公共选择弹窗(SelectDialog)。
+                // 原来用 XPopup 内置的 asCenterList —— 它的面板底/文字色与**圆角(库内固定 15dp)**都来自
+                // 库内样式,不吃主题文件;自定义主题下它就是一块"外来"的底,圆角也跟全站对不上
+                // (users 口径:"抽屉圆角还是不对 / 我怎么设置圆角都不生效")。
+                // SelectDialog 是 app 的公共居中列表:面板走 bg_dialog(= 主题圆角档),行样式与
+                // "选择音轨 / 内置字幕 / 主题"同款 —— 全站弹窗的圆角从此只有一个来源。
+                final String[] labels = {"跳转阿狸", "跳转优汐", "跳转夸父", "关闭"};
+                final String[][] targets = {
+                        {"com.alicloud.databox", "com.alicloud.databox.launcher.splash.SplashActivity"},
+                        {"com.UCMobile", "com.uc.browser.InnerUCMobile"},
+                        {"com.quark.browser", "com.ucpro.MainActivity"},
+                        null,
+                };
+                SelectDialog<String> dialog = new SelectDialog<>(this);
+                dialog.setTip("打开方式");
+                dialog.setAdapter(new SelectDialogAdapter.SelectDialogInterface<String>() {
+                    @Override
+                    public void click(String value, int pos) {
+                        dialog.dismiss();
+                        if (pos < 0 || pos >= targets.length || targets[pos] == null) return; // 「关闭」
+                        try {
+                            startActivity(new Intent().setComponent(new ComponentName(targets[pos][0], targets[pos][1])));
+                        } catch (Exception e) {
+                            AppBubble.toast("未找到应用");
+                        }
+                    }
+
+                    @Override
+                    public CharSequence getDisplay(String val) {
+                        return val == null ? "" : val;
+                    }
+                }, SelectDialogAdapter.stringDiff, java.util.Arrays.asList(labels), -1);
+                // -1 = 动作列表:4 项都没有"默认选中",每一行都点得动(选择列表才会跳过已选项)
+                DialogCoordinator.center(this, dialog).show();
             });
             screenShotListenManager.startListen();
         }else {

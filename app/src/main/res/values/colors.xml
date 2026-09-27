@@ -75,7 +75,7 @@
          此处不再重复定义(重复会编译不过)。它与主按钮同色:亮色主题=页面主黑 #1F2937、
          暗色主题=#E5E7EB,开关/chip 选中/选中文字/进度条等都跟着走。
          直播页"选中/聚焦那一条频道"的底**也走主题了**:原来是写死的蓝 accent_on_dark(该键已移除),
-         现在是 btn_select_bg(= 主色)+ 其上文字 btn_select_text(见 drawable/button_detail_quick_search 与
+         现在是 btn_select_bg(= 纯色按钮的底色,连透明度一起)+ 其上文字 btn_select_text(见 drawable/button_detail_quick_search 与
          res/color/live_channel_text.xml)—— 所以单靠写死色会被明暗主题拉成"白底白字"的那类问题不再有。
          唯一还写死的直播页聚焦色是**左侧"分组"列**的橙 title_fouse_n(#ffce7900,它在中灰区间,
          两种主题下配 text_foreground 都看得清);要不要也纳入主题待定。 -->

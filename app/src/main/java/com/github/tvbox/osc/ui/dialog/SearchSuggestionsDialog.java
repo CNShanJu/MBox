@@ -8,11 +8,9 @@ import android.widget.TextView;
 import androidx.annotation.NonNull;
 
 import com.github.tvbox.osc.R;
+import com.github.tvbox.osc.ui.kit.FlowTagLayout;
 import com.lxj.xpopup.impl.PartShadowPopupView;
 import com.lxj.xpopup.interfaces.OnSelectListener;
-import com.zhy.view.flowlayout.FlowLayout;
-import com.zhy.view.flowlayout.TagAdapter;
-import com.zhy.view.flowlayout.TagFlowLayout;
 
 import java.util.List;
 
@@ -24,7 +22,7 @@ public class SearchSuggestionsDialog extends PartShadowPopupView {
 
     private List<String> mList;
     private OnSelectListener onSelectListener;
-    private TagFlowLayout mFl;
+    private FlowTagLayout mFl;
 
     public SearchSuggestionsDialog(@NonNull Context context, List<String> list, OnSelectListener onSelectListener) {
         super(context);
@@ -50,9 +48,9 @@ public class SearchSuggestionsDialog extends PartShadowPopupView {
         }
         mFl = findViewById(R.id.fl_suggest);
         updateSuggestions(mList);
-        mFl.setOnTagClickListener(new TagFlowLayout.OnTagClickListener() {
+        mFl.setOnTagClickListener(new FlowTagLayout.OnTagClickListener() {
             @Override
-            public boolean onTagClick(View view, int position, FlowLayout parent) {
+            public boolean onTagClick(View view, int position, FlowTagLayout parent) {
                 if (onSelectListener!=null){
                     onSelectListener.onSelect(position,mList.get(position));
                 }
@@ -64,10 +62,10 @@ public class SearchSuggestionsDialog extends PartShadowPopupView {
     public void updateSuggestions(List<String> list){
         mList = list;
         if (mFl!=null){// 搜索框文字变化太快,先于onCreate执行(偶现)
-            mFl.setAdapter(new TagAdapter<String>(mList)
+            mFl.setAdapter(new FlowTagLayout.TagAdapter<String>(mList)
             {
                 @Override
-                public View getView(FlowLayout parent, int position, String s)
+                public View getView(FlowTagLayout parent, int position, String s)
                 {
                     TextView tv = (TextView) LayoutInflater.from(getContext()).inflate(R.layout.item_search_word_hot,
                             mFl, false);

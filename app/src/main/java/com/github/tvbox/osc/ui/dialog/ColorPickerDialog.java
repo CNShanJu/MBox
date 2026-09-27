@@ -208,7 +208,9 @@ public class ColorPickerDialog extends AppCenterPopupView {
 
     private void updatePreview() {
         GradientDrawable g = new GradientDrawable();
-        g.setCornerRadius(dp(6));
+        // 圆角走主题的"小件档"(common_corners),不要在代码里写死 dp ——
+        // 写死的那一份不吃主题文件,用户改圆角时这一块就是"没生效"的那块。
+        g.setCornerRadius(getResources().getDimensionPixelSize(R.dimen.common_corners));
         g.setColor((alpha << 24) | (rgb & 0xFFFFFF));
         g.setStroke(Math.max(1, (int) dp(1)), theme(R.color.btn_stroke));
         preview.setBackground(g);

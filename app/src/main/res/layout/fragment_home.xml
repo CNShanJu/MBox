@@ -47,13 +47,15 @@
         </LinearLayout>
 
         <!-- 提示文字色与底栏"未选中"文字/图标同色(同一个主题键 text_hint):
-             不写这一项时会落到 Material 默认的 hint 前景色,一旦主题色板或 Material 版本变化两边就会不一致 -->
+             不写这一项时会落到 Material 默认的 hint 前景色,一旦主题色板或 Material 版本变化两边就会不一致。
+             底用 bg_search_round_float(搜索框专用圆角档 radius_search):这条搜索框是胶囊造型的搜索条,
+             圆角是对的、且**不跟着面板档走** —— 别再换回 bg_large_round_float(那会跟页面卡片共用一个值)。 -->
         <com.github.tvbox.osc.ui.kit.SizedIconTextView
             android:id="@+id/search"
             android:layout_width="wrap_content"
             android:layout_weight="1"
             android:layout_height="36dp"
-            android:background="@drawable/bg_large_round_float"
+            android:background="@drawable/bg_search_round_float"
             android:gravity="center_vertical"
             android:paddingHorizontal="12sp"
             android:hint="搜索"

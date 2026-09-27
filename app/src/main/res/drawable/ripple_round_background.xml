@@ -4,7 +4,7 @@
      用法约束:把本 drawable 给行当背景时,行必须**四边内缩**(靠容器 padding,不要用负 margin 贴到容器边),
      否则高亮会撞上容器圆角被 clipToOutline 裁掉,看着"圆角没了"。
      圆角取 radius_background:44dp 高的行会被裁成胶囊(≈22dp 半径),看起来是柔和的一条,
-     不与容器自身 25dp 的圆角打架。 -->
+     不与容器圆角打架(容器圆角同属主题圆角文件,别在这里写死某个 dp)。 -->
 <ripple xmlns:android="http://schemas.android.com/apk/res/android"
     android:color="@color/gray_darker_press_alpha">
     <item android:id="@android:id/mask">

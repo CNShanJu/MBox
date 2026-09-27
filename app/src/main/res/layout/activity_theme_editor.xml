@@ -257,7 +257,10 @@
                 </LinearLayout>
             </LinearLayout>
 
-            <!-- ===== 底部动作:取消(新建)/删除(已有) + 导入/导出 ===== -->
+            <!-- ===== 底部动作:取消(新建)/删除(已有) + 导入/导出 =====
+                 取消与删除是**两个按钮**(以前是同一个按钮临时改文案):两者的样式不同 ——
+                 取消=次按钮;删除是"危险入口"(无底色 + 红字,见 BtnDangerGhost),
+                 共用一个按钮就没法各自套样式(会出现"删除长得像取消"的观感)。 -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -265,12 +268,22 @@
                 android:orientation="horizontal">
 
                 <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btn_cancel_or_delete"
+                    android:id="@+id/btn_cancel"
                     style="@style/BtnSecondary"
                     android:layout_width="0dp"
                     android:layout_height="44dp"
                     android:layout_weight="1"
                     android:text="取消" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btn_delete"
+                    style="@style/BtnDangerGhost"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_weight="1"
+                    android:text="删除"
+                    android:visibility="gone"
+                    tools:visibility="visible" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btn_import"

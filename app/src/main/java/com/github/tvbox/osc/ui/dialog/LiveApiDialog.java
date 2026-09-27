@@ -43,7 +43,9 @@ public class LiveApiDialog extends AppCenterPopupView {
                 AppBubble.toast("暂无历史记录");
                 return;
             }
-            DialogCoordinator.center(getContext(), new ApiHistoryDialog(getContext(), liveApi, this::updateEt)).show();
+            // ApiHistoryDialog 是底部抽屉:走 bottom(...) 才带上 isViewMode/hasNavigationBar 这两个参数,
+            // 与其它抽屉同款(原来用 center(...) 只是 asCustom,位置对但少了这两个参数,底边观感不一致)
+            DialogCoordinator.bottom(getContext(), new ApiHistoryDialog(getContext(), liveApi, this::updateEt), 0).show();
         });
 
         mBinding.btnCancel.setOnClickListener(v -> dismiss());

@@ -923,6 +923,12 @@ public class PlayFragment extends BaseLazyFragment {
         sourceViewModel.playResult.removeObserver(mObserverPlayResult);
 
         releasePlaybackSession(); // playback 会话原型:随视图销毁释放会话观察(共享视图不在此释放)
+        // 字幕协调器:取消在途的"切换轨道后恢复进度"延迟任务 —— 否则 800ms 内退出播放页时,
+        // 它会打到正在释放的内核上(seekTo/start 落到已释放的原生播放器 = native 崩)
+        if (mSubtitleCoordinator != null) {
+            mSubtitleCoordinator.release();
+            mSubtitleCoordinator = null;
+        }
         if (mBatteryListener != null) {
             com.github.tvbox.osc.state.SystemStateMonitor monitor = com.github.tvbox.osc.state.SystemStateMonitor.get();
             if (monitor != null)

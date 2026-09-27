@@ -151,7 +151,22 @@ public class Utils {
         return videoList;
     }
 
+    /**
+     * 界面是否按深色那套画(状态栏图标、弹窗/气泡深浅等)。
+     * <p>
+     * <b>以主题设置为准</b>:口径统一到主题门面 {@link com.github.tvbox.osc.storage.theme.ThemeStore#activeType()}
+     * (选了自定义主题 = 它的类型;显式浅色/深色 = 设置的那套;只有「跟随系统」才看系统明暗)。
+     * 旧口径读的是 Application 的 {@code uiMode},**显式选了浅色而手机是深色时**会判成深色 ——
+     * 白底页面配深色弹窗/浅色状态栏图标,整片看不清({@link #isAppDarkTheme()} 已在用新口径,这里跟上,免得两个口径打架)。
+     */
     public static boolean isDarkTheme(){
+        try {
+            if (com.github.tvbox.osc.storage.theme.ThemeStore.isReady()) {
+                return com.github.tvbox.osc.storage.theme.ThemeStore.activeType().isDark();
+            }
+        } catch (Throwable ignored) {
+        }
+        // 主题门面还没装配(极早期调用):退回旧口径
         int currentNightMode = App.getInstance().getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;
         return currentNightMode == Configuration.UI_MODE_NIGHT_YES || AppCompatDelegate.getDefaultNightMode()==AppCompatDelegate.MODE_NIGHT_YES;
     }

@@ -375,6 +375,15 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
             tabDeselectColor = androidx.core.content.ContextCompat.getColor(
                 requireContext(), com.github.tvbox.osc.R.color.text_sub_foreground)
         }
+        // 选中文字下面那条"微笑曲线"要和**选中文字同色**(同为文字主色):
+        // 曲线的底是矢量 indicator_flash,库内是 `typedArray.getDrawable()` 从 XML 属性里取的 ——
+        // 矢量的 fillColor 是**编译期**资源,那条通道绕不过换肤(ThemeResources/ThemeDrawables 都够不到),
+        // 自定义主题下它会停在**内置**的文字主色,而同一行的选中文字走的是上面的运行时取色 →
+        // 于是"曲线颜色没走文字主色"(用户口径)。库自己的 indicatorColor 就是"过滤指示器 drawable 的颜色"
+        // 那一档(设了就用它 tint 整条曲线),这里按当前主题给一次,和上面的 tabSelectColor 同源同值。
+        mBinding.tabLayout.tabIndicator.indicatorColor =
+            androidx.core.content.ContextCompat.getColor(
+                requireContext(), com.github.tvbox.osc.R.color.text_foreground)
         if (mSortDataList.isNotEmpty()) {
             mBinding.tabLayout.removeAllViews()
             fragments.clear()

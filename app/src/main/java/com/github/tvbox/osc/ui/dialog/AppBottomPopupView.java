@@ -10,6 +10,7 @@ import androidx.annotation.NonNull;
 import com.blankj.utilcode.util.ScreenUtils;
 import com.github.tvbox.osc.R;
 import com.github.tvbox.osc.ui.widget.FrostedGlassUtil;
+import com.lxj.xpopup.core.BasePopupView;
 import com.lxj.xpopup.core.BottomPopupView;
 
 /**
@@ -21,6 +22,8 @@ import com.lxj.xpopup.core.BottomPopupView;
  * 子类只需实现 {@link #getImplLayoutId()} 与各自 {@link #onCreate()};
  * 标题+内容+按钮结构时,中间内容区用 weight=1 + 内部滚动,避免挤压上下标题/按钮。
  * 布局含 tag="glass_blur" 的 BlurView 时自动启用毛玻璃。
+ * <p>弹壳绑定({@link #show()})也在基类兜底:子类既可经 {@link DialogCoordinator#bottom} 弹,
+ * 也可直接 {@code new XxxBottomPopup(ctx).show()},两条路观感一致。
  */
 public abstract class AppBottomPopupView extends BottomPopupView {
 
@@ -74,5 +77,24 @@ public abstract class AppBottomPopupView extends BottomPopupView {
         }
         // 毛玻璃:布局里存在 tag="glass_blur" 的 BlurView 时, 模糊弹层覆盖区域的下方内容
         FrostedGlassUtil.attach(root, getContext());
+    }
+
+    /**
+     * 弹壳兜底:popupInfo 只由 XPopup.Builder 绑定,未经 Builder 直接 {@code show()} 会命中
+     * {@code BasePopupView.show()} 的硬校验并抛
+     * {@code IllegalArgumentException: popupInfo is null}。
+     * <p><b>为什么放基类</b>(2026-09-27,日志页错误日志的日期抽屉崩溃):{@code BottomListDialog} 按
+     * "公共抽屉组件"设计、文档就写着 {@code new BottomListDialog(...).show()},但漏了 Builder 绑定,
+     * 一点日期即崩;此类"新公共弹窗忘了自绑定"的坑每个子类都要各写一遍 show() 才躲得过。
+     * 收口到基类后,所有底部弹窗(含以后新增的)直接 show() 都安全。
+     * <p>已绑定的调用点(经 {@link DialogCoordinator} 弹)走 {@code super.show()},行为完全不变;
+     * 壳参数用 {@link DialogCoordinator#bottom} 与全站底部弹窗保持同一套(view 模式 + 无导航栏占位)。
+     */
+    @Override
+    public BasePopupView show() {
+        if (popupInfo == null) {
+            return DialogCoordinator.bottom(getContext(), this, 0).show();
+        }
+        return super.show();
     }
 }
