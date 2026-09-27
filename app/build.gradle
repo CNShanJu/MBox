@@ -442,22 +442,35 @@ static def derivePalette(def c) {
     ]
 }
 
+// 圆角键:只认默认表里的键(值必须是 dp/dip/px 字符串);desc:每个键一句说明(与颜色文件同一套约定 ——
+// 写进生成的 theme_radii.xml 行尾注释,以后做"自定义主题"界面时就是每个圆角项下面的说明)。
+// 手改文件写错键名/漏写说明都会 WARN,和 readTheme 一个口径。
 static def readRadii(def file, def defaults) {
     def radii = new LinkedHashMap(defaults)
-    if (file.exists()) {
-        try {
-            def json = new groovy.json.JsonSlurper().parseText(file.getText('UTF-8'))
-            radii.each { k, v ->
-                def uv = json[k]
-                if (uv instanceof String && (uv.endsWith('dp') || uv.endsWith('dip') || uv.endsWith('px'))) {
-                    radii[k] = uv
-                }
+    def desc = [:]
+    if (!file.exists()) return [radii: radii, desc: desc]
+    try {
+        // 必须显式按 UTF-8 读(desc 里有中文,走平台默认编码在 Windows 下会读成乱码)
+        def json = new groovy.json.JsonSlurper().parseText(file.getText('UTF-8'))
+        radii.each { k, v ->
+            def uv = json[k]
+            if (uv instanceof String && (uv.endsWith('dp') || uv.endsWith('dip') || uv.endsWith('px'))) {
+                radii[k] = uv
             }
-        } catch (Throwable th) {
-            println "WARN: ${file.name} 解析失败,使用默认圆角: ${th.message}"
         }
+        // type=主题元信息、desc=说明:不参与派生,也不该被"不认识的键"告警误伤
+        def unknown = json.keySet().findAll { it != 'type' && it != 'desc' && !defaults.containsKey(it) }
+        if (unknown) println "WARN: ${file.name} 里有不认识的键(已忽略): ${unknown.join(', ')}"
+        def d = json['desc']
+        if (d instanceof Map) d.each { k, v -> if (v instanceof String) desc[k] = v }
+        def staleDesc = desc.keySet().findAll { !defaults.containsKey(it) }
+        if (staleDesc) println "WARN: ${file.name} 的 desc 里有不存在的键: ${staleDesc.join(', ')}"
+        def noDesc = defaults.keySet().findAll { !desc.containsKey(it) }
+        if (noDesc) println "WARN: ${file.name} 的 desc 缺少这些键的说明: ${noDesc.join(', ')}"
+    } catch (Throwable th) {
+        println "WARN: ${file.name} 解析失败,使用默认圆角: ${th.message}"
     }
-    return radii
+    return [radii: radii, desc: desc]
 }
 
 /** 写出颜色资源;desc 命中时在行尾带一条说明注释(方便直接看生成的 theme_colors.xml 知道每行是啥) */
@@ -474,14 +487,17 @@ static def writeColorsXml(def dir, def name, def colors, def desc) {
     f.setText(sb.toString(), 'UTF-8')   // 注释里有中文,必须显式 UTF-8 落盘(别用平台默认编码)
 }
 
-static def writeRadiiXml(def dir, def name, def radii) {
+static def writeRadiiXml(def dir, def name, def radii, def desc) {
     def valuesDir = new File(dir, name)
     valuesDir.mkdirs()
     def f = new File(valuesDir, 'theme_radii.xml')
     def sb = new StringBuilder('<?xml version="1.0" encoding="utf-8"?>\n<resources>\n')
-    radii.each { k, v -> sb.append("    <dimen name=\"${k}\">${v}</dimen>\n") }
+    radii.each { k, v ->
+        def note = (desc && desc[k]) ? "  <!-- ${desc[k]} -->" : ''
+        sb.append("    <dimen name=\"${k}\">${v}</dimen>${note}\n")
+    }
     sb.append('</resources>\n')
-    f.setText(sb.toString(), 'UTF-8')
+    f.setText(sb.toString(), 'UTF-8')   // 注释里有中文,必须显式 UTF-8 落盘(别用平台默认编码)
 }
 
 /**
@@ -537,7 +553,8 @@ task generateThemeColors {
         def nightNotes = new LinkedHashMap(derivedNotes); nightNotes.putAll(night.desc)
         writeColorsXml(themeColorsDir, 'values', derivePalette(light.colors), lightNotes)
         writeColorsXml(themeColorsDir, 'values-night', derivePalette(night.colors), nightNotes)
-        writeRadiiXml(themeColorsDir, 'values', readRadii(themeRadiiFile, defaultRadii))
+        def radiiRead = readRadii(themeRadiiFile, defaultRadii)
+        writeRadiiXml(themeColorsDir, 'values', radiiRead.radii, radiiRead.desc)
         // 运行时可读的派生结果(内置调色板的权威来源 + 单测对比基准)
         writeDerivedJson(themeAssetsDir, 'theme_derived_bright', derivePalette(light.colors))
         writeDerivedJson(themeAssetsDir, 'theme_derived_dark', derivePalette(night.colors))

@@ -2,5 +2,14 @@
   "mbox_tipsname": "初始",
   "size_player": 30,
   "size_other": 30,
-  "size_refresh": 36
+  "size_refresh": 36,
+  "msg_gap": 2,
+
+  "desc": {
+    "mbox_tipsname": "这个动画在「设置 - 加载动画」列表里的展示名(用户看到的名字,不是文件夹名)",
+    "size_player": "在视频播放页里显示多大(dp)",
+    "size_other": "其他页面(加载中弹窗、页面占位等)显示多大(dp)",
+    "size_refresh": "下拉刷新指示里显示多大(dp);不写默认 40",
+    "msg_gap": "动画与下方状态文字之间的间距(dp,可为负);不写默认 2"
+  }
 }
