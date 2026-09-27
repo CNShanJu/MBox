@@ -3,10 +3,8 @@ package com.github.tvbox.osc.ui.kit;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
-import android.graphics.ComposeShader;
 import android.graphics.LinearGradient;
 import android.graphics.Paint;
-import android.graphics.PorterDuff;
 import android.graphics.Shader;
 import android.util.AttributeSet;
 import android.view.MotionEvent;
@@ -38,7 +36,8 @@ public class ColorPlateView extends View {
     private final Paint cursorShadow = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final float[] hsv = new float[]{0f, 1f, 1f};
 
-    private Shader shader;
+    private Shader saturationShader;
+    private Shader valueShader;
     private int width;
     private int height;
     private float cursorX = 0f;
@@ -105,15 +104,21 @@ public class ColorPlateView extends View {
     @Override
     protected void onDraw(Canvas canvas) {
         if (width <= 0 || height <= 0) return;
-        if (dirty || shader == null) {
+        if (dirty || saturationShader == null) {
             int pure = Color.HSVToColor(new float[]{hsv[0], 1f, 1f});
-            Shader saturation = new LinearGradient(0, 0, width, 0, Color.WHITE, pure, Shader.TileMode.CLAMP);
-            Shader value = new LinearGradient(0, 0, 0, height, 0x00000000, 0xFF000000, Shader.TileMode.CLAMP);
-            shader = new ComposeShader(saturation, value, PorterDuff.Mode.MULTIPLY);
+            saturationShader = new LinearGradient(0, 0, width, 0, Color.WHITE, pure, Shader.TileMode.CLAMP);
+            valueShader = new LinearGradient(0, 0, 0, height, 0x00000000, 0xFF000000, Shader.TileMode.CLAMP);
             dirty = false;
         }
-        paint.setShader(shader);
+        // **分两遍画,不用 ComposeShader**:ComposeShader 要求两个 shader 类型不同,
+        // 两个 LinearGradient 组合在硬件加速下是不支持的操作 —— 系统不报错,只是画出来不对
+        // (实际表现就是"色相条拖到红,上面那块还是黑白的",用户口径)。
+        // 两遍等价于原来的乘法合成:先"白 → 当前色相"(横向=饱和度),再叠"透明 → 黑"(纵向=明度)。
+        paint.setShader(saturationShader);
         canvas.drawRect(0, 0, width, height, paint);
+        paint.setShader(valueShader);
+        canvas.drawRect(0, 0, width, height, paint);
+        paint.setShader(null);
 
         float cx = Math.max(0f, Math.min(width, cursorX));
         float cy = Math.max(0f, Math.min(height, cursorY));

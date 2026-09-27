@@ -761,14 +761,21 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
     }
 
     /**
-     * 生效:与既有的浅色/深色切换完全同一条链路 —— 先按主题解析出夜间模式,
-     * 再带"缓存配置已变"重载主页(这一步就是用户说的"重启应用")。
+     * 生效:**真重启进程**。
+     *
+     * <p>以前这里是"带标志重载主页"({@code jumpActivity(MainActivity)}),只在**内置浅色/深色**之间切换时才够用 ——
+     * 那条链路靠 AppCompat 夜间模式重建 Activity。而**自定义主题**靠的是运行时换肤层:
+     * 布局里的 {@code @color} 是 inflate 那一刻定下的,进程和所有已建视图都还在时,
+     * 光"重载主页"只会让页面继续按旧调色板画 —— 用户口径就是
+     * "我改了主题、App 也重启了,卡片和弹窗一点变化都没有"(把页面底色改成大红也不变)。
+     * 所以这里改成真重启,与弹窗文案「关闭后会重启应用生效」一致。
+     *
+     * <p>配置不会丢:选择关系在 {@link ThemePickerDialog#commitIfDirty()} 里已**同步落盘**
+     * ({@code PrefsDataStore} 的写是阻塞式),重启后按新配置解析(见 {@code ThemeRuntime.install})。
      */
     private fun applyThemeAndRestart() {
         Utils.initTheme()
-        val bundle = Bundle()
-        bundle.putBoolean(IntentKey.CACHE_CONFIG_CHANGED, true)
-        jumpActivity(MainActivity::class.java, bundle)
+        AppUtils.relaunchApp(true)
     }
 
     /** 背景图取值:默认(跟随主题) / 自定义(用户自己设过,含显式纯色) */
