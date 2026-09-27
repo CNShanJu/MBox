@@ -89,6 +89,9 @@ public final class ThemeStyles {
         // ③ 纯文字按钮(复制/展开/选集下载):底色透明**且无描边**,只有字色随主题
         List<Attr> ghost = attrs("textColor", R.color.btn_plain_text);
         m.put(R.style.BtnGhost, ghost);
+        // 纯文字按钮(TextView 版):同上一档观感,只是没有 MaterialButton 那层;
+        // 布局里个别键覆盖成强调色(如"复制"),这里登记默认那支,运行时照样跟着主题换
+        m.put(R.style.TextButton, ghost);
 
         // 危险按钮:红底/红字是**固定字面量**(危险三色不进主题文件),只有描边继承自主按钮(随主题)
         List<Attr> dangerStroke = attrs("strokeColor", R.color.btn_stroke);

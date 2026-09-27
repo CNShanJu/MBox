@@ -307,7 +307,7 @@
                 android:visibility="gone"
                 tools:visibility="visible" />
 
-            <TextView
+            <TextView style="@style/TextButton"
                 android:id="@+id/choose_series"
                 android:layout_width="wrap_content"
                 android:layout_height="34dp"
@@ -321,7 +321,7 @@
                 android:textSize="16sp"
                 android:layout_marginLeft="4dp" />
 
-            <TextView
+            <TextView style="@style/TextButton"
                 android:id="@+id/choose_download"
                 android:layout_width="wrap_content"
                 android:layout_height="34dp"

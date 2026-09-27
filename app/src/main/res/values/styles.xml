@@ -161,6 +161,21 @@
         <item name="cornerRadius">@dimen/radius_btn</item>
     </style>
 
+    <!-- 纯文字按钮(TextView 版):给"本质就是一行文字"的键用 —— 复制 / 展开 / 选集 / 下载。
+         与 ③ BtnGhost 同一档观感(无底色、无描边、只有文字),这里补的是裸 TextView 缺的东西:
+         **点击反馈**(selectableItemBackgroundBorderless)与**最小可点尺寸/内边距**。
+         文字色默认 btn_plain_text(= 文字主色),需要强调的地方(如"复制"走高亮色)在布局里单独覆盖。 -->
+    <style name="TextButton">
+        <item name="android:clickable">true</item>
+        <item name="android:focusable">true</item>
+        <item name="android:background">?android:attr/selectableItemBackgroundBorderless</item>
+        <item name="android:gravity">center</item>
+        <item name="android:minHeight">32dp</item>
+        <item name="android:paddingHorizontal">8dp</item>
+        <item name="android:textColor">@color/btn_plain_text</item>
+        <item name="android:textSize">14sp</item>
+    </style>
+
     <!-- 自定义dialog样式 -->
     <style name="CustomDialogStyle" parent="@android:style/Theme.Dialog">
         <item name="android:windowBackground">@android:color/transparent</item>

@@ -131,7 +131,7 @@
             android:singleLine="true"
             tools:text="http://" android:textColor="@color/text_foreground" />
 
-        <TextView
+        <TextView style="@style/TextButton"
             android:id="@+id/tv_link_copy"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
