@@ -272,7 +272,7 @@ def themeAssetsDir = file("${buildDir}/generated/theme_assets")
 
 def defaultRadii = [
         radius_background: '25dp',
-        radius_dialog    : '18dp',
+        radius_dialog    : '12dp',
         radius_card      : '12dp',
         // 按钮圆角:radius_btn=常规按钮,radius_btn_large=大圆角按钮(chip/预设)
         radius_btn       : '12dp',
