@@ -32,9 +32,23 @@ public class PicassoLoad {
     /** 扫光延迟(ms):加载在此内完成(缓存/较快网络)则不启动骨架屏,只有真正慢(>1s)才扫光 */
     private static final long SHIMMER_DELAY_MS = 1000L;
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
-    /** 会话内已成功加载过的 URL:滑回/复用命中则不再重启骨架屏,避免"顶部卡最初不扫、滑回却扫"的不一致 */
+    /**
+     * 会话内已成功加载过的 URL:滑回/复用命中则不再重启骨架屏,避免"顶部卡最初不扫、滑回却扫"的不一致。
+     * <p>
+     * 必须是<b>有界</b>的:原来用 {@code ConcurrentHashMap.newKeySet()} 存下所有成功过的海报地址,
+     * 会话里滑得越多条目越多(列表页每张海报一条),长会话纯涨。这里与 {@link #sessionFailed} 同口径,
+     * 用带容量上限的 LRU(超出淘汰最久未用的);淘汰只会让那张图"滑回时再扫一次骨架屏",不影响正确性。
+     */
+    private static final int LOADED_CACHE_MAX = 1000;
     private static final java.util.Set<String> sessionLoaded =
-            java.util.concurrent.ConcurrentHashMap.newKeySet();
+            java.util.Collections.newSetFromMap(
+                    java.util.Collections.synchronizedMap(
+                            new java.util.LinkedHashMap<String, Boolean>(64, 0.75f, true) {
+                                @Override
+                                protected boolean removeEldestEntry(java.util.Map.Entry<String, Boolean> eldest) {
+                                    return size() > LOADED_CACHE_MAX;
+                                }
+                            }));
     /** "失败不重试"窗口(ms):瞬时失败(开局无网/CDN 抖动/代理未就绪)窗口内不重试,过期后允许再试一次 */
     private static final long FAILED_TTL_MS = 60_000L;
     /** 失败记录上限:只用于窗口内去重,超出按最久未用淘汰,避免长会话无界增长 */
@@ -119,9 +133,11 @@ public class PicassoLoad {
         // 已成功加载过(会话缓存命中)→ 不再启动骨架屏,直接出图;仅真正加载(慢)才延迟扫光
         boolean cached = sessionLoaded.contains(trimUrl);
         if (!cached) {
-            // run 内再校验一次:仅当该 view 当前仍是本 URL 才启动扫光(双保险,防孤儿任务误触发)
+            // run 内再校验:仅当该 view 当前仍是本 URL、且实图还没出图(src 仍为空)才启动扫光。
+            // 后一条是"孤儿任务"的兜底:view 被复用到新图、新图已经加载完成之后,这条旧 run 若还触发,
+            // 就会给已出图的 view 叠一层没人会停的扫光(那个 INFINITE 动画器会一直 tick 并留住视图)。
             Runnable run = () -> {
-                if (trimUrl.equals(iv.getTag(TAG_LAST_URL))) {
+                if (trimUrl.equals(iv.getTag(TAG_LAST_URL)) && iv.getDrawable() == null) {
                     PicassoShimmer.start(iv);
                 }
             };

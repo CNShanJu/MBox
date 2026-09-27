@@ -96,13 +96,18 @@ public final class ScrollThumbIndicator {
         ConstraintLayout.LayoutParams lp = (ConstraintLayout.LayoutParams) thumb.getLayoutParams();
         int minThumb = Math.round(thumb.getResources().getDisplayMetrics().density * 24);
         int thumbH = Math.max(minThumb, Math.round(track * (float) extent / range));
-        lp.height = thumbH;
         // 可滚余量内的位置比例:offset/(range-extent) → [0,1],映射到 track-thumbH
         int scrollable = range - extent;
         int maxTop = track - thumbH;
         int top = scrollable > 0 ? Math.round(maxTop * (float) offset / scrollable) : 0;
-        lp.topMargin = top;
-        thumb.setLayoutParams(lp);
+        // 只有几何真的变了才 setLayoutParams:它一动就 requestLayout,而本方法是**每帧**被 onScrolled 调的,
+        // 每帧都设一次等于让整个弹窗每帧重新测量/布局(滚动时白烧 CPU、容易掉帧)。
+        // 像素级结果与以前逐帧设完全一致(值一样就不需要再设一次)。
+        if (lp.height != thumbH || lp.topMargin != top) {
+            lp.height = thumbH;
+            lp.topMargin = top;
+            thumb.setLayoutParams(lp);
+        }
         // 只有"用户真的在滚"才点亮;布局/测量触发的这一次只摆位置,
         // 保持 attach 时定下的"透明"(打开弹窗不预亮)
         if (fromScroll) {

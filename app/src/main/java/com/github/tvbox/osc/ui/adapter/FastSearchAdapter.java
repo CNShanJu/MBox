@@ -246,7 +246,18 @@ public class FastSearchAdapter extends BaseQuickAdapter<Movie.Video, BaseViewHol
         // 其余情况扫光延迟启动:命中(内存/磁盘)缓存的图会在延迟内就绪并取消,避免"闪一下"
         boolean cached = loadedUrls.contains(url);
         if (!cached) {
-            Runnable run = () -> com.github.tvbox.osc.ui.kit.PicassoShimmer.start(ivThumb);
+            // 排新的延迟启动前必须先撤掉上一条(与本方法末尾的 cancelShimmer 成对):
+            // 否则"上一张图还在延迟窗口内 → 该 view 被复用到新 URL"时,旧 run 的 tag 会被覆盖成孤儿,
+            // 它在图片已经出图之后才触发,给已出图的 view 再叠一层没人会停的扫光
+            // (那个动画器是 INFINITE 的,会一直按 60fps tick 并顺着 Drawable→View 引用把视图留住)。
+            cancelShimmer(ivThumb);
+            final String tagUrl = url;
+            Runnable run = () -> {
+                // 双保险:view 已经复用到别的图、或实图已经出图(src 已被 Picasso 填上)就不启动
+                if (!tagUrl.equals(ivThumb.getTag(TAG_LAST_URL))) return;
+                if (ivThumb.getDrawable() != null) return;
+                com.github.tvbox.osc.ui.kit.PicassoShimmer.start(ivThumb);
+            };
             ivThumb.setTag(TAG_SHIMMER_RUN, run);
             MAIN.postDelayed(run, SHIMMER_DELAY_MS);
         }

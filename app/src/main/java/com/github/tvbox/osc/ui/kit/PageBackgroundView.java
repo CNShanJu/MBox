@@ -3,8 +3,10 @@ package com.github.tvbox.osc.ui.kit;
 import android.app.Activity;
 import android.content.Context;
 import android.graphics.Bitmap;
+import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Matrix;
+import android.graphics.Paint;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.net.Uri;
@@ -35,7 +37,8 @@ import java.io.File;
  * 的最底层,因此<b>所有页面自动获得同一张背景图</b>,无需逐页改动布局。
  * <p>
  * 结构:背景图({@link ImageView} + {@link Matrix},支持用户拖动/等比缩放的自由摆放) + 主题色半透明遮罩
- * (取 {@code @color/bg_body})。遮罩让直接画在底色上的文字/图标(顶部标题、tab、宫格间隙等)保持可读,
+ * (取 {@code @color/bg_body},由本层在图片之上同一次绘制里画,见 {@link #dispatchDraw(Canvas)})。
+ * 遮罩让直接画在底色上的文字/图标(顶部标题、tab、宫格间隙等)保持可读,
  * 并随明暗主题自动换色:浅色主题偏白、深色主题偏暗。遮罩只提供<b>开关</b>,不透明度是固定值;设置页那根滑杆
  * 调的是<b>背景图自身的不透明度</b>({@code imageAlpha},作用于图片而非遮罩)。
  * <p>
@@ -96,8 +99,17 @@ public class PageBackgroundView extends FrameLayout {
 
     /** 背景图(自绘矩阵,置于遮罩之下) */
     private final ImageView image;
-    /** 主题色半透明遮罩(bg_body) */
-    private final View scrim;
+    /**
+     * 主题色半透明遮罩色(bg_body + {@link #dimPercent} 的 alpha;0=不画)。
+     * <p>
+     * 以前这里是一个单独的全屏 {@link View}(scrim),叠在图片之上;现在改成由本层在
+     * {@link #dispatchDraw(Canvas)} 里按原来那块矩形画同一色 —— 绘制次序、矩形、颜色与之前逐像素一致
+     * (同为"图片之上、铺满本层"),但少了一个全屏子视图的测量/布局/绘制遍历与它自己的 RenderNode。
+     * 注意:这省掉的是"多一层视图",像素本身的透明叠色(遮罩的用途)依然存在。
+     */
+    private int scrimColor;
+    /** 遮罩画笔(颜色随 {@link #scrimColor} 同步,避免每帧/每次绘制新建对象) */
+    private final Paint scrimPaint = new Paint();
     private final Matrix imageMatrix = new Matrix();
 
     /** 当前已应用的图源(空串=内置默认图);null 表示尚未加载过 */
@@ -141,10 +153,6 @@ public class PageBackgroundView extends FrameLayout {
         image.setScaleType(ImageView.ScaleType.MATRIX);
         image.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
         addView(image, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
-
-        scrim = new View(context);
-        scrim.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
-        addView(scrim, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT));
     }
 
     /**
@@ -304,12 +312,31 @@ public class PageBackgroundView extends FrameLayout {
     private void applyDim(int percent) {
         dimPercent = Math.max(0, Math.min(100, percent));
         Context ctx = getContext();
-        if (ctx == null) return;
-        if (dimPercent <= 0) {
-            scrim.setVisibility(GONE);
-        } else {
-            scrim.setVisibility(VISIBLE);
-            scrim.setBackgroundColor(withAlpha(ContextCompat.getColor(ctx, R.color.bg_body), dimPercent));
+        int color = 0;
+        if (dimPercent > 0 && ctx != null) {
+            color = withAlpha(ContextCompat.getColor(ctx, R.color.bg_body), dimPercent);
+        }
+        // 只在颜色真变了才重画(设置页拖滑杆会连续调用);0 = 不加遮罩,与以前"scrim 置 GONE"等价
+        if (scrimColor != color) {
+            scrimColor = color;
+            scrimPaint.setColor(color);
+            invalidate();
+        }
+    }
+
+    /**
+     * 遮罩与背景图同一次绘制里画完:先让子视图(背景图)画,再在本层画遮罩。
+     * <p>
+     * 矩形与"遮罩曾是排在这层里、MATCH_PARENT 的兄弟视图"一致(即本层的内边距盒子),
+     * 所以观感不变;但不再需要那个全屏子视图。注意本类的 {@code WILL_NOT_DRAW} 默认是置位的
+     * (没有 background),走绘制快速路径时 <b>onDraw 不会被调用</b>,所以画在这里而不是 onDraw。
+     */
+    @Override
+    protected void dispatchDraw(Canvas canvas) {
+        super.dispatchDraw(canvas);
+        if (scrimColor != 0) {
+            canvas.drawRect(getPaddingLeft(), getPaddingTop(),
+                    getWidth() - getPaddingRight(), getHeight() - getPaddingBottom(), scrimPaint);
         }
     }
 

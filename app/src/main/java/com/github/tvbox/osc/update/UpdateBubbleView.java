@@ -99,10 +99,13 @@ public class UpdateBubbleView extends View {
     private float mBounceScale = 1f;
     private long mDownMs;                   // 长按/点击持续时间,用于区分点击
     private boolean mFailHapticDone = false;
+    /** 缓存密度(见 onDraw 的说明):每帧取 getResources() 会连带跑一次换肤配置对齐 */
+    private float mDensity = 1f;
 
     public UpdateBubbleView(@NonNull Context context) {
         super(context);
-        mRingWidthDp = 3 * getResources().getDisplayMetrics().density; // 圆环粗细 3dp
+        mDensity = getResources().getDisplayMetrics().density;
+        mRingWidthDp = 3 * mDensity; // 圆环粗细 3dp
         mDiscColor = themeColor(context, R.color.bg_float, DEF_BG);
         // 轨道与弹窗进度条同色(switch_track_off):两处都是"下载进度",轨道不该各用各的
         mTrackColor = themeColor(context, R.color.switch_track_off, DEF_TRACK);
@@ -254,12 +257,25 @@ public class UpdateBubbleView extends View {
     }
 
     @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        // attach 时刷新一次密度(配置变化后重新 attach 的场合);绘制路径上不再取 getResources()
+        try {
+            mDensity = getResources().getDisplayMetrics().density;
+        } catch (Throwable ignored) {
+        }
+    }
+
+    @Override
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
         float cx = getWidth() / 2f;
         float cy = getHeight() / 2f;
         float r = Math.min(cx, cy) - mRingWidthDp;
-        float density = getResources().getDisplayMetrics().density;
+        // 用缓存密度:原来这里每帧都 getResources() —— 而 BaseActivity 覆写了 getResources()(换肤出口),
+        // 每次调用都要 syncFrom 对齐 Configuration/DisplayMetrics。下载中气泡是持续重绘的,
+        // 这一行等于"每帧做一次配置对齐"。密度只在配置变化时变(那时 Activity 会重建/重新 attach)。
+        float density = mDensity;
 
         // 外圈进度环:先画底环(与弹窗进度条同一条轨道色)
         mTrackPaint.setStyle(Paint.Style.STROKE);

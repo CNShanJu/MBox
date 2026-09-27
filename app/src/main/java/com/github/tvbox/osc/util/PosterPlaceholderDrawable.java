@@ -75,6 +75,19 @@ public class PosterPlaceholderDrawable extends Drawable {
     private final float iconTextGapPx;
     private final float minIconPx;
 
+    // ── 覆盖条避让高度的缓存(见 resolveOverlayReservePx):它是背景层,扫光动画每帧都会重画这里 ──
+    /** 缓存是否有效 */
+    private boolean overlayReserveValid;
+    /** 上次量得的覆盖条高度(px) */
+    private float overlayReservePx;
+    /** 缓存键:宿主在父容器中的下标(用 getChildAt 复核身份,省掉每帧的 indexOfChild) */
+    private int overlayProbeIndex = -1;
+    /** 缓存键:宿主自身的几何 */
+    private int overlayProbeW, overlayProbeH, overlayProbeTop, overlayProbeBottom;
+    /** 缓存键:上次扫过的每个兄弟视图,及其(可见性/高/上/下) */
+    private View[] overlayProbeSiblings;
+    private int[] overlayProbeStates;
+
     /** 加载态占位:灰底 + 居中图标(无文字),图标随宿主缩放,永不超出 */
     public static Drawable loading(Context context) {
         return new PosterPlaceholderDrawable(context, false);
@@ -185,31 +198,104 @@ public class PosterPlaceholderDrawable extends Drawable {
      * 这样量到的是真实高度(信息条随"集数行"显隐变矮/变高),不会被"图片旁边那列文字"误判;
      * 宿主没有这种覆盖层(详情弹窗海报、没有集数的卡)时返回 0,占位就是纯居中。
      * 新增海报卡布局时按这个形态摆覆盖条即可被自动识别,无需改这里的代码。
+     *
+     * <p><b>为什么这里要带缓存</b>:本 Drawable 是海报 ImageView 的<b>背景层</b>,加载中的骨架屏扫光
+     * ({@code PicassoShimmer},foreground)每帧都会让宿主重画一次 —— 也就是说下面这套
+     * {@code indexOfChild} + 遍历兄弟的判定以前是<b>每帧一次</b>。而结论只取决于
+     * "宿主几何 + 每个兄弟的身份/可见性/几何",这些量不重新布局就不会变,于是把它们当键缓存:
+     * 键没变直接复用上次的高度,键一变(重排、宿主尺寸变化、信息条显隐或变高)立刻按原规则重扫。
+     * 判定规则与结果跟每帧重扫完全一致 —— 兄弟的可见性/几何必须一起进键,否则"信息条隐藏后
+     * 落回纯居中"(AGENTS §七)这条就会失效。
      */
     private float resolveOverlayReservePx() {
-        if (!(getCallback() instanceof View)) return 0f;
+        if (!(getCallback() instanceof View)) {
+            overlayReserveValid = false;
+            return 0f;
+        }
         View self = (View) getCallback();
         ViewParent parent = self.getParent();
-        if (!(parent instanceof ViewGroup)) return 0f;
+        if (!(parent instanceof ViewGroup)) {
+            overlayReserveValid = false;
+            return 0f;
+        }
         ViewGroup group = (ViewGroup) parent;
+        // 快速路径:宿主位置/几何与各兄弟都跟上次一样,直接给出上次量到的高度(每帧只做几次整数比较)
+        if (overlayReserveFresh(self, group)) return overlayReservePx;
         int index = group.indexOfChild(self);
-        if (index < 0) return 0f;
+        if (index < 0) {
+            overlayReserveValid = false;
+            return 0f;
+        }
         int selfBottom = self.getBottom();
         int selfTop = self.getTop();
         int selfHeight = self.getHeight();
-        if (selfHeight <= 0) return 0f;
         float reserve = 0f;
-        for (int i = index + 1; i < group.getChildCount(); i++) {
-            View sibling = group.getChildAt(i);
-            if (sibling == null || sibling.getVisibility() != View.VISIBLE) continue;
-            if (sibling instanceof android.widget.TextView || sibling instanceof android.widget.ImageView) continue;
-            int h = sibling.getHeight();
-            if (h <= 0 || h >= selfHeight) continue;                        // 覆盖条只会占卡片的一部分
-            if (Math.abs(sibling.getBottom() - selfBottom) > 1) continue;   // 必须贴着图片底边覆盖
-            if (sibling.getTop() < selfTop + selfHeight / 2) continue;      // 且只压住下半部分
-            reserve = Math.max(reserve, h);
+        if (selfHeight > 0) {
+            for (int i = index + 1; i < group.getChildCount(); i++) {
+                View sibling = group.getChildAt(i);
+                if (sibling == null || sibling.getVisibility() != View.VISIBLE) continue;
+                if (sibling instanceof android.widget.TextView || sibling instanceof android.widget.ImageView) continue;
+                int h = sibling.getHeight();
+                if (h <= 0 || h >= selfHeight) continue;                        // 覆盖条只会占卡片的一部分
+                if (Math.abs(sibling.getBottom() - selfBottom) > 1) continue;   // 必须贴着图片底边覆盖
+                if (sibling.getTop() < selfTop + selfHeight / 2) continue;      // 且只压住下半部分
+                reserve = Math.max(reserve, h);
+            }
         }
+        rememberOverlayProbe(self, group, index);
+        overlayReservePx = reserve;
+        overlayReserveValid = true;
         return reserve;
+    }
+
+    /**
+     * 缓存命中判定(每帧都会走):宿主在父容器里的位置没变、宿主几何没变,
+     * 且上次扫过的每个兄弟的"身份 + 可见性 + 高 + 上 + 下"都没变。
+     * 任一项不同就返回 false,由 {@link #resolveOverlayReservePx()} 按原规则重扫。
+     */
+    private boolean overlayReserveFresh(View self, ViewGroup group) {
+        if (!overlayReserveValid) return false;
+        int index = overlayProbeIndex;
+        if (index < 0 || index >= group.getChildCount() || group.getChildAt(index) != self) return false;
+        if (self.getWidth() != overlayProbeW || self.getHeight() != overlayProbeH
+                || self.getTop() != overlayProbeTop || self.getBottom() != overlayProbeBottom) return false;
+        View[] siblings = overlayProbeSiblings;
+        int[] states = overlayProbeStates;
+        int count = group.getChildCount() - index - 1;
+        if (siblings == null || states == null || siblings.length != count) return false;
+        for (int i = 0; i < count; i++) {
+            View v = group.getChildAt(index + 1 + i);
+            int s = i * 4;
+            if (v != siblings[i]
+                    || v.getVisibility() != states[s]
+                    || v.getHeight() != states[s + 1]
+                    || v.getTop() != states[s + 2]
+                    || v.getBottom() != states[s + 3]) return false;
+        }
+        return true;
+    }
+
+    /** 记下本次扫描的键(宿主几何 + 每个兄弟的身份/可见性/高/上/下),供后续帧快速复用 */
+    private void rememberOverlayProbe(View self, ViewGroup group, int index) {
+        overlayProbeIndex = index;
+        overlayProbeW = self.getWidth();
+        overlayProbeH = self.getHeight();
+        overlayProbeTop = self.getTop();
+        overlayProbeBottom = self.getBottom();
+        int count = group.getChildCount() - index - 1;
+        if (overlayProbeSiblings == null || overlayProbeSiblings.length != count) {
+            overlayProbeSiblings = new View[count];
+            overlayProbeStates = new int[count * 4];
+        }
+        for (int i = 0; i < count; i++) {
+            View v = group.getChildAt(index + 1 + i);
+            overlayProbeSiblings[i] = v;
+            int s = i * 4;
+            overlayProbeStates[s] = v.getVisibility();
+            overlayProbeStates[s + 1] = v.getHeight();
+            overlayProbeStates[s + 2] = v.getTop();
+            overlayProbeStates[s + 3] = v.getBottom();
+        }
     }
 
     /**
