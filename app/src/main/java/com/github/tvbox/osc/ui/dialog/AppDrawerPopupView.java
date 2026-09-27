@@ -37,6 +37,8 @@ public abstract class AppDrawerPopupView extends DrawerPopupView {
         View root = getPopupImplView();
         if (root != null) {
             com.github.tvbox.osc.theme.ThemeDrawables.applyBackground(root, R.drawable.bg_drawer);
+            // 抽屉同理:创建时机晚于 Activity,补色扫描要在它自己身上再跑一次
+            com.github.tvbox.osc.theme.ThemeSweep.apply(root);
         }
         // 毛玻璃:布局里存在 tag="glass_blur" 的 BlurView 时, 模糊其后方内容(抽屉与列表分层更明显)
         FrostedGlassUtil.attach(root, getContext());

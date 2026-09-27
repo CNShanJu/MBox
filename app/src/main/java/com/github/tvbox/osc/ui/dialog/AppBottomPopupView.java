@@ -49,6 +49,9 @@ public abstract class AppBottomPopupView extends BottomPopupView {
             // **不能直接 setBackgroundResource** —— 那按编译期资源取色,会把换肤注入好的主题底
             // 又覆盖回内置色(用户口径:"弹窗的透明度怎么都不变");走 themedDrawable 才认自定义主题。
             com.github.tvbox.osc.theme.ThemeDrawables.applyBackground(root, R.drawable.bg_bottom_dialog);
+            // 弹窗是 Activity 建好之后才创建的,Activity 那次补色扫描覆盖不到它 —— 这里再扫一遍:
+            // 面板自己 + 里面的行(item_dialog_select 之类)只要还画着内置面,就按主题补上
+            com.github.tvbox.osc.theme.ThemeSweep.apply(root);
             // 横屏适配:内容宽度限 屏幕55% 并居中(竖屏保持全宽), 防横屏被拉全宽挤压
             if (ScreenUtils.isLandscape()) {
                 ViewGroup.LayoutParams lp = root.getLayoutParams();
