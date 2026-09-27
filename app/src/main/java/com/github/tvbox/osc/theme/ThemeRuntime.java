@@ -77,6 +77,14 @@ public final class ThemeRuntime {
         type = t;
         snapshotKey = key;
         installed = true;
+        // 让"换了主题却没看出变化"这类问题能在运行日志里一眼定位:
+        // 是"没生效"(解析出的还是内置/根本没选中自定义主题),还是"生效了但某处没跟着走"
+        try {
+            com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM,
+                    "主题: 生效[" + (p == null ? "内置" : "自定义") + "] " + key
+                            + (p == null ? "" : ";换肤层已介入"));
+        } catch (Throwable ignored) {
+        }
     }
 
     /**

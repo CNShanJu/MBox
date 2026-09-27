@@ -77,10 +77,27 @@ public final class ThemeInflaterFactory implements LayoutInflater.Factory2 {
         LayoutInflater.Factory existing1 = current1 instanceof LayoutInflater.Factory
                 ? (LayoutInflater.Factory) current1 : null;
         ThemeInflaterFactory factory = new ThemeInflaterFactory(existing2, existing1);
-        if (writeField(inflater, "mFactory2", factory)) return;
+        if (writeField(inflater, "mFactory2", factory)) {
+            log(activity, true);
+            return;
+        }
         // 反射改不了(极少数 ROM/被加固的包):退回"二次设置"这条会被系统拒绝的路,失败即放弃
         try {
             inflater.setFactory2(factory);
+            log(activity, true);
+        } catch (Throwable ignored) {
+            // 装不上 = 布局里那些 @color 引用不会跟着自定义主题走(只剩代码取色/窗口底色两条通道),
+            // 页面上会表现为"主题只变了一部分"。写进日志,便于和"主题压根没生效"区分开
+            log(activity, false);
+        }
+    }
+
+    /** 把"注入器到底装上没有"写进运行日志(见 install 的说明) */
+    private static void log(Activity activity, boolean ok) {
+        try {
+            com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM,
+                    "主题: 布局注入器" + (ok ? "已装 " : "未装上(反射被拦,布局里的颜色不会跟着主题走) ")
+                            + activity.getClass().getSimpleName());
         } catch (Throwable ignored) {
         }
     }

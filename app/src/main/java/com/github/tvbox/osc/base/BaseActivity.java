@@ -65,6 +65,17 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
+        // 运行时换肤第二层:窗口底色(bg_body)与布局属性注入。
+        // **必须在内容布局 inflate 之前**:Activity 自己的布局(onCreate 里的 setContentView / ViewBinding
+        // inflate)也是靠这个注入器改色的,装晚了这一层整个不参与换肤 —— 页面看着"和内置主题一模一样",
+        // 用户口径就是"我自定义的主题没效果"。放在 super.onCreate 之后是因为 AppCompat 到那时才把
+        // 自己的 LayoutInflater.Factory2 装好,本类要链在它后面(先让它造 AppCompat 控件,再由本类改颜色)。
+        try {
+            com.github.tvbox.osc.theme.ThemeRuntime.applyTo(this);
+            com.github.tvbox.osc.theme.ThemeRuntime.installInflaterFactory(this);
+        } catch (Throwable ignored) {
+        }
+
         if (getLayoutResID()==-1){
             initVb();
         }else {
@@ -72,14 +83,6 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
         }
         mContext = this;
         AppManager.getInstance().addActivity(this);
-        // 运行时换肤第二层:窗口底色(bg_body)与布局属性注入。
-        // 注意必须在 super.onCreate 之后:AppCompat 那时才把自己的 LayoutInflater.Factory2 装好,
-        // 本类要链在它后面(先让它造 AppCompat 控件,再由本类改颜色)。
-        try {
-            com.github.tvbox.osc.theme.ThemeRuntime.applyTo(this);
-            com.github.tvbox.osc.theme.ThemeRuntime.installInflaterFactory(this);
-        } catch (Throwable ignored) {
-        }
         // 全局页面背景层("body"底图):挂到内容容器最底层,所有页面透明处即显示背景图
         // 图源/遮罩/缩放位置统一走系统配置门面(SystemConfig)组装,设置页改完各页 onResume 自动套用
         try {
