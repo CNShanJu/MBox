@@ -700,7 +700,6 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             updatePageBackgroundVisibility()
             updateThemeValue()
         }
-        showThemeProbeOnce()
     }
 
     // ------------------------------------------------------------------
@@ -788,46 +787,9 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
      * 有了这三项就能立刻分清:"没选中自定义主题" / "派生出的透明度不对" / "drawable 重建通道没通"。
      */
     private fun showThemeProbeOnce() {
-        if (themeProbeShown) return
-        // 只在可调试构建里弹(AGP 8 默认不生成 BuildConfig,这里直接看 debuggable 标志)
-        val debuggable = (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
-        if (!debuggable) return
-        themeProbeShown = true
-        runCatching {
-            val p = ThemeStore.activePalette()
-            val rebuilt = com.github.tvbox.osc.theme.ThemeDrawables.rebuild(
-                R.drawable.bg_dialog, resources)
-            // 三条通道一起看:①派生出的色值对不对 ②drawable 重建通不通(卡片/弹窗背景就是它)
-            // ③Resources 包装有没有装上(代码里 ContextCompat.getColor 那一类靠它)
-            val wrapped = resources is com.github.tvbox.osc.theme.ThemeResources
-            // 圆角按"重建逻辑"解析出来的实际 px:与 dimens 里的 dp 一比,就能判断
-            // "chip 8dp 看着像全胶囊"到底是观感错觉还是重建把半径放大了
-            val chipR = com.github.tvbox.osc.theme.ThemeDrawables.shapeRadiusPx(
-                R.drawable.bg_r_common_stroke_primary, resources)
-            val drawerR = com.github.tvbox.osc.theme.ThemeDrawables.shapeRadiusPx(
-                R.drawable.bg_drawer, resources)
-            val density = resources.displayMetrics.density
-            // 直接量一个"布局里写了 @color/text_foreground 的 TextView"实际渲染成什么色,
-            // 与调色板里的 text_main 一对比:相等 = inflater 注入通道好使;
-            // 不等 = 那条链路对某些控件(例如 MaterialCheckBox)没生效 —— 用来给"弹窗 item 文字不跟主题"定性
-            val tvHex = Integer.toHexString(mBinding.tvTheme.currentTextColor)
-            val expectHex = Integer.toHexString(p.get("text_main"))
-            // 主题文件里**存的值**(不是派生结果):用它区分"文件里就没存对"与"存对了但派生/渲染不对"
-            val def = ThemeStore.resolveActive()
-            val src = if (def == null) "(内置)" else
-                "底色" + def.color("bg_surface") + " 卡片α" + def.color("bg_card_alpha") + " 浮层α" + def.color("bg_float_alpha")
-            AppBubble.toastLong(
-                "主题自检:" + ThemeStore.activeDisplayName()
-                    + " 面=" + Integer.toHexString(p.get("bg_surface"))
-                    + " 浮层=" + Integer.toHexString(p.get("bg_float"))
-                    + " 重建=" + (if (rebuilt != null) "OK" else "失败")
-                    + " 包装=" + (if (wrapped) "OK" else "无")
-                    + " 文本=" + tvHex + (if (tvHex == expectHex) "(=主题)" else "(期望 $expectHex)")
-                    + " chip圆角=" + (chipR / density).toInt() + "dp"
-                    + " 抽屉圆角=" + (drawerR / density).toInt() + "dp"
-                    + " 文件=" + src
-            )
-        }
+        // 用户口径:"主题自检先移除" —— 自检提示已停用(保留空实现,免得 removed 掉调用点后
+        // 有人又照旧文档去找这个弹窗)。要临时再开,把下面这段恢复即可:
+        //   按 debuggable 判断 → 打印 主题名 / 面 / 浮层 / 重建 / 包装 / 文本 / 圆角 / 主题文件里的值
     }
 
     /** 背景图取值:默认(跟随主题) / 自定义(用户自己设过,含显式纯色) */
