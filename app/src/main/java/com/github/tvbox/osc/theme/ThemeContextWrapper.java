@@ -32,6 +32,31 @@ public final class ThemeContextWrapper extends ContextWrapper {
         }
     }
 
+    /**
+     * 把一个 {@link Resources} 包成换肤版(幂等;没在用自定义主题或包装失败时原样返回)。
+     *
+     * <p><b>为什么还需要这一条</b>:AppCompat 会在 {@code attachBaseContext2} 里给 Activity 下
+     * {@code applyOverrideConfiguration(夜间模式等)},一旦有了 overrideConfiguration,
+     * {@code ContextThemeWrapper.getResourcesInternal()} 就走
+     * {@code createConfigurationContext(...)} **自己新建一份 Resources** —— 那份不是本类的
+     * {@link ThemeResources},于是<b>代码里的取色全部绕过换肤层</b>:标题栏文字(代码里取的
+     * {@code R.color.text_main})、列表项颜色、{@code getDrawable} 出来的矢量图标……
+     * 统统停在内置配色,而布局里行内写的颜色(走 inflater 注入)却是好的 ——
+     * 正是用户看到的"有的变了、有的没变"。
+     *
+     * <p>所以 Activity 侧要在 {@code getResources()} 上再兜一层(见 {@code BaseActivity}),
+     * 把 AppCompat 新造的那份也包进来。
+     */
+    public static Resources wrapResources(Resources base) {
+        if (base == null || !ThemeRuntime.active()) return base;
+        if (base instanceof ThemeResources) return base;
+        try {
+            return new ThemeResources(base);
+        } catch (Throwable th) {
+            return base;
+        }
+    }
+
     @Override
     public Resources getResources() {
         Resources base = super.getResources();

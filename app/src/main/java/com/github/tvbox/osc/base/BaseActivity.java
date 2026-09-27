@@ -3,6 +3,7 @@ package com.github.tvbox.osc.base;
 import android.content.Context;
 import android.content.Intent;
 import android.content.res.AssetManager;
+import android.content.res.Configuration;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -43,6 +44,8 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
     private ImmersionBar mImmersionBar;
     private com.github.tvbox.osc.ui.kit.AppTitleBar mTitleBar;
     private BasePopupView loadingPopup;
+    /** 换肤后的 Resources(见下面的 getResources 覆写);没在用自定义主题时为 null */
+    private android.content.res.Resources mThemedResources;
 
     /**
      * 运行时换肤第一层:把 Resources 换成主题感知的那份(见 theme/ThemeContextWrapper)。
@@ -61,9 +64,39 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
         super.attachBaseContext(com.github.tvbox.osc.theme.ThemeContextWrapper.wrap(newBase));
     }
 
+    /**
+     * 换肤的"代码取色"通道:**必须覆写**,只在 attachBaseContext 里包一层不够。
+     *
+     * <p>AppCompat 会给 Activity 下 {@code applyOverrideConfiguration}(夜间模式等),
+     * 此后 {@code ContextThemeWrapper.getResourcesInternal()} 走
+     * {@code createConfigurationContext(...)} **自己新建一份 Resources** —— 那份不是换肤用的包装,
+     * 于是代码里的 {@code getColor} / {@code getDrawable} / {@code getColorStateList} 全部绕过主题:
+     * 标题栏文字(代码里取 {@code R.color.text_main})、列表项颜色、没显式写 {@code app:tint} 的矢量图标
+     * 统统停在内置配色;而布局里行内写的颜色走 inflater 注入又是对的 ——
+     * 用户看到的"有的变了、有的没变"正是这一条(见 ThemeContextWrapper#wrapResources)。
+     *
+     * <p>这里在出口兜一层(幂等、带缓存):没在用自定义主题时原样返回,等于这条链路不存在。
+     */
+    @Override
+    public android.content.res.Resources getResources() {
+        android.content.res.Resources base = super.getResources();
+        if (base == null) return null;
+        android.content.res.Resources themed = mThemedResources;
+        if (themed instanceof com.github.tvbox.osc.theme.ThemeResources) {
+            // 配置可能变了(字号/屏幕/日夜),对齐一次再交出去
+            ((com.github.tvbox.osc.theme.ThemeResources) themed).syncFrom(base);
+            return themed;
+        }
+        mThemedResources = com.github.tvbox.osc.theme.ThemeContextWrapper.wrapResources(base);
+        return mThemedResources;
+    }
+
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        // 「跟随系统」翻明暗的比对基准:记下建这页时系统的明暗(见 handleSystemNightChange)
+        createdSystemNight = systemNightNow();
 
         // 运行时换肤第二层:窗口底色(bg_body)与布局属性注入。
         // **必须在内容布局 inflate 之前**:Activity 自己的布局(onCreate 里的 setContentView / ViewBinding
@@ -234,6 +267,86 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
         // 全局更新悬浮圈:下载进行中时,当前页面顶部悬浮圆形进度钮(不依赖系统悬浮窗权限)
         try {
             com.github.tvbox.osc.update.UpdateFloatIndicator.get(this).attach(this);
+        } catch (Throwable ignored) {
+        }
+        // 上次因"正在播放"挡下的明暗重建,等这页空闲了补上(否则它会一直停在翻明暗之前那套色)
+        if (nightRecreatePending) {
+            nightRecreatePending = false;
+            if (allowRecreateOnNightChange() && com.github.tvbox.osc.theme.ThemeRuntime.followsSystem()) {
+                recreateForSystemNight();
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 「跟随系统」下手机自己翻明暗
+    // ------------------------------------------------------------------
+
+    /** 建这页时系统的明暗(判断 onConfigurationChanged 里"是不是真的翻明暗了",而不是转屏/字号变化) */
+    private int createdSystemNight = -1;
+    /** 翻明暗时因"正在播放"挡下的重建:回到前台且空闲时补一次 */
+    private boolean nightRecreatePending;
+
+    private int systemNightNow() {
+        try {
+            return getApplicationContext().getResources().getConfiguration().uiMode
+                    & Configuration.UI_MODE_NIGHT_MASK;
+        } catch (Throwable th) {
+            return Configuration.UI_MODE_NIGHT_NO;
+        }
+    }
+
+    /**
+     * 本页在"跟随系统"翻明暗时是否允许<b>重建自己</b>。
+     * <p>
+     * 默认允许;播放中的页面(详情页预览播放器/直播页)应返回 false —— 翻明暗不该把正在看的片子
+     * 重建掉,那次重建会记下来,等页面空闲回到前台时补做(见 {@link #onResume()})。
+     */
+    protected boolean allowRecreateOnNightChange() {
+        return true;
+    }
+
+    /**
+     * 主页/直播/详情在清单里声明了 {@code uiMode}(系统不重建它们),所以翻明暗只能自己处理:
+     * 内置主题的颜色是 inflate 那一刻从 values/values-night 取回的<b>资源</b>,
+     * 之前的视图不会因为配置变了就跟着换 —— 不重建就是"跟随系统没生效"(旧色一直留着:
+     * 底色、状态栏图标、弹窗深浅全停在翻明暗之前那一套)。
+     */
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        int night = newConfig == null ? systemNightNow()
+                : newConfig.uiMode & Configuration.UI_MODE_NIGHT_MASK;
+        handleSystemNightChange(night);
+    }
+
+    private void handleSystemNightChange(int night) {
+        if (createdSystemNight < 0) {
+            createdSystemNight = night;
+            return;
+        }
+        if (night == createdSystemNight) return;
+        createdSystemNight = night;
+        // 显式浅色/深色、选了自定义主题:系统翻明暗跟本 App 无关(不重建,免得白白闪一下)
+        if (!com.github.tvbox.osc.theme.ThemeRuntime.followsSystem()) return;
+        if (!allowRecreateOnNightChange()) {
+            nightRecreatePending = true;
+            return;
+        }
+        recreateForSystemNight();
+    }
+
+    private void recreateForSystemNight() {
+        try {
+            // post 一下:避开"在 onConfigurationChanged 里直接重建自己"的时序问题(框架还在派发这次配置变化)
+            getWindow().getDecorView().post(() -> {
+                try {
+                    if (!isFinishing() && !isDestroyed()) recreate();
+                } catch (Throwable ignored) {
+                }
+            });
+            com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM,
+                    "主题: 系统翻明暗,跟随系统重建页面 " + getClass().getSimpleName());
         } catch (Throwable ignored) {
         }
     }
