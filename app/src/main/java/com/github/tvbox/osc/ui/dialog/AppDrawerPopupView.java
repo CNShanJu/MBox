@@ -32,10 +32,12 @@ public abstract class AppDrawerPopupView extends DrawerPopupView {
     @Override
     protected void onCreate() {
         super.onCreate();
-        // 统一抽屉背景:圆角 + 主题背景色(bg_float 浅色白 / 暗色深)
+        // 统一抽屉背景:圆角 + 主题背景色(bg_float 浅色白 / 暗色深)。
+        // 不能直接 setBackgroundResource(编译期取色,会覆盖掉换肤注入的主题底),走 themedDrawable
         View root = getPopupImplView();
         if (root != null) {
-            root.setBackgroundResource(R.drawable.bg_drawer);
+            root.setBackground(com.github.tvbox.osc.theme.ThemeDrawables.themedDrawable(
+                    R.drawable.bg_drawer, root.getResources()));
         }
         // 毛玻璃:布局里存在 tag="glass_blur" 的 BlurView 时, 模糊其后方内容(抽屉与列表分层更明显)
         FrostedGlassUtil.attach(root, getContext());

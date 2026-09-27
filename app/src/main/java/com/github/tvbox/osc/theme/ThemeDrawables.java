@@ -115,7 +115,31 @@ public final class ThemeDrawables {
         return scan(resId, res).tintKey;
     }
 
-    /** 清缓存(切换主题后调;理论上一套主题一次进程,但热更新/调试时会重新装) */
+    /**
+     * 代码里设底(代替 {@code View.setBackgroundResource})时用这个。
+     *
+     * <p>为什么必须换掉 {@code setBackgroundResource}:它按**编译期**资源取 drawable,
+     * 而 {@code android:background="@drawable/x"} 走的是 inflater 注入那条通道 ——
+     * 代码里再 {@code setBackgroundResource} 一次,等于把注入好的主题底**又覆盖回内置色**。
+     * 弹窗/抽屉/卡片那些底全是这么设的,所以"布局改色生效、弹窗卡片却纹丝不动"
+     * (用户口径:"透明度和卡片背景还是没生效")。
+     *
+     * @return 按主题重建过的那份;没在用自定义主题或该 drawable 与主题无关时返回系统那份
+     */
+    public static Drawable themedDrawable(int resId, Resources res) {
+        if (resId == 0 || res == null) return null;
+        Drawable rebuilt = rebuild(resId, res);
+        if (rebuilt != null) return rebuilt;
+        try {
+            return res.getDrawable(resId);
+        } catch (Throwable th) {
+            return null;
+        }
+    }
+
+    /**
+     * 清缓存(切换主题后调;理论上一套主题一次进程,但热更新/调试时会重新装)
+     */
     public static void clearCache() {
         synchronized (CACHE) {
             CACHE.clear();

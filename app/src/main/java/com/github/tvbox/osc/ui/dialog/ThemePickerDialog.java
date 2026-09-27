@@ -205,7 +205,10 @@ public class ThemePickerDialog extends SelectDialog<ThemePickerDialog.Row> {
         LinearLayout row = new LinearLayout(ctx);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER);
-        row.setBackgroundResource(R.drawable.bg_small_round_gray);
+        // 底同理:代码设底必须走 themedDrawable,否则这里永远是内置色(用户清单第 4 条:
+        // "主题颜色里那些 item 的文字/底色没变")
+        row.setBackground(com.github.tvbox.osc.theme.ThemeDrawables.themedDrawable(
+                R.drawable.bg_small_round_gray, ctx.getResources()));
         int padV = dp(13);
         row.setPadding(dp(12), padV, dp(12), padV);
 
