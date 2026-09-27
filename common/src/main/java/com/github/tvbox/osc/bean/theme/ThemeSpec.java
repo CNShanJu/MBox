@@ -85,12 +85,13 @@ public final class ThemeSpec {
         // **正文颜色(text_main)的键已移除**:它与文字主色共用同一个值(用户口径:
         // "正文颜色和主题主色共用,移除正文颜色的key")—— 资源名 text_main 仍然存在,由 brand 派生,
         // 所以布局/代码里的 @color/text_main、@color/text_foreground 一处都不用改。
-        // **次要文字(text_sub)与禁用文字(text_disable)两个键也已移除**:用户口径 ——
-        // "这两块的文字颜色通过计算获得,其值为文字主色透明度 60%"。资源名同样保留(派生自 brand @60%),
-        // 于是 @color/text_sub / @color/text_sub_foreground / @color/text_disable / @color/disable_text
-        // 这些引用一处都不用改,只是不再单独配。
-        list.add(new ThemeKey("text_hint", ThemeKey.Group.TEXT, ThemeKey.Kind.COLOR, "占位文字",
-                "底栏未选中项、搜索框里的「搜索」"));
+        // **次要文字(text_sub)/ 禁用文字(text_disable)/ 占位提示(text_hint)三个键都已移除**:
+        // 用户口径 —— "这两块的文字颜色通过计算获得,其值为文字主色透明度 60%"、
+        // "搜索框里的提示文本颜色没走文字主色透明度那种"。现在
+        //   text_sub = text_disable = 文字主色 @60%;
+        //   text_hint                = 文字主色 @40%。
+        // 资源名三个都照旧生成(@color/text_hint / text_sub_foreground / disable_text 等别名也在),
+        // 布局与代码里那 100 多处引用一行都不用改,只是不再单独配。
         list.add(new ThemeKey("text_accent", ThemeKey.Group.TEXT, ThemeKey.Kind.COLOR, "强调文字",
                 "选中项、标题、tab 选中"));
         list.add(new ThemeKey("text_highlight", ThemeKey.Group.TEXT, ThemeKey.Kind.COLOR, "高亮文字",

@@ -104,7 +104,7 @@ public final class ThemeJson {
      * 其值为文字主色透明度 60%")。资源名照旧生成,老文件里的值丢弃并给提示。
      */
     private static final java.util.Set<String> REMOVED_KEYS = new java.util.HashSet<>(
-            java.util.Arrays.asList("text_main", "brand_text", "btn_cancel_text", "text_sub", "text_disable"));
+            java.util.Arrays.asList("text_main", "brand_text", "btn_cancel_text", "text_sub", "text_disable", "text_hint"));
 
     private static boolean isLegacyFile(JsonObject o) {
         for (String k : LEGACY_RENAMES.keySet()) {

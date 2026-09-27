@@ -3,13 +3,13 @@
   "radius_dialog": "12dp",
   "radius_card": "12dp",
   "radius_btn": "12dp",
-  "radius_widget_btn": "16dp",
+  "radius_widget_btn": "8dp",
 
   "desc": {
     "radius_background": "大面板圆角:页面卡片、弹窗与抽屉面板、标题栏这些「整块」的底",
     "radius_dialog": "弹窗内部小块的圆角(气泡、提示条这类)与滚动条等附属件",
     "radius_card": "卡片里的小块圆角:列表行、海报占位、来源与类目标签等",
     "radius_btn": "按钮圆角:纯色按钮 / 空心按钮 / 纯文字按钮三型共用这一个值",
-    "radius_widget_btn": "小组件按钮圆角:日志分类键、背景图预设键、搜索历史·热词·联想键、播放器设置里的键。这类键的高度必须 ≥ 2×半径(共享样式里给了 minHeight 34dp),否则圆角 ≥ 半高会被缩成胶囊,看着上下不一致"
+    "radius_widget_btn": "小组件按钮圆角:日志分类键、背景图预设键、搜索历史·热词·联想键、播放器设置里的键。默认 8dp:这类键高 34dp(共享样式 WidgetBtn 的 minHeight),半径太大会把直边吃光、看着像胶囊(历史搜索那种小键尤其明显)"
   }
 }

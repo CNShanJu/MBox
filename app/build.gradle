@@ -277,7 +277,7 @@ def defaultRadii = [
         // 圆角档:radius_btn=按钮(纯色/空心/纯文字三型共用这一档),
         //          radius_widget_btn=小组件按钮(搜索历史·热词·联想 / 日志分类 / 背景图调整键 / 播放器设置里的组件 / chip 预设)
         radius_btn       : '12dp',
-        radius_widget_btn: '16dp'
+        radius_widget_btn: '8dp'
 ]
 
 // 主题文件缺失时的兜底(与仓库内文件同值)
@@ -285,7 +285,6 @@ def defaultLightColors = [
         bg_body: '#faf8ff',
         bg_surface: '#ECECF4', bg_float_alpha: 92, bg_card_alpha: 60,
         card_category_bg: '#1F2937', card_category_text: '#FFFFFF',
-        text_hint: '#611C1B1F',
         text_accent: '#1F2937', text_highlight: '#1890FF',
         brand: '#1F2937',
         btn_confirm_bg: '#1F2937', btn_confirm_text: '#FFFFFF',
@@ -297,7 +296,6 @@ def defaultNightColors = [
         bg_body: '#141218',
         bg_surface: '#211D28', bg_float_alpha: 10, bg_card_alpha: 100,
         card_category_bg: '#1F2937', card_category_text: '#FFFFFF',
-        text_hint: '#99E6E1E5',
         text_accent: '#E5E7EB', text_highlight: '#1890FF',
         brand: '#E5E7EB',
         btn_confirm_bg: '#E5E7EB', btn_confirm_text: '#141218',
@@ -398,6 +396,8 @@ static def derivePalette(def c) {
     // 其值为文字主色透明度 60%")。资源名 text_sub / text_disable 照旧生成,布局与代码不用改。
     // 注意 Gradle 侧 withAlpha 收的是 0..1 的比例(运行时 ThemePaletteFactory 收 0-100,两边必须同口径)
     int textSub = withAlpha(brand, 0.6f)
+    // 占位/提示文字:文字主色 @40%(与运行时 ThemePaletteFactory 同口径)
+    int textHint = withAlpha(brand, 0.4f)
     // 同上口径:纯色按钮的底与其"不透明版"描边/小组件选中填充
     int confirmBg = parseColor(c.btn_confirm_bg, brand)
     int confirmSolid = withAlpha(confirmBg, 100)
@@ -420,7 +420,7 @@ static def derivePalette(def c) {
             // 正文颜色与主色共用同一个值(资源名 text_main 保留,但主题文件里已没有这个键)
             text_main        : toHex(brand),
             text_sub         : toHex(textSub),
-            text_hint        : toHex(parseColor(c.text_hint, 0xFF611C1B1F)),
+            text_hint        : toHex(textHint),
             text_disable     : toHex(textSub),
             text_accent   : toHex(parseColor(c.text_accent, brand)),
             text_highlight      : toHex(parseColor(c.text_highlight, 0xFF1890FF)),
@@ -536,6 +536,7 @@ task generateThemeColors {
             color_highlight: '派生自 brand(全局高亮填充)',
             select_fill    : '派生自 brand(勾选框填充)',
             text_sub       : '派生自文字主色 @60%(次要文字:说明/描述/副标题)',
+            text_hint      : '派生自文字主色 @40%(占位/提示文字:搜索框的「搜索」、输入框提示)',
             text_disable   : '派生自文字主色 @60%(禁用文字;与次要文字同值)',
             btn_plain_text : '派生自 brand 文字主色(空心按钮/纯文字按钮的文字)',
             btn_select_bg  : '派生自 btn_confirm_bg 的不透明版(小组件按钮选中态/chip 选中态的填充)',

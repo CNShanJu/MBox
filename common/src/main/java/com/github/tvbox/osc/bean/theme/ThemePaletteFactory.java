@@ -57,6 +57,9 @@ public final class ThemePaletteFactory {
         // 通过计算获得,其值为文字主色透明度 60%")。资源名 text_sub / text_disable 仍然生成,
         // 布局与代码里那 90 多处引用一处都不用改。
         int textSub = ThemePalette.withAlpha(brand, 60);
+        // 占位/提示文字(搜索框里的「搜索」这类)同样不再单独配(用户口径:"搜索框里的提示文本颜色
+        // 没走文字主色透明度那种"):取文字主色 @40% —— 内置主题下与原来的 #611C1B1F 基本同观感
+        int textHint = ThemePalette.withAlpha(brand, 40);
         // 按钮两族的口径(用户口径,一次说清):
         //   ① 纯色按钮:底 = btn_confirm_bg(可以带透明度);**描边 = 底色的不透明版**
         //      ——"纯色按钮也要给边框线,颜色就是主按钮背景的颜色;把它设成透明度百分百时边框线要不透明";
@@ -104,7 +107,7 @@ public final class ThemePaletteFactory {
         // 于是"改主色 = 正文文字一起变",按钮/chip/描边与正文天然同色
         out.put("text_main", brand);
         out.put("text_sub", textSub);
-        out.put("text_hint", color(in, "text_hint", builtin.get("text_hint")));
+        out.put("text_hint", textHint);
         out.put("text_disable", textSub);
         // 强调/选中文字没写就跟主色走(与 Gradle 侧一致)
         out.put("text_accent", color(in, "text_accent", brand));

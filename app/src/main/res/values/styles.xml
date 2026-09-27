@@ -6,9 +6,10 @@
          全部套这一条:
            · 底 = selector_widget_btn(未选中只有边框线、选中=纯色按钮的填充,圆角只走 radius_widget_btn);
            · 字 = widget_btn_text(未选中=文字主色、选中=主按钮文字);
-           · **高度**:minHeight 给到 34dp —— 这类键通常只有 25~30dp 高,而 radius_widget_btn 默认 16dp,
-             圆角一旦 ≥ 半高就被 GradientDrawable 缩成胶囊,"上边圆角和下边圆角看着不一致"
-             (用户口径)就是这么来的;34dp 起才能让 16dp 圆角画成真正的四个角。
+           · **高度与半径要配套**:minHeight 给到 34dp,radius_widget_btn 默认 8dp ——
+             这类键本来只有 25~30dp 高,半径一旦 ≥ 半高,GradientDrawable 会把上下圆角一起缩成**胶囊**
+             (用户口径:"上边圆角和下边圆角不一致""历史搜索那个不是正常显示");34dp 高 + 8dp 半径
+             直边还剩 18dp,才是正常的圆角矩形。
          两种交互形态(用户口径,逐页归属也在这里定死,别在页面里各写一套):
            ① **选择按钮** —— 点击后 `setSelected(true/false)`,底色与文字色一起切到"纯色按钮"那一档
               (由下面这对 selector 自动完成,代码只切 isSelected)。用它的地方:

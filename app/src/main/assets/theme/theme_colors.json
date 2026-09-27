@@ -8,7 +8,6 @@
   "card_category_bg": "#1F2937",
   "card_category_text": "#FFFFFF",
 
-  "text_hint": "#611C1B1F",
   "text_accent": "#1F2937",
   "text_highlight": "#1890FF",
 
@@ -33,7 +32,6 @@
     "card_category_bg": "卡片类目背景色(卡片上的「类目」标签用它;具体接哪些组件由用户另行指定)",
     "card_category_text": "卡片类目文字颜色(与上面那个底色成对;具体接哪些组件由用户另行指定)",
 
-    "text_hint": "未选中/占位文字(底栏未选中文字图标、搜索框「搜索」)",
     "text_accent": "强调/选中文字(选中项、标题、tab 选中)",
     "text_highlight": "高亮文字(蓝色:搜索结果来源、链接、展开/复制)",
 
