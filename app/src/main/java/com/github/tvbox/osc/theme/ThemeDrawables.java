@@ -183,8 +183,27 @@ public final class ThemeDrawables {
         }
     }
 
-    /** 单色矢量图标:整份 XML 里"随主题走"的 fillColor 只能有一种(多色图标不碰) */
+    /**
+     * 单色矢量图标"该被着成哪个主题色"。
+     *
+     * <p><b>两种写法都要认</b>(少了任何一种,那一类图标就永远不跟主题走 ——
+     * 现象是"有的图标变了、有的没变",用户清单第 1 条"我的界面的那些图标没变"就是漏了第 ① 种):
+     * <ol>
+     *   <li>{@code <vector android:tint="@color/text_foreground">} —— 本仓库最常用的写法
+     *       (20 个图标,路径统一白底 + 整体着色)。它把主题色声明在<b>矢量根节点</b>上,
+     *       原来只扫 {@code <path fillColor>},于是这 20 个图标一个都没跟上主题;</li>
+     *   <li>{@code <path android:fillColor="@color/x">} —— 单色字形直接写颜色(5 个图标);
+     *       这种还要求"所有 path 同一种主题色",多色图标不碰。</li>
+     * </ol>
+     */
     private static String singleVectorTintKey(XmlResourceParser parser, Resources res) throws Exception {
+        // ① 矢量根节点上的 android:tint:它就是"这个图标该是主题色 X"的直白声明,优先取它
+        int rootTint = parser.getAttributeResourceValue(NS, "tint", 0);
+        if (rootTint != 0) {
+            String rootKey = ThemeColorAliases.paletteNameOf(rootTint);
+            if (rootKey != null) return rootKey;
+        }
+        // ② 退回到逐 path 看 fillColor(单色才认)
         String found = null;
         int depth = 0;
         while (true) {
