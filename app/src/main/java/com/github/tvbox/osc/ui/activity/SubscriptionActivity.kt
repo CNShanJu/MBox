@@ -17,6 +17,7 @@ import com.github.tvbox.osc.bean.Source
 import com.github.tvbox.osc.bean.Subscription
 import com.github.tvbox.osc.databinding.ActivitySubscriptionBinding
 import com.github.tvbox.osc.ui.adapter.SubscriptionAdapter
+import com.github.tvbox.osc.ui.dialog.AttachActionDialog
 import com.github.tvbox.osc.ui.dialog.ChooseSourceDialog
 import com.github.tvbox.osc.ui.dialog.DialogCoordinator
 import com.github.tvbox.osc.ui.dialog.JsonImportDialog
@@ -223,34 +224,38 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
             BaseQuickAdapter.OnItemLongClickListener { adapter: BaseQuickAdapter<*, *>?, view: View, position: Int ->
                 if (mSubscriptionAdapter.isExportMode) return@OnItemLongClickListener true //导出态不弹长按菜单
                 val item = mSubscriptions[position]
-                XPopup.Builder(this)
-                    .atView(view.findViewById(R.id.tv_name))
-                    .hasShadowBg(false)
-                    .isDarkTheme(Utils.isAppDarkTheme()) // 气泡跟随主题(直读 App 主题,防 ROM uiMode 不同步误判浅色)
-                    .asAttachList(
-                        arrayOf(
-                            if (item.isTop) "取消置顶" else "置顶",
-                            "编辑订阅",
-                            "复制地址"
-                        ), null
-                    ) { index: Int, _: String? ->
-                        when (index) {
-                            0 -> {
-                                item.isTop = !item.isTop
-                                mSubscriptions[position] = item
-                                mSubscriptionAdapter.setNewData(mSubscriptions)
-                                LogStore.log(
-                                    Category.SUBSCRIPTION,
-                                    "订阅: " + (if (item.isTop) "置顶 " else "取消置顶 ") + item.name
-                                )
-                            }
-                            1 -> showEditSubscription(position)
-                            2 -> {
-                                ClipboardUtils.copyText(mSubscriptions.get(position).url)
-                                AppBubble.toastLong("已复制")
-                            }
+                // 长按气泡统一走 AttachActionDialog(主题悬浮面 + text_main 文字色):
+                // XPopup 的 asAttachList 用库内固定样式,不吃主题文件,自定义主题下会是一块"外来"的底
+                AttachActionDialog.show(
+                    view.findViewById(R.id.tv_name),
+                    arrayOf(
+                        if (item.isTop) "取消置顶" else "置顶",
+                        "编辑订阅",
+                        "复制地址"
+                    ),
+                    intArrayOf(
+                        AttachActionDialog.NORMAL,
+                        AttachActionDialog.NORMAL,
+                        AttachActionDialog.NORMAL
+                    )
+                ) { index: Int ->
+                    when (index) {
+                        0 -> {
+                            item.isTop = !item.isTop
+                            mSubscriptions[position] = item
+                            mSubscriptionAdapter.setNewData(mSubscriptions)
+                            LogStore.log(
+                                Category.SUBSCRIPTION,
+                                "订阅: " + (if (item.isTop) "置顶 " else "取消置顶 ") + item.name
+                            )
                         }
-                    }.show()
+                        1 -> showEditSubscription(position)
+                        2 -> {
+                            ClipboardUtils.copyText(mSubscriptions.get(position).url)
+                            AppBubble.toastLong("已复制")
+                        }
+                    }
+                }
                 true
             }
     }

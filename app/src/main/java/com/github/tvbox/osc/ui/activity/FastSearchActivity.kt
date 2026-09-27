@@ -39,6 +39,7 @@ import com.github.tvbox.osc.ui.adapter.FastSearchAdapter
 import com.github.tvbox.osc.ui.adapter.SelectDialogAdapter
 import com.github.tvbox.osc.ui.adapter.SelectDialogAdapter.SelectDialogInterface
 import com.github.tvbox.osc.ui.kit.ListEndTipController
+import com.github.tvbox.osc.ui.dialog.AttachActionDialog
 import com.github.tvbox.osc.ui.dialog.DoubanSuggestDialog
 import com.github.tvbox.osc.ui.dialog.SearchCheckboxDialog
 import com.github.tvbox.osc.ui.dialog.SearchSuggestionsDialog
@@ -376,18 +377,21 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
 
     /**
      * 顶栏三点(⋮)入口:弹出气泡列表。当前仅一项「切换布局」,后续可继续加项。
+     * <p>
+     * <b>不要用 XPopup 的 `asAttachList`</b>:它的气泡面与文字色来自库内固定样式,不吃主题文件,
+     * 自定义主题下这块气泡会与全站"另一个面"割裂(用户口径:搜索页这个 tip 的颜色不对)。
+     * 全站长按/点按气泡统一走 {@link AttachActionDialog}(主题悬浮面 + text_main 文字色)。
      */
     private fun showMoreActions() {
-        XPopup.Builder(this@FastSearchActivity)
-            .isDarkTheme(Utils.isAppDarkTheme()) // 气泡列表跟随主题样式(直读 App 主题设置,避免 ROM 上 uiMode 不同步误判浅色→白底)
-            .atView(mBinding.ivMore)
-            .hasShadowBg(false)
-            .asAttachList(arrayOf("切换布局"), null) { index: Int, _: String? ->
-                if (index == 0) {
-                    showResultLayoutDialog()
-                }
+        AttachActionDialog.show(
+            mBinding.ivMore,
+            arrayOf("切换布局"),
+            intArrayOf(AttachActionDialog.NORMAL)
+        ) { index: Int ->
+            if (index == 0) {
+                showResultLayoutDialog()
             }
-            .show()
+        }
     }
 
     /**
