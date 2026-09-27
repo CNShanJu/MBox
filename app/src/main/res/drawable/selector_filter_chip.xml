@@ -1,22 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 日志筛选/操作按钮:圆角背景 + 选中高亮(与按钮圆角一致, 点击态不再出现长方形水波纹) -->
+<!-- 日志页分类/筛选键(全部/下载/播放/订阅/系统/仅失败 + 业务/错误):属于"小组件按钮"那条线,
+     圆角只走 radius_widget_btn(与搜索页历史·热词·联想、背景图调整键同一个档),
+     不再用 radius_background(18dp)—— 那是页面/卡片底那一档,套在小键上会显得过圆。
+     色值沿用:选中 = color_highlight(高亮),未选中 = bg_gray,按下 = 通用点击态;
+     文字色由 LogActivity 按主题取(选中 btn_select_text / 未选中 text_sub_foreground)。 -->
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:state_selected="true">
         <shape android:shape="rectangle">
             <solid android:color="@color/color_highlight" />
-            <corners android:radius="@dimen/radius_background" />
+            <corners android:radius="@dimen/radius_widget_btn" />
         </shape>
     </item>
     <item android:state_pressed="true">
         <shape android:shape="rectangle">
             <solid android:color="@color/gray_darker_press_alpha" />
-            <corners android:radius="@dimen/radius_background" />
+            <corners android:radius="@dimen/radius_widget_btn" />
         </shape>
     </item>
     <item>
         <shape android:shape="rectangle">
             <solid android:color="@color/bg_gray" />
-            <corners android:radius="@dimen/radius_background" />
+            <corners android:radius="@dimen/radius_widget_btn" />
         </shape>
     </item>
 </selector>
