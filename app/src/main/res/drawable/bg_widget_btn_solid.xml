@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 小组件按钮 · 纯色档(选中态):底取主题的 btn_select_bg(= 文字主色/填充高亮),
+     圆角同样只走 radius_widget_btn。 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/btn_select_bg" />
+    <corners android:radius="@dimen/radius_widget_btn" />
+</shape>
