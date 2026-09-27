@@ -205,10 +205,13 @@ public class ThemePickerDialog extends SelectDialog<ThemePickerDialog.Row> {
         LinearLayout row = new LinearLayout(ctx);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER);
-        // 底同理:代码设底必须走 themedDrawable,否则这里永远是内置色(用户清单第 4 条:
-        // "主题颜色里那些 item 的文字/底色没变")
+        // 底:这是个"动作入口",不是列表行/卡片 —— 用全站小动作键的统一底
+        // (描边 + 小圆角 = bg_r_common_stroke_primary,与联想标签/播放器面板那些键同款)。
+        // 原来用 bg_small_round_gray(卡片底色 + 卡片圆角):在主题色偏亮/偏红时,
+        // 这块就是一大坨实心色块,而且卡片圆角放在 ~48dp 高的动作行上看着像胶囊
+        // (用户口径:"这个按钮样式又出来了…看着奇奇怪怪的")。
         row.setBackground(com.github.tvbox.osc.theme.ThemeDrawables.themedDrawable(
-                R.drawable.bg_small_round_gray, ctx.getResources()));
+                R.drawable.bg_r_common_stroke_primary, ctx.getResources()));
         int padV = dp(13);
         row.setPadding(dp(12), padV, dp(12), padV);
 
