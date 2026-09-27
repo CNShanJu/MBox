@@ -175,6 +175,90 @@ android {
     }
 }
 
+// ------------------------------------------------------------------
+// 打包前清理"不完整的旧 APK"(兜住 Android Studio 的部署优化)
+//
+// 现象(2026-09-27 用户连报四次,每次一模一样):
+//   java.io.IOException: Missing AndroidManifest.xml entry in
+//     'app/build/intermediates/apk/debug/MBox_v3.5.9_debug.apk'
+// 定位结论:那个文件**不是我们构建出来的** ——
+//   · 正常构建只产出 app/build/outputs/apk/<变体>/ 下的完整包(1300+ 条目,含 res/、resources.arsc、
+//     AndroidManifest.xml、签名);用 gradlew 删掉 intermediates/apk 后重建,那个目录根本不会再生;
+//   · 而 Android Studio 的"部署优化 / Apply Changes"会在 intermediates/apk/<变体>/ 写一个**部署载荷**:
+//     实测 149 个条目 = dex(33) + assets(24) + lib(12) + META-INF(69) + kotlin/okhttp 等,
+//     **没有 res/、没有 resources.arsc、没有 AndroidManifest.xml、也没有签名**;
+//   · AGP 的增量打包把这个载荷当成"上一次打好的包"去做补丁,校验不到 manifest 就抛上面那个 IOException,
+//     于是构建直接失败;删掉它下次就好,但 AS 会再写一遍 → 看起来"怎么都修不好"。
+//
+// 处理:打包任务执行前,凡是"连 AndroidManifest.xml 都没有"的旧 APK 一律删掉,强制整包重打。
+// 只删自己变体目录下、且确实缺 manifest 的 APK —— 正常的包一个字节都不动。
+// (正本清源还是在 AS 里勾上 Run 配置的 "Always install with package manager(关掉部署优化)";
+//  这道兜底是为了"就算忘了勾、或者正在用 Apply Changes,构建也不会因此失败"。)
+// ------------------------------------------------------------------
+def isIncompleteApk = { File f ->
+    if (f == null || !f.isFile() || f.length() == 0L) return false
+    try {
+        return new java.util.zip.ZipFile(f).withCloseable { zip ->
+            zip.getEntry('AndroidManifest.xml') == null
+        }
+    } catch (Throwable ignored) {
+        return true   // 连 zip 都读不开 → 也是坏的
+    }
+}
+// 钩住所有打包任务(packageDebug/packageRelease/packageDebugBundle/...UniversalApk 等):
+// Android Studio 点 Run 时驱动的就是这批任务,只是它会额外把 APK 写进 intermediates/apk/<变体>/
+// (CLI 构建不写那里 —— 这就是"我这边怎么都复现不出来"的原因)。打之前先扫干净,再让它重新打。
+tasks.matching { it.name.startsWith('package') }.configureEach { t ->
+    t.doFirst {
+        def targets = []
+        // ① 任务自己声明的产物(可能是文件,也可能是目录)
+        t.outputs.files.each { f ->
+            if (f.isDirectory()) { f.listFiles()?.each { c -> targets << c } } else { targets << f }
+        }
+        // ② 再兜一层固定路径:AS 驱动构建时把包写在这里(所有变体都扫一遍)
+        def apkRoot = new File(t.project.layout.buildDirectory.get().asFile, 'intermediates/apk')
+        apkRoot.listFiles()?.each { vd ->
+            if (vd.isDirectory()) vd.listFiles()?.each { c -> targets << c }
+        }
+        targets.unique().each { f ->
+            if (f != null && f.name.endsWith('.apk') && isIncompleteApk(f)) {
+                logger.warn("WARN: 删除不完整的旧 APK(缺 AndroidManifest.xml,通常是 AS 部署优化留下的): ${f}")
+                //noinspection ResultOfMethodCallIgnored
+                f.delete()
+            }
+        }
+    }
+}
+// ------------------------------------------------------------------
+// 自愈:debug 变体的"编译期资源包"掉了 → 打出来的包没有 res/ 与 resources.arsc
+//
+// 现象(2026-09-27 实测):app/build/intermediates/processed_res/debug/ 里只剩 output-metadata.json,
+// **resources-debug.ap_ 不见了**,而 Gradle 仍认为 processDebugResources 是最新的 ——
+// 于是 packageDebug 打出一个 149 条目、没有 AndroidManifest.xml/resources.arsc/res/ 的包
+// (体积 42MB 看着正常,装上去却缺资源:圆角、布局、颜色这些**资源层**改动全都不生效)。
+// 这类包的成因与上面那条一样:AS 的部署优化/Apply Changes 会把 debug 的资源包挪走/删掉。
+//
+// 处理:preBuild 时扫一遍 processed_res/<变体>/,哪个变体"目录在、却一个 *.ap_ 都没有",
+// 就把那个目录删掉 —— 目录没了,processXxxResources 立刻变成"输出缺失",本次构建自动重跑并补回 .ap_。
+// 只在真的缺资源包时动手(正常构建零影响),把"要人工删目录/清缓存"变成自动恢复。
+// ------------------------------------------------------------------
+def hasProcessedResAp = { File dir ->
+    dir.listFiles()?.any { it.isFile() && it.name.endsWith('.ap_') } == true
+}
+tasks.matching { it.name == 'preBuild' }.configureEach { t ->
+    t.doFirst {
+        def root = new File(t.project.layout.buildDirectory.get().asFile, 'intermediates/processed_res')
+        root.listFiles()?.each { vd ->
+            if (vd.isDirectory() && !hasProcessedResAp(vd)) {
+                logger.warn("WARN: ${vd.name} 变体的资源包(processed_res/*.ap_)不见了 —— 删掉该目录让资源重新编译" +
+                        "(否则这次打出来的 APK 会缺 res/ 与 resources.arsc,装到机器上资源层改动全都不生效)")
+                //noinspection ResultOfMethodCallIgnored
+                vd.deleteDir()
+            }
+        }
+    }
+}
+
 dependencies {
     api fileTree(dir: "libs", include: ['*.jar', '*.aar'])
 
@@ -242,8 +326,10 @@ dependencies {
     implementation 'com.github.MZCretin:ExpandableTextView:v1.6.1-x'
     //lottie动画(6.7.1:支持 v5.7 动画格式与 Gaussian Blur,修复 5.2.0 加载新动画的资源ID异常/GC风暴)
     implementation 'com.airbnb.android:lottie:6.7.1'
-    //流式布局
-    implementation 'com.hyman:flowlayout-lib:1.1.2'
+    // 流式标签容器改用自研 ui/kit/FlowTagLayout(原来的 com.hyman:flowlayout-lib 已移除):
+    // 那条库的行高算法漏算子视图的上下外边距,标签最后一行会被容器裁掉下半截
+    // (用户口径"圆角只对顶部有效、底部没生效",查了一天);自研版把排版算术抽成
+    // FlowLineBreaker(纯函数 + JVM 单测 FlowLineBreakerTest),行高含外边距,块不会再被裁。
     //毛玻璃底栏(BlurView: API31+ RenderEffect 硬件模糊 / 低版本 RenderScript 回退)
     implementation 'com.eightbitlab:blurview:1.6.3'
     //崩溃
@@ -271,13 +357,33 @@ def themeColorsDir = file("${buildDir}/generated/theme_colors")
 def themeAssetsDir = file("${buildDir}/generated/theme_assets")
 
 def defaultRadii = [
-        radius_background: '25dp',
-        radius_dialog    : '12dp',
-        radius_card      : '12dp',
-        // 圆角档:radius_btn=按钮(纯色/空心/纯文字三型共用这一档),
-        //          radius_widget_btn=小组件按钮(搜索历史·热词·联想 / 日志分类 / 背景图调整键 / 播放器设置里的组件 / chip 预设)
+        // 主题文件(assets/theme/theme_radii.json)缺失时的兜底:必须与仓库内那份同值。
+        // 原来这里写的是 25dp —— 主题文件一旦缺失/解析失败,全站圆角会突然变成 25dp
+        // (小件的圆角超过半高就会被 GradientDrawable 缩成胶囊,而且不会有任何报错)。
+        // 注意:readRadii() 只认**这张表里有的键**(JSON 里多出来的键会 WARN 并忽略),
+        // 所以新增一个圆角档位必须同时加在这里,否则 @dimen/xxx 根本不会生成。
+        radius_background: '26dp',
+        radius_dialog    : '16dp',
+        radius_card      : '16dp',
         radius_btn       : '12dp',
-        radius_widget_btn: '8dp'
+        // 小组件按钮:高 34dp 的 chip/键,**不能跟面板档一起调大** —— 键高的一半就是上限,
+        // 16dp 就是 34dp 的 47%,GradientDrawable 会把上下圆角连成一条、整个底变胶囊
+        // (用户口径"圆角只对顶部有效,底部没生效 / 看着像胶囊")。安全上限约 15dp(45%)。
+        // 这条有 ThemePillShapeContractTest 兜着(已反证:改成 16dp 会红)。
+        radius_widget_btn: '12dp',
+        // "小件档":空心/实心小按钮(bg_r_common_*)、筛选抽屉里的选项、视频详情抽屉里的内块、
+        // 本地视频行这些**抽屉/弹窗里面的小元素**。
+        // 它原来写死在 res/values/dimens.xml(8dp),主题文件根本管不到 —— 用户把面板档调到 16dp 后,
+        // 抽屉里这些块还是 8dp,观感就是"同一个抽屉有些圆有些方",而且怎么改 theme_radii.json 都不动。
+        // 收进这张表后:**全 App 的圆角只剩 theme_radii.json 一个来源**。
+        common_corners   : '12dp',
+        // 小组件按钮的**边框线粗细**(底 = selector_widget_btn,圆角档 = radius_widget_btn)。
+        // 这类键文字只有 12~13sp,1dp 在高密度屏上是一条 3px 实线,整排键看着"边框又粗又重"
+        // (用户口径"radius_widget_btn 边框线太粗了");0.5dp 走抗锯齿,是发丝线观感
+        // —— 与输入框那条底线(theme_input_underline,同一个口径)一致。
+        stroke_widget_btn: '0.5dp',
+        // 搜索框专用(首页那条胶囊造型的搜索条):独立一档,不跟面板档走
+        radius_search    : '16dp'
 ]
 
 // 主题文件缺失时的兜底(与仓库内文件同值)
@@ -379,14 +485,16 @@ static int withAlpha(def colorRaw, def alphaRaw) {
 //   一句话:页面上的东西(含卡片里的 item)跟 bg_card_alpha;浮起来的那一层跟 bg_float_alpha。
 // 同值别名(不占配置):
 //   color_highlight / select_fill / btn_plain_text = brand(文字主色)
-//   btn_select_bg = btn_confirm_stroke = btn_confirm_bg 的**不透明版**(alpha 强制 100%)
+//   btn_confirm_stroke = btn_confirm_bg 的**不透明版**(alpha 强制 100%:底色透明时边框线仍要实心)
+//   btn_select_bg   = btn_confirm_bg **本身**(连透明度一起:主按钮无色,选中态就跟着无色)
 //   btn_select_text = btn_confirm_text(选中填充上的文字 = 主按钮文字)
 //   btn_stroke      = btn_cancel_bg(空心按钮边框线颜色;历史资源名,值同源)
 //   switch_track_on = download_done = success(正向状态色:开关打开 / 下载完成 —— 原本是两个键,值一直相同)
 // 按钮取色口径(用户口径):
 //   ① 纯色按钮:底 = btn_confirm_bg(可带透明度);描边 = 该底色的不透明版(设成半透明/全透明,边框线照样实心)
 //   ② 空心按钮:无填充,只有 1dp 描边 = btn_cancel_bg(「空心按钮边框线颜色」);文字走文字主色 brand
-//   ③ 小组件按钮:未选中 = 只有边框(同 ②)+ 文字主色;选中 = 填充 btn_select_bg(忽略透明度)+ 文字 btn_confirm_text
+//   ③ 小组件按钮:未选中 = 只有边框(同 ②)+ 文字主色;选中 = 填充 btn_select_bg(= ①的底,含透明度)+ 文字 btn_confirm_text
+//      —— 用户口径"选中态是背景透明无色啊,文字白色":① 的底设成无色时,选中态同样无色,只剩描边与文字
 // 不派生的固定色:text_danger / swipe_red / swipe_red_text 已写死在 res/values/colors.xml(不随主题)
 static def derivePalette(def c) {
     // 文字主色**强制纯色**(alpha 归 100):用户口径"文字主色不允许设置透明度,只能纯色" ——
@@ -431,7 +539,7 @@ static def derivePalette(def c) {
             btn_confirm_stroke: toHex(confirmSolid),
             btn_cancel_bg    : toHex(hollowStroke),
             btn_plain_text   : toHex(brand),
-            btn_select_bg    : toHex(confirmSolid),
+            btn_select_bg    : toHex(confirmBg),
             btn_select_text  : toHex(confirmText),
             btn_stroke       : toHex(hollowStroke),
             switch_track_on  : toHex(success),
@@ -539,7 +647,7 @@ task generateThemeColors {
             text_hint      : '派生自文字主色 @40%(占位/提示文字:搜索框的「搜索」、输入框提示)',
             text_disable   : '派生自文字主色 @60%(禁用文字;与次要文字同值)',
             btn_plain_text : '派生自 brand 文字主色(空心按钮/纯文字按钮的文字)',
-            btn_select_bg  : '派生自 btn_confirm_bg 的不透明版(小组件按钮选中态/chip 选中态的填充)',
+            btn_select_bg  : '同 btn_confirm_bg(小组件按钮/chip/直播选中条 选中态的填充;连透明度一起,主按钮无色则选中态也无色)',
             btn_select_text: '同 btn_confirm_text(选中填充上的文字 = 主按钮文字)',
             btn_confirm_stroke: '派生自 btn_confirm_bg 的不透明版(纯色按钮的边框线:底色带透明度时边框仍然实心)',
             btn_stroke     : '同 btn_cancel_bg(空心按钮边框线颜色;历史资源名)'
