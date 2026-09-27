@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 取色板:标题 + 预览 + 十六进制输入 + S/V 方块 + 色相条 + 透明度滑杆 + 取消/确定。
+     透明度用 Material Slider(0-100),与"背景图透明度"那根滑杆同一套观感。
+     根节点 focusableInTouchMode:让<b>根</b>先拿到焦点,打开弹窗时输入框不自动抢焦点
+     (否则软键盘立刻弹出,弹窗被顶上去 —— 用户口径:"会随着输入框往上挤,固定一下")。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="320dp"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_dialog"
+    android:focusable="true"
+    android:focusableInTouchMode="true"
+    android:orientation="vertical"
+    android:padding="@dimen/dp_20">
+
+    <TextView
+        android:id="@+id/tv_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:singleLine="true"
+        android:text="选择颜色"
+        android:textColor="@color/text_foreground"
+        android:textSize="16sp"
+        android:textStyle="bold" />
+
+    <!-- 预览:一条按当前色值填充的色带,前面给个「预览」小标题(与「色值」「不透明度」同一套小标题样式) -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/dp_10"
+        android:text="预览"
+        android:textColor="@color/text_sub_foreground"
+        android:textSize="12sp" />
+
+    <View
+        android:id="@+id/v_preview"
+        android:layout_width="match_parent"
+        android:layout_height="28dp"
+        android:layout_marginTop="@dimen/dp_6" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/dp_10"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="色值"
+            android:textColor="@color/text_sub_foreground"
+            android:textSize="12sp" />
+
+        <!-- 下边框线走 bg_theme_input_underline(1dp):以前用 input_dialog_api_input,
+             聚焦那条线是 2dp 的 text_foreground,暗色下就是一条又粗又亮、压着文字的白线,
+             跟整个面板格格不入。这里与编辑页那些色值输入框同一个样式。 -->
+        <EditText
+            android:id="@+id/et_hex"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/dp_10"
+            android:layout_weight="1"
+            android:background="@drawable/bg_theme_input_underline"
+            android:hint="#RRGGBB"
+            android:inputType="textNoSuggestions"
+            android:maxLength="9"
+            android:maxLines="1"
+            android:paddingHorizontal="2dp"
+            android:paddingTop="@dimen/dp_6"
+            android:paddingBottom="@dimen/dp_8"
+            android:textColor="@color/text_foreground"
+            android:textColorHint="@color/text_sub"
+            android:textSize="14sp"
+            tools:ignore="Autofill,LabelFor" />
+    </LinearLayout>
+
+    <com.github.tvbox.osc.ui.kit.ColorPlateView
+        android:id="@+id/plate"
+        android:layout_width="match_parent"
+        android:layout_height="140dp"
+        android:layout_marginTop="@dimen/dp_10" />
+
+    <com.github.tvbox.osc.ui.kit.HueBarView
+        android:id="@+id/hue"
+        android:layout_width="match_parent"
+        android:layout_height="18dp"
+        android:layout_marginTop="@dimen/dp_10" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/dp_10"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="不透明度"
+            android:textColor="@color/text_sub_foreground"
+            android:textSize="12sp" />
+
+        <com.google.android.material.slider.Slider
+            android:id="@+id/slider_alpha"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/dp_10"
+            android:layout_weight="1"
+            android:stepSize="1"
+            android:valueFrom="0"
+            android:valueTo="100"
+            app:labelBehavior="gone" />
+
+        <TextView
+            android:id="@+id/tv_alpha"
+            android:layout_width="42dp"
+            android:layout_height="wrap_content"
+            android:gravity="end"
+            android:textColor="@color/text_sub_foreground"
+            android:textSize="12sp"
+            tools:text="100%" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/dp_10"
+        android:orientation="horizontal">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_cancel"
+            style="@style/BtnSecondary"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_weight="1"
+            android:text="取消" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_ok"
+            style="@style/BtnPrimary"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_marginStart="@dimen/dp_10"
+            android:layout_weight="1"
+            android:text="确定" />
+    </LinearLayout>
+</LinearLayout>

@@ -211,6 +211,9 @@ dependencies {
     implementation project(":core-network")
     implementation project(":spider")
     implementation project(":download")
+    // 分享/导入导出传输层(:share)。app 只用其公开契约(ShareFacade/share 根包模型 +
+    // transport.lan 的桥接契约 LanShareHost),禁用 internal/online/local 实现包(门禁已加)。
+    implementation project(":share")
 
     // implementation 'com.tencent.bugly:crashreport_upgrade:latest.release'
     implementation 'com.owen:tv-recyclerview:3.0.0'
@@ -264,6 +267,8 @@ def themeColorsFile = file('src/main/assets/theme/theme_colors.json')
 def themeColorsNightFile = file('src/main/assets/theme/theme_colors_night.json')
 def themeRadiiFile = file('src/main/assets/theme/theme_radii.json')
 def themeColorsDir = file("${buildDir}/generated/theme_colors")
+// 生成的主题资产目录(theme_derived_*.json):作为额外的 assets 源目录合并进 assets/theme/
+def themeAssetsDir = file("${buildDir}/generated/theme_assets")
 
 def defaultRadii = [
         radius_background: '25dp',
@@ -277,29 +282,25 @@ def defaultRadii = [
 // 主题文件缺失时的兜底(与仓库内文件同值)
 def defaultLightColors = [
         bg_body: '#faf8ff',
-        bg_component: '#ECECF4', bg_component_alpha: 100,
-        bg_float: '#ECECF4', bg_float_alpha: 92,
+        bg_surface: '#ECECF4', bg_float_alpha: 92, bg_card_alpha: 60,
         text_main: '#050505', text_sub: '#787878', text_hint: '#611C1B1F',
-        text_disable: '#b3b3b3', text_highlight: '#1F2937', text_accent: '#1890FF',
+        text_disable: '#b3b3b3', text_accent: '#1F2937', text_highlight: '#1890FF',
         brand: '#1F2937', brand_text: '#FFFFFF',
         btn_confirm_bg: '#1F2937', btn_confirm_text: '#FFFFFF',
         btn_cancel_bg: '#ECECF4', btn_cancel_text: '#1F2937',
-        switch_track_on: '#1890FF', switch_track_off: '#1F2937', switch_thumb: '#FFFFFF',
-        accent_on_dark: '#1890FF',
-        download_active: '#037AFF', download_done: '#08CA2C', swipe_red: '#E5484D'
+        success: '#08CA2C', switch_track_off: '#ccccd4', switch_thumb: '#FFFFFF',
+        download_active: '#037AFF'
 ]
 def defaultNightColors = [
         bg_body: '#141218',
-        bg_component: '#211D28', bg_component_alpha: 100,
-        bg_float: '#211D28', bg_float_alpha: 92,
+        bg_surface: '#211D28', bg_float_alpha: 10, bg_card_alpha: 100,
         text_main: '#FFFFFF', text_sub: '#AFAFAF', text_hint: '#99E6E1E5',
-        text_disable: '#b3b3b3', text_highlight: '#E5E7EB', text_accent: '#1890FF',
+        text_disable: '#b3b3b3', text_accent: '#E5E7EB', text_highlight: '#1890FF',
         brand: '#E5E7EB', brand_text: '#141218',
         btn_confirm_bg: '#00000000', btn_confirm_text: '#E5E7EB',
         btn_cancel_bg: '#00000000', btn_cancel_text: '#7A7A7A',
-        switch_track_on: '#1890FF', switch_track_off: '#3C3C46', switch_thumb: '#FFFFFF',
-        accent_on_dark: '#1890FF',
-        download_active: '#037AFF', download_done: '#08CA2C', swipe_red: '#E5484D'
+        success: '#08CA2C', switch_track_off: '#3C3C46', switch_thumb: '#FFFFFF',
+        download_active: '#037AFF'
 ]
 
 // ---- 读取主题文件 ----
@@ -369,32 +370,39 @@ static int withAlpha(def colorRaw, def alphaRaw) {
 }
 
 // ---- 派生规则表 ----
-// 面的合并:主题文件里只有两个面 —— bg_component(组件/卡片)与 bg_float(悬浮面);
-//   bg_popup(弹窗/抽屉)、bg_float(底栏·标题栏·搜索框)、bg_float_fab(悬浮圆钮)是**同一个悬浮面**,
-//   本来就必须同色同透明度(否则同屏能看出深浅不一),所以共用 bg_float + bg_float_alpha。
+// 面:**颜色只有一个**(bg_surface),页面层与浮层共用,避免同屏深浅不一;
+//   **透明度是两档,分层不同**(用户口径,原来接反过一次):
+//     bg_card_alpha  → **页面层**:bg_surface(页面卡片·标题栏·底栏·搜索框)、
+//                      bg_card(海报占位、筛选块、以及**卡片里面的行** —— 弹窗列表行 bg_small_round_gray 等);
+//     bg_float_alpha → **浮层**:bg_float(所有弹窗与抽屉、长按/上次看到的气泡、首页直播·筛选悬浮钮与更新悬浮圈)。
+//   一句话:页面上的东西(含卡片里的 item)跟 bg_card_alpha;浮起来的那一层跟 bg_float_alpha。
 // 同值别名(不占配置):
 //   color_highlight / select_fill / btn_plain_text / btn_select_bg = brand
 //     (全局高亮填充=chip/进度条/悬浮圈、勾选框填充、无背景按钮文字、选中按钮填充 —— 设计上就与主色同色)
 //   btn_select_text = brand_text(选中填充上的文字)
 //   btn_stroke      = brand @40%(无填充按钮的描边)
+//   switch_track_on = download_done = success(正向状态色:开关打开 / 下载完成 —— 原本是两个键,值一直相同)
+// 不派生的固定色:text_danger / swipe_red / swipe_red_text 已写死在 res/values/colors.xml(不随主题)
 static def derivePalette(def c) {
     int brand = parseColor(c.brand, 0xFF1F2937)
     int brandText = parseColor(c.brand_text, 0xFFFFFFFF)
-    int component = withAlpha(parseColor(c.bg_component, 0xFFECECF4), percent(c.bg_component_alpha, 100))
-    int floatBg = withAlpha(parseColor(c.bg_float, 0xFFECECF4), percent(c.bg_float_alpha, 92))
+    // 同一个颜色、两档透明度:页面层(bg_card_alpha)与浮层(bg_float_alpha)
+    int surfaceColor = parseColor(c.bg_surface, 0xFFECECF4)
+    int cardBg = withAlpha(surfaceColor, percent(c.bg_card_alpha, 100))
+    int floatBg = withAlpha(surfaceColor, percent(c.bg_float_alpha, 92))
+    int success = parseColor(c.success, 0xFF08CA2C)
 
     return [
             bg_body          : toHex(parseColor(c.bg_body, 0xFFFAF8FF)),
-            bg_component     : toHex(component),
-            bg_popup         : toHex(floatBg),
+            bg_surface       : toHex(cardBg),
+            bg_card          : toHex(cardBg),
             bg_float         : toHex(floatBg),
-            bg_float_fab     : toHex(floatBg),
             text_main        : toHex(parseColor(c.text_main, 0xFF050505)),
             text_sub         : toHex(parseColor(c.text_sub, 0xFF787878)),
             text_hint        : toHex(parseColor(c.text_hint, 0xFF611C1B1F)),
             text_disable     : toHex(parseColor(c.text_disable, 0xFFB3B3B3)),
-            text_highlight   : toHex(parseColor(c.text_highlight, brand)),
-            text_accent      : toHex(parseColor(c.text_accent, 0xFF1890FF)),
+            text_accent   : toHex(parseColor(c.text_accent, brand)),
+            text_highlight      : toHex(parseColor(c.text_highlight, 0xFF1890FF)),
             color_highlight  : toHex(brand),
             select_fill      : toHex(brand),
             btn_confirm_bg   : toHex(parseColor(c.btn_confirm_bg, brand)),
@@ -405,13 +413,11 @@ static def derivePalette(def c) {
             btn_select_bg    : toHex(brand),
             btn_select_text  : toHex(brandText),
             btn_stroke       : toHex(withAlpha(brand, 0.4f)),
-            switch_track_on  : toHex(parseColor(c.switch_track_on, 0xFF1890FF)),
+            switch_track_on  : toHex(success),
             switch_track_off : toHex(parseColor(c.switch_track_off, brand)),
             switch_thumb     : toHex(parseColor(c.switch_thumb, 0xFFFFFFFF)),
-            accent_on_dark   : toHex(parseColor(c.accent_on_dark, 0xFF1890FF)),
             download_active  : toHex(parseColor(c.download_active, 0xFF037AFF)),
-            download_done    : toHex(parseColor(c.download_done, 0xFF08CA2C)),
-            swipe_red        : toHex(parseColor(c.swipe_red, 0xFFE5484D))
+            download_done    : toHex(success)
     ]
 }
 
@@ -457,15 +463,39 @@ static def writeRadiiXml(def dir, def name, def radii) {
     f.setText(sb.toString(), 'UTF-8')
 }
 
+/**
+ * 写出派生好的调色板(主题文件里不存在的键由 derivePalette 算出来),供<b>运行时</b>读取。
+ *
+ * 为什么要把派生结果也打成 assets:内置主题的首帧颜色来自编译期资源,自定义主题的颜色由运行期
+ * 按同一套规则重算(common 的 ThemePaletteFactory)。两边规则一旦漂移,用户就会看到"自定义主题的
+ * 按钮描边/选中态跟内置主题不是一个算法"。把 Gradle 的派生结果落成文件后,单测
+ * (ThemeDerivationParityTest)就能拿它跟运行期算法的结果逐键比对,漂移当场变红。
+ */
+static def writeDerivedJson(def dir, def name, def colors) {
+    def valuesDir = new File(dir, 'theme')
+    valuesDir.mkdirs()
+    def f = new File(valuesDir, "${name}.json")
+    def sb = new StringBuilder('{\n')
+    def keys = colors.keySet().toList()
+    keys.eachWithIndex { k, i ->
+        sb.append("  \"${k}\": \"${colors[k]}\"").append(i == keys.size() - 1 ? '\n' : ',\n')
+    }
+    sb.append('}\n')
+    f.setText(sb.toString(), 'UTF-8')
+}
+
 task generateThemeColors {
     inputs.file(themeColorsFile).optional()
     inputs.file(themeColorsNightFile).optional()
     inputs.file(themeRadiiFile).optional()
     outputs.dir(themeColorsDir)
+    outputs.dir(themeAssetsDir)
     // 派生项的内置说明(主题文件的 desc 里没有这些键,因为它们不占配置):写进生成 XML 的注释里
     def derivedNotes = [
-            bg_popup       : '同 bg_float(弹窗/抽屉就是悬浮面)',
-            bg_float_fab   : '同 bg_float(悬浮圆钮就是悬浮面)',
+            bg_card        : '页面层:同 bg_surface 的颜色 + bg_card_alpha 的透明度(海报占位/筛选块/卡片里的行)',
+            bg_float       : '浮层:同 bg_surface 的颜色 + bg_float_alpha 的透明度(弹窗/抽屉/气泡/悬浮钮)',
+            switch_track_on: '同 success(开关打开的正向状态色)',
+            download_done  : '同 success(下载完成的正向状态色)',
             color_highlight: '派生自 brand(全局高亮填充)',
             select_fill    : '派生自 brand(勾选框填充)',
             btn_plain_text : '派生自 brand(无背景按钮文字)',
@@ -484,7 +514,12 @@ task generateThemeColors {
         writeColorsXml(themeColorsDir, 'values', derivePalette(light.colors), lightNotes)
         writeColorsXml(themeColorsDir, 'values-night', derivePalette(night.colors), nightNotes)
         writeRadiiXml(themeColorsDir, 'values', readRadii(themeRadiiFile, defaultRadii))
+        // 运行时可读的派生结果(内置调色板的权威来源 + 单测对比基准)
+        writeDerivedJson(themeAssetsDir, 'theme_derived_bright', derivePalette(light.colors))
+        writeDerivedJson(themeAssetsDir, 'theme_derived_dark', derivePalette(night.colors))
     }
 }
 preBuild.dependsOn generateThemeColors
 android.sourceSets.main.res.srcDirs += themeColorsDir
+// 生成的主题资产(assets/theme/theme_derived_*.json)与手写的 assets/theme/*.json 合并进同一个目录
+android.sourceSets.main.assets.srcDirs += themeAssetsDir

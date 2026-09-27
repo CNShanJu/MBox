@@ -1,0 +1,306 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 主题编辑(二级页):主题名称 + 主题类型 + 颜色项(平铺,不再分组标题) + 背景 + 底部动作(取消/删除 + 导入/导出)。
+     改动只在点标题栏右侧「保存」时落盘;保存后返回上级页,生效由上级弹窗关闭时的重启统一负责。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+
+    <!-- 标题栏文案由 ThemeEditorActivity#refreshHeader 按"新建 / 编辑"设置
+         (布局里的 app:title 只是预览用的默认值) -->
+    <com.github.tvbox.osc.ui.kit.AppTitleBar
+        android:id="@+id/title_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        app:title="编辑主题"
+        app:titleBold="true">
+
+        <TextView
+            android:id="@+id/tv_save"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:background="@drawable/ripple_round_background"
+            android:gravity="center"
+            android:paddingHorizontal="14dp"
+            android:text="保存"
+            android:textColor="@color/color_highlight"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+    </com.github.tvbox.osc.ui.kit.AppTitleBar>
+
+    <!-- 越界跟手回弹(rubber_target=container:整个容器一起回弹)。
+         clipToPadding=true:与设置页同一个口径 —— 卡片最多滚到标题栏下方 8dp 处就截断,
+         不会贴着标题栏(两者都是半透明的同一个面,叠一起会糊成一团)。 -->
+    <com.github.tvbox.osc.ui.kit.RubberBandScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:clipToPadding="true"
+        android:paddingTop="8dp"
+        android:scrollbars="none"
+        app:rubber_target="container">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="20dp"
+            android:orientation="vertical"
+            android:paddingVertical="10dp">
+
+            <!-- ===== 主题名称(点它改名/起名) ===== -->
+            <LinearLayout
+                android:id="@+id/ll_name"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_large_round_float"
+                android:foreground="?android:selectableItemBackground"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingHorizontal="20dp"
+                android:paddingVertical="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="主题名称"
+                    android:textColor="@color/text_foreground"
+                    android:textSize="16sp" />
+
+                <TextView
+                    android:id="@+id/tv_name"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="@dimen/dp_10"
+                    android:layout_weight="1"
+                    android:ellipsize="end"
+                    android:gravity="end"
+                    android:maxLines="1"
+                    android:textColor="@color/text_foreground"
+                    android:textSize="14sp"
+                    tools:text="暗夜紫" />
+
+                <ImageView
+                    android:layout_width="11dp"
+                    android:layout_height="11dp"
+                    android:layout_gravity="center"
+                    android:alpha="0.75"
+                    android:src="@drawable/ic_seek_right"
+                    app:tint="@color/text_foreground" />
+            </LinearLayout>
+
+            <!-- ===== 主题类型:决定"这个主题是亮色还是暗色" ===== -->
+            <LinearLayout
+                android:id="@+id/ll_type"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:background="@drawable/bg_large_round_float"
+                android:foreground="?android:selectableItemBackground"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingHorizontal="20dp"
+                android:paddingVertical="16dp">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="主题类型"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="16sp" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:text="决定这个主题按亮色还是暗色渲染"
+                        android:textColor="@color/text_sub_foreground"
+                        android:textSize="12sp" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tv_type"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:drawablePadding="4dp"
+                    android:textColor="@color/text_foreground"
+                    android:textSize="14sp"
+                    tools:text="暗色" />
+
+                <ImageView
+                    android:layout_width="11dp"
+                    android:layout_height="11dp"
+                    android:layout_gravity="center"
+                    android:alpha="0.75"
+                    android:src="@drawable/ic_seek_right"
+                    app:tint="@color/text_foreground" />
+            </LinearLayout>
+
+            <!-- ===== 颜色项(按类目分成几张卡,与原来一致;**只是不再打类目标题**) ===== -->
+            <LinearLayout
+                android:id="@+id/ll_groups"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+
+            <!-- ===== 背景:一个开关切"纯色 / 背景图",两种形态各自展开 ===== -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:background="@drawable/bg_large_round_float"
+                android:orientation="vertical"
+                android:paddingHorizontal="20dp"
+                android:paddingVertical="16dp">
+
+                <LinearLayout
+                    android:id="@+id/ll_bg_image_row"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:foreground="?android:selectableItemBackground"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="背景"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="16sp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="背景图"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="14sp" />
+
+                    <com.github.tvbox.osc.ui.kit.AppSwitch
+                        android:id="@+id/switch_bg_image"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="@dimen/dp_10"
+                        android:clickable="false" />
+                </LinearLayout>
+
+                <!-- 纯色:取色行(与上面颜色项同一个控件)+ 居中的"恢复默认" -->
+                <LinearLayout
+                    android:id="@+id/ll_bg_solid"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btn_bg_reset"
+                    style="@style/BtnSecondary"
+                    android:layout_width="wrap_content"
+                    android:layout_height="38dp"
+                    android:layout_gravity="center_horizontal"
+                    android:layout_marginTop="@dimen/dp_6"
+                    android:minWidth="120dp"
+                    android:text="恢复默认"
+                    android:textSize="13sp" />
+
+                <!-- 背景图:图片(居中,圆角裁切)/ 描述(居左)/ 按钮(居中) -->
+                <LinearLayout
+                    android:id="@+id/ll_bg_image"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:visibility="gone">
+
+                    <!-- 圆角容器:clipToOutline 让里面的预览图跟着圆角一起裁,不再是硬邦邦的直角 -->
+                    <FrameLayout
+                        android:layout_width="96dp"
+                        android:layout_height="120dp"
+                        android:layout_gravity="center_horizontal"
+                        android:layout_marginTop="@dimen/dp_10"
+                        android:background="@drawable/bg_theme_field"
+                        android:clipToOutline="true">
+
+                        <ImageView
+                            android:id="@+id/iv_bg"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:scaleType="centerCrop"
+                            tools:ignore="ContentDescription" />
+                    </FrameLayout>
+
+                    <TextView
+                        android:id="@+id/tv_bg_desc"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="@dimen/dp_10"
+                        android:lineSpacingExtra="2dp"
+                        android:text="图片会压缩成 WebP 存进应用私有目录,同一张图只存一份"
+                        android:textColor="@color/text_sub_foreground"
+                        android:textSize="12sp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btn_bg_pick"
+                        style="@style/BtnSecondary"
+                        android:layout_width="wrap_content"
+                        android:layout_height="38dp"
+                        android:layout_gravity="center_horizontal"
+                        android:layout_marginTop="@dimen/dp_10"
+                        android:minWidth="120dp"
+                        android:text="选择图片"
+                        android:textSize="13sp" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- ===== 底部动作:取消(新建)/删除(已有) + 导入/导出 ===== -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:orientation="horizontal">
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btn_cancel_or_delete"
+                    style="@style/BtnSecondary"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_weight="1"
+                    android:text="取消" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btn_import"
+                    style="@style/BtnSecondary"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_marginStart="@dimen/dp_10"
+                    android:layout_weight="1"
+                    android:text="导入主题" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btn_export"
+                    style="@style/BtnSecondary"
+                    android:layout_width="0dp"
+                    android:layout_height="44dp"
+                    android:layout_marginStart="@dimen/dp_10"
+                    android:layout_weight="1"
+                    android:text="导出主题"
+                    android:visibility="gone" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/dp_10"
+                android:lineSpacingExtra="2dp"
+                android:text="保存后返回主题列表,关闭「主题颜色」弹窗时重启应用生效;内置的浅色/深色不可修改。"
+                android:textColor="@color/text_sub_foreground"
+                android:textSize="11sp"
+                tools:ignore="SmallSp" />
+        </LinearLayout>
+    </com.github.tvbox.osc.ui.kit.RubberBandScrollView>
+</LinearLayout>

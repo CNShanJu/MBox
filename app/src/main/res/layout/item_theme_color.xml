@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 一个可配置项:名称 + 一句说明(左) / 色块 + 十六进制输入(右)。
+     说明文字只讲"这颜色用在哪",不要再把名称重复一遍(名称已经在上方一行了)。
+     色块点击开取色板;透明度项没有色板(用 0-100 的输入),由代码隐藏色块。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingVertical="@dimen/dp_10">
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/tv_label"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textColor="@color/text_foreground"
+            android:textSize="15sp"
+            tools:text="页面背景" />
+
+        <!--<TextView-->
+        <!--    android:id="@+id/tv_desc"-->
+        <!--    android:layout_width="match_parent"-->
+        <!--    android:layout_height="wrap_content"-->
+        <!--    android:layout_marginTop="2dp"-->
+        <!--    android:ellipsize="end"-->
+        <!--    android:lineSpacingExtra="2dp"-->
+        <!--    android:maxLines="2"-->
+        <!--    android:textColor="@color/text_sub_foreground"-->
+        <!--    android:textSize="12sp"-->
+        <!--    tools:text="所有页面的底(纯色背景时就是它)" />-->
+    </LinearLayout>
+
+    <View
+        android:id="@+id/v_swatch"
+        android:layout_width="40dp"
+        android:layout_height="28dp"
+        android:layout_marginStart="@dimen/dp_10"
+        android:background="@drawable/bg_theme_field" />
+
+    <EditText
+        android:id="@+id/et_value"
+        android:layout_width="96dp"
+        android:layout_height="34dp"
+        android:layout_marginStart="@dimen/dp_10"
+        android:background="@drawable/bg_theme_input_underline"
+        android:gravity="center"
+        android:hint="#RRGGBB"
+        android:imeOptions="actionDone"
+        android:inputType="textNoSuggestions"
+        android:maxLength="9"
+        android:maxLines="1"
+        android:paddingHorizontal="6dp"
+        android:paddingVertical="0dp"
+        android:textColor="@color/text_foreground"
+        android:textColorHint="@color/text_sub"
+        android:textSize="13sp"
+        tools:ignore="Autofill,LabelFor" />
+</LinearLayout>

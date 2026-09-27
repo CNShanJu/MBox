@@ -13,7 +13,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * 数据维护在系统层（common 模块内，Hawk 键沿用旧应用 key，与历史设置兼容）；
  * 对外只暴露 查询 / 操作 / 订阅 / 备份：
  * <ul>
- *   <li>查询：getDohUrl / getTheme / getLoadingAnim / getHomeRec / getHistoryNum / getLiveUrl / isPrivateBrowsing</li>
+ *   <li>查询：getDohUrl / getTheme / getThemeCustomId / getThemeDefaultId / getLoadingAnim / getHomeRec / getHistoryNum / getLiveUrl / isPrivateBrowsing</li>
  *   <li>操作：对应 setXxx（内部校验 + 持久化 + 广播变更）</li>
  *   <li>订阅：{@link #subscribe(Listener)}——设置页等关注方刷新 UI</li>
  *   <li>备份：{@link #exportConfig()} / {@link #importConfig(Map)}（BackupDialog 聚合）</li>
@@ -42,6 +42,19 @@ public final class SystemConfig {
     // 全局页面背景("body"底图):用户设置(键不存在=跟随主题) + 主题默认图 + 遮罩/缩放/位置
     private static final String KEY_PAGE_BG = "page_bg_image";
     private static final String KEY_THEME_BG = "theme_default_bg";
+    /** 生效主题是否自定义主题:是则全局背景设置休眠,页面背景一律跟主题自带 */
+    private static final String KEY_ACTIVE_THEME_CUSTOM = "active_theme_custom";
+    /** 休眠快照:自定义主题生效期间把用户的全局摆放暂存这里,切回内置主题原样恢复 */
+    private static final String KEY_BG_STASHED = "page_bg_stashed";
+    private static final String KEY_BG_STASH_ZOOM = "page_bg_stash_zoom";
+    private static final String KEY_BG_STASH_ANCHOR_X = "page_bg_stash_anchor_x";
+    private static final String KEY_BG_STASH_ANCHOR_Y = "page_bg_stash_anchor_y";
+    private static final String KEY_BG_STASH_ALPHA = "page_bg_stash_alpha";
+    private static final String KEY_BG_STASH_SCRIM = "page_bg_stash_scrim";
+    // 自定义主题(见 theme/ThemeStore):选中的自定义主题 id + 亮/暗各自的"默认主题" id
+    private static final String KEY_THEME_ID = "theme_custom_id";
+    private static final String KEY_THEME_DEFAULT_BRIGHT = "theme_default_bright";
+    private static final String KEY_THEME_DEFAULT_DARK = "theme_default_dark";
     private static final String KEY_PAGE_BG_SCRIM = "page_bg_scrim";
     private static final String KEY_PAGE_BG_ALPHA = "page_bg_alpha";
     private static final String KEY_PAGE_BG_ZOOM = "page_bg_zoom";
@@ -78,9 +91,38 @@ public final class SystemConfig {
         return PrefsDataStore.getInt(KEY_DOH_URL, 0);
     }
 
-    /** 主题：0 跟随系统 1 浅色 2 深色，默认 0 */
+    /**
+     * 主题<b>模式</b>：0 跟随系统 1 浅色 2 深色，默认 0。
+     * <p>
+     * 它只表示"跟随系统 / 强制亮 / 强制暗"这个选择；<b>具体用哪套配色</b>由主题系统解析
+     * (见 {@code theme/ThemeStore}):
+     * <ul>
+     *   <li>选中了自定义主题({@link #getThemeCustomId()} 非空)→ 直接用那个主题(它的 type 决定亮暗);</li>
+     *   <li>否则 模式=浅色/深色 → <b>就是内置亮色/暗色</b>(不看默认主题);</li>
+     *   <li>否则 模式=跟随系统 → 按系统明暗取<b>该类型的默认主题</b>({@link #getThemeDefaultId(boolean)}，出厂=内置亮/暗)。</li>
+     * </ul>
+     */
     public static int getTheme() {
         return PrefsDataStore.getInt(KEY_THEME, 0);
+    }
+
+    /** 选中的<b>自定义</b>主题 id；空串=没选(走模式:浅色/深色=内置，跟随系统=该类型默认主题) */
+    public static String getThemeCustomId() {
+        return PrefsDataStore.getString(KEY_THEME_ID, "");
+    }
+
+    /**
+     * 某类型的"默认主题" id(空串=内置亮色/暗色主题本身)。
+     * <p>
+     * <b>只服务「跟随系统」这一个模式</b>:跟随系统要在系统亮/暗两种情况下各有一套配色，
+     * 所以亮、暗<b>各有一份默认</b>;用户在主题列表里对自定义主题点"设为默认"就是改这里
+     * (有且只能一份,设置即覆盖)。用户显式选了浅色/深色时这两个值<b>不参与解析</b> ——
+     * 选浅色/深色就是要内置那套。
+     *
+     * @param dark true=暗色类型的默认主题
+     */
+    public static String getThemeDefaultId(boolean dark) {
+        return PrefsDataStore.getString(dark ? KEY_THEME_DEFAULT_DARK : KEY_THEME_DEFAULT_BRIGHT, "");
     }
 
     /** 加载动画文件夹名（空串=默认），默认空 */
@@ -175,7 +217,8 @@ public final class SystemConfig {
     /**
      * <b>当前生效的背景图源</b>(页面宿主/背景层用它渲染),空串=纯色(主题窗底色):
      * <pre>
-     *   用户显式设置(图或"显式纯色")  >  主题默认背景  >  纯色
+     *   自定义主题生效:主题自带背景(全局设置休眠)
+     *   内置主题生效:用户显式设置(图或"显式纯色")  >  主题默认背景  >  纯色
      * </pre>
      * 纯色取主题窗底色 {@code bg_body}:亮色主题是近白({@code #faf8ff})、暗色主题是近黑({@code #141218}),
      * 因此自定义主题若没定义默认背景图,天然就是"亮色主题纯白 / 暗色主题纯黑"。
@@ -184,7 +227,7 @@ public final class SystemConfig {
      * (后续内置主题自带的默认背景图用这种)。
      */
     public static String getPageBackgroundPath() {
-        if (isPageBackgroundUserSet()) return PrefsDataStore.getString(KEY_PAGE_BG, "");
+        if (!isActiveThemeCustom() && isPageBackgroundUserSet()) return PrefsDataStore.getString(KEY_PAGE_BG, "");
         return getThemeDefaultBackground();
     }
 
@@ -208,6 +251,55 @@ public final class SystemConfig {
         PrefsDataStore.put(KEY_THEME_BG, v);
         com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM, "系统设置: 主题默认背景=" + v);
         fireChanged();
+    }
+
+    /** 生效主题是否自定义主题:是则全局背景设置(图 + 摆放)休眠,页面背景一律跟主题自带 */
+    public static boolean isActiveThemeCustom() {
+        return PrefsDataStore.getBoolean(KEY_ACTIVE_THEME_CUSTOM, false);
+    }
+
+    /**
+     * 生效主题变化时由主题系统调用({@code ThemeStore#applyActiveBackground}):
+     * 自定义主题生效前把用户的全局摆放暂存起来(免得被主题摆放覆盖),
+     * 切回内置主题时原样恢复 —— 用户那张老图和它的裁切不该因为切过一次主题就丢。
+     */
+    public static void setActiveThemeCustom(boolean custom) {
+        if (custom == isActiveThemeCustom()) return;
+        if (custom) {
+            stashPageBackgroundTransform();
+        } else {
+            restorePageBackgroundTransform();
+        }
+        PrefsDataStore.put(KEY_ACTIVE_THEME_CUSTOM, custom);
+        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM,
+                "系统设置: 全局背景休眠=" + custom);
+        fireChanged();
+    }
+
+    /** 只暂存"用户显式设过背景且还没暂存"这一次;用户没设过时摆放本就跟随主题,没什么要护的 */
+    private static void stashPageBackgroundTransform() {
+        if (!isPageBackgroundUserSet() || PrefsDataStore.contains(KEY_BG_STASHED)) return;
+        PrefsDataStore.put(KEY_BG_STASH_ZOOM, getPageBackgroundZoom());
+        PrefsDataStore.put(KEY_BG_STASH_ANCHOR_X, getPageBackgroundAnchorX());
+        PrefsDataStore.put(KEY_BG_STASH_ANCHOR_Y, getPageBackgroundAnchorY());
+        PrefsDataStore.put(KEY_BG_STASH_ALPHA, getPageBackgroundAlpha());
+        PrefsDataStore.put(KEY_BG_STASH_SCRIM, isPageBackgroundScrimEnabled());
+        PrefsDataStore.put(KEY_BG_STASHED, true);
+    }
+
+    private static void restorePageBackgroundTransform() {
+        if (!PrefsDataStore.contains(KEY_BG_STASHED)) return;
+        PrefsDataStore.put(KEY_PAGE_BG_ZOOM, PrefsDataStore.getFloat(KEY_BG_STASH_ZOOM, 0f));
+        PrefsDataStore.put(KEY_PAGE_BG_ANCHOR_X, PrefsDataStore.getFloat(KEY_BG_STASH_ANCHOR_X, ANCHOR_CENTER));
+        PrefsDataStore.put(KEY_PAGE_BG_ANCHOR_Y, PrefsDataStore.getFloat(KEY_BG_STASH_ANCHOR_Y, ANCHOR_CENTER));
+        PrefsDataStore.put(KEY_PAGE_BG_ALPHA, PrefsDataStore.getInt(KEY_BG_STASH_ALPHA, PAGE_BG_ALPHA_DEFAULT));
+        PrefsDataStore.put(KEY_PAGE_BG_SCRIM, PrefsDataStore.getBoolean(KEY_BG_STASH_SCRIM, true));
+        PrefsDataStore.delete(KEY_BG_STASHED);
+        PrefsDataStore.delete(KEY_BG_STASH_ZOOM);
+        PrefsDataStore.delete(KEY_BG_STASH_ANCHOR_X);
+        PrefsDataStore.delete(KEY_BG_STASH_ANCHOR_Y);
+        PrefsDataStore.delete(KEY_BG_STASH_ALPHA);
+        PrefsDataStore.delete(KEY_BG_STASH_SCRIM);
     }
 
     /**
@@ -294,6 +386,34 @@ public final class SystemConfig {
         if (getTheme() == v) return;
         PrefsDataStore.put(KEY_THEME, v);
         com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM, "系统设置: 主题=" + v);
+        fireChanged();
+    }
+
+    /** 设置选中的自定义主题 id(空串=取消自定义选择,回到"模式 + 该类型默认主题") */
+    public static void setThemeCustomId(String id) {
+        String v = id == null ? "" : id;
+        if (v.equals(getThemeCustomId())) return;
+        if (v.isEmpty()) {
+            PrefsDataStore.delete(KEY_THEME_ID);
+        } else {
+            PrefsDataStore.put(KEY_THEME_ID, v);
+        }
+        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM, "系统设置: 自定义主题=" + v);
+        fireChanged();
+    }
+
+    /** 设置某类型的默认主题 id(空串=内置亮色/暗色主题本身)；亮/暗各一份，设置即覆盖 */
+    public static void setThemeDefaultId(boolean dark, String id) {
+        String key = dark ? KEY_THEME_DEFAULT_DARK : KEY_THEME_DEFAULT_BRIGHT;
+        String v = id == null ? "" : id;
+        if (v.equals(getThemeDefaultId(dark))) return;
+        if (v.isEmpty()) {
+            PrefsDataStore.delete(key);
+        } else {
+            PrefsDataStore.put(key, v);
+        }
+        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM,
+                "系统设置: " + (dark ? "暗色" : "亮色") + "默认主题=" + v);
         fireChanged();
     }
 
@@ -488,6 +608,10 @@ public final class SystemConfig {
         Map<String, Object> cfg = new LinkedHashMap<>();
         cfg.put(KEY_DOH_URL, getDohUrl());
         cfg.put(KEY_THEME, getTheme());
+        // 自定义主题选择(主题定义本身在 filesDir/themes/,随"数据备份还原"的整包一起走,见 ThemeStore)
+        cfg.put(KEY_THEME_ID, getThemeCustomId());
+        cfg.put(KEY_THEME_DEFAULT_BRIGHT, getThemeDefaultId(false));
+        cfg.put(KEY_THEME_DEFAULT_DARK, getThemeDefaultId(true));
         cfg.put(KEY_LOADING_ANIM, getLoadingAnim());
         cfg.put(KEY_HOME_REC, getHomeRec());
         cfg.put(KEY_HISTORY_NUM, getHistoryNum());
@@ -502,6 +626,9 @@ public final class SystemConfig {
         Object v;
         if ((v = cfg.get(KEY_DOH_URL)) instanceof Number) setDohUrl(((Number) v).intValue());
         if ((v = cfg.get(KEY_THEME)) instanceof Number) setTheme(((Number) v).intValue());
+        if ((v = cfg.get(KEY_THEME_ID)) instanceof String) setThemeCustomId((String) v);
+        if ((v = cfg.get(KEY_THEME_DEFAULT_BRIGHT)) instanceof String) setThemeDefaultId(false, (String) v);
+        if ((v = cfg.get(KEY_THEME_DEFAULT_DARK)) instanceof String) setThemeDefaultId(true, (String) v);
         if ((v = cfg.get(KEY_LOADING_ANIM)) instanceof String) setLoadingAnim((String) v);
         if ((v = cfg.get(KEY_HOME_REC)) instanceof Number) setHomeRec(((Number) v).intValue());
         if ((v = cfg.get(KEY_HISTORY_NUM)) instanceof Number) setHistoryNum(((Number) v).intValue());

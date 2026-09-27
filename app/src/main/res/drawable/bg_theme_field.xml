@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 主题编辑页里的"小方框":圆角 + 主题描边 + 透明填充。
+     只给"色块"(v_swatch)与背景图预览容器用 —— 色块需要一个描边轮廓才看得出浅色;
+     十六进制输入框不用它(输入框走底部 1dp 边框线 bg_theme_input_underline)。 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <corners android:radius="6dp" />
+    <solid android:color="@android:color/transparent" />
+    <stroke
+        android:width="1dp"
+        android:color="@color/btn_stroke" />
+</shape>

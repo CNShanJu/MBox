@@ -1,0 +1,171 @@
+package com.github.tvbox.osc.theme;
+
+import android.app.Activity;
+import android.graphics.drawable.ColorDrawable;
+import android.view.Window;
+
+import com.github.tvbox.osc.bean.theme.ThemeDef;
+import com.github.tvbox.osc.bean.theme.ThemePalette;
+import com.github.tvbox.osc.bean.theme.ThemeType;
+import com.github.tvbox.osc.storage.theme.ThemeStore;
+
+/**
+ * 运行时换肤的<b>装配点与当前调色板持有者</b>。
+ *
+ * <p>它回答一个问题:"这次启动,界面该按哪套颜色画?"——答案只有两种:
+ * <ul>
+ *   <li><b>没在用自定义主题</b>(内置亮/暗):{@link #palette()} 返回 {@code null},
+ *       整套换肤层<b>完全不介入</b>,界面就是编译期资源里那份(首帧、观感、性能都与改动前一致);</li>
+ *   <li><b>在用自定义主题</b>:返回那份主题的调色板,于是
+ *       {@link ThemeResources}(代码取色)、{@link ThemeInflaterFactory}(布局属性)、
+ *       {@link ThemeDrawables}(drawable/图标)三条通道一起把它铺到界面上。</li>
+ * </ul>
+ *
+ * <p>"这次启动"是关键字:主题改动一律<b>不实时生效</b>,而是写配置 + 重启 App
+ * (与既有的浅色/深色切换同一条链路)。所以这里在进程启动时解析一次,之后全程只读 ——
+ * 没有热切换带来的"半个界面新色半个界面旧色"问题。
+ *
+ * <p><b>唯一的例外是「跟随系统」</b>:手机自己从亮切到暗(或反之)时进程不会重启,而生效主题
+ * 是按系统明暗解析出来的("该类型的默认主题"),于是快照会与真实生效的那套脱节 ——
+ * 最坏的情况是<b>用户只配了暗色默认主题</b>:进程在亮色时启动,快照是"不介入"(palette=null),
+ * 切到暗色后换肤层仍然不介入,弹窗/开关一类全画成内置暗色,和配置的默认暗色对不上。
+ * 所以 {@link #refresh()} 会在配置变化时重新解析一次,亮暗/主题真变了才换快照并清派生缓存。
+ *
+ * <p>解析不出/异常一律退化为"不介入":宁可显示内置配色,也不能让换肤层把界面搞坏。
+ */
+public final class ThemeRuntime {
+
+    private static volatile ThemePalette palette;
+    private static volatile ThemeType type;
+    private static volatile boolean installed;
+    /**
+     * 快照对应的生效主题指纹(亮暗类型 + 主题 id + 内容哈希,见 {@link #fingerprint})。
+     * <p>只看 id 不够:在编辑页改了<b>当前生效主题</b>的颜色后 id 不变,但配色已经变了。
+     */
+    private static volatile String snapshotKey = "";
+
+    private ThemeRuntime() {
+    }
+
+    /**
+     * 解析并装上当前的调色板快照。
+     *
+     * <p>调用点有三处,都是"生效"这一刻:进程启动({@code App.initParams})、主题改动提交
+     * ({@code Utils.initTheme()})、系统明暗翻转({@code App.onConfigurationChanged} /
+     * {@code BaseActivity.attachBaseContext},见 {@link #refresh()})。
+     */
+    public static void install() {
+        ThemeType t = ThemeType.BRIGHT;
+        ThemePalette p = null;
+        String key = "";
+        try {
+            t = ThemeStore.activeType();
+            ThemeDef def = ThemeStore.resolveActive();
+            if (def != null) {
+                p = ThemeStore.paletteOf(def);
+                // 自检:别名表里每个概念名都要能在调色板里取到,否则说明两侧对不上(改了 colors.xml 忘了改表),
+                // 这种情况不介入比"换一半颜色"更好定位
+                if (!ThemeColorAliases.namesResolvable(p)) {
+                    p = null;
+                }
+            }
+            key = fingerprint(t, def);
+        } catch (Throwable th) {
+            p = null;
+        }
+        palette = p;
+        type = t;
+        snapshotKey = key;
+        installed = true;
+    }
+
+    /**
+     * 重新解析一次,只在"生效主题真的变了"时才换快照并清派生缓存。
+     *
+     * <p><b>为什么必须有这一步</b>:"切主题后重启应用"走的是带标志重载主页({@code jumpActivity(MainActivity)}),
+     * <b>进程并没有重启</b>;而换肤层的答案存在这个快照里。不刷新的话,换完主题界面仍按进程启动那一刻的
+     * 调色板画 —— 最典型的是「跟随系统」下只配了暗色默认主题:进程在亮色时启动,快照是"不介入",
+     * 手机翻到暗色后换肤层依旧不介入,弹窗/开关一类全画成内置暗色,和用户配的默认暗色对不上。
+     */
+    public static void refresh() {
+        try {
+            ThemeDef def = ThemeStore.resolveActive();
+            String key = fingerprint(ThemeStore.activeType(), def);
+            if (installed && key.equals(snapshotKey)) return;   // 没变:不白清缓存
+            install();
+            // 派生缓存按 resId 索引、内容绑当前主题:换了必须清,否则按钮/选择器还是旧色
+            ThemeDrawables.clearCache();
+        } catch (Throwable ignored) {
+            // 解析失败保持原快照:宁可短暂用旧配色,也不能把换肤层拆了导致界面黑掉
+        }
+    }
+
+    /** 快照指纹:亮暗类型 + 主题 id + 那份 25 键的内容哈希(内置时 id 为空串) */
+    private static String fingerprint(ThemeType t, ThemeDef def) {
+        String id = def == null ? "" : def.getId() + "@" + def.colors().hashCode();
+        return (t == null ? "?" : t.name()) + "|" + id;
+    }
+
+    /** 当前换肤调色板;{@code null} = 不用自定义主题(不介入) */
+    public static ThemePalette palette() {
+        return palette;
+    }
+
+    /** 当前生效的亮暗类型(夜间模式与弹窗深浅的依据) */
+    public static ThemeType type() {
+        return type;
+    }
+
+    /** 换肤层是否在介入(只影响"要不要多做一层包装",不影响正确性) */
+    public static boolean active() {
+        return palette != null;
+    }
+
+    /** 是否已经装配过(测试/调试用;没装配时一律按"不介入"处理) */
+    public static boolean installed() {
+        return installed;
+    }
+
+    /** 切主题后清派生缓存(下一次启动才会重新 install,这里只在同进程重装时用) */
+    public static void reset() {
+        ThemeDrawables.clearCache();
+        palette = null;
+        snapshotKey = "";
+        installed = false;
+    }
+
+    /**
+     * 把主题铺到窗口这一层:窗口底色用主题的 {@code bg_body}。
+     *
+     * <p>为什么必须做:所有页面布局的根节点都是透明的,内容实际浮在窗口底色上 ——
+     * 底色不对,整个页面就会透出编译期的旧色(浅色主题下最明显:faf8ff 的底 vs 用户设的深底)。
+     *
+     * <p><b>不用自定义主题时这里直接返回,绝不碰窗口背景</b>:窗口背景是主题
+     * {@code android:windowBackground} 给的(就是 {@code bg_body}),
+     * 主动 `setBackgroundDrawable(null)` 会把它清掉(页面根节点全透明,清了就是黑屏/透出下层),
+     * 这正是"内置亮/暗模式下不介入"的含义 —— 不介入就要彻底不碰。
+     */
+    public static void applyTo(Activity activity) {
+        if (activity == null) return;
+        ThemePalette p = palette;
+        if (p == null) return; // 不介入
+        Window window = activity.getWindow();
+        if (window == null) return;
+        try {
+            window.setBackgroundDrawable(new ColorDrawable(p.get("bg_body")));
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /**
+     * 布局注入器:给 Activity 的 LayoutInflater 装上"按主题改属性色"的工厂。
+     * <p>幂等;同一个 inflater 只装一次(Activity 重建会拿到新的 inflater)。
+     */
+    public static void installInflaterFactory(Activity activity) {
+        if (activity == null) return;
+        try {
+            ThemeInflaterFactory.install(activity);
+        } catch (Throwable ignored) {
+        }
+    }
+}

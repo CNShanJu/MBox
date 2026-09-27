@@ -157,11 +157,19 @@ public class Utils {
     }
 
     /**
-     * 是否深色主题(直接读 app 主题设置,不依赖 AppCompatDelegate/系统 uiMode):
-     * THEME_TAG: 0=跟随系统, 1=浅色, 2=深色。
+     * 是否深色主题(直接读 app 主题设置,不依赖 AppCompatDelegate/系统 uiMode)。
+     * <p>口径来自主题门面 {@link com.github.tvbox.osc.storage.theme.ThemeStore}:选了自定义主题就是它的
+     * type;否则按"跟随系统/浅色/深色"解析出<b>该类型的默认主题</b>。
      * 用于气泡等自绘控件取色,避免部分 ROM 上 AppCompatDelegate 夜间模式与系统 uiMode 不同步。
      */
     public static boolean isAppDarkTheme(){
+        try {
+            if (com.github.tvbox.osc.storage.theme.ThemeStore.isReady()) {
+                return com.github.tvbox.osc.storage.theme.ThemeStore.activeType().isDark();
+            }
+        } catch (Throwable ignored) {
+        }
+        // 主题门面还没装配(极早期调用):退回旧口径
         try {
             int tag = SystemConfig.getTheme();
             if (tag == 2) return true;
@@ -174,8 +182,44 @@ public class Utils {
         }
     }
 
+    /**
+     * 按主题设置决定 AppCompat 夜间模式(启动时调一次;每次"主题生效"也调一次)。
+     *
+     * <p>顺带重解析运行时换肤快照({@code ThemeRuntime.refresh()}):主题改完走的是"带标志重载主页",
+     * 进程并没有重启,不换快照界面会继续按启动那一刻的调色板画。
+     *
+     * <p>与"主题颜色"功能的关系:
+     * <ul>
+     *   <li><b>选了自定义主题</b> → 强制成它的类型。自定义主题的配色是固定的,夜间模式必须跟着它,
+     *       否则弹窗/气泡/状态栏会按系统明暗取反(浅色主题 + 深色系统 = 白底黑字的页面配深色气泡);</li>
+     *   <li><b>跟随系统 / 浅色 / 深色</b> → 与改动前完全一致(跟随系统时不强制,让系统说了算,
+     *       再由 {@code ThemeStore} 按系统明暗取该类型的默认主题)。</li>
+     * </ul>
+     */
     public static void initTheme(){
-        switch (SystemConfig.getTheme()) {
+        // "生效"这一步必须同时刷新换肤快照:切主题走的是带标志重载主页,进程并没有重启,
+        // 不换快照的话界面仍按进程启动那一刻的调色板画(见 ThemeRuntime.refresh 的说明)
+        com.github.tvbox.osc.theme.ThemeRuntime.refresh();
+        int mode;
+        try {
+            if (com.github.tvbox.osc.storage.theme.ThemeStore.isReady()) {
+                com.github.tvbox.osc.storage.theme.ThemeStore.Selection s =
+                        com.github.tvbox.osc.storage.theme.ThemeStore.selection();
+                if (!s.customId.isEmpty()) {
+                    AppCompatDelegate.setDefaultNightMode(
+                            com.github.tvbox.osc.storage.theme.ThemeStore.activeType().isDark()
+                                    ? AppCompatDelegate.MODE_NIGHT_YES
+                                    : AppCompatDelegate.MODE_NIGHT_NO);
+                    return;
+                }
+                mode = s.mode;
+            } else {
+                mode = SystemConfig.getTheme();
+            }
+        } catch (Throwable th) {
+            mode = SystemConfig.getTheme();
+        }
+        switch (mode) {
             case 0:
                 AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM);
                 break;
@@ -184,6 +228,9 @@ public class Utils {
                 break;
             case 2:
                 AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES);
+                break;
+            default:
+                AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM);
                 break;
         }
     }

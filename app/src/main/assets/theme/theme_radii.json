@@ -1,7 +1,7 @@
 {
-  "radius_background": "25dp",
+  "radius_background": "18dp",
   "radius_dialog": "18dp",
   "radius_card": "12dp",
   "radius_btn": "12dp",
-  "radius_btn_large": "25dp"
+  "radius_btn_large": "18dp"
 }
