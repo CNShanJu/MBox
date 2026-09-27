@@ -807,12 +807,18 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             val drawerR = com.github.tvbox.osc.theme.ThemeDrawables.shapeRadiusPx(
                 R.drawable.bg_drawer, resources)
             val density = resources.displayMetrics.density
+            // 直接量一个"布局里写了 @color/text_foreground 的 TextView"实际渲染成什么色,
+            // 与调色板里的 text_main 一对比:相等 = inflater 注入通道好使;
+            // 不等 = 那条链路对某些控件(例如 MaterialCheckBox)没生效 —— 用来给"弹窗 item 文字不跟主题"定性
+            val tvHex = Integer.toHexString(mBinding.tvTheme.currentTextColor)
+            val expectHex = Integer.toHexString(p.get("text_main"))
             AppBubble.toastLong(
                 "主题自检:" + ThemeStore.activeDisplayName()
                     + " 面=" + Integer.toHexString(p.get("bg_surface"))
                     + " 浮层=" + Integer.toHexString(p.get("bg_float"))
                     + " 重建=" + (if (rebuilt != null) "OK" else "失败")
                     + " 包装=" + (if (wrapped) "OK" else "无")
+                    + " 文本=" + tvHex + (if (tvHex == expectHex) "(=主题)" else "(期望 $expectHex)")
                     + " chip圆角=" + (chipR / density).toInt() + "dp"
                     + " 抽屉圆角=" + (drawerR / density).toInt() + "dp"
             )
