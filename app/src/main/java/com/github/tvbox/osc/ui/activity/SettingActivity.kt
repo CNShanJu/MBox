@@ -72,6 +72,9 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
     private companion object {
         /** 主题编辑页请求码 */
         const val REQ_THEME_EDITOR = 0x0E10
+
+        /** 调试包的主题自检提示:整个进程只弹一次(见 showThemeProbeOnce) */
+        private var themeProbeShown = false
     }
 
     /** 设置操作业务日志:写结构化业务日志(SYSTEM) */
@@ -697,6 +700,7 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             updatePageBackgroundVisibility()
             updateThemeValue()
         }
+        showThemeProbeOnce()
     }
 
     // ------------------------------------------------------------------
@@ -776,6 +780,30 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
     private fun applyThemeAndRestart() {
         Utils.initTheme()
         AppUtils.relaunchApp(true)
+    }
+
+    /**
+     * 调试包专用(每次进程一次):把"这次到底解析成了什么配色"直接摆出来,省去翻日志 ——
+     * 内容包括生效主题名、面的实际 ARGB、浮层的实际 ARGB,以及**面/浮层 drawable 能否按主题重建**。
+     * 有了这三项就能立刻分清:"没选中自定义主题" / "派生出的透明度不对" / "drawable 重建通道没通"。
+     */
+    private fun showThemeProbeOnce() {
+        if (themeProbeShown) return
+        // 只在可调试构建里弹(AGP 8 默认不生成 BuildConfig,这里直接看 debuggable 标志)
+        val debuggable = (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+        if (!debuggable) return
+        themeProbeShown = true
+        runCatching {
+            val p = ThemeStore.activePalette()
+            val rebuilt = com.github.tvbox.osc.theme.ThemeDrawables.rebuild(
+                R.drawable.bg_dialog, resources)
+            AppBubble.toastLong(
+                "主题自检:" + ThemeStore.activeDisplayName()
+                    + " 面=" + Integer.toHexString(p.get("bg_surface"))
+                    + " 浮层=" + Integer.toHexString(p.get("bg_float"))
+                    + " 重建=" + (if (rebuilt != null) "OK" else "失败")
+            )
+        }
     }
 
     /** 背景图取值:默认(跟随主题) / 自定义(用户自己设过,含显式纯色) */

@@ -75,7 +75,9 @@ public class AttachActionDialog extends AttachPopupView {
         tv.setLayoutParams(new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
         tv.setPadding(padH, padV, padH, padV);
-        tv.setGravity(Gravity.CENTER_VERTICAL);
+        // 只有一个动作时(如搜索页 ⋮ 的「切换布局」)整行居中:气泡是按内容宽度弹出的,
+        // 左对齐会让那一个词贴着左边、右边空一截(用户口径:"文字没有水平居中")
+        tv.setGravity(actions.size() <= 1 ? Gravity.CENTER : Gravity.CENTER_VERTICAL);
         tv.setTextSize(15f);
         tv.setSingleLine(true);
         tv.setText(text);
