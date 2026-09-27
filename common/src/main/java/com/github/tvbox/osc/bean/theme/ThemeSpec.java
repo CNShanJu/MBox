@@ -68,7 +68,11 @@ public final class ThemeSpec {
                 "弹窗、抽屉、气泡、首页直播/筛选悬浮钮"));
 
         // ② 文字分级
-        // **正文颜色(text_main)的键已移除**:它与主题主色 brand 共用同一个值(用户口径:
+        // **文字主色(brand)排在最前**:用户口径 —— "主题主色改成文字主色,并把文字主色调整到次要文字前面"。
+        // 它同时是"正文默认色"与"填充/高亮色"(与 text_main 是同一个值,见 ThemePaletteFactory)。
+        list.add(new ThemeKey("brand", ThemeKey.Group.TEXT, ThemeKey.Kind.COLOR, "文字主色",
+                "正文/列表文字的默认色;chip 选中填充、进度条、勾选框与描边也取它"));
+        // **正文颜色(text_main)的键已移除**:它与文字主色共用同一个值(用户口径:
         // "正文颜色和主题主色共用,移除正文颜色的key")—— 资源名 text_main 仍然存在,由 brand 派生,
         // 所以布局/代码里的 @color/text_main、@color/text_foreground 一处都不用改。
         list.add(new ThemeKey("text_sub", ThemeKey.Group.TEXT, ThemeKey.Kind.COLOR, "次要文字",
@@ -84,11 +88,11 @@ public final class ThemeSpec {
         // 危险文字(text_danger)与危险红底(swipe_red / swipe_red_text)已**固定成字面量**,
         // 不再进主题文件(用户口径:"删除,对应组件固定就是这个颜色")—— 见 res/values/colors.xml。
 
-        // ③ 主色与按钮
-        list.add(new ThemeKey("brand", ThemeKey.Group.BRAND, ThemeKey.Kind.COLOR, "主题主色",
-                "chip 选中、进度条等填充;并派生勾选框、选中按钮与描边"));
+        // ③ 按钮(主色 brand 已挪到上面的"文字分级"里,见那处说明)
+        //    「主色上的文字」(brand_text)暂时保留:它是 btn_select_text 的输入,
+        //    要移除得先有"按主色明暗自动取对比色"的规则(下一步做),否则按钮/选中态上的字没了来源。
         list.add(new ThemeKey("brand_text", ThemeKey.Group.BRAND, ThemeKey.Kind.COLOR, "主色上的文字",
-                "主色块上的字"));
+                "主色块上的字(下一步改为按主色明暗自动取对比色)"));
         list.add(new ThemeKey("btn_confirm_bg", ThemeKey.Group.BRAND, ThemeKey.Kind.COLOR, "主按钮背景",
                 "确定 / 开始下载;透明即无填充"));
         list.add(new ThemeKey("btn_confirm_text", ThemeKey.Group.BRAND, ThemeKey.Kind.COLOR, "主按钮文字",

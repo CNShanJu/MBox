@@ -131,6 +131,12 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
         }
         initStatusBar();
         init();
+        // 再补一次:页面在 init() 里动态加出来的视图(主题编辑页那样一行行现建的卡片)
+        // 不在上面那次扫描的树里(用户口径:"编辑主题里还存在部分卡片背景色没走")
+        try {
+            com.github.tvbox.osc.theme.ThemeSweep.apply(getWindow() == null ? null : getWindow().getDecorView());
+        } catch (Throwable ignored) {
+        }
         if (!App.getInstance().isNormalStart){
             AppUtils.relaunchApp(true);
         }
