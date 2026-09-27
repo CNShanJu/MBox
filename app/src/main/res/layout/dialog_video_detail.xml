@@ -72,13 +72,13 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:paddingTop="4dp"
-                tools:text="年份: 2019" />
+                tools:text="年份: 2019" android:textColor="@color/text_foreground" />
 
             <TextView
                 android:id="@+id/tvArea"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                tools:text="地区: 中国" />
+                tools:text="地区: 中国" android:textColor="@color/text_foreground" />
 
             <TextView
                 android:id="@+id/tvType"
@@ -86,7 +86,7 @@
                 android:layout_height="wrap_content"
                 android:maxLines="2"
                 android:ellipsize="end"
-                tools:text="类型: 动画" />
+                tools:text="类型: 动画" android:textColor="@color/text_foreground" />
 
             <TextView
                 android:id="@+id/tvActor"
@@ -94,7 +94,7 @@
                 android:layout_height="wrap_content"
                 android:maxLines="2"
                 android:ellipsize="end"
-                tools:text="主演: xxx" />
+                tools:text="主演: xxx" android:textColor="@color/text_foreground" />
 
             <TextView
                 android:id="@+id/tvDirector"
@@ -102,7 +102,7 @@
                 android:layout_height="wrap_content"
                 android:maxLines="2"
                 android:ellipsize="end"
-                tools:text="导演: xxx" />
+                tools:text="导演: xxx" android:textColor="@color/text_foreground" />
         </LinearLayout>
     </LinearLayout>
 
@@ -120,7 +120,7 @@
             android:id="@+id/tv_link_tip"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="链接：" />
+            android:text="链接：" android:textColor="@color/text_foreground" />
 
         <TextView
             android:id="@+id/url"
@@ -129,7 +129,7 @@
             android:layout_weight="1"
             android:ellipsize="middle"
             android:singleLine="true"
-            tools:text="http://" />
+            tools:text="http://" android:textColor="@color/text_foreground" />
 
         <TextView
             android:id="@+id/tv_link_copy"
