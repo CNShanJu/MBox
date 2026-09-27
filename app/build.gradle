@@ -288,7 +288,7 @@ def defaultLightColors = [
         text_disable: '#b3b3b3', text_accent: '#1F2937', text_highlight: '#1890FF',
         brand: '#1F2937', brand_text: '#FFFFFF',
         btn_confirm_bg: '#1F2937', btn_confirm_text: '#FFFFFF',
-        btn_cancel_bg: '#ECECF4', btn_cancel_text: '#1F2937',
+        btn_cancel_bg: '#00000000', btn_cancel_text: '#1F2937',
         success: '#08CA2C', switch_track_off: '#ccccd4', switch_thumb: '#FFFFFF',
         download_active: '#037AFF'
 ]

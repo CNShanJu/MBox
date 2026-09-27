@@ -98,7 +98,7 @@ public final class ThemeSpec {
         list.add(new ThemeKey("btn_confirm_text", ThemeKey.Group.BRAND, ThemeKey.Kind.COLOR, "主按钮文字",
                 "主按钮上的字"));
         list.add(new ThemeKey("btn_cancel_bg", ThemeKey.Group.BRAND, ThemeKey.Kind.COLOR, "次按钮背景",
-                "取消 / 重置;透明即无填充"));
+                "取消 / 重置;默认透明 ⇒ 空心按钮(无底色 + 描边),填色即纯色次按钮"));
         list.add(new ThemeKey("btn_cancel_text", ThemeKey.Group.BRAND, ThemeKey.Kind.COLOR, "次按钮文字",
                 "次按钮上的字"));
 

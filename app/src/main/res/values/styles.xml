@@ -69,14 +69,19 @@
         <!--        <item name="android:windowBackground">@drawable/main_bg</item>-->
         <item name="android:windowBackground">@android:color/transparent</item>
     </style>
-    <!-- ================= 主题按钮(全局统一) =================
-         颜色全部来自 assets/theme/theme_colors.json 的 btn_* 键,圆角来自 theme_radii.json 的
-         radius_btn(常规)/radius_btn_large(大圆角,chip/预设类),不再在布局里写死色值。
-         浅色:主按钮=页面主黑(#1F2937)填充+白字,次按钮=浅灰填充+深字;
-         暗色:主/次按钮都无背景(按主题配置成透明),靠文字亮度区分(主=亮、次=暗);
+    <!-- ================= 主题按钮(全局统一,只有三型) =================
+         ① 纯色按钮 BtnPrimary   —— 有底色的(btn_confirm_*):确定/保存/开始下载等主要动作
+         ② 空心按钮 BtnSecondary —— 无底色 + 1dp 描边:取消/重置/下载管理等次要动作
+                                     (底色 = btn_cancel_bg,主题里配成透明即"空心";
+                                      描边 btn_stroke 是"空心"的唯一来源,不许去掉)
+         ③ 纯文字按钮 BtnGhost   —— 无底色、无描边,只有文字(btn_plain_text):复制/展开/选集下载这类
+         三型**圆角只走 radius_btn**(theme_radii.json),不再有 *Large 变体。
+         "小组件按钮"(日志分类 / 背景图调整键 / 搜索历史·热词·联想 / 播放器设置键)是另一条线:
+         底走 bg_widget_btn_stroke(空心)与 bg_widget_btn_solid(纯色),圆角只走 **radius_widget_btn**。
+         颜色一律来自 assets/theme/theme_colors.json 的 btn_* 键,布局里不写死色值。
          选中态(btn_select_*)单独一套:暗色下必须给浅色填充,否则选中看不出来。 -->
 
-    <!-- 主按钮:确定/保存/开始下载等主要动作(常规圆角) -->
+    <!-- ① 纯色按钮:确定/保存/开始下载等主要动作 -->
     <style name="BtnPrimary" parent="@style/Widget.Material3.Button">
         <item name="android:textColor">@color/btn_confirm_text</item>
         <item name="android:textSize">14sp</item>
@@ -91,11 +96,6 @@
              有填充时描边与底色同族,基本看不见,不用单独处理 -->
         <item name="strokeColor">@color/btn_stroke</item>
         <item name="strokeWidth">1dp</item>
-    </style>
-
-    <!-- 主按钮(大圆角):chip/预设类 -->
-    <style name="BtnPrimaryLarge" parent="BtnPrimary">
-        <item name="cornerRadius">@dimen/radius_btn_large</item>
     </style>
 
     <!-- 弹窗右上角关闭键(**全站统一**):40dp 方框 + 8dp 内边距 ⇒ 图标实际画 24dp,
@@ -120,7 +120,19 @@
         <item name="backgroundTint">@color/swipe_red</item>
     </style>
 
-    <!-- 次按钮:取消/重置/下载管理等次要动作(常规圆角) -->
+    <!-- 危险入口(无底色 + 红字 + 描边):不可逆动作的**入口**键,不是确认键。
+         口径 = colors.xml 那条"危险入口走无底色的 @color/text_danger":底色透明(不抢眼、不是"确认执行"的重量)。
+         它**不跟**纯文字按钮(BtnGhost)走无描边那一档 —— 危险入口是"要做点什么"的键,留着 btn_stroke 描边
+         才不会跟旁边可点的普通文字混在一起;红字是固定字面量(危险三色不进主题文件),描边随主题走。
+         用在:主题编辑页的「删除」(它只是入口,真正的执行在确认弹窗的红底键上)。 -->
+    <style name="BtnDangerGhost" parent="BtnGhost">
+        <item name="android:textColor">@color/text_danger</item>
+        <item name="strokeColor">@color/btn_stroke</item>
+        <item name="strokeWidth">1dp</item>
+    </style>
+
+    <!-- ② 空心按钮:取消/重置/下载管理等次要动作。底色=btn_cancel_bg(主题里默认透明 ⇒ 空心),
+         描边 btn_stroke(派生自文字主色 @40%)是"空心"的唯一来源,不能去掉。 -->
     <style name="BtnSecondary" parent="@style/Widget.Material3.Button">
         <item name="android:textColor">@color/btn_cancel_text</item>
         <item name="android:textSize">14sp</item>
@@ -135,12 +147,8 @@
         <item name="strokeWidth">1dp</item>
     </style>
 
-    <!-- 次按钮(大圆角) -->
-    <style name="BtnSecondaryLarge" parent="BtnSecondary">
-        <item name="cornerRadius">@dimen/radius_btn_large</item>
-    </style>
-
-    <!-- 无背景按钮(纯文字):背景透明,靠 btn_stroke 描边区分于普通文字 -->
+    <!-- ③ 纯文字按钮:背景透明、**无描边**,只剩文字(复制/展开/选集下载这类"本质是文字的动作")。
+         文字色 btn_plain_text 派生自 brand(文字主色),随主题走;圆角仍写 radius_btn(按下态才看得见形状)。 -->
     <style name="BtnGhost" parent="@style/Widget.Material3.Button.TextButton">
         <item name="android:textColor">@color/btn_plain_text</item>
         <item name="android:textSize">14sp</item>
@@ -151,13 +159,6 @@
         <item name="android:stateListAnimator">@null</item>
         <item name="backgroundTint">@android:color/transparent</item>
         <item name="cornerRadius">@dimen/radius_btn</item>
-        <item name="strokeColor">@color/btn_stroke</item>
-        <item name="strokeWidth">1dp</item>
-    </style>
-
-    <!-- 无背景按钮(大圆角) -->
-    <style name="BtnGhostLarge" parent="BtnGhost">
-        <item name="cornerRadius">@dimen/radius_btn_large</item>
     </style>
 
     <!-- 自定义dialog样式 -->

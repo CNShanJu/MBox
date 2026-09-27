@@ -72,33 +72,28 @@ public final class ThemeStyles {
     private static Map<Integer, List<Attr>> build() {
         Map<Integer, List<Attr>> m = new HashMap<>();
 
-        // 主按钮(确定/保存/开始下载):底色 + 字色 + 描边全在样式里
+        // ① 纯色按钮(确定/保存/开始下载):底色 + 字色 + 描边全在样式里
         List<Attr> primary = attrs(
                 "textColor", R.color.btn_confirm_text,
                 "backgroundTint", R.color.btn_confirm_bg,
                 "strokeColor", R.color.btn_stroke);
         m.put(R.style.BtnPrimary, primary);
-        m.put(R.style.BtnPrimaryLarge, primary);
 
-        // 次按钮(取消/重置/导入导出):只有圆角与主按钮不同,颜色同一套
+        // ② 空心按钮(取消/重置/下载管理):底色(默认透明) + 字色 + 描边
         List<Attr> secondary = attrs(
                 "textColor", R.color.btn_cancel_text,
                 "backgroundTint", R.color.btn_cancel_bg,
                 "strokeColor", R.color.btn_stroke);
         m.put(R.style.BtnSecondary, secondary);
-        m.put(R.style.BtnSecondaryLarge, secondary);
 
-        // 无底色按钮(纯文字):底色本来就是透明,不需要换;只有字色与描边随主题
-        List<Attr> ghost = attrs(
-                "textColor", R.color.btn_plain_text,
-                "strokeColor", R.color.btn_stroke);
+        // ③ 纯文字按钮(复制/展开/选集下载):底色透明**且无描边**,只有字色随主题
+        List<Attr> ghost = attrs("textColor", R.color.btn_plain_text);
         m.put(R.style.BtnGhost, ghost);
-        m.put(R.style.BtnGhostLarge, ghost);
 
         // 危险按钮:红底/红字是**固定字面量**(危险三色不进主题文件),只有描边继承自主按钮(随主题)
         List<Attr> dangerStroke = attrs("strokeColor", R.color.btn_stroke);
         m.put(R.style.BtnDanger, dangerStroke);
-        // 危险入口(无底色 + 红字):红字同样是固定字面量,描边随主题
+        // 危险入口(无底色 + 红字 + 描边):红字同样是固定字面量,描边随主题
         m.put(R.style.BtnDangerGhost, dangerStroke);
 
         // 字幕弹窗按钮:字色挂在主题文字色上(底色/描边是透明,不用换)
