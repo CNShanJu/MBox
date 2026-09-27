@@ -96,7 +96,7 @@
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btn_manager"
-            style="@style/BtnSecondary"
+            style="@style/BtnPrimary"
             android:layout_width="0dp"
             android:layout_height="44dp"
             android:layout_marginRight="10dp"
