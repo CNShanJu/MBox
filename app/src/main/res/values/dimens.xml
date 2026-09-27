@@ -1,7 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <dimen name="common_corners">12dp</dimen>
+    <!-- 描边/实心小按钮的统一圆角(bg_r_common_* 三个 drawable 都用它):
+         12dp 放在 ~28dp 高的按钮上(播放器抽屉的倍速/横竖屏/字幕那些),圆角接近半高,
+         画出来像胶囊/半圆(用户口径:"出现很多次了"),收到 8dp —— 仍是圆角矩形但不再像药丸。 -->
+    <dimen name="common_corners">8dp</dimen>
 
     <!-- 搜索结果卡片统一字号(改此处一处,全部搜索布局的对应文本一起生效) -->
     <dimen name="search_card_title_size">16sp</dimen>
