@@ -57,6 +57,17 @@ public final class ThemeInflaterFactory implements LayoutInflater.Factory2 {
     /** 按属性名缓存的反射 setter(第三方控件兜底路径用) */
     private static final Map<String, Method> SETTER_CACHE = new HashMap<>();
 
+    /**
+     * 名字本身表示"文本"的属性:<b>不走 int setter 兜底</b>。
+     *
+     * <p>原因:{@code setText(int)} / {@code setTitle(int)} 收的是<b>字符串资源 id</b> ——
+     * 若某个布局把这类属性写成颜色({@code app:text="@color/text_foreground"}),按名字反射命中
+     * {@code setText(int)} 就会把颜色当成资源 id 塞进去,界面冒出一段乱七八糟的文字。
+     * 颜色对应的是 {@code textColor} / {@code titleColor} 这类名字,不在这里面。
+     */
+    private static final java.util.Set<String> TEXT_LIKE_ATTRS = new java.util.HashSet<>(
+            java.util.Arrays.asList("text", "hint", "title", "label", "contentDescription", "tag"));
+
     /** 样式属性名(非命名空间属性,{@code style="@style/X"});由 {@link ThemeStyles} 那趟单独处理 */
     private static final String STYLE_ATTR = "style";
 
@@ -364,7 +375,7 @@ public final class ThemeInflaterFactory implements LayoutInflater.Factory2 {
     private boolean applyBySetter(View view, Context context, String attrName, int resId, ThemePalette palette) {
         // 1) 单色属性(值是随主题走的纯色):塞给收 int 的 setter
         Integer color = colorOf(resId, palette);
-        if (color != null) {
+        if (color != null && !TEXT_LIKE_ATTRS.contains(attrName)) {
             Method m = findSetter(view.getClass(), attrName, int.class);
             if (m != null && invokeQuietly(m, view, color)) return true;
         }
