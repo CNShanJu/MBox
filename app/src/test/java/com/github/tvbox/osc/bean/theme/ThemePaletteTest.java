@@ -86,12 +86,14 @@ public class ThemePaletteTest {
         ThemePalette builtin = new ThemePalette(new java.util.LinkedHashMap<String, Integer>() {{
             put("bg_body", 0xFF101010);
             put("color_highlight", 0xFFABCDEF);
-            put("btn_select_text", 0xFF000000);
+            put("btn_confirm_text", 0xFF000000);
+            put("btn_stroke", 0x66123456);
         }});
         ThemePalette derived = ThemePaletteFactory.derive(new java.util.LinkedHashMap<String, String>(), builtin);
         assertEquals("缺 bg_body 时应取内置主题的值", 0xFF101010, derived.get("bg_body"));
         assertEquals("缺 brand 时应取内置主题的主色", 0xFFABCDEF, derived.get("color_highlight"));
-        assertTrue("主色上的文字应取内置主题的 btn_select_text", derived.has("btn_select_text"));
+        assertEquals("缺主按钮文字时应取内置主题的 btn_confirm_text", 0xFF000000, derived.get("btn_confirm_text"));
+        assertEquals("缺空心键描边色时应取内置主题的 btn_stroke", 0x66123456, derived.get("btn_cancel_bg"));
     }
 
     /**
@@ -118,19 +120,45 @@ public class ThemePaletteTest {
         assertNotEquals("浮层不该跟页面层同透明度(曾经接反过)", p.get("bg_surface"), p.get("bg_float"));
     }
 
-    /** 别名必须与主色同值(勾选框填充/无背景按钮文字/选中按钮填充 = 主色) */
+    /**
+     * 按钮取色口径(用户口径):
+     * <ul>
+     *   <li>① 纯色按钮:底 = {@code btn_confirm_bg}(保留透明度);描边 = 该底色的<b>不透明版</b>
+     *       —— 于是"把主按钮背景设成透明度百分百时,边框线不透明";</li>
+     *   <li>② 空心按钮:无填充,描边 = {@code btn_cancel_bg}(标签「空心按钮边框线颜色」),
+     *       文字走<b>文字主色</b>{@code btn_plain_text}(所以「次按钮文字」这个键已删除);</li>
+     *   <li>③ 小组件按钮选中:填充 = 纯色按钮底色的<b>不透明版</b>({@code btn_select_bg},忽略透明度),
+     *       文字 = 主按钮文字({@code btn_select_text} = {@code btn_confirm_text})。</li>
+     * </ul>
+     */
     @Test
-    public void brandAliasesShareTheBrandColor() {
+    public void buttonColorsFollowTheThreeTypeRule() {
         java.util.Map<String, String> in = new java.util.LinkedHashMap<>();
         in.put("brand", "#3366FF");
-        in.put("brand_text", "#001100");
+        in.put("btn_confirm_bg", "#80112233");
+        in.put("btn_confirm_text", "#FFEEDD");
+        in.put("btn_cancel_bg", "#66123456");
         ThemePalette p = ThemePaletteFactory.derive(in, null);
-        assertEquals(0xFF3366FF, p.get("color_highlight"));
-        assertEquals(0xFF3366FF, p.get("select_fill"));
+
+        // ① 纯色按钮:底保留透明度,描边取它的不透明版
+        assertEquals(0x80112233, p.get("btn_confirm_bg"));
+        assertEquals(0xFF112233, p.get("btn_confirm_stroke"));
+        // 全透明的底:边框线照样不透明(用户口径:"设成透明度百分百的时候,边框线则不透明")
+        in.put("btn_confirm_bg", "#00000000");
+        assertEquals("底全透明时描边仍必须是不透明的", 0xFF,
+                ThemePaletteFactory.derive(in, null).get("btn_confirm_stroke") >>> 24);
+
+        // ② 空心按钮:描边 = 那个键;文字走文字主色;历史资源名 btn_stroke 同值
+        assertEquals(0x66123456, p.get("btn_cancel_bg"));
         assertEquals(0xFF3366FF, p.get("btn_plain_text"));
-        assertEquals(0xFF3366FF, p.get("btn_select_bg"));
-        assertEquals(0xFF001100, p.get("btn_select_text"));
-        assertEquals("#663366FF", ThemePalette.toHex(p.get("btn_stroke")));
-        assertFalse("描边不该是不透明的主色", (p.get("btn_stroke") >>> 24) == 0xFF);
+        assertEquals("btn_stroke 与空心键描边色同值", p.get("btn_cancel_bg"), p.get("btn_stroke"));
+
+        // ③ 小组件按钮选中:填充忽略透明度 + 文字走主按钮文字
+        assertEquals(0xFF112233, p.get("btn_select_bg"));
+        assertEquals(p.get("btn_confirm_text"), p.get("btn_select_text"));
+
+        // 两个键已删除,不该再派生出来
+        assertFalse("「次按钮文字」键应当已移除", p.has("btn_cancel_text"));
+        assertFalse("「主色上的文字」键应当已移除", p.has("brand_text"));
     }
 }

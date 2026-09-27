@@ -72,18 +72,17 @@ public final class ThemeStyles {
     private static Map<Integer, List<Attr>> build() {
         Map<Integer, List<Attr>> m = new HashMap<>();
 
-        // ① 纯色按钮(确定/保存/开始下载):底色 + 字色 + 描边全在样式里
+        // ① 纯色按钮(确定/保存/开始下载):底色 + 字色 + 描边(= 底色的不透明版,用户口径)
         List<Attr> primary = attrs(
                 "textColor", R.color.btn_confirm_text,
                 "backgroundTint", R.color.btn_confirm_bg,
-                "strokeColor", R.color.btn_stroke);
+                "strokeColor", R.color.btn_confirm_stroke);
         m.put(R.style.BtnPrimary, primary);
 
-        // ② 空心按钮(取消/重置/下载管理):底色(默认透明) + 字色 + 描边
+        // ② 空心按钮(取消/重置/下载管理):无填充,只有 1dp 描边 = 空心按钮边框线颜色;文字走文字主色
         List<Attr> secondary = attrs(
-                "textColor", R.color.btn_cancel_text,
-                "backgroundTint", R.color.btn_cancel_bg,
-                "strokeColor", R.color.btn_stroke);
+                "textColor", R.color.btn_plain_text,
+                "strokeColor", R.color.btn_cancel_bg);
         m.put(R.style.BtnSecondary, secondary);
 
         // ③ 纯文字按钮(复制/展开/选集下载):底色透明**且无描边**,只有字色随主题
@@ -93,11 +92,10 @@ public final class ThemeStyles {
         // 布局里个别键覆盖成强调色(如"复制"),这里登记默认那支,运行时照样跟着主题换
         m.put(R.style.TextButton, ghost);
 
-        // 危险按钮:红底/红字是**固定字面量**(危险三色不进主题文件),只有描边继承自主按钮(随主题)
-        List<Attr> dangerStroke = attrs("strokeColor", R.color.btn_stroke);
-        m.put(R.style.BtnDanger, dangerStroke);
-        // 危险入口(无底色 + 红字 + 描边):红字同样是固定字面量,描边随主题
-        m.put(R.style.BtnDangerGhost, dangerStroke);
+        // 危险按钮:红底/红字是**固定字面量**(危险三色不进主题文件),描边同底色(同为 swipe_red),
+        //   整条样式不随主题走 → 不需要登记;
+        // 危险入口(无底色 + 红字):红字同样是固定字面量,描边 = 空心键的描边色,随主题
+        m.put(R.style.BtnDangerGhost, attrs("strokeColor", R.color.btn_cancel_bg));
 
         // 字幕弹窗按钮:字色挂在主题文字色上(底色/描边是透明,不用换)
         m.put(R.style.SubtitleTextButton, attrs("textColor", R.color.text_foreground));

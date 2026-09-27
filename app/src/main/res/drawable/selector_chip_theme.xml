@@ -1,28 +1,28 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- chip/预设按钮背景(跟随主题按钮色板,**小组件按钮圆角 radius_widget_btn**):
-     选中 = btn_select_bg + btn_select_text,未选中 = btn_cancel_bg(默认配成透明 ⇒ 空心),
+     未选中 = **只有边框线**(btn_cancel_bg = 空心按钮边框线颜色)、无填充 —— 与小组件按钮的未选中档同款;
+     选中 = 填充纯色按钮的颜色(忽略透明度,btn_select_bg)+ 同色描边(btn_confirm_stroke);
      按下 = 通用点击态。
-     一律带 1dp btn_stroke 描边:未选中态没有填充,全靠它才看得出是个键,
-     没有描边就"看不到按钮/看不到圆角";选中态填充压过描边,不受影响。 -->
+     文字色由 chip_text 选择器给(选中 = 主按钮文字,未选中 = 文字主色)。 -->
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:state_selected="true">
         <shape android:shape="rectangle">
             <solid android:color="@color/btn_select_bg" />
-            <stroke android:width="1dp" android:color="@color/btn_stroke" />
+            <stroke android:width="1dp" android:color="@color/btn_confirm_stroke" />
             <corners android:radius="@dimen/radius_widget_btn" />
         </shape>
     </item>
     <item android:state_pressed="true">
         <shape android:shape="rectangle">
             <solid android:color="@color/gray_darker_press_alpha" />
-            <stroke android:width="1dp" android:color="@color/btn_stroke" />
+            <stroke android:width="1dp" android:color="@color/btn_cancel_bg" />
             <corners android:radius="@dimen/radius_widget_btn" />
         </shape>
     </item>
     <item>
         <shape android:shape="rectangle">
-            <solid android:color="@color/btn_cancel_bg" />
-            <stroke android:width="1dp" android:color="@color/btn_stroke" />
+            <solid android:color="@android:color/transparent" />
+            <stroke android:width="1dp" android:color="@color/btn_cancel_bg" />
             <corners android:radius="@dimen/radius_widget_btn" />
         </shape>
     </item>

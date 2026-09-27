@@ -4,7 +4,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * 主题文件(25 个可配置键)→ {@link ThemePalette}(30 个资源名)的派生。
+ * 主题文件(17 个可配置键)→ {@link ThemePalette}(25 个资源名)的派生。
  *
  * <p><b>这份规则必须与 {@code app/build.gradle} 的 {@code derivePalette} 完全一致</b>:
  * 内置主题在构建期被 Gradle 派生进 {@code res/values/theme_colors.xml}(首帧就是对的),
@@ -20,9 +20,10 @@ import java.util.Map;
  *       {@code bg_float}(弹窗·抽屉·气泡·悬浮钮)取同一个颜色 + {@code bg_float_alpha} ——
  *       颜色相同才不会同屏深浅不一,透明度分两层(**页面层 / 浮层**);</li>
  *   <li>同值别名(不占配置):{@code color_highlight} / {@code select_fill} / {@code btn_plain_text}
- *       / {@code btn_select_bg} = {@code brand};{@code btn_select_text} = {@code brand_text};
+ *       = {@code brand}(文字主色);{@code btn_select_bg} = {@code btn_confirm_stroke}
+ *       = {@code btn_confirm_bg} <b>的不透明版</b>;{@code btn_select_text} = {@code btn_confirm_text};
  *       {@code switch_track_on} = {@code download_done} = {@code success}(正向状态色);</li>
- *   <li>{@code btn_stroke} = {@code brand} @40%(无填充按钮的描边);</li>
+ *   <li>{@code btn_stroke} = {@code btn_cancel_bg}(空心按钮边框线颜色;历史资源名,值同源);</li>
  *   <li>{@code text_danger} / {@code swipe_red} / {@code swipe_red_text} <b>不在这里</b>:
  *       它们已固定成 {@code res/values/colors.xml} 的字面量,不随主题走;
  *       {@code accent_on_dark} 已移除(直播页选中态走 {@code btn_select_bg} / {@code btn_select_text});</li>
@@ -49,7 +50,17 @@ public final class ThemePaletteFactory {
 
         // ---- 源头 ----
         int brand = color(in, "brand", builtin.get("color_highlight"));
-        int brandText = color(in, "brand_text", builtin.get("btn_select_text"));
+        // 按钮两族的口径(用户口径,一次说清):
+        //   ① 纯色按钮:底 = btn_confirm_bg(可以带透明度);**描边 = 底色的不透明版**
+        //      ——"纯色按钮也要给边框线,颜色就是主按钮背景的颜色;把它设成透明度百分百时边框线要不透明";
+        //   ② 空心按钮:无填充、只有 1dp 描边,描边色 = 可配置键 btn_cancel_bg(标签「空心按钮边框线颜色」),
+        //      文字走文字主色 brand —— 所以「次按钮文字」这个键已删除;
+        //   ③ 小组件按钮:未选中 = 只有边框(同上描边色)+ 文字主色;
+        //      选中 = 填充纯色按钮底色的**不透明版**(btn_select_bg,即"忽略透明度")+ 文字 btn_confirm_text。
+        int confirmBg = color(in, "btn_confirm_bg", brand);
+        int confirmSolid = ThemePalette.withAlpha(confirmBg, 100);
+        int confirmText = color(in, "btn_confirm_text", builtin.get("btn_confirm_text"));
+        int hollowStroke = color(in, "btn_cancel_bg", builtin.get("btn_stroke"));
         int bodyFallback = builtin.get("bg_body");
         // 面:**颜色只有一个**(bg_surface),页面层与浮层共用;**透明度是两档,分层不同**
         // (用户口径,原来接反过一次):
@@ -91,14 +102,17 @@ public final class ThemePaletteFactory {
 
         out.put("color_highlight", brand);
         out.put("select_fill", brand);
-        out.put("btn_confirm_bg", color(in, "btn_confirm_bg", brand));
-        out.put("btn_confirm_text", color(in, "btn_confirm_text", brandText));
-        out.put("btn_cancel_bg", color(in, "btn_cancel_bg", 0x00000000));
-        out.put("btn_cancel_text", color(in, "btn_cancel_text", brand));
+        out.put("btn_confirm_bg", confirmBg);
+        out.put("btn_confirm_text", confirmText);
+        // 纯色按钮的描边(也是小组件按钮选中态的填充):主按钮背景的不透明版
+        out.put("btn_confirm_stroke", confirmSolid);
+        // 空心按钮的描边色(主题编辑页那个键);空心/纯文字按钮的文字走文字主色
+        out.put("btn_cancel_bg", hollowStroke);
         out.put("btn_plain_text", brand);
-        out.put("btn_select_bg", brand);
-        out.put("btn_select_text", brandText);
-        out.put("btn_stroke", ThemePalette.withAlpha(brand, 40));
+        out.put("btn_select_bg", confirmSolid);
+        out.put("btn_select_text", confirmText);
+        // btn_stroke 是"空心键描边"的历史资源名,现在与 btn_cancel_bg 同值(入口只有主题编辑页那个键)
+        out.put("btn_stroke", hollowStroke);
 
         out.put("switch_track_on", success);
         out.put("switch_track_off", color(in, "switch_track_off", brand));

@@ -286,9 +286,9 @@ def defaultLightColors = [
         bg_surface: '#ECECF4', bg_float_alpha: 92, bg_card_alpha: 60,
         text_sub: '#787878', text_hint: '#611C1B1F',
         text_disable: '#b3b3b3', text_accent: '#1F2937', text_highlight: '#1890FF',
-        brand: '#1F2937', brand_text: '#FFFFFF',
+        brand: '#1F2937',
         btn_confirm_bg: '#1F2937', btn_confirm_text: '#FFFFFF',
-        btn_cancel_bg: '#00000000', btn_cancel_text: '#1F2937',
+        btn_cancel_bg: '#661F2937',
         success: '#08CA2C', switch_track_off: '#ccccd4', switch_thumb: '#FFFFFF',
         download_active: '#037AFF'
 ]
@@ -297,9 +297,9 @@ def defaultNightColors = [
         bg_surface: '#211D28', bg_float_alpha: 10, bg_card_alpha: 100,
         text_sub: '#AFAFAF', text_hint: '#99E6E1E5',
         text_disable: '#b3b3b3', text_accent: '#E5E7EB', text_highlight: '#1890FF',
-        brand: '#E5E7EB', brand_text: '#141218',
-        btn_confirm_bg: '#00000000', btn_confirm_text: '#E5E7EB',
-        btn_cancel_bg: '#00000000', btn_cancel_text: '#7A7A7A',
+        brand: '#E5E7EB',
+        btn_confirm_bg: '#E5E7EB', btn_confirm_text: '#141218',
+        btn_cancel_bg: '#66E5E7EB',
         success: '#08CA2C', switch_track_off: '#3C3C46', switch_thumb: '#FFFFFF',
         download_active: '#037AFF'
 ]
@@ -378,15 +378,23 @@ static int withAlpha(def colorRaw, def alphaRaw) {
 //     bg_float_alpha → **浮层**:bg_float(所有弹窗与抽屉、长按/上次看到的气泡、首页直播·筛选悬浮钮与更新悬浮圈)。
 //   一句话:页面上的东西(含卡片里的 item)跟 bg_card_alpha;浮起来的那一层跟 bg_float_alpha。
 // 同值别名(不占配置):
-//   color_highlight / select_fill / btn_plain_text / btn_select_bg = brand
-//     (全局高亮填充=chip/进度条/悬浮圈、勾选框填充、无背景按钮文字、选中按钮填充 —— 设计上就与主色同色)
-//   btn_select_text = brand_text(选中填充上的文字)
-//   btn_stroke      = brand @40%(无填充按钮的描边)
+//   color_highlight / select_fill / btn_plain_text = brand(文字主色)
+//   btn_select_bg = btn_confirm_stroke = btn_confirm_bg 的**不透明版**(alpha 强制 100%)
+//   btn_select_text = btn_confirm_text(选中填充上的文字 = 主按钮文字)
+//   btn_stroke      = btn_cancel_bg(空心按钮边框线颜色;历史资源名,值同源)
 //   switch_track_on = download_done = success(正向状态色:开关打开 / 下载完成 —— 原本是两个键,值一直相同)
+// 按钮取色口径(用户口径):
+//   ① 纯色按钮:底 = btn_confirm_bg(可带透明度);描边 = 该底色的不透明版(设成半透明/全透明,边框线照样实心)
+//   ② 空心按钮:无填充,只有 1dp 描边 = btn_cancel_bg(「空心按钮边框线颜色」);文字走文字主色 brand
+//   ③ 小组件按钮:未选中 = 只有边框(同 ②)+ 文字主色;选中 = 填充 btn_select_bg(忽略透明度)+ 文字 btn_confirm_text
 // 不派生的固定色:text_danger / swipe_red / swipe_red_text 已写死在 res/values/colors.xml(不随主题)
 static def derivePalette(def c) {
     int brand = parseColor(c.brand, 0xFF1F2937)
-    int brandText = parseColor(c.brand_text, 0xFFFFFFFF)
+    // 同上口径:纯色按钮的底与其"不透明版"描边/小组件选中填充
+    int confirmBg = parseColor(c.btn_confirm_bg, brand)
+    int confirmSolid = withAlpha(confirmBg, 100)
+    int confirmText = parseColor(c.btn_confirm_text, 0xFFFFFFFF)
+    int hollowStroke = parseColor(c.btn_cancel_bg, 0xFF661F2937)
     // 同一个颜色、两档透明度:页面层(bg_card_alpha)与浮层(bg_float_alpha)
     int surfaceColor = parseColor(c.bg_surface, 0xFFECECF4)
     int cardBg = withAlpha(surfaceColor, percent(c.bg_card_alpha, 100))
@@ -407,14 +415,14 @@ static def derivePalette(def c) {
             text_highlight      : toHex(parseColor(c.text_highlight, 0xFF1890FF)),
             color_highlight  : toHex(brand),
             select_fill      : toHex(brand),
-            btn_confirm_bg   : toHex(parseColor(c.btn_confirm_bg, brand)),
-            btn_confirm_text : toHex(parseColor(c.btn_confirm_text, brandText)),
-            btn_cancel_bg    : toHex(parseColor(c.btn_cancel_bg, 0x00000000)),
-            btn_cancel_text  : toHex(parseColor(c.btn_cancel_text, brand)),
+            btn_confirm_bg   : toHex(confirmBg),
+            btn_confirm_text : toHex(confirmText),
+            btn_confirm_stroke: toHex(confirmSolid),
+            btn_cancel_bg    : toHex(hollowStroke),
             btn_plain_text   : toHex(brand),
-            btn_select_bg    : toHex(brand),
-            btn_select_text  : toHex(brandText),
-            btn_stroke       : toHex(withAlpha(brand, 0.4f)),
+            btn_select_bg    : toHex(confirmSolid),
+            btn_select_text  : toHex(confirmText),
+            btn_stroke       : toHex(hollowStroke),
             switch_track_on  : toHex(success),
             switch_track_off : toHex(parseColor(c.switch_track_off, brand)),
             switch_thumb     : toHex(parseColor(c.switch_thumb, 0xFFFFFFFF)),
@@ -500,10 +508,11 @@ task generateThemeColors {
             download_done  : '同 success(下载完成的正向状态色)',
             color_highlight: '派生自 brand(全局高亮填充)',
             select_fill    : '派生自 brand(勾选框填充)',
-            btn_plain_text : '派生自 brand(无背景按钮文字)',
-            btn_select_bg  : '派生自 brand(选中按钮/chip 填充)',
-            btn_select_text: '派生自 brand_text(选中填充上的文字)',
-            btn_stroke     : '派生自 brand @40%(无填充按钮的描边)'
+            btn_plain_text : '派生自 brand 文字主色(空心按钮/纯文字按钮的文字)',
+            btn_select_bg  : '派生自 btn_confirm_bg 的不透明版(小组件按钮选中态/chip 选中态的填充)',
+            btn_select_text: '同 btn_confirm_text(选中填充上的文字 = 主按钮文字)',
+            btn_confirm_stroke: '派生自 btn_confirm_bg 的不透明版(纯色按钮的边框线:底色带透明度时边框仍然实心)',
+            btn_stroke     : '同 btn_cancel_bg(空心按钮边框线颜色;历史资源名)'
     ]
     doLast {
         def light = readTheme(themeColorsFile, defaultLightColors)

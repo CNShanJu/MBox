@@ -88,19 +88,22 @@ public final class ThemeSpec {
         // 危险文字(text_danger)与危险红底(swipe_red / swipe_red_text)已**固定成字面量**,
         // 不再进主题文件(用户口径:"删除,对应组件固定就是这个颜色")—— 见 res/values/colors.xml。
 
-        // ③ 按钮(主色 brand 已挪到上面的"文字分级"里,见那处说明)
-        //    「主色上的文字」(brand_text)暂时保留:它是 btn_select_text 的输入,
-        //    要移除得先有"按主色明暗自动取对比色"的规则(下一步做),否则按钮/选中态上的字没了来源。
-        list.add(new ThemeKey("brand_text", ThemeKey.Group.BRAND, ThemeKey.Kind.COLOR, "主色上的文字",
-                "主色块上的字(下一步改为按主色明暗自动取对比色)"));
+        // ③ 按钮(主色 brand 已挪到上面的"文字分级"里,见那处说明;按钮只有这三个可配置键)
+        //    取色口径(用户口径):
+        //      · 主按钮背景 = 纯色按钮的底;主按钮文字 = 纯色按钮的字
+        //        (纯色按钮的**描边**由"主按钮背景的不透明版"派生,不单独配;
+        //         小组件按钮选中态的填充/文字也取这两个键);
+        //      · 空心按钮边框线颜色 = 空心按钮(无底色、只有 1dp 描边)的描边色,
+        //        也是小组件按钮未选中时的边框色 —— 这个键原来叫"次按钮背景";
+        //      · 「次按钮文字」已删除:空心按钮的文字走**文字主色**;
+        //      · 「主色上的文字」(brand_text)已删除:它唯一的用途是派生 btn_select_text,
+        //        而后者现在直接取主按钮文字。
         list.add(new ThemeKey("btn_confirm_bg", ThemeKey.Group.BRAND, ThemeKey.Kind.COLOR, "主按钮背景",
-                "确定 / 开始下载;透明即无填充"));
+                "纯色按钮(确定 / 开始下载 / 重置)的底色;描边按它的不透明版画,带透明也看得见边框"));
         list.add(new ThemeKey("btn_confirm_text", ThemeKey.Group.BRAND, ThemeKey.Kind.COLOR, "主按钮文字",
-                "主按钮上的字"));
-        list.add(new ThemeKey("btn_cancel_bg", ThemeKey.Group.BRAND, ThemeKey.Kind.COLOR, "次按钮背景",
-                "取消 / 重置;默认透明 ⇒ 空心按钮(无底色 + 描边),填色即纯色次按钮"));
-        list.add(new ThemeKey("btn_cancel_text", ThemeKey.Group.BRAND, ThemeKey.Kind.COLOR, "次按钮文字",
-                "次按钮上的字"));
+                "纯色按钮上的字(小组件按钮选中态的文字也用它)"));
+        list.add(new ThemeKey("btn_cancel_bg", ThemeKey.Group.BRAND, ThemeKey.Kind.COLOR, "空心按钮边框线颜色",
+                "空心按钮(取消这类无底色按钮)的 1dp 描边;小组件按钮未选中时的边框也用它"));
 
         // ④ 状态与开关
         // 「开关-开」与「下载完成」原来是两个键、值也一直是同一个绿(#08CA2C),合并成一个

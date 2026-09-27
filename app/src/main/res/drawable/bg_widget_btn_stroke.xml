@@ -1,11 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 小组件按钮 · 空心档(日志分类键 / 背景图调整键 / 搜索页历史·热词·联想键 / 播放器设置键都用它):
-     圆角**只走 radius_widget_btn**(主题资产,默认 16dp),描边取主题的 colorPrimary。
-     与"纯色/空心按钮"那条线分开,正是为了不让"小键"套上按钮的 12dp 圆角。 -->
+<!-- 小组件按钮 · 未选中档(日志分类键 / 背景图调整键 / 搜索页历史·热词·联想键 / 播放器设置键都用它):
+     **只有边框线、没有填充**,描边色 = 主题键 btn_cancel_bg(标签「空心按钮边框线颜色」,与空心按钮同一条线),
+     文字色走**文字主色**(text_main / btn_plain_text,由布局或代码给)。
+     圆角**只走 radius_widget_btn**(主题资产,默认 16dp)。 -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
     <stroke
-        android:color="@color/colorPrimary"
+        android:color="@color/btn_cancel_bg"
         android:width="1dp" />
     <corners android:radius="@dimen/radius_widget_btn" />
 </shape>

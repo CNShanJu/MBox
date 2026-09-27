@@ -91,9 +91,16 @@ public final class ThemeJson {
      * <p>{@code text_main}(正文文字)= 与主题主色 {@code brand} <b>合并</b>:两者永远同一个值,
      * 所以不再单独配(用户口径:"正文颜色和主题主色共用,移除正文颜色的key")。
      * 资源名 {@code text_main} 仍然存在,由 {@code brand} 派生 —— 布局与代码一行都不用改。
+     *
+     * <p>{@code brand_text}(主色上的文字)= 唯一用途是派生 {@code btn_select_text},
+     * 现在 {@code btn_select_text} 直接取 {@code btn_confirm_text}(用户口径:"选中/小组件选中态的文字
+     * 走主按钮文字"),于是它也没有输入了,一并移除。
+     *
+     * <p>{@code btn_cancel_text}(次按钮文字)= 已删除:空心按钮的文字走<b>文字主色</b>{@code brand}
+     * (用户口径:"次按钮文字没有,空心按钮的文字颜色走文字主色")。
      */
     private static final java.util.Set<String> REMOVED_KEYS = new java.util.HashSet<>(
-            java.util.Arrays.asList("text_main"));
+            java.util.Arrays.asList("text_main", "brand_text", "btn_cancel_text"));
 
     private static boolean isLegacyFile(JsonObject o) {
         for (String k : LEGACY_RENAMES.keySet()) {

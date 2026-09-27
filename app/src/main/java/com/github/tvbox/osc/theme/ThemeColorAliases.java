@@ -55,8 +55,8 @@ public final class ThemeColorAliases {
             put(map, R.color.select_fill, "select_fill");
             put(map, R.color.btn_confirm_bg, "btn_confirm_bg");
             put(map, R.color.btn_confirm_text, "btn_confirm_text");
+            put(map, R.color.btn_confirm_stroke, "btn_confirm_stroke");
             put(map, R.color.btn_cancel_bg, "btn_cancel_bg");
-            put(map, R.color.btn_cancel_text, "btn_cancel_text");
             put(map, R.color.btn_plain_text, "btn_plain_text");
             put(map, R.color.btn_select_bg, "btn_select_bg");
             put(map, R.color.btn_select_text, "btn_select_text");
