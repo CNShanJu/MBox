@@ -365,6 +365,14 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
     }
 
     private fun initViewPager(absXml: AbsSortXml?) {
+        // 顶部导航的文字色显式走主题:库的选中/未选中色只从 XML 属性取(编译期固定),
+        // 自定义主题下不会变(用户清单第 5 条"首页顶部当前选中的导航栏对象的文字颜色")
+        mBinding.tabLayout.configTabLayoutConfig {
+            tabSelectColor = androidx.core.content.ContextCompat.getColor(
+                requireContext(), com.github.tvbox.osc.R.color.colorPrimary)
+            tabDeselectColor = androidx.core.content.ContextCompat.getColor(
+                requireContext(), com.github.tvbox.osc.R.color.text_sub_foreground)
+        }
         if (mSortDataList.isNotEmpty()) {
             mBinding.tabLayout.removeAllViews()
             fragments.clear()

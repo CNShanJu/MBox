@@ -180,6 +180,12 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
         }
         mBinding.ivMore.setOnClickListener { showMoreActions() }
         mBinding.tabLayout.configTabLayoutConfig {
+            // 来源列表的文字色显式走主题:库的选中/未选中色只从 XML 属性取(编译期固定),
+            // 自定义主题下不会变(用户清单第 9 条"右滑的来源列表文字都改成正文颜色")
+            tabSelectColor = androidx.core.content.ContextCompat.getColor(
+                this@FastSearchActivity, R.color.colorPrimary)
+            tabDeselectColor = androidx.core.content.ContextCompat.getColor(
+                this@FastSearchActivity, R.color.text_sub_foreground)
             onSelectViewChange  = { _, selectViewList, _, _ ->
                     val tvItem: TextView = selectViewList.first() as TextView
                     filterResult(tvItem.text.toString())
