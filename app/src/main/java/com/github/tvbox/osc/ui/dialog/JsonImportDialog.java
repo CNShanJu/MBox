@@ -39,6 +39,8 @@ public class JsonImportDialog extends AppCenterPopupView {
         super.onCreate();
         DialogInputJsonBinding binding = DialogInputJsonBinding.bind(getPopupImplView());
         binding.btnCancel.setOnClickListener(v -> dismiss());
+        // 粘贴键是"点击型"小组件按钮:补点击特效(按下整键透明度 80% 再恢复)
+        com.github.tvbox.osc.ui.kit.WidgetPressEffect.attach(binding.tvPaste);
         binding.tvPaste.setOnClickListener(v -> {
             CharSequence text = ClipboardUtils.getText();
             if (TextUtils.isEmpty(text)) {

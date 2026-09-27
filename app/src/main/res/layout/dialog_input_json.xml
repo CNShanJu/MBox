@@ -23,10 +23,9 @@
             android:layout_height="wrap_content"
             android:layout_centerVertical="true"/>
 
-        <TextView
+        <TextView style="@style/WidgetBtn"
             android:id="@+id/tv_paste"
             android:text="粘贴"
-            android:textColor="@color/colorPrimary"
             android:layout_width="wrap_content"
             android:textSize="14sp"
             android:layout_height="wrap_content"
@@ -36,7 +35,7 @@
             android:paddingEnd="8dp"
             android:paddingTop="4dp"
             android:paddingBottom="4dp"
-            android:background="@drawable/bg_widget_btn_stroke"/>
+            />
     </RelativeLayout>
 
     <!-- 说明与格式示例分两行:比塞进输入框 hint 更清楚,也不会在框里折行显得像"输出了两遍" -->

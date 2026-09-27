@@ -1,16 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 搜索词 chip(历史搜索 / 热门搜索共用;联想弹窗也用这个 item,只是另设同款底):
-     底 = 描边 + 小圆角(bg_widget_btn_stroke)。
+<!-- 搜索词 chip(历史搜索 / 热门搜索共用;联想弹窗也用这个 item,同一套底):
+     底与字都走 style/WidgetBtn(selector_widget_btn + widget_btn_text,圆角 radius_widget_btn);
+     这个键是"点击型"(点一下就搜),按下时整键做一次透明度 80% 的点击特效(WidgetPressEffect)。
      原来用 bg_large_round_float —— 那是"大面板"的底,圆角 radius_background = 18dp,
      放在 ~28dp 高的 chip 上圆角比半高还大,整个底变成胶囊/半圆(用户口径:"这两处的半圆是个什么鬼,
      出现很多次了"),颜色也跟"大面板底"走,看着像另一套组件。 -->
-<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+<TextView style="@style/WidgetBtn" xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/tvSearchWord"
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
     android:layout_gravity="center_horizontal"
-    android:background="@drawable/bg_widget_btn_stroke"
     android:ellipsize="marquee"
     android:focusable="true"
     android:marqueeRepeatLimit="marquee_forever"
@@ -18,7 +18,6 @@
     android:paddingHorizontal="10dp"
     android:singleLine="true"
     android:textAlignment="center"
-    android:textColor="@color/text_foreground"
     android:layout_marginTop="4dp"
     android:layout_marginRight="4dp"
     tools:text="釜山行"/>

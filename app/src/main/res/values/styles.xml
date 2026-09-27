@@ -1,18 +1,35 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <!-- 背景图设置页的预设 chip:大圆角 + 主题按钮色板(选中 btn_select_bg / 未选中 btn_cancel_bg,
-         见 selector_chip_theme 与 chip_text),与外层 Row 等分宽度 -->
-    <style name="PageBgChip">
+    <!-- ================= 小组件按钮(唯一一份,全局复用) =================
+         日志分类键 / 背景图"调整组件位置"键 / 搜索页历史·热词·联想键 / 播放器设置面板里的键 / JSON 导入的「粘贴」键,
+         全部套这一条:
+           · 底 = selector_widget_btn(未选中只有边框线、选中=纯色按钮的填充,圆角只走 radius_widget_btn);
+           · 字 = widget_btn_text(未选中=文字主色、选中=主按钮文字);
+           · **高度**:minHeight 给到 34dp —— 这类键通常只有 25~30dp 高,而 radius_widget_btn 默认 16dp,
+             圆角一旦 ≥ 半高就被 GradientDrawable 缩成胶囊,"上边圆角和下边圆角看着不一致"
+             (用户口径)就是这么来的;34dp 起才能让 16dp 圆角画成真正的四个角。
+         两种交互形态(用户口径):
+           ① **选择按钮**(日志分类 / 背景图预设 / 播放器倍速):点击后 `setSelected(true/false)`,
+              底色与文字色一起切到"纯色按钮"那一档 —— 由上面这对 selector 自动完成,代码不用再手动换底;
+           ② **点击按钮**(搜索历史·热词·联想 / 字幕·音轨·重播·刷新·重置 / 粘贴):点下去整键做一次
+              透明度 80% 的点击特效再恢复,见 {@code ui/kit/WidgetPressEffect}。 -->
+    <style name="WidgetBtn">
+        <item name="android:background">@drawable/selector_widget_btn</item>
+        <item name="android:textColor">@color/widget_btn_text</item>
+        <item name="android:minHeight">34dp</item>
+        <item name="android:gravity">center</item>
+        <item name="android:singleLine">true</item>
+        <item name="android:paddingHorizontal">10dp</item>
+    </style>
+
+    <!-- 背景图设置页的预设 chip:就是小组件按钮(等分宽度 + 12sp 小一号字),底与字都跟 WidgetBtn 同一套 -->
+    <style name="PageBgChip" parent="@style/WidgetBtn">
         <item name="android:layout_width">0dp</item>
         <item name="android:layout_height">34dp</item>
         <item name="android:layout_weight">1</item>
         <item name="android:layout_marginHorizontal">4dp</item>
-        <item name="android:background">@drawable/selector_chip_theme</item>
-        <item name="android:textColor">@color/chip_text</item>
         <item name="android:textSize">12sp</item>
-        <item name="android:gravity">center</item>
-        <item name="android:singleLine">true</item>
         <item name="android:ellipsize">end</item>
     </style>
 
@@ -77,7 +94,7 @@
          ③ 纯文字按钮 BtnGhost   —— 无底色、无描边,只有文字(btn_plain_text):复制/展开/选集下载这类
          三型**圆角只走 radius_btn**(theme_radii.json),不再有 *Large 变体。
          "小组件按钮"(日志分类 / 背景图调整键 / 搜索历史·热词·联想 / 播放器设置键)是另一条线:
-         底走 bg_widget_btn_stroke(空心)与 bg_widget_btn_solid(纯色),圆角只走 **radius_widget_btn**。
+         底走 selector_widget_btn(未选中只有边框线、选中=纯色按钮的填充)、字走 widget_btn_text,圆角只走 **radius_widget_btn**。
          颜色一律来自 assets/theme/theme_colors.json 的 btn_* 键,布局里不写死色值。
          选中态(btn_select_*)单独一套:暗色下必须给浅色填充,否则选中看不出来。 -->
 

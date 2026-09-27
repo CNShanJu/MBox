@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- chip/预设按钮文字色(跟随主题按钮色板):选中 = btn_select_text,未选中 = btn_plain_text -->
+<!-- 小组件按钮的文字色(与 selector_widget_btn 成对):
+     选中 = 主按钮文字(btn_select_text = btn_confirm_text,压在实心填充上);
+     未选中 = **文字主色**(btn_plain_text 派生自 brand)。 -->
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:state_selected="true" android:color="@color/btn_select_text" />
     <item android:color="@color/btn_plain_text" />

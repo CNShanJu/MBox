@@ -112,27 +112,23 @@
         android:layout_marginTop="8dp"
         android:orientation="horizontal">
 
-        <TextView
+        <TextView style="@style/WidgetBtn"
             android:id="@+id/tv_tab_biz"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:background="@drawable/selector_filter_chip"
             android:paddingHorizontal="16dp"
             android:paddingVertical="6dp"
             android:text="业务日志"
-            android:textColor="@color/text_foreground"
             android:textSize="13sp" />
 
-        <TextView
+        <TextView style="@style/WidgetBtn"
             android:id="@+id/tv_tab_all"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginStart="10dp"
-            android:background="@drawable/selector_filter_chip"
             android:paddingHorizontal="16dp"
             android:paddingVertical="6dp"
             android:text="错误日志"
-            android:textColor="@color/text_sub_foreground"
             android:textSize="13sp" />
     </LinearLayout>
 
@@ -152,70 +148,58 @@
             android:orientation="horizontal"
             android:paddingVertical="2dp">
 
-            <TextView
+            <TextView style="@style/WidgetBtn"
                 android:id="@+id/ft_all"
                 android:layout_marginEnd="8dp"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:background="@drawable/selector_filter_chip"
                 android:paddingHorizontal="14dp"
                 android:paddingVertical="6dp"
                 android:text="全部"
-                android:textColor="@color/text_sub_foreground"
                 android:textSize="12sp" />
-            <TextView
+            <TextView style="@style/WidgetBtn"
                 android:id="@+id/ft_download"
                 android:layout_marginEnd="8dp"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:background="@drawable/selector_filter_chip"
                 android:paddingHorizontal="14dp"
                 android:paddingVertical="6dp"
                 android:text="下载"
-                android:textColor="@color/text_sub_foreground"
                 android:textSize="12sp" />
-            <TextView
+            <TextView style="@style/WidgetBtn"
                 android:id="@+id/ft_player"
                 android:layout_marginEnd="8dp"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:background="@drawable/selector_filter_chip"
                 android:paddingHorizontal="14dp"
                 android:paddingVertical="6dp"
                 android:text="播放"
-                android:textColor="@color/text_sub_foreground"
                 android:textSize="12sp" />
-            <TextView
+            <TextView style="@style/WidgetBtn"
                 android:id="@+id/ft_subscription"
                 android:layout_marginEnd="8dp"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:background="@drawable/selector_filter_chip"
                 android:paddingHorizontal="14dp"
                 android:paddingVertical="6dp"
                 android:text="订阅"
-                android:textColor="@color/text_sub_foreground"
                 android:textSize="12sp" />
-            <TextView
+            <TextView style="@style/WidgetBtn"
                 android:id="@+id/ft_system"
                 android:layout_marginEnd="8dp"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:background="@drawable/selector_filter_chip"
                 android:paddingHorizontal="14dp"
                 android:paddingVertical="6dp"
                 android:text="系统"
-                android:textColor="@color/text_sub_foreground"
                 android:textSize="12sp" />
-            <TextView
+            <TextView style="@style/WidgetBtn"
                 android:id="@+id/ft_error"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:background="@drawable/selector_filter_chip"
                 android:paddingHorizontal="14dp"
                 android:paddingVertical="6dp"
                 android:text="仅失败"
-                android:textColor="@color/text_sub_foreground"
                 android:textSize="12sp" />
         </LinearLayout>
     </HorizontalScrollView>

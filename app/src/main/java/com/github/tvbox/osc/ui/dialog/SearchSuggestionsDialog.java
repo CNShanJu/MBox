@@ -71,9 +71,9 @@ public class SearchSuggestionsDialog extends PartShadowPopupView {
                 {
                     TextView tv = (TextView) LayoutInflater.from(getContext()).inflate(R.layout.item_search_word_hot,
                             mFl, false);
-                    // 联想标签在统一色调的弹层上改描边式,避免与弹层背景同色不可辨;
-                    // 描边色(colorPrimary)也要跟主题走,故走 themedDrawable(用户清单第 7 条:边框颜色固定)
-                    com.github.tvbox.osc.theme.ThemeDrawables.applyBackground(tv, R.drawable.bg_widget_btn_stroke);
+                    // 联想标签就是小组件按钮(item_search_word_hot 自带 style/WidgetBtn 的底与字),
+                    // 这里只补"点击型"的点击特效:按下整键透明度 80% 再恢复(用户口径)
+                    com.github.tvbox.osc.ui.kit.WidgetPressEffect.attach(tv);
                     tv.setText(s);
                     return tv;
                 }

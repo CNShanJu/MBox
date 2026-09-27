@@ -542,7 +542,9 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
                     R.layout.item_search_word_hot,
                     mBinding.flHistory, false
                 ) as TextView
-                tv.text = s
+                // 点击型小组件按钮:按下整键透明度 80% 再恢复(用户口径)
+                com.github.tvbox.osc.ui.kit.WidgetPressEffect.attach(tv)
+tv.text = s
                 return tv
             }
         }
@@ -593,7 +595,9 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
                                             R.layout.item_search_word_hot,
                                             mBinding.flHot, false
                                         ) as TextView
-                                    tv.text = s
+                                    // 点击型小组件按钮:按下整键透明度 80% 再恢复(用户口径)
+                                    com.github.tvbox.osc.ui.kit.WidgetPressEffect.attach(tv)
+tv.text = s
                                     return tv
                                 }
                             }

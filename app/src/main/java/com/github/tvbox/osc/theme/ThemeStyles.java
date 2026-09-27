@@ -100,11 +100,14 @@ public final class ThemeStyles {
         // 字幕弹窗按钮:字色挂在主题文字色上(底色/描边是透明,不用换)
         m.put(R.style.SubtitleTextButton, attrs("textColor", R.color.text_foreground));
 
-        // chip / 预设(背景图设置页):底色是主题色板画的 selector,文字色也是 selector,
+        // chip / 预设(背景图设置页)与全部"小组件按钮":底是主题色板画的 selector、文字色也是 selector,
         // 两个都得按原 XML 重建才吃得到自定义主题(见 ThemeDrawables)
+        m.put(R.style.WidgetBtn, attrs(
+                "textColor", R.color.widget_btn_text,
+                "background", R.drawable.selector_widget_btn));
         m.put(R.style.PageBgChip, attrs(
-                "textColor", R.color.chip_text,
-                "background", R.drawable.selector_chip_theme));
+                "textColor", R.color.widget_btn_text,
+                "background", R.drawable.selector_widget_btn));
 
         return m;
     }

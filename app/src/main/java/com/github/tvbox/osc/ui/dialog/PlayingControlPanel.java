@@ -74,6 +74,12 @@ final class PlayingControlPanel {
         mBinding.landscapePortrait.setVisibility(View.VISIBLE);
         updateAboutIjkVisible();
         updateSpeedUi();
+        // 「点击型」小组件按钮的点击特效(按下整键透明度 80% 再恢复):倍速那几个是"选择型",
+        // 靠选中态换色反馈,不套这个特效(用户口径:"一种是选择按钮一种是点击按钮")
+        for (int id : new int[]{R.id.scale, R.id.player, R.id.decode, R.id.landscape_portrait,
+                R.id.subtitle, R.id.voice, R.id.replay, R.id.refresh, R.id.start_end_reset}) {
+            com.github.tvbox.osc.ui.kit.WidgetPressEffect.attach(mBinding.getRoot().findViewById(id));
+        }
     }
 
     private void initListener() {
@@ -208,19 +214,13 @@ final class PlayingControlPanel {
     }
 
     private void updateSpeedUi() {
-        Context ctx = mBinding.getRoot().getContext();
         for (int i = 0; i < mBinding.containerSpeed.getChildCount(); i++) {
             TextView tv = (TextView) mBinding.containerSpeed.getChildAt(i);
             boolean selected = String.valueOf(mPlayer.getSpeed()).equals(tv.getText().toString().replace("x", ""));
-            if (selected) {
-                // 选中:实心填充 + 按钮选中文字色(小组件按钮纯色档,圆角走 radius_widget_btn)
-                ThemeDrawables.applyBackground(tv, R.drawable.bg_widget_btn_solid);
-                tv.setTextColor(ContextCompat.getColor(ctx, R.color.btn_select_text));
-            } else {
-                // 未选中:小组件按钮空心档(描边 + radius_widget_btn)
-                ThemeDrawables.applyBackground(tv, R.drawable.bg_widget_btn_stroke);
-                tv.setTextColor(ContextCompat.getColor(ctx, R.color.text_foreground));
-            }
+            // 倍速是"选择型"小组件按钮:只切选中态 —— 底与文字色都由 style/WidgetBtn 的
+            // selector_widget_btn + widget_btn_text 一对选择器给(选中 = 纯色按钮那一档),
+            // 代码不再手动换底/换字色(用户口径:"选择按钮点击选中背景色和文字颜色都切换成纯色按钮")
+            tv.setSelected(selected);
         }
     }
 

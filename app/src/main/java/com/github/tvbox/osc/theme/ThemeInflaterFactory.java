@@ -512,7 +512,7 @@ public final class ThemeInflaterFactory implements LayoutInflater.Factory2 {
         return key == null ? null : palette.get(key);
     }
 
-    /** 颜色选择器:随主题的单色直接换成同值 CSL;随主题的 selector(如 chip_text)按原 XML 重建 */
+    /** 颜色选择器:随主题的单色直接换成同值 CSL;随主题的 selector(如 widget_btn_text)按原 XML 重建 */
     private ColorStateList colorStateList(int resId, Context context, ThemePalette palette) {
         Integer color = colorOf(resId, palette);
         if (color != null) return ColorStateList.valueOf(color);

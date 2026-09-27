@@ -94,7 +94,7 @@ public final class ThemeDrawables {
     }
 
     /**
-     * 重建一个含主题色的 {@link ColorStateList}(如 {@code res/color/chip_text.xml})。
+     * 重建一个含主题色的 {@link ColorStateList}(如 {@code res/color/widget_btn_text.xml})。
      *
      * @return 重建好的色值选择器;{@code null} = 不随主题走
      */

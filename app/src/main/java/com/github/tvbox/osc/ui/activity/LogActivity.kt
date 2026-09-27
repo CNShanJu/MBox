@@ -84,12 +84,10 @@ class LogActivity : BaseVbActivity<ActivityLogBinding>() {
 
     private fun switchTab(tab: Int) {
         currentTab = tab
-        // Tab 选中态:背景用 selector_filter_chip 的 selected(= 纯色按钮的颜色,忽略透明度),
-        // 文字取"主按钮文字"btn_select_text;未选中是空心键,文字走文字主色 btn_plain_text(小组件按钮口径)
+        // Tab 是"选择型"小组件按钮:只切 isSelected —— 底与文字色由 style/WidgetBtn 的
+        // selector_widget_btn + widget_btn_text 一对选择器给(选中 = 纯色按钮那一档)
         mBinding.tvTabBiz.isSelected = tab == 0
         mBinding.tvTabAll.isSelected = tab == 1
-        mBinding.tvTabBiz.setTextColor(if (tab == 0) colorOf(R.color.btn_select_text) else colorOf(R.color.btn_plain_text))
-        mBinding.tvTabAll.setTextColor(if (tab == 1) colorOf(R.color.btn_select_text) else colorOf(R.color.btn_plain_text))
         val isBiz = tab == 0
         mBinding.llFilter.visibility = if (isBiz) View.VISIBLE else View.GONE
         mBinding.llDatePicker.visibility = if (isBiz) View.GONE else View.VISIBLE
@@ -117,12 +115,10 @@ class LogActivity : BaseVbActivity<ActivityLogBinding>() {
     }
 
     private fun setFilterSelected(tv: TextView, selected: Boolean) {
-        // 选中 = 纯色按钮的底 + 主按钮文字;未选中 = 只有边框线 + 文字主色(小组件按钮口径)
+        // 选择型小组件按钮:只切 isSelected,底与字都由 WidgetBtn 那对选择器给
         tv.isSelected = selected
-        tv.setTextColor(colorOf(if (selected) R.color.btn_select_text else R.color.btn_plain_text))
     }
 
-    private fun colorOf(res: Int): Int = getColor(res)
 
     // ------------------------------------------------------------------
     // 内容（组装逻辑在 LogViewAssembler）
