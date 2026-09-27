@@ -34,6 +34,52 @@ public final class ThemeSweep {
         ThemePalette builtin = builtin();
         if (builtin == null) return;
         walk(root, palette, builtin);
+        // **再补一趟"布局之后"**:列表 item / 异步填充的子视图都是在这之后才出现的 ——
+        // 只扫创建那一刻,弹窗列表里的 item 永远扫不到(用户口径:"加载动画弹窗里的 item
+        // 文字没变、背景还是白的")。
+        try {
+            root.post(() -> {
+                try {
+                    walk(root, palette, builtin);
+                } catch (Throwable ignored) {
+                }
+            });
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /**
+     * 给列表挂"子项挂载即补色":RecyclerView 的 item 可能在任何时刻被复用/新造出来
+     * (首帧之后、滚动时、数据刷新后),靠一次性扫描盖不全。
+     */
+    public static void watchItems(View root) {
+        final ThemePalette palette = ThemeRuntime.palette();
+        if (root == null || palette == null) return;
+        final ThemePalette builtin = builtin();
+        if (builtin == null) return;
+        if (root instanceof androidx.recyclerview.widget.RecyclerView) {
+            ((androidx.recyclerview.widget.RecyclerView) root)
+                    .addOnChildAttachStateChangeListener(
+                            new androidx.recyclerview.widget.RecyclerView.OnChildAttachStateChangeListener() {
+                                @Override
+                                public void onChildViewAttachedToWindow(View view) {
+                                    try {
+                                        walk(view, palette, builtin);
+                                    } catch (Throwable ignored) {
+                                    }
+                                }
+
+                                @Override
+                                public void onChildViewDetachedFromWindow(View view) {
+                                }
+                            });
+        }
+        if (root instanceof ViewGroup) {
+            ViewGroup g = (ViewGroup) root;
+            for (int i = 0; i < g.getChildCount(); i++) {
+                watchItems(g.getChildAt(i));
+            }
+        }
     }
 
     private static ThemePalette builtin() {

@@ -67,6 +67,7 @@ public abstract class AppCenterPopupView extends CenterPopupView {
         // (上一轮只给"底部弹窗/抽屉"加了这一趟,漏了本类,用户口径:"弹窗还是没变")
         try {
             com.github.tvbox.osc.theme.ThemeSweep.apply(getPopupImplView());
+            com.github.tvbox.osc.theme.ThemeSweep.watchItems(getPopupImplView());
         } catch (Throwable ignored) {
         }
         // 内容超高且不自带滚动区时,自动包一层 ScrollView:防止被 maxHeight 裁剪(纯文本/按钮弹窗兜底)
