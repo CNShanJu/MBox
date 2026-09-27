@@ -9,11 +9,17 @@
            · **高度**:minHeight 给到 34dp —— 这类键通常只有 25~30dp 高,而 radius_widget_btn 默认 16dp,
              圆角一旦 ≥ 半高就被 GradientDrawable 缩成胶囊,"上边圆角和下边圆角看着不一致"
              (用户口径)就是这么来的;34dp 起才能让 16dp 圆角画成真正的四个角。
-         两种交互形态(用户口径):
-           ① **选择按钮**(日志分类 / 背景图预设 / 播放器倍速):点击后 `setSelected(true/false)`,
-              底色与文字色一起切到"纯色按钮"那一档 —— 由上面这对 selector 自动完成,代码不用再手动换底;
-           ② **点击按钮**(搜索历史·热词·联想 / 字幕·音轨·重播·刷新·重置 / 粘贴):点下去整键做一次
-              透明度 80% 的点击特效再恢复,见 {@code ui/kit/WidgetPressEffect}。 -->
+         两种交互形态(用户口径,逐页归属也在这里定死,别在页面里各写一套):
+           ① **选择按钮** —— 点击后 `setSelected(true/false)`,底色与文字色一起切到"纯色按钮"那一档
+              (由下面这对 selector 自动完成,代码只切 isSelected)。用它的地方:
+              · 运行日志页的分类/筛选键(业务·错误日志 + 全部/下载/播放/订阅/系统/仅失败);
+              · 设置背景页的「图片位置 / 大小」预设键(8 个);
+              · 播放器设置面板里的**倍速**键(x0.5 ~ x3.0)。
+           ② **点击按钮** —— 点下去整键做一次**透明度 80%** 的点击特效再恢复
+              (见 {@code ui/kit/WidgetPressEffect},用 View alpha 才能连文字与图标一起淡)。用它的地方:
+              · 搜索页的全部按钮:历史记录 / 热门搜索 chip、搜索联想弹窗里的键;
+              · 播放器设置面板里倍速**以外**的键:缩放/播放器/解码/横竖屏/字幕/音轨/重播/刷新/重置;
+              · JSON 导入弹窗里的「粘贴」键。 -->
     <style name="WidgetBtn">
         <item name="android:background">@drawable/selector_widget_btn</item>
         <item name="android:textColor">@color/widget_btn_text</item>
