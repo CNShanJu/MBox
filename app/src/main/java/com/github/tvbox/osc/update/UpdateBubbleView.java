@@ -67,14 +67,14 @@ public class UpdateBubbleView extends View {
     private static final float CONTENT_INSET_DP = 4f;
 
     // 主题兼容色(首页「直播」悬浮钮同源:bg_float 盘面 / track 用 switch_track_off)
-    private final int mDiscColor;
-    private final int mTrackColor;
+    private int mDiscColor;
+    private int mTrackColor;
     /** 下载中/暂停:与「视频下载」同一语义色(download_active) */
-    private final int mActiveColor;
+    private int mActiveColor;
     /** 完成:download_done */
-    private final int mDoneColor;
+    private int mDoneColor;
     /** 失败:swipe_red */
-    private final int mFailColor;
+    private int mFailColor;
     /** 当前状态色(状态切换时由 {@link #applyStateColor()} 刷新):进度环 / 中心图标 / 百分比文字共用同一个色 */
     private int mIconColor;
 
@@ -106,6 +106,26 @@ public class UpdateBubbleView extends View {
         super(context);
         mDensity = getResources().getDisplayMetrics().density;
         mRingWidthDp = 3 * mDensity; // 圆环粗细 3dp
+        refreshThemeColors(context);
+        mArrowIcon = loadIcon(context, R.drawable.ic_download_arrow);
+        // 完成态用**纯勾**(LiteIcon「勾.svg」,ic_check_24):以前用 ic_check_circle(圈里一个勾),
+        // 放进气泡自己的圆盘里就是"圈套圈",看着乱。颜色照旧按状态 tint(download_done 绿)。
+        mCheckIcon = loadIcon(context, R.drawable.ic_check_24);
+        applyStateColor();
+        setLayerType(View.LAYER_TYPE_SOFTWARE, null);
+    }
+
+    /**
+     * 按当前主题重取所有颜色(构造时 + 每次挂上窗口/重新显示时都调一次)。
+     *
+     * <p><b>为什么必须重取,而不是只在构造时取一次</b>(2026-10-01 用户口径:"首页的直播气泡球和
+     * 更新气泡球的背景色没有跟着 bg_surface 走"):这些球是
+     * {@code ContextCompat.getColor(context, R.color.bg_float)} 在**构造那一刻**把颜色存进字段、
+     * 之后每帧自绘用的都是缓存值。而换主题走的是"重载主页"(进程不重启)或视图被复用,
+     * 构造时机只要早于主题快照刷新,缓存里就永远是编译期那份色 —— 之后换多少次主题都不会变。
+     * 颜色是"每帧画的东西",就不该在构造时定死。
+     */
+    void refreshThemeColors(Context context) {
         mDiscColor = themeColor(context, R.color.bg_float, DEF_BG);
         // 轨道与弹窗进度条同色(switch_track_off):两处都是"下载进度",轨道不该各用各的
         mTrackColor = themeColor(context, R.color.switch_track_off, DEF_TRACK);
@@ -113,12 +133,6 @@ public class UpdateBubbleView extends View {
         mActiveColor = themeColor(context, R.color.download_active, DEF_ACTIVE);
         mDoneColor = themeColor(context, R.color.download_done, DEF_DONE);
         mFailColor = themeColor(context, R.color.swipe_red, PROGRESS_FAIL_COLOR);
-        mArrowIcon = loadIcon(context, R.drawable.ic_download_arrow);
-        // 完成态用**纯勾**(LiteIcon「勾.svg」,ic_check_24):以前用 ic_check_circle(圈里一个勾),
-        // 放进气泡自己的圆盘里就是"圈套圈",看着乱。颜色照旧按状态 tint(download_done 绿)。
-        mCheckIcon = loadIcon(context, R.drawable.ic_check_24);
-        applyStateColor();
-        setLayerType(View.LAYER_TYPE_SOFTWARE, null);
     }
 
     /**
@@ -262,6 +276,14 @@ public class UpdateBubbleView extends View {
         // attach 时刷新一次密度(配置变化后重新 attach 的场合);绘制路径上不再取 getResources()
         try {
             mDensity = getResources().getDisplayMetrics().density;
+        } catch (Throwable ignored) {
+        }
+        // **同时按当前主题重取颜色**:这些颜色原来是构造时定死的,换主题(重载主页、进程不重启)
+        // 或视图被复用后就不会再变 —— 用户口径"直播气泡球 / 更新气泡球的底色没跟着主题走"。
+        try {
+            refreshThemeColors(getContext());
+            applyStateColor();
+            invalidate();
         } catch (Throwable ignored) {
         }
     }

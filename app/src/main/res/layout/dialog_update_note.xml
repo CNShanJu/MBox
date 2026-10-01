@@ -67,7 +67,7 @@
         android:orientation="horizontal">
 
         <!-- 「稍后」是次要动作,走共用样式 BtnSecondary —— 与局域网弹窗的「立即重启应用」同一套:
-             描边不填充(= 空心按钮:btn_cancel_bg 描边 + 文字主色)+ 主题圆角 radius_btn,
+             描边不填充(= 空心按钮:文字主色描边与文字)+ 主题圆角 radius_btn,
              换主题时和所有 Btn* 按钮一起变。
              这里原本是手搓的 TextView + 一个描边 selector(旧文件 bg_btn_outline_selector.xml),三处与共用样式不一致:
              圆角走硬编码的 common_corners(不跟主题)、字号 13sp 而右侧是 14sp、

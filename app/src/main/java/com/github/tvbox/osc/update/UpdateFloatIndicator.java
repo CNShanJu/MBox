@@ -74,15 +74,15 @@ public final class UpdateFloatIndicator implements UpdateManager.Listener {
         if (activity == null)
             return;
         this.currentActivity = activity;
-        LOG.i(TAG, "attach " + activity.getClass().getSimpleName()
-                + " state=" + UpdateManager.get().getState());
+        /* LOG.i(TAG, "attach " + activity.getClass().getSimpleName()
+                + " state=" + UpdateManager.get().getState()); */
         syncView();
     }
 
     /** BaseActivity.onPause/onDestroy 调用:当前 Activity 离开前台即卸载悬浮圈(安装/切页时隐藏) */
     public void detach(Activity activity) {
         if (activity != null && activity == currentActivity) {
-            LOG.i(TAG, "detach " + activity.getClass().getSimpleName());
+            // LOG.i(TAG, "detach " + activity.getClass().getSimpleName());
             hide();
         }
     }
@@ -104,9 +104,9 @@ public final class UpdateFloatIndicator implements UpdateManager.Listener {
 
     @Override
     public void onUpdate(UpdateManager.State state, long downloaded, long total, UpdateInfo info) {
-        LOG.i(TAG, "onUpdate state=" + state + " d=" + downloaded + "/" + total
+        /* LOG.i(TAG, "onUpdate state=" + state + " d=" + downloaded + "/" + total
                 + " floatView=" + (floatView != null) + " cur="
-                + (currentActivity == null ? "null" : currentActivity.getClass().getSimpleName()));
+                + (currentActivity == null ? "null" : currentActivity.getClass().getSimpleName())); */
         syncView();
     }
 
@@ -117,10 +117,10 @@ public final class UpdateFloatIndicator implements UpdateManager.Listener {
                 || s == UpdateManager.State.COMPLETED
                 || s == UpdateManager.State.FAILED);
         Activity a = resolveActivity(currentActivity);
-        LOG.i(TAG, "syncView state=" + s + " show=" + show + " act="
+        /* LOG.i(TAG, "syncView state=" + s + " show=" + show + " act="
                 + (a == null ? "null" : a.getClass().getSimpleName())
                 + (a == null ? "" : (" fin=" + a.isFinishing() + " des=" + a.isDestroyed()))
-                + " attached=" + (floatView != null && floatView.getParent() != null));
+                + " attached=" + (floatView != null && floatView.getParent() != null)); */
         if (!show || a == null || a.isFinishing() || a.isDestroyed()) {
             hide();
             return;
@@ -146,7 +146,7 @@ public final class UpdateFloatIndicator implements UpdateManager.Listener {
             placeInitial(lp, a, floatView);
             decor.addView(floatView, lp);
             attachedParent = decor;
-            LOG.i(TAG, "bubble mounted to decor(" + a.getClass().getSimpleName() + ")");
+            // LOG.i(TAG, "bubble mounted to decor(" + a.getClass().getSimpleName() + ")");
         }
         updateBubble();
     }
@@ -208,8 +208,8 @@ public final class UpdateFloatIndicator implements UpdateManager.Listener {
     private void hide() {
         // floatView 对象常驻(listener 在首次创建时已绑定),仅从父容器摘除并暂停动画
         if (floatView != null) {
-            LOG.i(TAG, "hide: removing floatView, parent="
-                    + (floatView.getParent() == null ? "null" : floatView.getParent().getClass().getSimpleName()));
+            /* LOG.i(TAG, "hide: removing floatView, parent="
+                    + (floatView.getParent() == null ? "null" : floatView.getParent().getClass().getSimpleName())); */
             UpdateBubbleView b = bubbleView != null ? bubbleView : floatView.findViewById(R.id.update_bubble);
             if (b != null)
                 b.pauseAnimations();
@@ -223,12 +223,12 @@ public final class UpdateFloatIndicator implements UpdateManager.Listener {
     /** 用 UpdateBubbleView 映射 UpdateManager 状态与真实进度(进度环/中心图标/动画) */
     private void updateBubble() {
         if (floatView == null) {
-            LOG.i(TAG, "updateBubble: floatView null, skipped");
+            // LOG.i(TAG, "updateBubble: floatView null, skipped");
             return;
         }
         UpdateBubbleView b = bubbleView != null ? bubbleView : floatView.findViewById(R.id.update_bubble);
         if (b == null) {
-            LOG.i(TAG, "updateBubble: R.id.update_bubble not found in inflated layout!");
+            // LOG.i(TAG, "updateBubble: R.id.update_bubble not found in inflated layout!");
             return;
         }
         bubbleView = b;
@@ -254,7 +254,7 @@ public final class UpdateFloatIndicator implements UpdateManager.Listener {
                 break;
         }
         b.setState(bs, progress);
-        LOG.i(TAG, "bubble.setState " + bs + " " + Math.round(progress * 100) + "%");
+        // LOG.i(TAG, "bubble.setState " + bs + " " + Math.round(progress * 100) + "%");
     }
 
     /** 短按气泡:下载中→暂停,暂停中→继续;失败/完成/空闲→打开控制弹窗 */

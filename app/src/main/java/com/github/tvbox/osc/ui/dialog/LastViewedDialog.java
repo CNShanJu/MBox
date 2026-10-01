@@ -24,22 +24,23 @@ public class LastViewedDialog extends PositionPopupView {
     }
 
     @Override
+    protected int getMaxWidth() {
+        return Math.round(DialogStyle.CENTER_MAX_WIDTH_DP
+                * getContext().getResources().getDisplayMetrics().density);
+    }
+
+    @Override
     protected int getImplLayoutId() {
         return R.layout.dialog_last_viewed;
     }
 
     @Override
     protected void onCreate() {
+        PopupKeyboardPolicy.onCreate(this);
         super.onCreate();
-// 换肤兜底:本类直接继承 XPopup 的 *PopupView,没走 AppBottom/Center/Drawer 那层壳,
-        // 面板底不会被换肤注入覆盖到 —— 这里补同一趟"内置面 → 主题面"扫描
-        // (用户口径:"切换布局气泡的背景色没走卡片与悬浮层颜色")。
-        try {
-            com.github.tvbox.osc.theme.ThemeSweep.apply(getPopupImplView());
-            com.github.tvbox.osc.theme.ThemeSweep.watchItems(getPopupImplView());
-        } catch (Throwable ignored) {
-        }
         TextView textView = findViewById(R.id.tv);
+        // 显示时明确重放气泡资源,不按原像素猜 bg_float。
+        com.github.tvbox.osc.theme.ThemeDrawables.applyBackground(textView, R.drawable.bg_bubble);
         textView.setText("上次看到: "+vodInfo.name+" "+vodInfo.note);
         // 触发跑马灯滚动(超出单行时不换行、循环滚动播放)
         textView.setSelected(true);
@@ -52,6 +53,12 @@ public class LastViewedDialog extends PositionPopupView {
             bundle.putString("vodName", vodInfo.name);
             getContext().startActivity(new Intent(getContext(),DetailActivity.class).putExtras(bundle));
         });
+    }
+
+    @Override
+    public void focusAndProcessBackPress() {
+        super.focusAndProcessBackPress();
+        PopupKeyboardPolicy.afterFocus(this);
     }
 
     @Override

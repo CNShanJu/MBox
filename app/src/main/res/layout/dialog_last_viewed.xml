@@ -6,6 +6,8 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- 右侧那个播放图标:尺寸走全站内联图标的常规档 **18dp**(2026-10-01,用户口径"最右侧的 icon 太大了,调小点");
+         原来写 28dp —— 它是全站唯一一个 28dp 的 compound drawable(其余 16/18/20/24),压在 14sp 的文字旁边显得很重。 -->
     <com.github.tvbox.osc.ui.kit.SizedIconTextView
         android:id="@+id/tv"
         android:layout_width="match_parent"
@@ -18,7 +20,7 @@
         android:textColor="@color/text_foreground"
         android:drawableTint="@color/text_foreground"
         android:drawableRight="@drawable/ic_play"
-        app:drawableIconSize="28dp"
+        app:drawableIconSize="18dp"
         android:singleLine="true"
         android:ellipsize="marquee"
         android:marqueeRepeatLimit="marquee_forever"
