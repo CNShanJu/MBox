@@ -143,13 +143,14 @@ public class ThemePickerDialog extends SelectDialog<ThemePickerDialog.Row> {
 
             @Override
             public int rowIconTint(Row value) {
+                // 与行文字同色；背景水印的透明度只由 rowIconAlpha 控制一次。
                 return ContextCompat.getColor(getContext(), R.color.text_main);
             }
 
             @Override
             public int rowIconAlpha(Row value) {
-                // 背景水印:压到 ~14%,能看出太阳/月亮又不抢文字
-                return 36;
+                // 50% 文字色：亮暗主题下都能认出太阳/月亮，仍低于正文层。
+                return 128;
             }
         });
         rebuildRows();

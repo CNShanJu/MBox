@@ -1,10 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- 小动作键的底(描边型):**边框色 = 这个键的文字颜色** `text_foreground`(2026-10-01 口径:
+     空心组件没有填充,边框就是它的"轮廓",必须和文字同色,否则自定义主题下很容易脱节 ——
+     它的消费方 ThemePickerDialog 的动作行、item_stroke_button/item_quick_search_lite 的文字都是 text_foreground)。
+     圆角走小件档 common_corners;线宽走主题键 stroke_widget_btn(默认 0.5dp 发丝线),与同屏 chip(selector_widget_btn)同口径。
+     历史:这里曾用 @color/colorPrimary(别名「强调文字」text_accent),又改成过 @color/btn_stroke
+     (= 空心按钮边框线颜色 btn_cancel_bg)—— 两版都会和文字色各走各的,本次统一到"跟文字"。 -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
 	android:shape="rectangle">
 
 	<stroke
-			android:color="@color/colorPrimary"
-		android:width="1dp"/>
+			android:color="@color/text_foreground"
+		android:width="@dimen/stroke_widget_btn"/>
 
 	<corners 
 			android:radius="@dimen/common_corners" />

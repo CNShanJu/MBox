@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+﻿#!/usr/bin/env node
 /**
  * 离线校验:自定义主题(运行时换肤)的"覆盖面"自检。
  *
@@ -6,13 +6,14 @@
  *   1) 颜色资源 —— 必须登记在 `ThemeColorAliases`(颜色 id → 调色板概念名);
  *   2) 布局属性 —— 必须是 `ThemeInflaterFactory` 处理过的属性名
  *      (android:textColor / app:tint / android:background ...);
- *   3) drawable / 色值选择器 —— 由 ThemeDrawables 按原 XML 重建,不需要登记;
+ *   3) 已迁移 drawable —— 必须在 theme_shapes.json 与 ThemeDrawableFactory 显式登记;
+ *      其余过渡 drawable / 色值选择器仍由 ThemeDrawables 兼容重建;
  *   4) 单色矢量图标 —— 由 tint 覆盖,不需要登记。
  *
  * 漏了 1 或 2 的症状是"自定义主题下,某一处颜色没变"(不会有任何报错),所以在 CI/提交前扫一遍:
  *   - 颜色资源漏登记:**报错**(退出码 1),必须补表;
- *   - 属性名不认识:先列出来(第三方控件属性走反射 setter 兜底,能兜住就不算错),
- *     只有连反射都兜不住的才需要人工看一眼 —— 因此这里只报"未处理属性"的数量与名字,不直接失败。
+ *   - 属性名不认识:**报错**;第三方属性必须核对真实公开 setter,禁止反射猜测;
+ *   - 配方未映射、配方令牌不存在、业务代码直接 setBackgroundResource(R.drawable.*):**报错**。
  *
  * 用法:node scripts/check-theme-res-coverage.mjs
  */
@@ -23,6 +24,8 @@ const ROOT = path.resolve(process.cwd());
 const RES = path.join(ROOT, 'app', 'src', 'main', 'res');
 const ALIAS_JAVA = path.join(ROOT, 'app', 'src', 'main', 'java', 'com', 'github', 'tvbox', 'osc', 'theme', 'ThemeColorAliases.java');
 const FACTORY_JAVA = path.join(ROOT, 'app', 'src', 'main', 'java', 'com', 'github', 'tvbox', 'osc', 'theme', 'ThemeInflaterFactory.java');
+const DRAWABLE_FACTORY_JAVA = path.join(ROOT, 'app', 'src', 'main', 'java', 'com', 'github', 'tvbox', 'osc', 'theme', 'ThemeDrawableFactory.java');
+const SHAPES_JSON = path.join(ROOT, 'app', 'src', 'main', 'assets', 'theme', 'theme_shapes.json');
 const GEN_COLORS = path.join(ROOT, 'app', 'build', 'generated', 'theme_colors', 'values', 'theme_colors.xml');
 
 /** 派生出来的主题资源名(= 调色板里的概念名)。没有生成文件时退到硬编码清单(与 build.gradle 的派生表一致) */
@@ -33,8 +36,9 @@ function paletteNames() {
   }
   return [
     'bg_body', 'bg_surface', 'bg_card', 'bg_float',
-    'text_main', 'text_sub', 'text_hint', 'text_disable', 'text_accent', 'text_highlight',
-    'color_highlight', 'select_fill', 'btn_confirm_bg', 'btn_confirm_text', 'btn_cancel_bg', 'btn_cancel_text',
+    'text_main', 'text_sub', 'text_hint', 'text_main_half', 'text_disable', 'text_accent', 'text_highlight',
+    'color_highlight', 'select_fill', 'press_overlay',
+    'btn_confirm_bg', 'btn_confirm_text', 'btn_confirm_stroke', 'btn_cancel_bg',
     'btn_plain_text', 'btn_select_bg', 'btn_select_text', 'btn_stroke',
     'switch_track_on', 'switch_track_off', 'switch_thumb',
     'download_active', 'download_done',
@@ -113,20 +117,19 @@ for (const name of palette) {
   if (!registered.has(name)) missingColors.push(name);
 }
 
-// 2) 属性覆盖:布局里用到主题色的属性名,看换肤层认不认识
-//    只扫 layout/menu:drawable 内部的色值由 ThemeDrawables 按原 XML 重建,不靠属性注入;
-//    values/*.xml 里没有"视图属性"这回事。
+// 2) 属性覆盖:布局、菜单、色值选择器与共享 style 里用到主题色的属性名,看换肤层认不认识。
 const attrUse = new Map();
 const layoutDirs = [path.join(RES, 'layout'), path.join(RES, 'menu'), path.join(RES, 'color')];
 for (const dir of layoutDirs) {
   for (const file of walk(dir)) {
-    const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/);
-    for (const line of lines) {
-      const color = line.match(/@color\/([A-Za-z0-9_]+)/);
-      if (!color || !themedNames.has(color[1])) continue;
-      const attrMatch = line.match(/^\s*([A-Za-z_][\w:.-]*)\s*=/);
-      if (!attrMatch) continue; // 不是属性行(例如整行就是色值),跳过
-      let attr = attrMatch[1];
+    const xml = fs.readFileSync(file, 'utf8');
+    // 逐个匹配“这个属性自己的值”,不能按整行先找第一个属性、再找任意 @color。
+    // 同一行写 tools:text="…" android:textColor="@color/…" 时,旧算法会把它误报成
+    // text 属性在吃主题色,也就无法把未知属性真正升级为错误。
+    for (const match of xml.matchAll(/([A-Za-z_][\w:.-]*)\s*=\s*["']@color\/([A-Za-z0-9_]+)["']/g)) {
+      let attr = match[1];
+      const color = match[2];
+      if (!themedNames.has(color)) continue;
       if (attr.startsWith('xmlns')) continue;
       // 换肤层按"属性局部名"匹配(android:tint 与 app:tint 同一处理),这里也去掉命名空间前缀
       const colon = attr.indexOf(':');
@@ -138,6 +141,40 @@ for (const dir of layoutDirs) {
     }
   }
 }
+const stylesFile = path.join(RES, 'values', 'styles.xml');
+if (fs.existsSync(stylesFile)) {
+  const xml = fs.readFileSync(stylesFile, 'utf8');
+  const blocks = new Map();
+  for (const match of xml.matchAll(/<style\s+name="([^"]+)"([^>]*)>([\s\S]*?)<\/style>/g)) {
+    const parent = /\bparent="(?:@style\/)?([^"]+)"/.exec(match[2])?.[1] ?? '';
+    blocks.set(match[1], { parent, body: match[3] });
+  }
+  const used = new Set();
+  for (const file of walk(path.join(RES, 'layout'))) {
+    const layout = fs.readFileSync(file, 'utf8');
+    for (const match of layout.matchAll(/\bstyle="@style\/([^"]+)"/g)) used.add(match[1]);
+  }
+  // 本地父 style 同样参与最终属性；AppTheme 等只在 Manifest 使用，不是视图 setter，不混进本检查。
+  const pending = [...used];
+  while (pending.length) {
+    const name = pending.pop();
+    const block = blocks.get(name);
+    if (block?.parent && blocks.has(block.parent) && !used.has(block.parent)) {
+      used.add(block.parent);
+      pending.push(block.parent);
+    }
+  }
+  for (const name of used) {
+    const block = blocks.get(name);
+    if (!block) continue;
+    for (const match of block.body.matchAll(/<item\s+name="(?:android:|app:)?([A-Za-z0-9_]+)"\s*>\s*@color\/([A-Za-z0-9_]+)\s*<\/item>/g)) {
+      const [, attr, color] = match;
+      if (!themedNames.has(color)) continue;
+      if (!attrUse.has(attr)) attrUse.set(attr, new Set());
+      attrUse.get(attr).add(path.relative(ROOT, stylesFile) + '#' + name);
+    }
+  }
+}
 
 const unknownAttrs = [];
 for (const [attr, files] of attrUse) {
@@ -145,14 +182,69 @@ for (const [attr, files] of attrUse) {
   unknownAttrs.push(`${attr}  (${files.size} 个文件,例如 ${[...files][0]})`);
 }
 
-// 3) 汇总
+// 3) 配方必须只引用已知令牌,并且每个配方 id 都由运行时工厂显式映射。
+const recipeErrors = [];
+const recipes = JSON.parse(fs.readFileSync(SHAPES_JSON, 'utf8'));
+const drawableFactory = fs.readFileSync(DRAWABLE_FACTORY_JAVA, 'utf8');
+const radiiJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'app', 'src', 'main', 'assets', 'theme', 'theme_radii.json'), 'utf8'));
+const shapeTokens = new Set(Object.keys(radiiJson).filter((k) => k !== 'desc' && k !== 'type'));
+function checkRecipeValue(id, key, value) {
+  if (typeof value !== 'string') return;
+  if (['fill', 'stroke', 'ripple'].includes(key)) {
+    if (value !== 'transparent' && !value.startsWith('#') && !palette.has(value)) {
+      recipeErrors.push(`${id}:未知颜色令牌 ${value}`);
+    }
+  } else if (key === 'radius' || key === 'strokeWidth' || /^(top|bottom)(Left|Right|Start|End)$/.test(key)) {
+    if (!shapeTokens.has(value)) recipeErrors.push(`${id}:未知形状令牌 ${value}`);
+  }
+}
+function walkRecipe(id, value, key = '') {
+  if (Array.isArray(value)) value.forEach((item) => walkRecipe(id, item));
+  else if (value && typeof value === 'object') {
+    for (const [childKey, child] of Object.entries(value)) walkRecipe(id, child, childKey);
+  } else checkRecipeValue(id, key, value);
+}
+for (const [id, recipe] of Object.entries(recipes)) {
+  walkRecipe(id, recipe);
+  if (!drawableFactory.includes(`return "${id}"`)) recipeErrors.push(`${id}:ThemeDrawableFactory 未映射`);
+}
+
+// 4) 业务代码不得把已编译 drawable 直接盖回去;统一走 ThemeDrawables.applyBackground。
+const directBackgrounds = [];
+const javaRoot = path.join(ROOT, 'app', 'src', 'main', 'java');
+function walkCode(dir) {
+  if (!fs.existsSync(dir)) return;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const file = path.join(dir, entry.name);
+    if (entry.isDirectory()) walkCode(file);
+    else if (/\.(java|kt)$/.test(entry.name)) {
+      const text = fs.readFileSync(file, 'utf8');
+      if (/\.setBackgroundResource\(\s*R\.drawable\./.test(text)) {
+        directBackgrounds.push(path.relative(ROOT, file));
+      }
+    }
+  }
+}
+walkCode(javaRoot);
+
+// 5) 汇总
 console.log(`主题概念名:${palette.size} 个;登记的颜色资源:${registered.size} 个;换肤层处理的属性:${handled.size} 个`);
 console.log(`用到主题色的属性:${attrUse.size} 种`);
 
 if (unknownAttrs.length) {
-  console.log('\n[提示] 这些属性不在 ThemeInflaterFactory 的显式处理列表里(第三方控件属性会走反射 setter 兜底;'
-    + '若某个属性既没显式处理、也找不到同名 setter,那一处颜色不会跟着主题走):');
-  for (const a of unknownAttrs.sort()) console.log('  - ' + a);
+  console.error('\n[错误] 以下主题属性没有显式处理。第三方属性必须在 ThemeInflaterFactory 中调用真实公开 API,'
+    + '禁止按属性名猜 setter:');
+  for (const a of unknownAttrs.sort()) console.error('  - ' + a);
+}
+
+if (recipeErrors.length) {
+  console.error('\n[错误] 主题形状配方不完整:');
+  for (const item of recipeErrors.sort()) console.error('  - ' + item);
+}
+
+if (directBackgrounds.length) {
+  console.error('\n[错误] 以下代码直接 setBackgroundResource(R.drawable.*),会覆盖运行时主题:');
+  for (const file of directBackgrounds.sort()) console.error('  - ' + file);
 }
 
 if (missingColors.length) {
@@ -161,4 +253,6 @@ if (missingColors.length) {
   process.exit(1);
 }
 
-console.log('\ncheck-theme-res-coverage: 颜色资源覆盖完整(属性覆盖情况见上方提示)');
+if (unknownAttrs.length || recipeErrors.length || directBackgrounds.length) process.exit(1);
+
+console.log('\ncheck-theme-res-coverage: 颜色资源与主题属性覆盖完整');

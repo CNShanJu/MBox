@@ -66,6 +66,13 @@ public class ThemeJsonTest {
         for (ThemeKey k : ThemeSpec.all()) {
             assertEquals("键 " + k.key + " 往返后变了", src.color(k.key), back.color(k.key));
         }
+        for (ThemeSpec.ShapeKey key : ThemeSpec.shapeKeys()) {
+            float expected = key.kind == ThemeSpec.ShapeKey.Kind.RADIUS
+                    ? src.radius(key.key) : src.stroke(key.key);
+            float actual = key.kind == ThemeSpec.ShapeKey.Kind.RADIUS
+                    ? back.radius(key.key) : back.stroke(key.key);
+            assertEquals("形状 " + key.key + " 往返后变了", expected, actual, 0.0001f);
+        }
         assertTrue("警告不该出现在自产主题上: " + r.warnings, r.warnings.isEmpty());
     }
 
@@ -76,9 +83,14 @@ public class ThemeJsonTest {
         assertEquals(ThemeDef.SCHEMA, o.get("schema").getAsInt());
         assertEquals("type 必须与内置主题文件同词(bright/dark),否则两边不能互用",
                 "dark", o.get("type").getAsString());
-        assertTrue("可配置项一个不少(首尾各取一个:页面背景 / 完成开启色)",
-                o.has("bg_body") && o.has("success"));
-        assertTrue("透明度写数字,便于手改", o.get("bg_float_alpha").getAsJsonPrimitive().isNumber());
+        JsonObject colors = o.getAsJsonObject("colors");
+        assertTrue("颜色必须收在 schema 3 的 colors 对象里",
+                colors.has("bg_body") && colors.has("success"));
+        assertTrue("透明度写数字,便于手改",
+                colors.get("bg_float_alpha").getAsJsonPrimitive().isNumber());
+        assertTrue("圆角与描边必须分组输出", o.has("radii") && o.has("strokes"));
+        assertTrue("dp 数值不带单位后缀",
+                o.getAsJsonObject("radii").get("radius_dialog").getAsJsonPrimitive().isNumber());
     }
 
     @Test
@@ -253,6 +265,30 @@ public class ThemeJsonTest {
         assertEquals("新语义:highlight=高亮(蓝)", "#0000FF", r.def.color("text_highlight"));
         assertEquals("新语义:accent=强调", "#AAAAAA", r.def.color("text_accent"));
         assertTrue("新文件不该有升级提示: " + r.warnings, r.warnings.isEmpty());
+    }
+
+    @Test
+    public void schemaThreeValidatesShapesAndMigratesOldFiles() {
+        ThemeJson.Result old = ThemeJson.parse("{\"kind\":\"mbox-theme\",\"schema\":2,"
+                + "\"bg_body\":\"#101010\"}");
+        assertNull(old.error);
+        java.util.Map<String, Float> inheritedRadii = new java.util.LinkedHashMap<>();
+        inheritedRadii.put(ThemeShapePalette.RADIUS_WIDGET_BTN, 16f);
+        old.def.materializeShapes(new ThemeShapePalette(inheritedRadii,
+                java.util.Collections.<String, Float>emptyMap()));
+        assertEquals("schema 1/2 必须继承调用方给的同类型内置值", 16f,
+                old.def.radius("radius_widget_btn"), 0.0001f);
+
+        ThemeJson.Result current = ThemeJson.parse("{\"kind\":\"mbox-theme\",\"schema\":3,"
+                + "\"colors\":{\"bg_body\":\"#101010\"},"
+                + "\"radii\":{\"radius_widget_btn\":17,\"radius_dialog\":-1,\"future\":3},"
+                + "\"strokes\":{\"stroke_widget_btn\":\"bad\"}}");
+        assertNull(current.error);
+        assertEquals(17f, current.def.radius("radius_widget_btn"), 0.0001f);
+        assertEquals(16f, current.def.radius("radius_dialog"), 0.0001f);
+        assertEquals(0.5f, current.def.stroke("stroke_widget_btn"), 0.0001f);
+        assertTrue(current.warnings.toString(), current.warnings.toString().contains("future"));
+        assertTrue(current.warnings.toString(), current.warnings.toString().contains("回退内置值"));
     }
 
     /**

@@ -207,8 +207,8 @@ public class Utils {
      * <ul>
      *   <li><b>选了自定义主题</b> → 强制成它的类型。自定义主题的配色是固定的,夜间模式必须跟着它,
      *       否则弹窗/气泡/状态栏会按系统明暗取反(浅色主题 + 深色系统 = 白底黑字的页面配深色气泡);</li>
-     *   <li><b>跟随系统 / 浅色 / 深色</b> → 与改动前完全一致(跟随系统时不强制,让系统说了算,
-     *       再由 {@code ThemeStore} 按系统明暗取该类型的默认主题)。</li>
+     *   <li><b>跟随系统 / 浅色 / 深色</b> → 跟随系统只读取手机的亮暗状态，再明确启用
+     *       应用自己的亮/暗资源；{@code ThemeStore} 选该类型的默认主题。</li>
      * </ul>
      */
     public static void initTheme(){
@@ -236,7 +236,11 @@ public class Utils {
         }
         switch (mode) {
             case 0:
-                AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM);
+                // 跟随系统只决定亮暗类型；具体资源仍锁定到应用自己的亮/暗主题。
+                AppCompatDelegate.setDefaultNightMode(
+                        com.github.tvbox.osc.storage.theme.ThemeStore.activeType().isDark()
+                                ? AppCompatDelegate.MODE_NIGHT_YES
+                                : AppCompatDelegate.MODE_NIGHT_NO);
                 break;
             case 1:
                 AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO);
@@ -245,7 +249,10 @@ public class Utils {
                 AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES);
                 break;
             default:
-                AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM);
+                AppCompatDelegate.setDefaultNightMode(
+                        com.github.tvbox.osc.storage.theme.ThemeStore.activeType().isDark()
+                                ? AppCompatDelegate.MODE_NIGHT_YES
+                                : AppCompatDelegate.MODE_NIGHT_NO);
                 break;
         }
     }

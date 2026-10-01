@@ -36,6 +36,30 @@ public final class ThemeSpec {
 
     private static final List<ThemeKey> ALL;
     private static final Map<String, ThemeKey> BY_KEY;
+    private static final List<ShapeKey> SHAPES;
+    private static final Map<String, ShapeKey> SHAPE_BY_KEY;
+
+    /** 形状编辑项。数值统一是 dp,不带单位后缀。 */
+    public static final class ShapeKey {
+        public enum Kind { RADIUS, STROKE }
+
+        public final String key;
+        public final Kind kind;
+        public final String label;
+        public final String description;
+        public final float defaultDp;
+        public final float maxDp;
+
+        ShapeKey(String key, Kind kind, String label, String description,
+                 float defaultDp, float maxDp) {
+            this.key = key;
+            this.kind = kind;
+            this.label = label;
+            this.description = description;
+            this.defaultDp = defaultDp;
+            this.maxDp = maxDp;
+        }
+    }
 
     static {
         List<ThemeKey> list = new ArrayList<>();
@@ -66,13 +90,9 @@ public final class ThemeSpec {
                 "页面层:卡片/标题栏/底栏/搜索框/占位/卡片里的行"));
         list.add(new ThemeKey("bg_float_alpha", ThemeKey.Group.SURFACE, ThemeKey.Kind.ALPHA, "浮层透明度",
                 "弹窗、抽屉、气泡、首页直播/筛选悬浮钮"));
-        // 卡片类目:底色与文字一对 —— **目前没有接到任何组件**(用户口径:"暂时我还没对组件使用")。
-        // 只把键与派生准备好,等用户明确指定用在哪再接线;别自己认领组件:
-        // 海报卡角上那个角标是**故意固定**的深底白字(见 res/values/colors.xml 的 poster_badge_bg)。
-        list.add(new ThemeKey("card_category_bg", ThemeKey.Group.SURFACE, ThemeKey.Kind.COLOR, "卡片类目背景",
-                "卡片上的「类目」标签底色(暂未接到任何组件,等指定)"));
-        list.add(new ThemeKey("card_category_text", ThemeKey.Group.SURFACE, ThemeKey.Kind.COLOR, "卡片类目文字",
-                "与上面那个底色成对(暂未接到任何组件,等指定)"));
+        // 卡片类目底色/文字这一对键已按用户要求**移除**(从未接到任何组件,留着只是让主题编辑器多两行看不懂的项)。
+        // 海报卡角上那个角标依旧是**故意固定**的深底白字(见 res/values/colors.xml 的 poster_badge_bg),
+        // 别拿它当"类目"重新认领。
 
         // ② 文字分级
         // **文字主色(brand)排在最前**:用户口径 —— "主题主色改成文字主色,并把文字主色调整到次要文字前面"。
@@ -105,8 +125,8 @@ public final class ThemeSpec {
         //        (纯色按钮的**描边**由"主按钮背景的不透明版"派生,不单独配;
         //         小组件按钮/chip/直播选中条的**选中态填充与文字**也取这两个键 ——
         //         填充 = 主按钮背景**本身(含透明度)**:主按钮设成无色时,选中态也是无色);
-        //      · 空心按钮边框线颜色 = 空心按钮(无底色、只有 1dp 描边)的描边色,
-        //        也是小组件按钮未选中时的边框色 —— 这个键原来叫"次按钮背景";
+        //      · 空心按钮与未选中小组件的描边跟文字主色同源;
+        //        btn_cancel_bg 仅用于无文字容器与输入框(原键名保留兼容);
         //      · 「次按钮文字」已删除:空心按钮的文字走**文字主色**;
         //      · 「主色上的文字」(brand_text)已删除:它唯一的用途是派生 btn_select_text,
         //        而后者现在直接取主按钮文字。
@@ -115,8 +135,10 @@ public final class ThemeSpec {
                         + "选中态(小组件按钮/chip/直播选中条)的填充就是它本身,设成无色则选中态也无色"));
         list.add(new ThemeKey("btn_confirm_text", ThemeKey.Group.BRAND, ThemeKey.Kind.COLOR, "主按钮文字",
                 "纯色按钮上的字(选中态的文字也用它)"));
-        list.add(new ThemeKey("btn_cancel_bg", ThemeKey.Group.BRAND, ThemeKey.Kind.COLOR, "空心按钮边框线颜色",
-                "空心按钮(取消这类无底色按钮)的 1dp 描边;小组件按钮未选中时的边框也用它"));
+        list.add(new ThemeKey("btn_cancel_bg", ThemeKey.Group.BRAND, ThemeKey.Kind.COLOR, "无字容器边框颜色",
+                "**已从主题编辑器移除**(2026-10-01,用户口径):空心按钮的描边一律跟自己的文字色走,"
+                        + "这个键只剩内部用途 —— 输入框底/无文字描边容器(btn_stroke 同值);"
+                        + "改它请编辑 assets/theme/theme_colors*.json"));
 
         // ④ 状态与开关
         // 「开关-开」与「下载完成」原来是两个键、值也一直是同一个绿(#08CA2C),合并成一个
@@ -124,8 +146,10 @@ public final class ThemeSpec {
         // (派生名 switch_track_on / download_done 仍然存在,组件代码不用动,见 build.gradle 的派生表)。
         list.add(new ThemeKey("success", ThemeKey.Group.STATE, ThemeKey.Kind.COLOR, "完成/开启色",
                 "开关打开、下载完成这类正向状态"));
-        list.add(new ThemeKey("switch_track_off", ThemeKey.Group.STATE, ThemeKey.Kind.COLOR, "开关-关",
-                "开关关闭时的轨道色"));
+        // 「开关-关」已**不再是配置项**(2026-10-01,用户口径"开关关闭颜色不自定义,改成开关开启色 透明度30%,
+        // 同时移除主题配置里的开关-关选项"):它现在是派生值 = 开关开启色 @30% 透明
+        // (生成侧见 build.gradle 的派生表,运行期见 ThemePaletteFactory)——
+        // 与 switch_track_on / download_done 同一档:调色板仍有这个名字,只是不占配置、不进编辑器。
         list.add(new ThemeKey("switch_thumb", ThemeKey.Group.STATE, ThemeKey.Kind.COLOR, "开关圆点",
                 "开关上的圆点"));
         // 直播页"选中/聚焦那一条频道"的底原来是写死的蓝 accent_on_dark(唯一还在用那支蓝的地方),
@@ -140,6 +164,32 @@ public final class ThemeSpec {
         Map<String, ThemeKey> map = new LinkedHashMap<>();
         for (ThemeKey k : list) map.put(k.key, k);
         BY_KEY = Collections.unmodifiableMap(map);
+
+        List<ShapeKey> shapes = new ArrayList<>();
+        shapes.add(shape(ThemeShapePalette.RADIUS_BACKGROUND, ShapeKey.Kind.RADIUS, "大面板圆角", "页面大卡片", 26f));
+        shapes.add(shape(ThemeShapePalette.RADIUS_DIALOG, ShapeKey.Kind.RADIUS, "弹窗圆角", "弹窗与抽屉面板", 16f));
+        shapes.add(shape(ThemeShapePalette.RADIUS_CARD, ShapeKey.Kind.RADIUS, "卡片圆角", "列表行、海报与卡片小块", 16f));
+        shapes.add(shape(ThemeShapePalette.RADIUS_BTN, ShapeKey.Kind.RADIUS, "按钮圆角", "主按钮、空心按钮与文字按钮", 12f));
+        shapes.add(shape(ThemeShapePalette.RADIUS_WIDGET_BTN, ShapeKey.Kind.RADIUS, "小组件按钮圆角", "0–15 为圆角矩形;16–17 会形成胶囊", 12f));
+        shapes.add(shape(ThemeShapePalette.RADIUS_SEARCH, ShapeKey.Kind.RADIUS, "搜索框圆角", "搜索框专用", 16f));
+        shapes.add(shape(ThemeShapePalette.COMMON_CORNERS, ShapeKey.Kind.RADIUS, "小件圆角", "弹窗与抽屉内的小元素", 12f));
+        // 缩略图专用(下载页小封面 / 本地视频小图)。**列在这里是为了让主题文件能解析/校验这个键**
+        // (自定义主题 JSON 的 radii 段照旧能存它);它**不出现在主题编辑器界面**里 ——
+        // ThemeEditorActivity 会跳过 Kind.RADIUS 的项(用户口径"主题配置里不给圆角配置选项")。
+        shapes.add(shape(ThemeShapePalette.RADIUS_THUMB, ShapeKey.Kind.RADIUS, "缩略图圆角", "下载页小封面与本地视频小图", 8f));
+        shapes.add(shape(ThemeShapePalette.STROKE_WIDGET_BTN, ShapeKey.Kind.STROKE, "小组件描边", "chip 与小组件按钮描边宽度", 0.5f));
+        SHAPES = Collections.unmodifiableList(shapes);
+        Map<String, ShapeKey> shapeMap = new LinkedHashMap<>();
+        for (ShapeKey shape : shapes) shapeMap.put(shape.key, shape);
+        SHAPE_BY_KEY = Collections.unmodifiableMap(shapeMap);
+    }
+
+    private static ShapeKey shape(String key, ShapeKey.Kind kind, String label,
+                                  String description, float fallback) {
+        float value = kind == ShapeKey.Kind.RADIUS
+                ? ThemeShapePalette.defaultRadius(key) : ThemeShapePalette.defaultStroke(key);
+        if (value == 0f && fallback != 0f) value = fallback;
+        return new ShapeKey(key, kind, label, description, value, ThemeShapePalette.maxOf(key));
     }
 
     private ThemeSpec() {
@@ -177,5 +227,31 @@ public final class ThemeSpec {
     /** 可配置项总数(内置主题文件必须一个不少) */
     public static int size() {
         return ALL.size();
+    }
+
+    public static List<ShapeKey> shapeKeys() {
+        return SHAPES;
+    }
+
+    /**
+     * 该颜色键是否**不进主题编辑器界面**(2026-10-01):
+     * 用户口径"移除主题配置里的空心按钮边框线颜色"、"移除开关-关选项"。
+     * 与"派生键"(如 switch_track_on / switch_track_off,压根不在 {@link #ALL} 里)的区别:
+     * 这些键**仍然是配置项**(主题文件里照旧解析/校验/保存),只是编辑器不再列它 ——
+     * 想让用户改就得编辑主题文件。圆角项是另一条路(编辑器跳过 {@code Kind.RADIUS},不在这里)。
+     */
+    public static boolean isHidden(String key) {
+        if (key == null) return false;
+        switch (key) {
+            case "btn_cancel_bg":
+                // 空心按钮的描边已一律跟文字色走,这个键只剩内部用途(输入框底/无文字描边容器)
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    public static ShapeKey shapeByKey(String key) {
+        return key == null ? null : SHAPE_BY_KEY.get(key);
     }
 }

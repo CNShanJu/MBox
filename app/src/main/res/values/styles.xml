@@ -6,10 +6,8 @@
          全部套这一条:
            · 底 = selector_widget_btn(未选中只有边框线、选中=纯色按钮的填充,圆角只走 radius_widget_btn);
            · 字 = widget_btn_text(未选中=文字主色、选中=主按钮文字);
-           · **高度与半径要配套**:minHeight 给到 34dp,radius_widget_btn 默认 8dp ——
-             这类键本来只有 25~30dp 高,半径一旦 ≥ 半高,GradientDrawable 会把上下圆角一起缩成**胶囊**
-             (用户口径:"上边圆角和下边圆角不一致""历史搜索那个不是正常显示");34dp 高 + 8dp 半径
-             直边还剩 18dp,才是正常的圆角矩形。
+           · **高度与半径要配套**:minHeight 为 34dp,radius_widget_btn 默认 12dp;
+             0～15dp 是普通圆角,16dp 接近胶囊,17dp 是标准胶囊,不得用布局裁剪造成不对称圆角。
          两种交互形态(用户口径,逐页归属也在这里定死,别在页面里各写一套):
            ① **选择按钮** —— 点击后 `setSelected(true/false)`,底色与文字色一起切到"纯色按钮"那一档
               (由下面这对 selector 自动完成,代码只切 isSelected)。用它的地方:
@@ -30,12 +28,16 @@
         <item name="android:paddingHorizontal">10dp</item>
     </style>
 
-    <!-- 背景图设置页的预设 chip:就是小组件按钮(等分宽度 + 12sp 小一号字),底与字都跟 WidgetBtn 同一套 -->
+    <!-- 背景图设置页的预设 chip:就是小组件按钮(等分宽度 + 12sp 小一号字),底与字都跟 WidgetBtn 同一套。
+         横向内边距比 WidgetBtn 收窄(10dp→6dp):位置那一行有 5 个等分格,每格只有 50 来 dp,
+         4 字标签 + 10dp 内边距在窄屏/大字体下必被 ellipsize 成"全屏铺…";
+         让出的宽度全给文字,配合"尺寸 3 个 / 位置 5 个(2 字标签)"的排法,标签就不会再被截断 -->
     <style name="PageBgChip" parent="@style/WidgetBtn">
         <item name="android:layout_width">0dp</item>
         <item name="android:layout_height">34dp</item>
         <item name="android:layout_weight">1</item>
         <item name="android:layout_marginHorizontal">4dp</item>
+        <item name="android:paddingHorizontal">6dp</item>
         <item name="android:textSize">12sp</item>
         <item name="android:ellipsize">end</item>
     </style>
@@ -43,6 +45,8 @@
 
 
     <style name="AppTheme" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- 明暗由应用的主题选择解析；系统只提供亮暗信号，不自动重着色页面。 -->
+        <item name="android:forceDarkAllowed">false</item>
         <!-- Material 3 色板 -->
         <item name="colorPrimary">@color/md_primary</item>
         <item name="colorOnPrimary">@color/md_on_primary</item>
@@ -68,6 +72,9 @@
         <!-- 兼容旧引用 -->
         <item name="colorAccent">@color/md_primary</item>
         <item name="colorPrimaryDark">@color/md_primary</item>
+        <!-- 系统输入框的光标与选区句柄跟随文字主色。 -->
+        <item name="colorControlActivated">@color/text_foreground</item>
+        <item name="android:colorControlActivated">@color/text_foreground</item>
         <!--默认window窗口(activity)背景颜色,避免activity跳转/回跳白屏-->
         <item name="android:windowBackground">@color/windowBackground</item>
     </style>
@@ -95,9 +102,8 @@
     </style>
     <!-- ================= 主题按钮(全局统一,只有三型) =================
          ① 纯色按钮 BtnPrimary   —— 有底色的(btn_confirm_*):确定/保存/开始下载等主要动作
-         ② 空心按钮 BtnSecondary —— 无底色 + 1dp 描边:取消/重置/下载管理等次要动作
-                                     (底色 = btn_cancel_bg,主题里配成透明即"空心";
-                                      描边 btn_stroke 是"空心"的唯一来源,不许去掉)
+         ② 空心按钮 BtnSecondary —— 无底色 + 1dp 描边:取消/重置/下载管理等次要动作;
+                                      按下仍为空心,描边与文字同色
          ③ 纯文字按钮 BtnGhost   —— 无底色、无描边,只有文字(btn_plain_text):复制/展开/选集下载这类
          三型**圆角只走 radius_btn**(theme_radii.json),不再有 *Large 变体。
          "小组件按钮"(日志分类 / 背景图调整键 / 搜索历史·热词·联想 / 播放器设置键)是另一条线:
@@ -114,13 +120,9 @@
         <item name="android:insetBottom">0dp</item>
         <item name="android:gravity">center</item>
         <item name="android:stateListAnimator">@null</item>
-        <item name="backgroundTint">@color/btn_confirm_bg</item>
-        <item name="cornerRadius">@dimen/radius_btn</item>
-        <!-- 纯色按钮也要有边框线:描边色 = 主按钮背景色,但**强制不透明**
-              (btn_confirm_stroke = btn_confirm_bg 的 alpha 归 100%)——
-              这样用户把底色设成半透明/全透明时,边框线依旧实心清楚 -->
-        <item name="strokeColor">@color/btn_confirm_stroke</item>
-        <item name="strokeWidth">1dp</item>
+        <!-- 首帧 XML 与运行时 Drawable 都由 theme_shapes.json 的同一条配方生成。 -->
+        <item name="android:background">@drawable/theme_btn_primary</item>
+        <item name="backgroundTint">@null</item>
     </style>
 
     <!-- 弹窗右上角关闭键(**全站统一**):40dp 方框 + 8dp 内边距 ⇒ 图标实际画 24dp,
@@ -138,41 +140,35 @@
         <item name="android:src">@drawable/ic_close_24</item>
     </style>
 
-    <!-- 危险按钮:不可逆动作的"执行"键(删除/清空确认),主题文件里的 swipe_red(红底)+ swipe_red_text(红底上的字)。
-         只给"确认执行"用 —— 危险动作的**入口**(列表工具条的「删除」、条目上的删除图标)走无底色的 @color/text_danger。 -->
+    <!-- 危险实心按钮:红底 + 白字,用于明确采用实心危险样式的弹窗。
+         普通危险确认使用 BtnDangerGhost(红色描边 + 红字)。 -->
     <style name="BtnDanger" parent="BtnPrimary">
         <item name="android:textColor">@color/swipe_red_text</item>
-        <item name="backgroundTint">@color/swipe_red</item>
-        <!-- 同纯色按钮的规则:描边 = 底色(swipe_red 本身就是不透明字面量) -->
-        <item name="strokeColor">@color/swipe_red</item>
+        <item name="android:background">@drawable/theme_btn_danger</item>
     </style>
 
-    <!-- 危险入口(无底色 + 红字 + 描边):不可逆动作的**入口**键,不是确认键。
+    <!-- 危险空心按钮(无底色 + 红字 + 描边):不可逆动作的入口与普通确认键。
          口径 = colors.xml 那条"危险入口走无底色的 @color/text_danger":底色透明(不抢眼、不是"确认执行"的重量)。
          它**不跟**纯文字按钮(BtnGhost)走无描边那一档 —— 危险入口是"要做点什么"的键,留着空心键的描边
-         (btn_cancel_bg)才不会跟旁边可点的普通文字混在一起;红字是固定字面量(危险三色不进主题文件),描边随主题走。
-         用在:主题编辑页的「删除」(它只是入口,真正的执行在确认弹窗的红底键上)。 -->
+         红色描边才不会跟旁边可点的普通文字混在一起;红字与描边同取危险红,按下仍为空心。
+         用在:主题编辑页「删除」、日志页「清空」及通用危险确认弹窗。 -->
     <style name="BtnDangerGhost" parent="BtnGhost">
-        <item name="android:textColor">@color/text_danger</item>
-        <item name="strokeColor">@color/btn_cancel_bg</item>
-        <item name="strokeWidth">1dp</item>
+        <item name="android:textColor">@color/btn_danger_ghost_text</item>
+        <item name="android:background">@drawable/theme_btn_danger_entry</item>
     </style>
 
-    <!-- ② 空心按钮:取消/重置/下载管理等次要动作。**无填充**,只有 1dp 描边 ——
-         描边色 = 主题键 btn_cancel_bg(标签「空心按钮边框线颜色」),文字走**文字主色**(btn_plain_text)。 -->
+    <!-- ② 空心按钮:取消/重置/下载管理等次要动作。按下仍无填充;
+         描边和文字都走文字主色(btn_plain_text),禁用时都走 text_disable。 -->
     <style name="BtnSecondary" parent="@style/Widget.Material3.Button">
-        <item name="android:textColor">@color/btn_plain_text</item>
+        <item name="android:textColor">@color/btn_secondary_text</item>
         <item name="android:textSize">14sp</item>
         <item name="android:textAllCaps">false</item>
         <item name="android:insetTop">0dp</item>
         <item name="android:insetBottom">0dp</item>
         <item name="android:gravity">center</item>
         <item name="android:stateListAnimator">@null</item>
-        <!-- 空心 = 不填色:底色恒透明,颜色只走描边那条线 -->
-        <item name="backgroundTint">@android:color/transparent</item>
-        <item name="cornerRadius">@dimen/radius_btn</item>
-        <item name="strokeColor">@color/btn_cancel_bg</item>
-        <item name="strokeWidth">1dp</item>
+        <item name="android:background">@drawable/theme_btn_secondary</item>
+        <item name="backgroundTint">@null</item>
     </style>
 
     <!-- ③ 纯文字按钮:背景透明、**无描边**,只剩文字(复制/展开/选集下载这类"本质是文字的动作")。
@@ -185,8 +181,8 @@
         <item name="android:insetBottom">0dp</item>
         <item name="android:gravity">center</item>
         <item name="android:stateListAnimator">@null</item>
-        <item name="backgroundTint">@android:color/transparent</item>
-        <item name="cornerRadius">@dimen/radius_btn</item>
+        <item name="android:background">@drawable/theme_btn_ghost</item>
+        <item name="backgroundTint">@null</item>
     </style>
 
     <!-- 纯文字按钮(TextView 版):给"本质就是一行文字"的键用 —— 复制 / 展开 / 选集 / 下载。

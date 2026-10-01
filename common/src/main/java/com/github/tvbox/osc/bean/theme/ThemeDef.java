@@ -33,10 +33,10 @@ public final class ThemeDef {
     /**
      * 格式版本:加字段/改键名时靠它做兼容(导入方不认识的更高版本会被拒绝)。
      *
-     * <p>v2(2026-09):底色/状态/危险色那批键改过名(见 {@code ThemeJson} 的旧键迁移表)——
-     * 老主题文件(v1)读进来时会被自动搬到新键名上,不必让用户重建主题。
+     * <p>v2(2026-09):底色/状态/危险色那批键改过名；v3 增加 radii/strokes。
+     * schema 1/2 读入时自动迁移并继承同类型内置形状，不必让用户重建主题。
      */
-    public static final int SCHEMA = 2;
+    public static final int SCHEMA = 3;
 
     private int schema = SCHEMA;
     private String kind = KIND;
@@ -47,6 +47,10 @@ public final class ThemeDef {
     private long createdAt = 0L;
     /** 25 个可配置项:键 → 值(颜色 {@code #RRGGBB}/{@code #AARRGGBB},透明度 {@code "0".."100"}) */
     private final LinkedHashMap<String, String> colors = new LinkedHashMap<>();
+    /** schema 3:语义圆角(dp,无单位后缀) */
+    private final LinkedHashMap<String, Float> radii = new LinkedHashMap<>();
+    /** schema 3:描边宽度(dp,无单位后缀) */
+    private final LinkedHashMap<String, Float> strokes = new LinkedHashMap<>();
     private Background background = new Background();
 
     /** 背景图引用(相对应用私有目录;见类注释) */
@@ -173,6 +177,7 @@ public final class ThemeDef {
             }
         }
         def.materialize(builtinInput);
+        def.materializeShapes(ThemeShapePalette.defaults());
         return def;
     }
 
@@ -189,6 +194,22 @@ public final class ThemeDef {
             if (v == null) continue;
             colors.put(k.key, v);
             filled.add(k.key);
+        }
+        return filled;
+    }
+
+    /** 用同类型内置形状补齐 schema 1/2 或残缺 schema 3。 */
+    public List<String> materializeShapes(ThemeShapePalette builtin) {
+        ThemeShapePalette fallback = builtin == null ? ThemeShapePalette.defaults() : builtin;
+        List<String> filled = new ArrayList<>();
+        for (ThemeSpec.ShapeKey key : ThemeSpec.shapeKeys()) {
+            LinkedHashMap<String, Float> map = key.kind == ThemeSpec.ShapeKey.Kind.RADIUS ? radii : strokes;
+            Float current = map.get(key.key);
+            if (current != null && ThemeShapePalette.isValid(key.key, current)) continue;
+            float value = key.kind == ThemeSpec.ShapeKey.Kind.RADIUS
+                    ? fallback.radiusDp(key.key) : fallback.strokeDp(key.key);
+            map.put(key.key, value);
+            filled.add(key.key);
         }
         return filled;
     }
@@ -225,6 +246,8 @@ public final class ThemeDef {
         d.type = type;
         d.createdAt = createdAt;
         d.colors.putAll(colors);
+        d.radii.putAll(radii);
+        d.strokes.putAll(strokes);
         d.background = background.copy();
         return d;
     }
@@ -283,6 +306,44 @@ public final class ThemeDef {
     /** 可直接改的键值视图(仅同包/序列化用;外部请走 {@link #color}/{@link #setColor}) */
     public LinkedHashMap<String, String> colors() {
         return colors;
+    }
+
+    public LinkedHashMap<String, Float> radii() {
+        return radii;
+    }
+
+    public LinkedHashMap<String, Float> strokes() {
+        return strokes;
+    }
+
+    public float radius(String key) {
+        Float value = radii.get(key);
+        return value == null ? ThemeShapePalette.defaultRadius(key) : value;
+    }
+
+    public float stroke(String key) {
+        Float value = strokes.get(key);
+        return value == null ? ThemeShapePalette.defaultStroke(key) : value;
+    }
+
+    /** 写圆角:超上限**夹到上限**(与构建期 readRadii、与 ThemeShapePalette 同口径),负数/NaN 才回默认 */
+    public void setRadius(String key, float value) {
+        if (!ThemeShapePalette.isRadiusKey(key)) return;
+        if (!Float.isFinite(value) || value < 0f) {
+            radii.put(key, ThemeShapePalette.defaultRadius(key));
+        } else {
+            radii.put(key, Math.min(value, ThemeShapePalette.maxOf(key)));
+        }
+    }
+
+    /** 写描边:同 {@link #setRadius} 的口径 */
+    public void setStroke(String key, float value) {
+        if (!ThemeShapePalette.isStrokeKey(key)) return;
+        if (!Float.isFinite(value) || value < 0f) {
+            strokes.put(key, ThemeShapePalette.defaultStroke(key));
+        } else {
+            strokes.put(key, Math.min(value, ThemeShapePalette.maxOf(key)));
+        }
     }
 
     public Background getBackground() {

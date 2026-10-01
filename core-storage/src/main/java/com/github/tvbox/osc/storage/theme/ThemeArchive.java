@@ -190,6 +190,7 @@ public final class ThemeArchive {
         if (r.def == null) return new ImportResult(null, r.error, null, false);
         ThemeDef def = r.def;
         def.materialize(ThemeStore.builtinInput(def.getType()));
+        def.materializeShapes(ThemeStore.builtinShapes(def.getType()));
         // 粘贴进来的 JSON 若声明了背景图,那张图在本机大概率不存在:退化成"跟随默认"并提示
         List<String> warnings = new ArrayList<>(r.warnings);
         if (def.hasBackgroundImage() && ThemeBackgroundLibrary.resolvePath(ThemeStore.context(),
@@ -255,6 +256,7 @@ public final class ThemeArchive {
             return new ImportResult(null, "主题包里没有找到主题文件(.json)", null, false);
         }
         def.materialize(ThemeStore.builtinInput(def.getType()));
+        def.materializeShapes(ThemeStore.builtinShapes(def.getType()));
 
         // 背景图:收进图库(按内容 hash 去重,重复的图直接复用)
         if (tmpImage != null) {

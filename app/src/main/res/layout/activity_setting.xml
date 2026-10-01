@@ -524,39 +524,6 @@
                 android:layout_marginTop="14dp"
                 android:background="@drawable/bg_large_round_float">
                 <LinearLayout
-                    android:id="@+id/llLiveApi"
-                    android:layout_width="match_parent"
-                    android:layout_height="@dimen/dp_60"
-                    android:layout_weight="1"
-                    android:focusable="true"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal"
-                    android:paddingHorizontal="40dp"
-                    android:foreground="?android:selectableItemBackground">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="直播源"
-                        android:textColor="@color/text_foreground"
-                        android:textSize="16sp"
-                        />
-
-                    <Space
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1" />
-
-                    <ImageView
-                        android:layout_width="13dp"
-                        android:layout_height="13dp"
-                        android:layout_gravity="center"
-                        android:alpha="0.75"
-                        android:src="@drawable/ic_seek_right"
-                        app:tint="@color/text_foreground"/>
-                </LinearLayout>
-
-                <LinearLayout
                     android:id="@+id/llPlay"
                     android:layout_width="match_parent"
                     android:layout_height="@dimen/dp_60"

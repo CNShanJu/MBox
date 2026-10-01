@@ -16,10 +16,13 @@ import com.github.tvbox.osc.R
 import com.github.tvbox.osc.base.BaseVbActivity
 import com.github.tvbox.osc.bean.theme.ThemeDef
 import com.github.tvbox.osc.bean.theme.ThemeKey
-import com.github.tvbox.osc.bean.theme.ThemePalette
+import com.github.tvbox.osc.bean.theme.ThemeColorPalette
 import com.github.tvbox.osc.bean.theme.ThemeSpec
+import com.github.tvbox.osc.bean.theme.ThemeShapePalette
 import com.github.tvbox.osc.bean.theme.ThemeType
 import com.github.tvbox.osc.databinding.ActivityThemeEditorBinding
+import com.github.tvbox.osc.log.Category
+import com.github.tvbox.osc.log.LogStore
 import com.github.tvbox.osc.storage.theme.ThemeArchive
 import com.github.tvbox.osc.storage.theme.ThemeStore
 import com.github.tvbox.osc.ui.adapter.SelectDialogAdapter
@@ -47,6 +50,10 @@ import java.util.LinkedHashMap
  *       (否则会得到一个"说是暗色、其实是浅色"的主题);已经调过的颜色一律保持不动。</li>
  *   <li><b>颜色项</b>:按 {@link ThemeSpec} 的类目列出全部 25 项;每项都能<b>直接改十六进制文本</b>,
  *       也能点色块开取色板。透明度项给数字(0-100),没有色板。</li>
+ *   <li><b>圆角项不在本页**(用户口径"主题配置里不给圆角配置选项"):圆角只在
+ *       {@code assets/theme/theme_radii.json}(或自定义主题 JSON 的 radii)里改 ——
+ *       页面里只剩一个"边框线粗细"({@code stroke_widget_btn})的形状项。
+ *       主题文件里的圆角值照旧解析、校验、随主题保存与套用(见本页 draft/ThemeSpec 路径)。</li>
  *   <li><b>背景</b>:图片(走既有背景图导入:体积上限 / 纠 EXIF 方向 / 转 WebP,并按内容 hash 去重)
  *       / 纯色 / 恢复默认(默认值按主题类型取内置主题,即纯色)。</li>
  *   <li><b>底部动作</b>:新建时是「取消 + 导入主题」,编辑已有主题时换成「删除 + 导出主题」——
@@ -77,6 +84,7 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
     private var typeBaseline: Map<String, String> = emptyMap()
     /** key → 该键的所有行(同一个键可能在两处出现,如 bg_body 在颜色卡与「背景」块各一行) */
     private val rows = LinkedHashMap<String, MutableList<Row>>()
+    private val shapeRows = LinkedHashMap<String, ShapeRow>()
 
     /** 导出到缓存里的文件(用户选好位置后复制过去) */
     private var exportedFile: File? = null
@@ -85,6 +93,12 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
         val key: ThemeKey,
         val label: TextView,
         val swatch: View,
+        val input: EditText
+    )
+
+    private class ShapeRow(
+        val key: ThemeSpec.ShapeKey,
+        val label: TextView,
         val input: EditText
     )
 
@@ -99,16 +113,75 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
                 ?: ThemeDef.blank(ThemeType.BRIGHT, ThemeStore.builtinInput(ThemeType.BRIGHT))
         }
         def.materialize(ThemeStore.builtinInput(def.type))
+        def.materializeShapes(ThemeStore.builtinShapes(def.type))
         draft = def
         typeBaseline = LinkedHashMap(def.colors())
 
         buildColorRows()
+        buildShapeRows()
         bindType()
         bindBackground()
         bindActions()
         refreshHeader()
         refreshAllValues()
     }
+
+    /** schema 3 形状项:数值统一为 dp,输入框不带 dp 后缀;右侧色块就是实时预览。 */
+    private fun buildShapeRows() {
+        val card = LinearLayout(this)
+        card.orientation = LinearLayout.VERTICAL
+        com.github.tvbox.osc.theme.ThemeDrawables.applyBackground(card, R.drawable.bg_large_round_float)
+        val pad = dp(20)
+        card.setPadding(pad, dp(16), pad, dp(16))
+        card.layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).also {
+            it.topMargin = dp(14)
+        }
+        val inflater = LayoutInflater.from(this)
+        for (key in ThemeSpec.shapeKeys()) {
+            // **圆角项不进界面**(用户口径"主题配置里不给圆角配置选项"):圆角只在
+            // assets/theme/theme_radii.json(或自定义主题 JSON)里改,编辑器只留颜色与"边框线粗细";
+            // 实测也印证了这个取舍 —— 圆角项做成输入框既容易被调成胶囊(小件圆角超过半高),
+            // 又和颜色项混在一屏里,改一档要来回比。ThemeSpec 的圆角键仍在(主题文件解析/校验照旧)。
+            if (key.kind == ThemeSpec.ShapeKey.Kind.RADIUS) continue
+            val rowView = inflater.inflate(R.layout.item_theme_color, card, false)
+            card.addView(rowView)
+            bindShapeRow(key, rowView)
+        }
+        mBinding.llGroups.addView(card)
+    }
+
+    private fun bindShapeRow(key: ThemeSpec.ShapeKey, rowView: View) {
+        val label = rowView.findViewById<TextView>(R.id.tv_label)
+        val input = rowView.findViewById<EditText>(R.id.et_value)
+        // 形状项**不显示色块预览**(用户口径"小组件描边为啥前面还有颜色预览块…边框颜色跟着文字颜色走,
+        // 移除颜色预览块"):原来那块画的是"小组件按钮的小样"(底/描边/文字全是主题色),
+        // 看着像"这里能设颜色",其实这一项只能设**粗细**;边框色已一律跟文字色走,没有可预览的颜色。
+        rowView.findViewById<View>(R.id.v_swatch).visibility = View.GONE
+        label.text = key.label
+        input.hint = "0-${formatDp(key.maxDp)}"
+        input.inputType = android.text.InputType.TYPE_CLASS_NUMBER or
+                android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+        input.maxLengthCompat(5)
+        input.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                val value = s?.toString()?.trim()?.toFloatOrNull()
+                val valid = value != null && ThemeShapePalette.isValid(key.key, value)
+                input.setTextColor(ContextCompat.getColor(this@ThemeEditorActivity,
+                    if (valid) R.color.text_foreground else R.color.text_danger))
+                if (valid) {
+                    val d = draft ?: return
+                    d.setStroke(key.key, value!!)
+                }
+            }
+        })
+        shapeRows[key.key] = ShapeRow(key, label, input)
+    }
+
+    private fun formatDp(value: Float): String =
+        if (value == value.toInt().toFloat()) value.toInt().toString() else value.toString()
 
     // ------------------------------------------------------------------
     // 颜色项:仍按类目分成几张卡(与原来一致),只是不再打类目标题
@@ -119,7 +192,9 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
         for (group in ThemeSpec.groups()) {
             val card = LinearLayout(this)
             card.orientation = LinearLayout.VERTICAL
-            card.background = ContextCompat.getDrawable(this, R.drawable.bg_large_round_float)
+            // 动态创建的卡片在创建点显式声明背景资源,不交给全树按颜色值猜语义。
+            com.github.tvbox.osc.theme.ThemeDrawables.applyBackground(
+                card, R.drawable.bg_large_round_float)
             val pad = dp(20)
             card.setPadding(pad, dp(16), pad, dp(16))
             val lp = LinearLayout.LayoutParams(
@@ -131,6 +206,9 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
                 // 页面背景不在这张卡里重复列:它归下面「背景」块那一个取色行(纯色就是它)。
                 // 两处都列 = 同一项在页面上出现两次(上面一次、下面一次),用户看到的是"重合了"。
                 if (key.key == BG_BODY_KEY) continue
+                // 用户口径"移除主题配置里的空心按钮边框线颜色":这类键仍是配置项(主题文件照旧解析),
+                // 只是编辑器不列它 —— 见 ThemeSpec.isHidden 的说明
+                if (ThemeSpec.isHidden(key.key)) continue
                 val rowView = inflater.inflate(R.layout.item_theme_color, card, false)
                 card.addView(rowView)
                 bindRow(key, rowView)
@@ -231,7 +309,7 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
         if (draft == null || key.isAlpha) return
         for (row in rows[key.key].orEmpty()) {
             val v = row.input.text.toString().trim()
-            val color = if (isValid(key, v)) ThemePalette.parseColor(normalize(key, v), 0xFF1F2937.toInt())
+            val color = if (isValid(key, v)) ThemeColorPalette.parseColor(normalize(key, v), 0xFF1F2937.toInt())
             else 0x00000000
             row.swatch.background = swatchDrawable(color)
         }
@@ -277,9 +355,9 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
         d.type = type
         if (untouched) {
             ThemeStore.resetToBuiltin(d)
-            AppBubble.toast("已按「${type.label}」内置主题填充颜色")
+            AppBubble.toast("已应用${type.label}默认配色")
         } else {
-            AppBubble.toast("只改了类型,颜色保持不变")
+            AppBubble.toast("类型已更改，配色未变")
         }
         typeBaseline = LinkedHashMap(d.colors())
         refreshHeader()
@@ -351,7 +429,7 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
         d.background.mode = ThemeDef.Background.MODE_DEFAULT
         d.background.ref = ""
         refreshBackground()
-        AppBubble.toast("背景已恢复默认(按「${d.type.label}」内置主题)")
+        AppBubble.toast("背景已恢复默认")
     }
 
     /**
@@ -502,6 +580,13 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
             }
             updateSwatch(key)
         }
+        for (key in ThemeSpec.shapeKeys()) {
+            val row = shapeRows[key.key] ?: continue
+            val value = if (key.kind == ThemeSpec.ShapeKey.Kind.RADIUS)
+                d.radius(key.key) else d.stroke(key.key)
+            val text = formatDp(value)
+            if (row.input.text.toString() != text) row.input.setText(text)
+        }
         refreshBackground()
     }
 
@@ -526,6 +611,16 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
                 continue
             }
             d.setColor(key.key, normalize(key, text))
+        }
+        for (key in ThemeSpec.shapeKeys()) {
+            val row = shapeRows[key.key] ?: continue
+            val value = row.input.text.toString().trim().toFloatOrNull()
+            if (value == null || !ThemeShapePalette.isValid(key.key, value)) {
+                row.input.requestFocus()
+                return "「${key.label}」请填 0-${formatDp(key.maxDp)} 的数字（单位 dp）"
+            }
+            if (key.kind == ThemeSpec.ShapeKey.Kind.RADIUS) d.setRadius(key.key, value)
+            else d.setStroke(key.key, value)
         }
         val bad = firstBad ?: return null
         rows[bad.key]?.firstOrNull()?.input?.requestFocus()
@@ -584,7 +679,7 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
                         s.commit()
                     }
                 }
-                AppBubble.toast("已保存并使用,关闭主题弹窗后重启生效")
+                AppBubble.toast("已保存，关闭弹窗后重启生效")
                 setResult(RESULT_OK)
                 finish()
             }
@@ -601,7 +696,7 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
                 mBinding.root.post {
                     dismissLoadingDialog()
                     if (!ok) {
-                        AppBubble.toast("删除失败,请稍后再试")
+                        AppBubble.toast("删除失败，请重试")
                         return@post
                     }
                     AppBubble.toast("已删除")
@@ -631,7 +726,7 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
                 if (!result.withImage) {
                     // 没有背景图 = 一个纯文本 JSON:顺手复制到剪贴板,微信里直接粘贴就能发出去
                     ClipboardUtils.copyText(readText(result.file!!))
-                    AppBubble.toast("主题 JSON 已复制到剪贴板")
+                    AppBubble.toast("主题内容已复制")
                 }
                 startExportPicker(result.file!!, result.withImage)
             }
@@ -753,6 +848,7 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
      */
     private fun applyImported(def: ThemeDef, warnings: List<String>) {
         def.materialize(ThemeStore.builtinInput(def.type))
+        def.materializeShapes(ThemeStore.builtinShapes(def.type))
         def.id = "" // 导入一律新建
         def.createdAt = 0L
         draft = def
@@ -762,9 +858,10 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
         refreshHeader()
         refreshAllValues()
         if (warnings.isNotEmpty()) {
-            AppBubble.toastLong("已导入:" + warnings.first())
+            LogStore.log(Category.SYSTEM, "主题导入: " + warnings.joinToString("；"))
+            AppBubble.toast(if (warnings.any { it.contains("背景图") }) "已导入，背景图未保留" else "已导入，部分内容未保留")
         } else {
-            AppBubble.toast("已导入,检查后点保存")
+            AppBubble.toast("已导入，检查后保存")
         }
         // 名字重复(或为空)时立刻让用户定名,免得保存时才发现
         if (def.name.isEmpty() || ThemeStore.checkName(def.name, "") != null) {

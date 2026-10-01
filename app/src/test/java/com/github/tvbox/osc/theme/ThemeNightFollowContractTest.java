@@ -60,7 +60,7 @@ public class ThemeNightFollowContractTest {
                 body.contains("customId.isEmpty()"));
     }
 
-    /** 主页/直播/详情声明了 uiMode(系统不重建),所以必须自己重建一次 */
+    /** 主页/直播/详情声明了 uiMode，跟随系统与自定义主题都要在明暗变化后重铺视图 */
     @Test
     public void configChangeRecreatesWhenFollowingSystem() throws Exception {
         String src = baseActivity();
@@ -68,8 +68,10 @@ public class ThemeNightFollowContractTest {
         assertTrue("配置变化要走明暗判定:" + body, body.contains("handleSystemNightChange("));
 
         String handler = methodBody(src, "private void handleSystemNightChange(");
-        assertTrue("只有跟随系统才重建(显式浅色/深色、自定义主题不受系统影响):" + handler,
+        assertTrue("跟随系统切换亮暗后必须重建页面:" + handler,
                 handler.contains("ThemeRuntime.followsSystem()"));
+        assertTrue("自定义主题在系统明暗变化后也要重铺，避免平台资源盖掉原有样式:" + handler,
+                handler.contains("ThemeRuntime.active()"));
         assertTrue("播放中的页面可以不重建:" + handler,
                 handler.contains("allowRecreateOnNightChange()"));
         assertTrue("挡下的重建要记下来,等空闲补做:" + handler,

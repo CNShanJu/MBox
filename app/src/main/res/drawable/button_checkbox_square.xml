@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 方形勾选框的全局样式:未选中 = 空心方框(无填充),选中 = 方框 + 勾(无填充)。
+     两个图标都以 @color/text_foreground 为色源,所以"边框线 + 勾"全局跟着文字主色走,
+     换自定义主题时经主题重建通道换成新色。
+     用法:给 CheckBox 加 android:button="@drawable/button_checkbox_square"
+     (MaterialCheckBox 用 app:buttonCompat)。 -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:state_checked="true"
+        android:drawable="@drawable/ic_checkbox_square_checked" />
+    <item
+        android:state_checked="false"
+        android:drawable="@drawable/ic_checkbox_square" />
+</selector>

@@ -92,4 +92,21 @@ public class ThemeRuntimeRefreshContractTest {
         assertTrue("默认主题只能在跟随系统分支被取用",
                 body.indexOf("s.mode != Selection.MODE_FOLLOW_SYSTEM") < body.indexOf("defaultIdOf("));
     }
+
+    /** 内置与自定义背景都必须先走配方工厂，且主题状态只通过一个快照引用发布。 */
+    @Test
+    public void runtimePublishesOneSnapshotAndRecipesPrecedeLegacyFallback() throws Exception {
+        String runtime = read("src/main/java/com/github/tvbox/osc/theme/ThemeRuntime.java",
+                "../app/src/main/java/com/github/tvbox/osc/theme/ThemeRuntime.java");
+        assertTrue(runtime.contains("private static volatile ThemeSnapshot snapshot"));
+        assertTrue("不得恢复颜色/类型分离的 volatile 状态",
+                !runtime.contains("private static volatile ThemePalette palette")
+                        && !runtime.contains("private static volatile ThemeType type"));
+
+        String drawables = read("src/main/java/com/github/tvbox/osc/theme/ThemeDrawables.java",
+                "../app/src/main/java/com/github/tvbox/osc/theme/ThemeDrawables.java");
+        String rebuild = methodBody(drawables, "public static Drawable rebuild(");
+        assertTrue(rebuild.indexOf("ThemeDrawableFactory.create")
+                < rebuild.indexOf("ThemeRuntime.palette() == null"));
+    }
 }

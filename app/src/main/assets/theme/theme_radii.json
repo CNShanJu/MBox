@@ -1,21 +1,23 @@
 {
-  "radius_background": "26dp",
-  "radius_dialog": "16dp",
-  "radius_card": "16dp",
-  "radius_btn": "12dp",
-  "radius_widget_btn": "12dp",
-  "radius_search": "16dp",
-  "common_corners": "12dp",
-  "stroke_widget_btn": "0.5dp",
+  "radius_background": 26,
+  "radius_dialog": 20,
+  "radius_card": 18,
+  "radius_btn": 14,
+  "radius_widget_btn": 26,
+  "radius_search": 26,
+  "common_corners": 26,
+  "radius_thumb": 10,
+  "stroke_widget_btn": 0.5,
 
   "desc": {
     "radius_background": "大面板圆角:**页面**上那些「整块」的底 —— 页面卡片、内容块、标题栏、页面里的气泡面板。**弹窗与抽屉那层面不在这档**(它们走 radius_dialog)。本行以前写的是「页面卡片、弹窗与抽屉面板、标题栏」,而居中弹窗面板底实际有一半挂在本档 —— 与 radius_dialog 的口径自相矛盾,于是「弹窗的圆角和抽屉的圆角,设置出来显示效果不一致」,2026-09-27 已把弹窗那层面全部收回 radius_dialog",
     "radius_dialog": "**全 App 弹窗/抽屉那层面的唯一一档**:居中弹窗、底部面板、右侧抽屉、播放器控制面板都走它。对应底是 bg_dialog(居中弹窗,唯一一份面板底)、bg_bottom_dialog(底部)、bg_drawer(右侧,只圆左两角)、bg_playing_control;ShadowLayout 壳形态(搜索字幕弹窗)的 hl_cornerRadius 也走这一档 —— 曾经它挂在 radius_card 上,于是那个弹窗比别的弹窗和抽屉都更圆。**居中弹窗的底一律 bg_dialog**:不要再建第二份「弹窗面板底」挂到别的档上(曾经有一份 bg_large_round_popup 挂 radius_background,已合并删除)。**浮层里的小件不算在这一档** —— 气泡(长按动作 / 搜索页 ⋮「切换布局」/ 上次看到)与搜索联想面板走 common_corners,好跟同屏的 chip 打成一套(用户口径:\"…tips 也是圆角不对了\")",
     "radius_card": "卡片里的小块圆角:列表行、海报占位、来源与类目标签等",
     "radius_btn": "按钮圆角:纯色按钮 / 空心按钮 / 纯文字按钮三型共用这一个值",
-    "radius_widget_btn": "小组件按钮圆角:搜索页历史·热词·联想键、日志分类键、背景图预设键、播放器设置里的键。**上限就是键高的一半**:这类键高 34dp(共享样式 WidgetBtn 的 minHeight),圆角 16dp = 34dp 的 47% —— 越过那条线,GradientDrawable 会把上下两段圆弧连成一条,整个底变成胶囊(用户口径「圆角为什么只对顶部有效,底部没生效 / 看着像胶囊」,2026-09-27 设成 16dp 后实复现)。安全上限约 15dp(45%),想更圆最多到那一档;这条由 ThemePillShapeContractTest 兜着,调大过头会直接红",
+    "radius_widget_btn": "小组件按钮圆角:搜索页历史·热词·联想键、日志分类键、背景图预设键、播放器设置里的键。键高固定 34dp:0～15dp 是普通圆角矩形,16dp 接近胶囊,17dp 是标准胶囊;超过 17dp 视觉不会继续变化。编辑器允许并原样保存 0～17dp,在 16～17dp 明确提示胶囊效果,不得靠裁剪伪装成上圆下方",
     "radius_search": "搜索框专用圆角:首页那条搜索框本来就是「胶囊造型的搜索条」(设计如此,用户明确说过这个圆角是对的)。**刻意独立成一档**:它不属于面板档,跟着 radius_background 一起改会把它一起改掉(2026-09-27 就这么误伤过一次)。只有 bg_search_round_float 用它",
     "common_corners": "小件档:空心/实心小按钮(bg_r_common_*)、筛选抽屉里的选项、视频详情抽屉里的内块、本地视频行、更新说明的按钮 —— 也就是「抽屉/弹窗里的小元素」。**它以前写死在 res/values/dimens.xml,这里改不动**:面板档调大了,抽屉里这些小件还是 8dp,于是同一个抽屉「有些圆有些方」。现在它也进主题文件,全 App 的圆角只剩这一个来源",
+    "radius_thumb": "**缩略图专用圆角(2026-10-01)**:「下载页小封面」(item_download_task_new 的 56×74dp 图)与「本地视频行的小图」(item_local_video 的 156×88dp 图)这两处。它们以前跟着 radius_card 走,卡片档一调大,小图的圆角就吃掉大半个边(用户口径\"小图片的圆角太大了\")。单独立档后只影响这两处,默认 10dp。**这一档不出现在主题编辑器的界面里**(用户口径\"主题配置里不给圆角配置选项\"),要改就改本文件或自定义主题 JSON",
     "stroke_widget_btn": "小组件按钮(底 = selector_widget_btn,圆角档 = radius_widget_btn)的**边框线粗细**。默认 0.5dp 发丝线:这类键文字只有 12~13sp,1dp 在高密度屏上就是一条 3px 实线,整排键看着「边框又粗又重」(用户口径「radius_widget_btn 边框线太粗了」)。要更清楚调回 1dp,要更轻写 0.25dp —— 全 App 的小组件按钮一起变"
   }
 }

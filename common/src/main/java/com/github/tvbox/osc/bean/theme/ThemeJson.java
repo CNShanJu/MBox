@@ -15,13 +15,13 @@ import java.util.Map;
  * <pre>
  * {
  *   "kind": "mbox-theme",          // 认这个字段才知道"这是 MBox 主题"
- *   "schema": 1,                   // 格式版本
+ *   "schema": 3,                   // 格式版本
  *   "id": "t1738...",              // 本地主键(导入时会换新的)
  *   "name": "暗夜紫",
  *   "type": "dark",                // bright | dark(与内置主题文件同词)
- *   "bg_body": "#141218",          // 25 个可配置键,键名/写法与 assets/theme/*.json 完全一致
- *   "bg_card_alpha": 60,      // 透明度写数字(与内置主题文件一致)
- *   ...
+ *   "colors": { "bg_body": "#141218", "bg_card_alpha": 60 },
+ *   "radii": { "radius_dialog": 16 },
+ *   "strokes": { "stroke_widget_btn": 0.5 },
  *   "background": { "mode": "image", "ref": "theme_bg/3f2a....webp" }
  * }
  * </pre>
@@ -34,7 +34,8 @@ public final class ThemeJson {
 
     /** 已知的非颜色顶层字段(解析时不算"不认识的键") */
     private static final String[] META_FIELDS = {
-            "kind", "schema", "id", "name", "type", "createdAt", "desc", "background"};
+            "kind", "schema", "id", "name", "type", "createdAt", "desc", "background",
+            "colors", "radii", "strokes"};
 
     /**
      * <b>旧键名迁移表</b>(v1 → v2,2026-09 那批重命名;已经写进用户手机的 {@code filesDir/themes/*.json}
@@ -102,9 +103,14 @@ public final class ThemeJson {
      * <p>{@code text_sub}(次要文字)与 {@code text_disable}(禁用文字)= 已删除:两级改为<b>计算</b>得出
      * —— 文字主色 @60% 不透明度(用户口径:"移除次要文件颜色和禁用文字颜色,这两块的文字颜色通过计算获得,
      * 其值为文字主色透明度 60%")。资源名照旧生成,老文件里的值丢弃并给提示。
+     *
+     * <p>{@code switch_track_off}(开关-关)= 已删除(2026-10-01,用户口径"开关关闭颜色不自定义,
+     * 改成开关开启色 透明度30%,同时移除主题配置里的开关-关选项"):资源名照旧存在,
+     * 值改为派生 = 开关开启色 @30% 透明(生成侧 build.gradle、运行期 ThemePaletteFactory)。
      */
     private static final java.util.Set<String> REMOVED_KEYS = new java.util.HashSet<>(
-            java.util.Arrays.asList("text_main", "brand_text", "btn_cancel_text", "text_sub", "text_disable", "text_hint"));
+            java.util.Arrays.asList("text_main", "brand_text", "btn_cancel_text", "text_sub", "text_disable", "text_hint",
+                    "switch_track_off"));
 
     private static boolean isLegacyFile(JsonObject o) {
         for (String k : LEGACY_RENAMES.keySet()) {
@@ -146,15 +152,29 @@ public final class ThemeJson {
         o.addProperty("type", def.getType().jsonValue);
         o.addProperty("createdAt", def.getCreatedAt());
 
+        JsonObject colors = new JsonObject();
         for (ThemeKey k : ThemeSpec.all()) {
             String v = def.color(k.key);
             if (k.isAlpha()) {
                 // 透明度写成数字:与 assets/theme/*.json 一致,手改时也不用加引号
-                o.addProperty(k.key, ThemePalette.parsePercent(v, 0));
+                colors.addProperty(k.key, ThemePalette.parsePercent(v, 0));
             } else {
-                o.addProperty(k.key, v);
+                colors.addProperty(k.key, v);
             }
         }
+        o.add("colors", colors);
+
+        JsonObject radii = new JsonObject();
+        JsonObject strokes = new JsonObject();
+        for (ThemeSpec.ShapeKey key : ThemeSpec.shapeKeys()) {
+            if (key.kind == ThemeSpec.ShapeKey.Kind.RADIUS) {
+                radii.addProperty(key.key, def.radius(key.key));
+            } else {
+                strokes.addProperty(key.key, def.stroke(key.key));
+            }
+        }
+        o.add("radii", radii);
+        o.add("strokes", strokes);
 
         JsonObject bg = new JsonObject();
         bg.addProperty("mode", def.getBackground().getMode());
@@ -202,13 +222,14 @@ public final class ThemeJson {
         if (kind != null && !kind.isEmpty() && !ThemeDef.KIND.equalsIgnoreCase(kind)) {
             return new Result(null, "这不是 MBox 主题文件(kind=" + kind + ")", null);
         }
-        int schema = num(o, "schema", ThemeDef.SCHEMA);
+        int schema = num(o, "schema", o.has("colors") ? ThemeDef.SCHEMA : 1);
         if (schema > ThemeDef.SCHEMA) {
             return new Result(null, "主题文件版本过高(需要更新 App 后再导入)", null);
         }
 
         ThemeDef def = new ThemeDef();
-        def.setSchema(schema == 0 ? ThemeDef.SCHEMA : schema);
+        // 解析成功即完成迁移;下次保存统一写 schema 3。
+        def.setSchema(ThemeDef.SCHEMA);
         def.setKind(ThemeDef.KIND);
         def.setId(orEmpty(str(o, "id")));
         def.setName(orEmpty(str(o, "name")));
@@ -217,13 +238,16 @@ public final class ThemeJson {
 
         List<String> warnings = new ArrayList<>();
         int recognized = 0;
-        boolean legacy = isLegacyFile(o);
+        JsonObject colorObject = o.has("colors") && o.get("colors").isJsonObject()
+                ? o.getAsJsonObject("colors") : o;
+        boolean nestedColors = colorObject != o;
+        boolean legacy = !nestedColors && isLegacyFile(o);
 
         // ① 老文件先整份搬到新键名(含 text_highlight ⇄ text_accent 对调)——
         //    这一步必须在按新键名读之前做,否则老值会被当成"不认识的项"丢掉、再被内置主题补齐
         if (legacy) {
             warnings.add("这是旧版本的主题文件,已自动升级键名");
-            for (Map.Entry<String, JsonElement> e : o.entrySet()) {
+            for (Map.Entry<String, JsonElement> e : colorObject.entrySet()) {
                 String old = e.getKey();
                 String target = LEGACY_RENAMES.containsKey(old)
                         ? LEGACY_RENAMES.get(old)
@@ -244,7 +268,7 @@ public final class ThemeJson {
         }
 
         // ② 再按当前键名读一遍;老文件里"语义对调过"的那两个名字要跳过,免得把刚搬好的值又按新语义读回去
-        for (Map.Entry<String, JsonElement> e : o.entrySet()) {
+        for (Map.Entry<String, JsonElement> e : colorObject.entrySet()) {
             String key = e.getKey();
             if (legacy && (LEGACY_RENAMES.containsKey(key) || SWAP_A.equals(key) || SWAP_B.equals(key))) {
                 continue;
@@ -262,12 +286,24 @@ public final class ThemeJson {
                 recognized++;
             } else if (REMOVED_KEYS.contains(key)) {
                 warnings.add("「" + key + "」已与「主题主色」合并,调主色即可(这一项已忽略)");
-            } else if (!isMeta(key)) {
+            } else if (!nestedColors && !isMeta(key)) {
                 warnings.add("不认识的项「" + key + "」已忽略");
+            } else if (nestedColors) {
+                warnings.add("colors 中不认识的项「" + key + "」已忽略");
             }
         }
         if (recognized == 0) {
             return new Result(null, "主题文件里没有任何可识别的颜色项", null);
+        }
+
+        readShapes(o, "radii", ThemeSpec.ShapeKey.Kind.RADIUS, def, warnings);
+        readShapes(o, "strokes", ThemeSpec.ShapeKey.Kind.STROKE, def, warnings);
+
+        // schema 3 顶层只允许元信息与三个分组;未知项忽略并记录。
+        if (nestedColors) {
+            for (String key : o.keySet()) {
+                if (!isMeta(key)) warnings.add("不认识的项「" + key + "」已忽略");
+            }
         }
 
         JsonObject bg = o.has("background") && o.get("background").isJsonObject()
@@ -300,6 +336,42 @@ public final class ThemeJson {
         }
 
         return new Result(def, null, warnings);
+    }
+
+    private static void readShapes(JsonObject root, String field, ThemeSpec.ShapeKey.Kind kind,
+                                   ThemeDef def, List<String> warnings) {
+        JsonObject values = root.has(field) && root.get(field).isJsonObject()
+                ? root.getAsJsonObject(field) : null;
+        if (values == null) return; // schema 1/2:由 materializeShapes 继承内置值
+        for (Map.Entry<String, JsonElement> entry : values.entrySet()) {
+            ThemeSpec.ShapeKey key = ThemeSpec.shapeByKey(entry.getKey());
+            if (key == null || key.kind != kind) {
+                warnings.add(field + " 中不认识的项「" + entry.getKey() + "」已忽略");
+                continue;
+            }
+            Float value = decimal(entry.getValue());
+            if (value == null || !ThemeShapePalette.isValid(key.key, value)) {
+                warnings.add("「" + key.label + "」不是 0–" + trimNumber(key.maxDp)
+                        + " 的数字,已回退内置值");
+                // 不把通用默认值写进定义：ThemeStore 随后会用“同类型内置主题”物化。
+                continue;
+            }
+            if (kind == ThemeSpec.ShapeKey.Kind.RADIUS) def.setRadius(key.key, value);
+            else def.setStroke(key.key, value);
+        }
+    }
+
+    private static Float decimal(JsonElement element) {
+        if (element == null || !element.isJsonPrimitive()) return null;
+        try {
+            return element.getAsFloat();
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
+    private static String trimNumber(float value) {
+        return value == Math.round(value) ? Integer.toString(Math.round(value)) : Float.toString(value);
     }
 
     private static boolean isMeta(String key) {

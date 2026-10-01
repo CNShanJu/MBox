@@ -5,21 +5,25 @@ import android.graphics.drawable.ColorDrawable;
 import android.view.Window;
 
 import com.github.tvbox.osc.bean.theme.ThemeDef;
+import com.github.tvbox.osc.bean.theme.ThemeColorPalette;
 import com.github.tvbox.osc.bean.theme.ThemePalette;
+import com.github.tvbox.osc.bean.theme.ThemeShapePalette;
+import com.github.tvbox.osc.bean.theme.ThemeSnapshot;
 import com.github.tvbox.osc.bean.theme.ThemeType;
 import com.github.tvbox.osc.storage.theme.ThemeStore;
 
 /**
  * 运行时换肤的<b>装配点与当前调色板持有者</b>。
  *
- * <p>它回答一个问题:"这次启动,界面该按哪套颜色画?"——答案只有两种:
+ * <p>它回答一个问题:"这次启动,界面该按哪套颜色和形状画?"。颜色、圆角、描边、主题类型、
+ * 自定义标记和指纹始终封装在同一份 {@link ThemeSnapshot} 中,切换时只做一次原子替换:
  * <ul>
- *   <li><b>没在用自定义主题</b>(内置亮/暗):{@link #palette()} 返回 {@code null},
- *       整套换肤层<b>完全不介入</b>,界面就是编译期资源里那份(首帧、观感、性能都与改动前一致);</li>
- *   <li><b>在用自定义主题</b>:返回那份主题的调色板,于是
+ *   <li><b>内置亮/暗主题</b>:配方背景经 {@link ThemeDrawableFactory} 渲染,首帧 XML 也由同一份配方生成;</li>
+ *   <li><b>自定义主题</b>:快照带上自定义颜色与形状,于是
  *       {@link ThemeResources}(代码取色)、{@link ThemeInflaterFactory}(布局属性)、
  *       {@link ThemeDrawables}(drawable/图标)三条通道一起把它铺到界面上。</li>
  * </ul>
+ * {@link #palette()} 只保留给尚未迁移的旧颜色包装层:内置主题仍返回 {@code null},不代表统一配方渲染停用。
  *
  * <p>"这次启动"是关键字:主题改动一律<b>不实时生效</b>,而是写配置 + 重启 App
  * (与既有的浅色/深色切换同一条链路)。所以这里在进程启动时解析一次,之后全程只读 ——
@@ -35,8 +39,7 @@ import com.github.tvbox.osc.storage.theme.ThemeStore;
  */
 public final class ThemeRuntime {
 
-    private static volatile ThemePalette palette;
-    private static volatile ThemeType type;
+    private static volatile ThemeSnapshot snapshot;
     private static volatile boolean installed;
     /**
      * 快照对应的生效主题指纹(亮暗类型 + 主题 id + 内容哈希,见 {@link #fingerprint})。
@@ -57,6 +60,8 @@ public final class ThemeRuntime {
     public static void install() {
         ThemeType t = ThemeType.BRIGHT;
         ThemePalette p = null;
+        ThemeShapePalette shapes = ThemeShapePalette.defaults();
+        ThemeSnapshot nextSnapshot = null;
         String key = "";
         String customId = "";
         String trouble = "";
@@ -66,6 +71,7 @@ public final class ThemeRuntime {
             ThemeDef def = ThemeStore.resolveActive();
             if (def != null) {
                 p = ThemeStore.paletteOf(def);
+                shapes = ThemeStore.shapePaletteOf(def);
                 // 自检:别名表里每个概念名都要能在调色板里取到,否则说明两侧对不上(改了 colors.xml 忘了改表),
                 // 这种情况不介入比"换一半颜色"更好定位
                 if (!ThemeColorAliases.namesResolvable(p)) {
@@ -76,14 +82,26 @@ public final class ThemeRuntime {
                 // 选中了自定义主题却解析不出来 = 主题文件不在了(被删/写坏),这也是"改了没效果"的一种原因
                 trouble = "选中的自定义主题[" + customId + "]找不到(主题文件缺失?)";
             }
+            boolean useCustom = def != null && p != null;
+            ThemePalette completeColors = useCustom ? p : ThemeStore.builtinPalette(t);
+            if (!useCustom) shapes = ThemeStore.builtinShapes(t);
             key = fingerprint(t, def);
+            nextSnapshot = new ThemeSnapshot(completeColors, shapes, t, useCustom, key);
         } catch (Throwable th) {
             p = null;
             trouble = "解析异常:" + th.getClass().getSimpleName()
                     + (th.getMessage() == null ? "" : (" " + th.getMessage()));
+            try {
+                ThemePalette fallbackColors = ThemeStore.builtinPalette(t);
+                shapes = ThemeStore.builtinShapes(t);
+                key = fingerprint(t, null);
+                nextSnapshot = new ThemeSnapshot(fallbackColors, shapes, t, false, key);
+            } catch (Throwable ignored) {
+                nextSnapshot = null;
+            }
         }
-        palette = p;
-        type = t;
+        // 颜色、圆角、类型与身份只在这里做一次 volatile 引用替换，读方永远看见完整快照。
+        snapshot = nextSnapshot;
         snapshotKey = key;
         installed = true;
         // 让"换了主题却没看出变化"这类问题能在运行日志里一眼定位:
@@ -122,25 +140,46 @@ public final class ThemeRuntime {
         }
     }
 
-    /** 快照指纹:亮暗类型 + 主题 id + 那份 25 键的内容哈希(内置时 id 为空串) */
+    /** 快照指纹:亮暗类型 + 主题 id + 颜色与形状内容哈希(内置时 id 为空串) */
     private static String fingerprint(ThemeType t, ThemeDef def) {
-        String id = def == null ? "" : def.getId() + "@" + def.colors().hashCode();
+        String id = def == null ? "" : def.getId() + "@" + def.colors().hashCode()
+                + "@" + def.radii().hashCode() + "@" + def.strokes().hashCode();
         return (t == null ? "?" : t.name()) + "|" + id;
     }
 
     /** 当前换肤调色板;{@code null} = 不用自定义主题(不介入) */
     public static ThemePalette palette() {
-        return palette;
+        ThemeSnapshot current = snapshot;
+        if (current == null || !current.custom || current.colors == null) return null;
+        return current.colors instanceof ThemePalette
+                ? (ThemePalette) current.colors : new ThemePalette(current.colors.asMap());
+    }
+
+    /** 完整颜色快照;内置与自定义主题都非空(尚未 install 时除外)。 */
+    public static ThemeColorPalette colorPalette() {
+        ThemeSnapshot current = snapshot;
+        return current == null ? null : current.colors;
+    }
+
+    public static ThemeShapePalette shapePalette() {
+        ThemeSnapshot current = snapshot;
+        return current == null ? ThemeShapePalette.defaults() : current.shapes;
+    }
+
+    public static ThemeSnapshot snapshot() {
+        return snapshot;
     }
 
     /** 当前生效的亮暗类型(夜间模式与弹窗深浅的依据) */
     public static ThemeType type() {
-        return type;
+        ThemeSnapshot current = snapshot;
+        return current == null ? ThemeType.BRIGHT : current.type;
     }
 
     /** 换肤层是否在介入(只影响"要不要多做一层包装",不影响正确性) */
     public static boolean active() {
-        return palette != null;
+        ThemeSnapshot current = snapshot;
+        return current != null && current.custom;
     }
 
     /**
@@ -173,7 +212,7 @@ public final class ThemeRuntime {
     /** 切主题后清派生缓存(下一次启动才会重新 install,这里只在同进程重装时用) */
     public static void reset() {
         ThemeDrawables.clearCache();
-        palette = null;
+        snapshot = null;
         snapshotKey = "";
         installed = false;
     }
@@ -191,7 +230,9 @@ public final class ThemeRuntime {
      */
     public static void applyTo(Activity activity) {
         if (activity == null) return;
-        ThemePalette p = palette;
+        ThemeColorPalette p = colorPalette();
+        ThemeSnapshot current = snapshot;
+        if (current == null || !current.custom) return; // 内置主题窗口底走原生资源
         if (p == null) return; // 不介入
         Window window = activity.getWindow();
         if (window == null) return;

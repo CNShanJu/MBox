@@ -352,7 +352,9 @@ dependencies {
 def themeColorsFile = file('src/main/assets/theme/theme_colors.json')
 def themeColorsNightFile = file('src/main/assets/theme/theme_colors_night.json')
 def themeRadiiFile = file('src/main/assets/theme/theme_radii.json')
+def themeShapesFile = file('src/main/assets/theme/theme_shapes.json')
 def themeColorsDir = file("${buildDir}/generated/theme_colors")
+def themeShapesDir = file("${buildDir}/generated/theme_shapes")
 // 生成的主题资产目录(theme_derived_*.json):作为额外的 assets 源目录合并进 assets/theme/
 def themeAssetsDir = file("${buildDir}/generated/theme_assets")
 
@@ -362,51 +364,54 @@ def defaultRadii = [
         // (小件的圆角超过半高就会被 GradientDrawable 缩成胶囊,而且不会有任何报错)。
         // 注意:readRadii() 只认**这张表里有的键**(JSON 里多出来的键会 WARN 并忽略),
         // 所以新增一个圆角档位必须同时加在这里,否则 @dimen/xxx 根本不会生成。
-        radius_background: '26dp',
-        radius_dialog    : '16dp',
-        radius_card      : '16dp',
-        radius_btn       : '12dp',
-        // 小组件按钮:高 34dp 的 chip/键,**不能跟面板档一起调大** —— 键高的一半就是上限,
-        // 16dp 就是 34dp 的 47%,GradientDrawable 会把上下圆角连成一条、整个底变胶囊
-        // (用户口径"圆角只对顶部有效,底部没生效 / 看着像胶囊")。安全上限约 15dp(45%)。
-        // 这条有 ThemePillShapeContractTest 兜着(已反证:改成 16dp 会红)。
-        radius_widget_btn: '12dp',
+        radius_background: 26,
+        radius_dialog    : 20,
+        radius_card      : 18,
+        radius_btn       : 14,
+        // 小组件按钮高 34dp:0～15dp 是普通圆角,16dp 接近胶囊,17dp 是标准胶囊。
+        // 编辑器允许并原样保存 0～17dp；超过半高只会饱和,不应靠裁剪制造不对称圆角。
+        radius_widget_btn: 26,
         // "小件档":空心/实心小按钮(bg_r_common_*)、筛选抽屉里的选项、视频详情抽屉里的内块、
         // 本地视频行这些**抽屉/弹窗里面的小元素**。
         // 它原来写死在 res/values/dimens.xml(8dp),主题文件根本管不到 —— 用户把面板档调到 16dp 后,
         // 抽屉里这些块还是 8dp,观感就是"同一个抽屉有些圆有些方",而且怎么改 theme_radii.json 都不动。
         // 收进这张表后:**全 App 的圆角只剩 theme_radii.json 一个来源**。
-        common_corners   : '12dp',
+        common_corners   : 26,
         // 小组件按钮的**边框线粗细**(底 = selector_widget_btn,圆角档 = radius_widget_btn)。
         // 这类键文字只有 12~13sp,1dp 在高密度屏上是一条 3px 实线,整排键看着"边框又粗又重"
         // (用户口径"radius_widget_btn 边框线太粗了");0.5dp 走抗锯齿,是发丝线观感
         // —— 与输入框那条底线(theme_input_underline,同一个口径)一致。
-        stroke_widget_btn: '0.5dp',
+        stroke_widget_btn: 0.5,
         // 搜索框专用(首页那条胶囊造型的搜索条):独立一档,不跟面板档走
-        radius_search    : '16dp'
+        radius_search    : 26,
+        // **缩略图专用**(2026-10-01):「下载页小封面」与「本地视频行的小图」这两处的图。
+        // 它们以前跟卡片档走(radius_card):面板档一调大,56×74dp 的小封面圆角就吃掉大半个边,
+        // 观感是"小图被切成了圆片"(用户口径"小图片的圆角太大了")。
+        // 单独立档后可以只调它、与卡片/抽屉/按钮互不影响;默认 10dp。
+        // **刻意不进主题编辑器的界面**(用户口径"主题配置里不给圆角配置选项"):要改就改
+        // assets/theme/theme_radii.json(或自定义主题 JSON)的 radius_thumb。
+        radius_thumb     : 10
 ]
 
 // 主题文件缺失时的兜底(与仓库内文件同值)
 def defaultLightColors = [
         bg_body: '#faf8ff',
         bg_surface: '#ECECF4', bg_float_alpha: 92, bg_card_alpha: 60,
-        card_category_bg: '#1F2937', card_category_text: '#FFFFFF',
         text_accent: '#1F2937', text_highlight: '#1890FF',
         brand: '#1F2937',
         btn_confirm_bg: '#1F2937', btn_confirm_text: '#FFFFFF',
         btn_cancel_bg: '#661F2937',
-        success: '#08CA2C', switch_track_off: '#ccccd4', switch_thumb: '#FFFFFF',
+        success: '#08CA2C', switch_thumb: '#FFFFFF',
         download_active: '#037AFF'
 ]
 def defaultNightColors = [
         bg_body: '#141218',
         bg_surface: '#211D28', bg_float_alpha: 10, bg_card_alpha: 100,
-        card_category_bg: '#1F2937', card_category_text: '#FFFFFF',
         text_accent: '#E5E7EB', text_highlight: '#1890FF',
         brand: '#E5E7EB',
         btn_confirm_bg: '#E5E7EB', btn_confirm_text: '#141218',
         btn_cancel_bg: '#66E5E7EB',
-        success: '#08CA2C', switch_track_off: '#3C3C46', switch_thumb: '#FFFFFF',
+        success: '#08CA2C', switch_thumb: '#FFFFFF',
         download_active: '#037AFF'
 ]
 
@@ -488,12 +493,12 @@ static int withAlpha(def colorRaw, def alphaRaw) {
 //   btn_confirm_stroke = btn_confirm_bg 的**不透明版**(alpha 强制 100%:底色透明时边框线仍要实心)
 //   btn_select_bg   = btn_confirm_bg **本身**(连透明度一起:主按钮无色,选中态就跟着无色)
 //   btn_select_text = btn_confirm_text(选中填充上的文字 = 主按钮文字)
-//   btn_stroke      = btn_cancel_bg(空心按钮边框线颜色;历史资源名,值同源)
+//   btn_stroke      = btn_cancel_bg(无文字描边容器与输入框用;历史资源名,值同源)
 //   switch_track_on = download_done = success(正向状态色:开关打开 / 下载完成 —— 原本是两个键,值一直相同)
 // 按钮取色口径(用户口径):
 //   ① 纯色按钮:底 = btn_confirm_bg(可带透明度);描边 = 该底色的不透明版(设成半透明/全透明,边框线照样实心)
-//   ② 空心按钮:无填充,只有 1dp 描边 = btn_cancel_bg(「空心按钮边框线颜色」);文字走文字主色 brand
-//   ③ 小组件按钮:未选中 = 只有边框(同 ②)+ 文字主色;选中 = 填充 btn_select_bg(= ①的底,含透明度)+ 文字 btn_confirm_text
+//   ② 空心按钮:无填充,1dp 描边与文字同取 brand;按下仍不填充
+//   ③ 小组件按钮:未选中描边与文字同取 brand,按下仍不填充;真正选中才填充 btn_select_bg + 文字 btn_confirm_text
 //      —— 用户口径"选中态是背景透明无色啊,文字白色":① 的底设成无色时,选中态同样无色,只剩描边与文字
 // 不派生的固定色:text_danger / swipe_red / swipe_red_text 已写死在 res/values/colors.xml(不随主题)
 static def derivePalette(def c) {
@@ -506,6 +511,9 @@ static def derivePalette(def c) {
     int textSub = withAlpha(brand, 0.6f)
     // 占位/提示文字:文字主色 @40%(与运行时 ThemePaletteFactory 同口径)
     int textHint = withAlpha(brand, 0.4f)
+    // 「文字主色 50%」:给"链接/地址"这类要压一档、又要跟主色同系的文字(如订阅管理里的订阅地址)。
+    // 与 text_sub(60%)分开是因为用户对链接明确要求 50%,别再各自写透明度。
+    int textMainHalf = withAlpha(brand, 0.5f)
     // 同上口径:纯色按钮的底与其"不透明版"描边/小组件选中填充
     int confirmBg = parseColor(c.btn_confirm_bg, brand)
     int confirmSolid = withAlpha(confirmBg, 100)
@@ -522,18 +530,18 @@ static def derivePalette(def c) {
             bg_surface       : toHex(cardBg),
             bg_card          : toHex(cardBg),
             bg_float         : toHex(floatBg),
-            // 卡片类目(海报卡角上的小标签:来源名/年份/评分):底色 + 文字一对
-            card_category_bg : toHex(parseColor(c.card_category_bg, 0xFF1F2937)),
-            card_category_text: toHex(parseColor(c.card_category_text, 0xFFFFFFFF)),
+            // (card_category_bg / card_category_text 已按用户要求移除:这两个键从未接到任何组件)
             // 正文颜色与主色共用同一个值(资源名 text_main 保留,但主题文件里已没有这个键)
             text_main        : toHex(brand),
             text_sub         : toHex(textSub),
             text_hint        : toHex(textHint),
+            text_main_half   : toHex(textMainHalf),
             text_disable     : toHex(textSub),
             text_accent   : toHex(parseColor(c.text_accent, brand)),
             text_highlight      : toHex(parseColor(c.text_highlight, 0xFF1890FF)),
             color_highlight  : toHex(brand),
             select_fill      : toHex(brand),
+            press_overlay    : toHex(withAlpha(brand, 0.24f)),
             btn_confirm_bg   : toHex(confirmBg),
             btn_confirm_text : toHex(confirmText),
             btn_confirm_stroke: toHex(confirmSolid),
@@ -543,14 +551,17 @@ static def derivePalette(def c) {
             btn_select_text  : toHex(confirmText),
             btn_stroke       : toHex(hollowStroke),
             switch_track_on  : toHex(success),
-            switch_track_off : toHex(parseColor(c.switch_track_off, brand)),
+            // 「开关-关」不再单独配(2026-10-01,用户口径"开关关闭颜色不自定义,改成开关开启色 透明度30%,
+            // 同时移除主题配置里的开关-关选项"):派生自开关开启色(success)的 30% 透明;
+            // 主题文件里那个 switch_track_off 键已删,编辑器也不再列它(见 ThemeSpec:它不再是配置项)。
+            switch_track_off : toHex(withAlpha(success, 0.30f)),
             switch_thumb     : toHex(parseColor(c.switch_thumb, 0xFFFFFFFF)),
             download_active  : toHex(parseColor(c.download_active, 0xFF037AFF)),
             download_done    : toHex(success)
     ]
 }
 
-// 圆角键:只认默认表里的键(值必须是 dp/dip/px 字符串);desc:每个键一句说明(与颜色文件同一套约定 ——
+// 圆角键:只认默认表里的键(数值单位固定为 dp,JSON 不带 "dp" 后缀);desc:每个键一句说明(与颜色文件同一套约定 ——
 // 写进生成的 theme_radii.xml 行尾注释,以后做"自定义主题"界面时就是每个圆角项下面的说明)。
 // 手改文件写错键名/漏写说明都会 WARN,和 readTheme 一个口径。
 static def readRadii(def file, def defaults) {
@@ -562,8 +573,19 @@ static def readRadii(def file, def defaults) {
         def json = new groovy.json.JsonSlurper().parseText(file.getText('UTF-8'))
         radii.each { k, v ->
             def uv = json[k]
-            if (uv instanceof String && (uv.endsWith('dp') || uv.endsWith('dip') || uv.endsWith('px'))) {
-                radii[k] = uv
+            if (uv instanceof Number) {
+                float n = ((Number) uv).floatValue()
+                float max = (k == 'radius_widget_btn') ? 17f : (k.startsWith('stroke_') ? 8f : 64f)
+                if (Float.isFinite(n) && n >= 0f && n <= max) {
+                    radii[k] = n
+                } else if (Float.isFinite(n) && n > 0f && max < 64f) {
+                    // **超上限就夹到上限,不许原样放行**:运行期 ThemeShapePalette 对同一批键也有上限
+                    // (radius_widget_btn ≤ 17 —— 键高 34dp,超过半高只会饱和成胶囊;描边 ≤ 8)。
+                    // 两边不一致会出现"内置主题(编译期资源)画 26dp、自定义主题(运行时调色板)画 17dp",
+                    // 同一个 App 两套圆角。这里夹到与运行时同值,ThemePillShapeContractTest 也据此守住。
+                    println "WARN: ${file.name} 的 ${k}=${n} 超过上限 ${max},已夹到 ${max}(与运行时同口径)"
+                    radii[k] = max
+                }
             }
         }
         // type=主题元信息、desc=说明:不参与派生,也不该被"不认识的键"告警误伤
@@ -602,7 +624,7 @@ static def writeRadiiXml(def dir, def name, def radii, def desc) {
     def sb = new StringBuilder('<?xml version="1.0" encoding="utf-8"?>\n<resources>\n')
     radii.each { k, v ->
         def note = (desc && desc[k]) ? "  <!-- ${desc[k]} -->" : ''
-        sb.append("    <dimen name=\"${k}\">${v}</dimen>${note}\n")
+        sb.append("    <dimen name=\"${k}\">${v}dp</dimen>${note}\n")
     }
     sb.append('</resources>\n')
     f.setText(sb.toString(), 'UTF-8')   // 注释里有中文,必须显式 UTF-8 落盘(别用平台默认编码)
@@ -629,28 +651,119 @@ static def writeDerivedJson(def dir, def name, def colors) {
     f.setText(sb.toString(), 'UTF-8')
 }
 
+/** theme_shapes.json 是形状结构的唯一来源:同一份数据同时生成首帧 XML 与运行时配方表。 */
+static def writeThemeShapes(def source, def resDir, def assetsDir) {
+    if (!source.exists()) throw new GradleException("缺少主题形状配方:${source}")
+    def recipes = new groovy.json.JsonSlurper().parseText(source.getText('UTF-8'))
+    if (!(recipes instanceof Map)) throw new GradleException('theme_shapes.json 顶层必须是对象')
+    def drawableDir = new File(resDir, 'drawable')
+    drawableDir.mkdirs()
+
+    def colorRef = { value ->
+        if (value == null || value == 'transparent') return '@android:color/transparent'
+        String text = value.toString()
+        return text.startsWith('#') || text.startsWith('@') ? text : "@color/${text}"
+    }
+    def dimRef = { Map recipe, String tokenKey, String dpKey ->
+        if (recipe[tokenKey] instanceof String) return "@dimen/${recipe[tokenKey]}"
+        if (recipe[dpKey] instanceof Number) return "${recipe[dpKey]}dp"
+        return null
+    }
+    def shapeXml = { Map recipe, Map state ->
+        // 形状:默认矩形;oval 用于圆形悬浮钮(bg_fab_oval)。两种写法必须与运行时
+        // ThemeDrawableFactory 一致,否则编译期首帧与换肤后是两个形状。
+        String shapeName = (recipe.shape instanceof String) ? recipe.shape.toString() : 'rectangle'
+        if (!(shapeName in ['rectangle', 'oval'])) {
+            throw new GradleException("不支持的 android:shape:${shapeName}(只允许 rectangle / oval)")
+        }
+        def lines = ["<shape xmlns:android=\"http://schemas.android.com/apk/res/android\" android:shape=\"${shapeName}\">"]
+        lines << "    <solid android:color=\"${colorRef(state.fill)}\" />"
+        def width = dimRef(recipe, 'strokeWidth', 'strokeWidthDp')
+        if (state.stroke != null && width != null) {
+            lines << "    <stroke android:width=\"${width}\" android:color=\"${colorRef(state.stroke)}\" />"
+        }
+        if (shapeName == 'rectangle') {
+            if (recipe.radius instanceof String) {
+                lines << "    <corners android:radius=\"@dimen/${recipe.radius}\" />"
+            } else if (recipe.corners instanceof Map) {
+                Map c = (Map) recipe.corners
+                def corner = { String token, String dp ->
+                    if (c[token] instanceof String) return "@dimen/${c[token]}"
+                    if (c[dp] instanceof Number) return "${c[dp]}dp"
+                    return '0dp'
+                }
+                lines << '    <corners'
+                lines << "        android:topLeftRadius=\"${corner('topLeft', 'topLeftDp')}\""
+                lines << "        android:topRightRadius=\"${corner('topRight', 'topRightDp')}\""
+                lines << "        android:bottomRightRadius=\"${corner('bottomRight', 'bottomRightDp')}\""
+                lines << "        android:bottomLeftRadius=\"${corner('bottomLeft', 'bottomLeftDp')}\" />"
+            }
+        }
+        lines << '</shape>'
+        return lines.join('\n')
+    }
+    def stateAttrs = [selected: 'android:state_selected="true"', pressed: 'android:state_pressed="true"',
+                      disabled: 'android:state_enabled="false"', checked: 'android:state_checked="true"',
+                      focused: 'android:state_focused="true"']
+    recipes.each { id, raw ->
+        if (!(id ==~ /[a-z0-9_]+/) || !(raw instanceof Map)) {
+            throw new GradleException("非法主题配方 id:${id}")
+        }
+        Map recipe = (Map) raw
+        Map states = recipe.states instanceof Map ? (Map) recipe.states : [:]
+        if (!states.containsKey('default')) throw new GradleException("主题配方 ${id} 缺 default 状态")
+        String body
+        if (states.size() == 1) {
+            body = shapeXml(recipe, (Map) states.default)
+        } else {
+            def order = ['disabled', 'selected', 'checked', 'focused', 'pressed', 'default']
+            def lines = ['<selector xmlns:android="http://schemas.android.com/apk/res/android">']
+            order.each { stateName ->
+                if (!states.containsKey(stateName)) return
+                String attrs = stateName == 'default' ? '' : ' ' + stateAttrs[stateName]
+                lines << "    <item${attrs}>"
+                shapeXml(recipe, (Map) states[stateName]).split('\n').each { lines << '        ' + it }
+                lines << '    </item>'
+            }
+            lines << '</selector>'
+            body = lines.join('\n')
+        }
+        new File(drawableDir, "${id}.xml").setText('<?xml version="1.0" encoding="utf-8"?>\n' + body + '\n', 'UTF-8')
+    }
+
+    def runtimeDir = new File(assetsDir, 'theme')
+    runtimeDir.mkdirs()
+    def runtime = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(recipes)) + '\n'
+    new File(runtimeDir, 'theme_shapes_runtime.json').setText(runtime, 'UTF-8')
+}
+
 task generateThemeColors {
     inputs.file(themeColorsFile).optional()
     inputs.file(themeColorsNightFile).optional()
     inputs.file(themeRadiiFile).optional()
+    inputs.file(themeShapesFile)
     outputs.dir(themeColorsDir)
+    outputs.dir(themeShapesDir)
     outputs.dir(themeAssetsDir)
     // 派生项的内置说明(主题文件的 desc 里没有这些键,因为它们不占配置):写进生成 XML 的注释里
     def derivedNotes = [
             bg_card        : '页面层:同 bg_surface 的颜色 + bg_card_alpha 的透明度(海报占位/筛选块/卡片里的行)',
             bg_float       : '浮层:同 bg_surface 的颜色 + bg_float_alpha 的透明度(弹窗/抽屉/气泡/悬浮钮)',
             switch_track_on: '同 success(开关打开的正向状态色)',
+            switch_track_off: '同开关开启色 @30% 透明(派生值;2026-10-01 起不再单独配)',
             download_done  : '同 success(下载完成的正向状态色)',
             color_highlight: '派生自 brand(全局高亮填充)',
             select_fill    : '派生自 brand(勾选框填充)',
+            press_overlay  : '派生自 brand @24%(通用按下态覆盖色)',
             text_sub       : '派生自文字主色 @60%(次要文字:说明/描述/副标题)',
             text_hint      : '派生自文字主色 @40%(占位/提示文字:搜索框的「搜索」、输入框提示)',
+            text_main_half : '派生自文字主色 @50%(链接/地址这类要与主色同系但压一档的文字)',
             text_disable   : '派生自文字主色 @60%(禁用文字;与次要文字同值)',
             btn_plain_text : '派生自 brand 文字主色(空心按钮/纯文字按钮的文字)',
             btn_select_bg  : '同 btn_confirm_bg(小组件按钮/chip/直播选中条 选中态的填充;连透明度一起,主按钮无色则选中态也无色)',
             btn_select_text: '同 btn_confirm_text(选中填充上的文字 = 主按钮文字)',
             btn_confirm_stroke: '派生自 btn_confirm_bg 的不透明版(纯色按钮的边框线:底色带透明度时边框仍然实心)',
-            btn_stroke     : '同 btn_cancel_bg(空心按钮边框线颜色;历史资源名)'
+            btn_stroke     : '同 btn_cancel_bg(无文字描边容器与输入框用;历史资源名)'
     ]
     doLast {
         def light = readTheme(themeColorsFile, defaultLightColors)
@@ -667,9 +780,11 @@ task generateThemeColors {
         // 运行时可读的派生结果(内置调色板的权威来源 + 单测对比基准)
         writeDerivedJson(themeAssetsDir, 'theme_derived_bright', derivePalette(light.colors))
         writeDerivedJson(themeAssetsDir, 'theme_derived_dark', derivePalette(night.colors))
+        writeThemeShapes(themeShapesFile, themeShapesDir, themeAssetsDir)
     }
 }
 preBuild.dependsOn generateThemeColors
 android.sourceSets.main.res.srcDirs += themeColorsDir
+android.sourceSets.main.res.srcDirs += themeShapesDir
 // 生成的主题资产(assets/theme/theme_derived_*.json)与手写的 assets/theme/*.json 合并进同一个目录
 android.sourceSets.main.assets.srcDirs += themeAssetsDir

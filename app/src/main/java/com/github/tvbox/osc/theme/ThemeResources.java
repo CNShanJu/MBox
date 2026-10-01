@@ -1,6 +1,7 @@
 package com.github.tvbox.osc.theme;
 
 import android.content.res.ColorStateList;
+import android.content.res.Configuration;
 import android.content.res.Resources;
 import android.graphics.drawable.Drawable;
 import android.util.DisplayMetrics;
@@ -23,27 +24,30 @@ import com.github.tvbox.osc.bean.theme.ThemePalette;
  */
 public class ThemeResources extends Resources {
 
-    private final Resources base;
+    private final Configuration syncedConfiguration;
+    private final DisplayMetrics syncedMetrics = new DisplayMetrics();
 
     public ThemeResources(Resources base) {
         super(base.getAssets(), base.getDisplayMetrics(), base.getConfiguration());
-        this.base = base;
+        syncedConfiguration = new Configuration(base.getConfiguration());
+        syncedMetrics.setTo(base.getDisplayMetrics());
     }
 
     /** 与最新配置对齐(变了才调 updateConfiguration,避免每次取色都做一次 native 调用) */
     public void syncFrom(Resources latest) {
-        if (latest == null || latest == this.base) return;
+        // Resources 会原地更新配置；同一个实例也可能已从竖屏切到横屏。
+        if (latest == null || latest == this) return;
         try {
-            android.content.res.Configuration cur = getConfiguration();
-            android.content.res.Configuration now = latest.getConfiguration();
+            Configuration now = latest.getConfiguration();
             DisplayMetrics m = latest.getDisplayMetrics();
             if (now == null || m == null) return;
-            if (cur == null || !cur.equals(now)
-                    || getDisplayMetrics().density != m.density
-                    || getDisplayMetrics().scaledDensity != m.scaledDensity) {
+            // 比较上次基础资源的内容快照，既识别原地更新，也保留 AutoSize 对包装资源的密度适配。
+            if (!syncedConfiguration.equals(now) || !syncedMetrics.equals(m)) {
                 @SuppressWarnings("deprecation")
                 Resources self = this;
                 self.updateConfiguration(now, m);
+                syncedConfiguration.setTo(now);
+                syncedMetrics.setTo(m);
             }
         } catch (Throwable ignored) {
         }
@@ -112,13 +116,42 @@ public class ThemeResources extends Resources {
      */
     private Drawable tintIfThemed(Drawable d, int id) {
         if (d == null) return null;
+        // 旧系统的 EditText 没有公开句柄/光标 setter；框架从 Context 的 Resources
+        // 加载 Material 句柄与光标时，在这里把默认强调色替换为当前文字主色。
+        if ((id >>> 24) == 0x01) {
+            try {
+                String entry = getResourceEntryName(id);
+                if ((entry.startsWith("text_select_handle_") && entry.endsWith("_material"))
+                        || "text_cursor_material".equals(entry)) {
+                    ThemePalette current = palette();
+                    if (current != null) {
+                        Drawable.ConstantState state = d.getConstantState();
+                        Drawable copy = (state == null ? d : state.newDrawable(this)).mutate();
+                        androidx.core.graphics.drawable.DrawableCompat.setTint(copy, current.get("text_main"));
+                        return copy;
+                    }
+                }
+            } catch (Throwable ignored) {
+                // 非预期的系统 drawable 保持原样。
+            }
+        }
         String name = ThemeDrawables.iconTintKey(id, this);
         if (name == null) return d;
         ThemePalette p = palette();
         if (p == null) return d;
+        int color = p.get(name);
         try {
             Drawable copy = d.mutate();
-            copy.setTintList(ColorStateList.valueOf(p.get(name)));
+            // 用 androidx 兼容层给这一层着色(ImageView 的 imageTint 走的是 View 的公开 API,
+            // 而这里是 drawable 自己着色,必须走 DrawableCompat 才在各 API 上都成立)。
+            //
+            // **注意容器**:StateListDrawable 这类容器换状态时画的是**子 drawable**,
+            // 父层 tint 不会自动下传;而本运行时的 android.jar 把 DrawableContainer.getChildren() /
+            // Drawable.getTintList() 这些隐藏 API 剥掉了(真机反射均为 NoSuchMethodException),
+            // 公开面上拿不到子项、也就没法替子项着色。
+            // 所以"选择器型图标"(如方形勾选框 button_checkbox_square)不能指望在这里被涂色:
+            // 它的颜色必须像其它 drawable 一样**写进 XML 的颜色引用里**、由主题重建通道换掉。
+            androidx.core.graphics.drawable.DrawableCompat.setTint(copy, color);
             return copy;
         } catch (Throwable th) {
             return d;

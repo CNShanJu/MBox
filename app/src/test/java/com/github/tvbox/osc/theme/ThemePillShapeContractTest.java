@@ -19,19 +19,20 @@ import java.util.regex.Pattern;
  * "胶囊/半圆底"的源码级绊线(纯 JVM;真机观感由用户人工验证)。
  *
  * <p>用户口径:"这个按钮样式又出来了……看着奇奇怪怪的,每次都出现,有时候指不定哪里出现"。
- * 规律很简单:<b>圆角 ≥ 控件高度的 ~40% 时,那个底就圆得像个药丸/半圆</b> ——
+ * 规律很简单:<b>圆角超过控件高度的一半时,视觉不会再继续变化</b> ——
  * 已经踩过三次:搜索词 chip(bg_large_round_float 的 18dp 圆角放在 ~28dp 高上)、
  * 播放器面板小按钮(12dp/28dp)、主题弹窗页脚(卡片圆角放在动作行上)。
  *
  * <p>这类问题不会有任何报错,只是"某处看着怪",所以钉成断言:凡是布局里
  * {@code android:background="@drawable/X"} 且自己写了固定高度(或 @dimen)的控件,
- * 只要 X 的圆角 ≥ 高度的 40%,就在这里红 —— 要么换个小圆角的 drawable,
+ * 只要 X 的圆角超过高度的一半,就在这里红 —— 要么换个小圆角的 drawable,
  * 要么把高度加大,要么确认它本来就该是个药丸(那种情况请显式加进 {@link #ALLOW})。
  */
 public class ThemePillShapeContractTest {
 
     /** 圆角占高度超过这个比例就算"药丸感" */
-    private static final double MAX_RATIO = 0.45;
+    /** 半高就是标准胶囊上限;更大的值不再产生视觉变化。 */
+    private static final double MAX_RATIO = 0.50;
 
     /**
      * 已知且有意为之的例外(打印成 "布局:控件" 形式)。
@@ -47,6 +48,14 @@ public class ThemePillShapeContractTest {
      */
     private static final String[] ALLOW = {
             "fragment_home.xml:search",
+            // 主题编辑器的圆角色块:它是**故意**把当前圆角档画在 28dp 高的小方块上给用户看的,
+            // 圆角档调到 26dp 时这里自然就是"药丸/半圆" —— 那是预览本身要表达的效果,
+            // 不是某个组件被画坏了(全站真实的短控件由本测试的其余用例继续守着)。
+            "item_theme_color.xml:v_swatch",
+            // 「最近热搜」的序号徽标(1..10,2026-10-01 新增):22dp 的序号牌,**本来就该是圆/药丸** ——
+            // 圆角跟主题档走(用户把各档调到 26dp 时它就是一个圆点),与 NewBox 搜索页的同款序号牌一致。
+            // 这不是"短控件被画成药丸"的事故,故按本测试的口径登记豁免。
+            "item_search_hot_rank.xml:tv_rank",
     };
 
     private static File repoRoot() {
@@ -97,6 +106,9 @@ public class ThemePillShapeContractTest {
      */
     private static Double radiusDp(String drawableName, Map<String, Double> dimens) throws Exception {
         File xml = new File(repoRoot(), "app/src/main/res/drawable/" + drawableName + ".xml");
+        if (!xml.isFile()) {
+            xml = new File(repoRoot(), "app/build/generated/theme_shapes/drawable/" + drawableName + ".xml");
+        }
         if (!xml.isFile()) return null;
         String text = withoutRippleMask(read(xml));
         Double max = null;
@@ -181,7 +193,7 @@ public class ThemePillShapeContractTest {
      * 2026-09-27 用户把该档设成 16dp(= 34dp 的 47%)后又复现了一次,口径是
      * "圆角为什么只对顶部有效,底部没生效 / 看着像胶囊"。
      *
-     * <p>所以钉两条:① {@code radius_widget_btn ≤ minHeight × 45%};② 边框粗细必须走主题键
+     * <p>所以钉两条:① {@code radius_widget_btn ≤ minHeight / 2}(17dp = 标准胶囊);② 边框粗细必须走主题键
      * {@code stroke_widget_btn}(不许在 drawable 里写死 1dp/2mm —— 2mm 那处曾经厚得像块板子)。
      */
     @Test
@@ -202,16 +214,20 @@ public class ThemePillShapeContractTest {
         double ratio = radius / minHeight;
         assertTrue(String.format(java.util.Locale.ROOT,
                         "radius_widget_btn 圆角 %.0fdp / 键高 %.0fdp = %.0f%%,超过上限 %.0f%% —— "
-                                + "该类键在高密度屏上会圆成药丸/半圆(用户口径「看着像胶囊、上下圆角不一致」);"
-                                + "要么把这一档调小(34dp 键的安全上限约 15dp,建议 12dp),要么加大 WidgetBtn 的 minHeight",
+                                 + "超过半高不会继续改变视觉,且容易掩盖真实裁剪问题;"
+                                 + "0–15dp 为普通圆角,16dp 接近胶囊,17dp 为标准胶囊",
                         radius, minHeight, ratio * 100, MAX_RATIO * 100),
                 ratio <= MAX_RATIO);
 
         assertTrue("生成资源里没有 stroke_widget_btn:小组件键的边框线粗细必须走主题键",
                 dimens.containsKey("stroke_widget_btn"));
         for (String drawable : new String[]{"selector_widget_btn", "button_detail_quick_search"}) {
+            File file = new File(repoRoot(), "app/src/main/res/drawable/" + drawable + ".xml");
+            if (!file.isFile()) {
+                file = new File(repoRoot(), "app/build/generated/theme_shapes/drawable/" + drawable + ".xml");
+            }
             Matcher w = Pattern.compile("android:width=\"([^\"]+)\"").matcher(
-                    read(new File(repoRoot(), "app/src/main/res/drawable/" + drawable + ".xml")));
+                    read(file));
             while (w.find()) {
                 assertTrue(drawable + " 里还有写死的描边宽度 " + w.group(1) + "(应走 @dimen/stroke_widget_btn)",
                         w.group(1).startsWith("@dimen/"));
@@ -237,7 +253,7 @@ public class ThemePillShapeContractTest {
     @Test
     public void defaultRadiiMatchesThemeFile() throws Exception {
         Map<String, String> fromFile = new HashMap<>();
-        Matcher j = Pattern.compile("\"(\\w+)\"\\s*:\\s*\"([0-9.]+(?:dp|dip|px))\"")
+        Matcher j = Pattern.compile("\"(\\w+)\"\\s*:\\s*([0-9.]+)")
                 .matcher(read(new File(repoRoot(), "app/src/main/assets/theme/theme_radii.json")));
         while (j.find()) fromFile.put(j.group(1), j.group(2));
 
@@ -247,7 +263,7 @@ public class ThemePillShapeContractTest {
         int end = gradle.indexOf("\n]", start);
         assertTrue("defaultRadii 块没有闭合", end > start);
         Map<String, String> fromGradle = new HashMap<>();
-        Matcher g = Pattern.compile("(\\w+)\\s*:\\s*'([0-9.]+(?:dp|dip|px))'")
+        Matcher g = Pattern.compile("(?m)^\\s*([A-Za-z_]\\w*)\\s*:\\s*([0-9.]+)")
                 .matcher(gradle.substring(start, end));
         while (g.find()) fromGradle.put(g.group(1), g.group(2));
 

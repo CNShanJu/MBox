@@ -24,7 +24,6 @@ import com.github.tvbox.osc.ui.adapter.SelectDialogAdapter.SelectDialogInterface
 import com.github.tvbox.osc.ui.dialog.BackupDialog
 import com.github.tvbox.osc.ui.dialog.DialogCoordinator
 import com.github.tvbox.osc.ui.dialog.LanServerDialog
-import com.github.tvbox.osc.ui.dialog.LiveApiDialog
 import com.github.tvbox.osc.ui.dialog.SelectDialog
 import com.github.tvbox.osc.ui.dialog.TextTipDialog
 import com.github.tvbox.osc.ui.dialog.ThemePickerDialog
@@ -56,7 +55,6 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
 
     private var homeRec = SystemConfig.getHomeRec()
     private var dnsOpt = SystemConfig.getDohUrl()
-    private var currentLiveApi = SystemConfig.getLiveUrl()
 
     /** init() 是否已跑完(onResume 刷新显示前要确认控件已就绪) */
     private var inited = false
@@ -128,12 +126,19 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             val newVal = !SystemConfig.isLanServerEnabled()
             mBinding.switchLanServer.setChecked(newVal)
             SystemConfig.setLanServerEnabled(newVal)
-            biz(if (newVal) "开启局域网服务(重启后生效)" else "关闭局域网服务(仅本机)")
+            val lanState = ControlManager.get().lanState()
+            biz(when (lanState) {
+                ControlManager.LAN_PENDING_RESTART -> "开启局域网服务(重启后生效)"
+                ControlManager.LAN_PENDING_CLOSE -> "关闭局域网服务(重启后仅本机)"
+                ControlManager.LAN_ACTIVE -> "局域网服务已开启"
+                else -> "局域网服务已关闭(仅本机)"
+            })
             if (newVal) {
                 // 开启后弹窗:把"访问地址 + 还需重启"一次说清,并给一键重启(否则用户只能自己去后台杀应用)
                 showLanServerDialog()
             } else {
-                AppBubble.toast("已关闭局域网服务(仅本机),重启应用后生效")
+                AppBubble.toast(if (lanState == ControlManager.LAN_PENDING_CLOSE)
+                    "局域网服务已关闭，重启生效" else "局域网服务已关闭")
             }
         }
 
@@ -152,16 +157,12 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             SystemConfig.setIgnoreSslError(newVal)
             biz(if (newVal) "开启忽略证书错误(重启网络重建后对 OkHttp 生效)" else "关闭忽略证书错误")
             AppBubble.toast(
-                if (newVal) "已开启忽略证书错误(仅用于个别自签名站点)" else "已关闭忽略证书错误(恢复证书校验)"
+                if (newVal) "已开启证书忽略，仅用于自签名站点" else "已恢复证书校验"
             )
         }
 
-        mBinding.llLiveApi.setOnClickListener {
-            XPopup.Builder(mContext)
-                .autoFocusEditText(false)
-                .asCustom(LiveApiDialog(this))
-                .show()
-        }
+        // 直播源已移到「订阅管理 - 直播源」页(订阅自带的跟着订阅走、用户自建的在那儿加),
+        // 设置页不再提供入口,避免两处各配一份(2026-10-01)
 
         val defaultBgPlayTypePos = PlayConfig.getBackgroundPlayType()
         val bgPlayTypes = ArrayList<String>()
@@ -189,7 +190,7 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
                                 }
 
                                 override fun onDenied(permissions: List<String>, never: Boolean) {
-                                    AppBubble.toast("未授予通知权限,后台播放时通知栏将不可见")
+                                    AppBubble.toast("通知权限未开启，后台控制不可用")
                                 }
                             })
                     }
@@ -209,9 +210,6 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             types.add("3.0")
             types.add("4.0")
             types.add("5.0")
-            types.add("6.0")
-            types.add("8.0")
-            types.add("10.0")
             val defaultPos = types.indexOf(PlayConfig.getVideoSpeed().toString())
             val dialog = SelectDialog<String>(this@SettingActivity)
             dialog.setTip("请选择")
@@ -247,7 +245,7 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
 
                         override fun onDenied(permissions: List<String>, never: Boolean) {
                             if (never) {
-                                AppBubble.toastLong("获取存储权限失败,请在系统设置中开启")
+                                AppBubble.toast("请在系统设置中授予存储权限")
                                 XXPermissions.startPermissionActivity(
                                     this@SettingActivity,
                                     permissions
@@ -486,7 +484,7 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             dialog.show()
         }
         mBinding.llClearCache.setOnClickListener { view: View ->
-            com.github.tvbox.osc.ui.dialog.ConfirmDialog.show(this, "提示", "确定清空缓存吗？", "清空", {
+            com.github.tvbox.osc.ui.dialog.ConfirmDialog.showDanger(this, "提示", "确定清空缓存吗？", "清空", {
                 onClickClearCache(view)
             })
         }
@@ -566,7 +564,7 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             biz("下载仅WiFi: " + if (newVal) "开启" else "关闭")
             AppBubble.toast("仅 Wi-Fi 下载已" + if (newVal) "开启" else "关闭")
         }
-        // 同时下载任务数(1-5)
+        // 同时下载任务数(**1-3**;2026-10-01 上限由 5 收到 3,与下载页齿轮弹窗同一事实源)
         val refreshConcurrent = {
             mBinding.tvDlConcurrent.text = DownloadFacade.get().getMaxConcurrent().toString() + " 个"
         }
@@ -574,8 +572,8 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
         mBinding.llDlConcurrent.setOnClickListener {
             FastClickCheckUtil.check(it)
             val types = ArrayList<String>()
-            for (i in 1..5) types.add("并发 " + i)
-            val defaultPos = DownloadFacade.get().getMaxConcurrent() - 1
+            for (i in 1..3) types.add("并发 " + i)
+            val defaultPos = DownloadFacade.get().getMaxConcurrent().coerceIn(1, 3) - 1
             val dialog = SelectDialog<String>(this@SettingActivity)
             dialog.setTip("选择同时下载任务数")
             dialog.setAdapter(object : SelectDialogInterface<String?> {
@@ -676,16 +674,10 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             return
         }
         if (homeRec != SystemConfig.getHomeRec() || dnsOpt != SystemConfig.getDohUrl()
-            || currentLiveApi != SystemConfig.getLiveUrl()
-        ) { // 首页类型/dns/doh/直播源有更改,需重载页面
-            //AppManager.getInstance().finishAllActivity()
-            if (currentLiveApi == SystemConfig.getLiveUrl()) { //未更改直播源,不需重载api等
-                val bundle = Bundle()
-                bundle.putBoolean(IntentKey.CACHE_CONFIG_CHANGED, true)
-                jumpActivity(MainActivity::class.java, bundle)
-            } else {
-                jumpActivity(MainActivity::class.java)
-            }
+        ) { // 首页类型/dns/doh 有更改,需重载页面(直播源已移到订阅管理页,不在这里比)
+            val bundle = Bundle()
+            bundle.putBoolean(IntentKey.CACHE_CONFIG_CHANGED, true)
+            jumpActivity(MainActivity::class.java, bundle)
             overridePendingTransition(R.anim.fade_in, R.anim.fade_out)
         } else {
             super.onBackPressed()
@@ -822,7 +814,7 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
                 false
             }
             mBinding.root.post {
-                AppBubble.toastLong(if (ok) "缓存已清空" else "清空缓存失败,请稍后再试")
+                AppBubble.toast(if (ok) "缓存已清空" else "清空失败，请重试")
             }
         }
     }
@@ -886,7 +878,7 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
         try {
             AppUtils.relaunchApp(true)
         } catch (t: Throwable) {
-            AppBubble.toast("重启失败,请手动退出并重新打开应用")
+            AppBubble.toast("重启失败，请手动重开应用")
         }
     }
 }

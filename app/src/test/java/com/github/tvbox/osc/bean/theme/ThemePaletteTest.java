@@ -93,7 +93,7 @@ public class ThemePaletteTest {
         assertEquals("缺 bg_body 时应取内置主题的值", 0xFF101010, derived.get("bg_body"));
         assertEquals("缺 brand 时应取内置主题的主色", 0xFFABCDEF, derived.get("color_highlight"));
         assertEquals("缺主按钮文字时应取内置主题的 btn_confirm_text", 0xFF000000, derived.get("btn_confirm_text"));
-        assertEquals("缺空心键描边色时应取内置主题的 btn_stroke", 0x66123456, derived.get("btn_cancel_bg"));
+        assertEquals("缺无字容器描边色时应取内置主题的 btn_stroke", 0x66123456, derived.get("btn_cancel_bg"));
     }
 
     /**
@@ -125,8 +125,8 @@ public class ThemePaletteTest {
      * <ul>
      *   <li>① 纯色按钮:底 = {@code btn_confirm_bg}(保留透明度);描边 = 该底色的<b>不透明版</b>
      *       —— 于是"把主按钮背景设成透明度百分百时,边框线不透明";</li>
-     *   <li>② 空心按钮:无填充,描边 = {@code btn_cancel_bg}(标签「空心按钮边框线颜色」),
-     *       文字走<b>文字主色</b>{@code btn_plain_text}(所以「次按钮文字」这个键已删除);</li>
+     *   <li>② 空心按钮:无填充,描边与文字同取<b>文字主色</b>{@code btn_plain_text};
+     *       {@code btn_cancel_bg} 只给没有文字的容器与输入框使用;</li>
      *   <li>③ 小组件按钮选中:填充 = 纯色按钮的<b>底色本身</b>({@code btn_select_bg},<b>连透明度一起</b> ——
      *       用户口径"选中态是背景透明无色啊,文字白色":主按钮无色时选中态也无色),
      *       文字 = 主按钮文字({@code btn_select_text} = {@code btn_confirm_text})。</li>
@@ -151,10 +151,10 @@ public class ThemePaletteTest {
         assertEquals("底全透明时选中态也必须是无色(不能退化成不透明的实心填充)", 0x00000000,
                 ThemePaletteFactory.derive(in, null).get("btn_select_bg"));
 
-        // ② 空心按钮:描边 = 那个键;文字走文字主色;历史资源名 btn_stroke 同值
+        // ② 空心按钮:描边与文字同取文字主色;无字容器描边仍由 btn_cancel_bg/btn_stroke 提供
         assertEquals(0x66123456, p.get("btn_cancel_bg"));
         assertEquals(0xFF3366FF, p.get("btn_plain_text"));
-        assertEquals("btn_stroke 与空心键描边色同值", p.get("btn_cancel_bg"), p.get("btn_stroke"));
+        assertEquals("btn_stroke 与无字容器描边色同值", p.get("btn_cancel_bg"), p.get("btn_stroke"));
 
         // ③ 小组件按钮选中:填充 = 纯色按钮的底(含透明度,不再强制不透明)+ 文字走主按钮文字
         assertEquals(p.get("btn_confirm_bg"), p.get("btn_select_bg"));

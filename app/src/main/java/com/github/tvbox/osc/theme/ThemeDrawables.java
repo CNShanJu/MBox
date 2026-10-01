@@ -22,15 +22,11 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 运行时换肤的 <b>drawable / 色值选择器重建</b>通道。
+ * 主题 drawable 的统一入口与旧资源兼容层。
  *
- * <p>为什么需要它:布局里 {@code android:background="@drawable/bg_dialog"} 这种引用,
- * 颜色写在 drawable 的 {@code <solid android:color="@color/bg_float"/>} 里 ——
- * 编译期就烤进了资源表,既不是属性级颜色(改不了),也不走 Java 层 getDrawable
- * (系统的 {@code TypedArray.getDrawable} 是 native 实现)。唯一的办法是<b>按原样重建一份</b>。
- *
- * <p>做法(没有手写表、也不会跟资源脱节):把 drawable 的 XML 用 {@link Resources#getXml(int)} 读出来
- * (打包时它就是二进制 XML,运行时能读),按元素重建:
+ * <p>已登记到 {@code theme_shapes.json} 的背景优先交给 {@link ThemeDrawableFactory}:内置主题、
+ * 自定义主题和构建期 XML 共用同一份结构配方。尚未迁移的进度条、矢量、颜色 selector 等复杂资源,
+ * 暂时读取编译后的 XML 并按元素重建:
  * <ul>
  *   <li>{@code <shape>} → {@link GradientDrawable}(solid/stroke/corners/size/padding/gradient);</li>
  *   <li>{@code <selector>} → 有 {@code android:color} 的建成 {@link ColorStateList},
@@ -40,7 +36,7 @@ import java.util.Set;
  *       是就换成当前调色板的值,不是就原样取系统值。</li>
  * </ul>
  *
- * <p><b>安全阀</b>:只重建"确实用到了随主题颜色"的那几种(一个都没用到就直接交回系统);
+ * <p><b>安全阀</b>:兼容层只重建"确实用到了随主题颜色"的那几种(一个都没用到就直接交回系统);
  * 遇到不认识的元素/解析异常一律返回 null,调用方(Resources 包装或 inflater 注入)退回系统 drawable ——
  * 最差的情况是这一处保持内置配色,绝不会画错或崩。
  *
@@ -84,7 +80,10 @@ public final class ThemeDrawables {
      *         调用方应当用系统给的
      */
     public static Drawable rebuild(int resId, Resources res) {
-        if (resId == 0 || res == null || ThemeRuntime.palette() == null) return null;
+        if (resId == 0 || res == null) return null;
+        String recipeId = ThemeDrawableFactory.recipeIdFor(resId);
+        if (!recipeId.isEmpty()) return ThemeDrawableFactory.create(recipeId, res);
+        if (ThemeRuntime.palette() == null) return null;
         Scan scan = scan(resId, res);
         if (scan.state == null) return null;
         try {
@@ -143,13 +142,44 @@ public final class ThemeDrawables {
         }
     }
 
-    /** 读一个圆角矩形的四角半径(px);{@code null} = 直角 */
+    /**
+     * 读一个圆角矩形的四角半径;{@code null} = **真的是直角**。
+     *
+     * <p><b>均匀圆角必须走标量分支</b>(2026-10-01 静态检查发现的真 bug):
+     * 框架在"四角同值"时会把半径退化成标量,于是 {@code getCornerRadii()} 返回 {@code null} ——
+     * 原来 API 24+ 直接返回它,调用方({@link #copyCorners})就把"均匀圆角"当成"直角",
+     * 把重建那份的圆角**清成 0**:搜索弹窗条目、描边动作行这些仍走旧重建路径的组件,
+     * 换自定义主题后会突然变成直角。API 24 以下的分支反而处理对了,这里统一成同一口径。
+     */
     private static float[] radiiOf(GradientDrawable g) {
+        if (g == null) return null;
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
-            return g.getCornerRadii();
+            float[] radii = g.getCornerRadii();
+            if (radii != null) return radii;
         }
-        float r = g.getCornerRadius(); // API 24 以下没有 getCornerRadii,对称圆角用标量足够
+        // 均匀圆角(或 API 24 以下):用标量展开成四角
+        float r = g.getCornerRadius();
         return r > 0f ? new float[]{r, r, r, r, r, r, r, r} : null;
+    }
+
+    /**
+     * 这个 drawable 里是否**确实写了随主题走的颜色**(即换肤层有义务重建它)。
+     *
+     * <p>用途:重建返回 null 时区分"安全阀正常工作(本来就没有主题色,如固定黑渐变——
+     * 这时调用方应当原样用编译期那份)"与"该重建却失败了(真的会画成内置色,必须告警)"。
+     * 判定与原重建同名同源(扫一遍 XML 里的 {@code @color/} 引用,看是否登记在别名表里)。
+     */
+    public static boolean refersThemedColor(int resId, Resources res) {
+        if (resId == 0 || res == null) return false;
+        if (!ThemeDrawableFactory.recipeIdFor(resId).isEmpty()) return true; // 已登记配方:必然随主题
+        try {
+            Scan scan = scan(resId, res);
+            // state==null 也可能是"扫描不出/异常",这里保守地按"不是主题色"处理(不刷噪音);
+            // 真正的异常在生成 drawable 那条路上另有留痕(见 ThemeDrawableFactory#create)。
+            return scan.state != null || scan.colorList != null || scan.tintKey != null;
+        } catch (Throwable th) {
+            return false;
+        }
     }
 
     /**
@@ -188,13 +218,50 @@ public final class ThemeDrawables {
     public static Drawable themedDrawable(int resId, Resources res) {
         if (resId == 0 || res == null) return null;
         Drawable rebuilt = rebuild(resId, res);
-        if (rebuilt != null) return rebuilt;
+        if (rebuilt != null) {
+            logDrawablePath(resId, "rebuild");
+            return rebuilt;
+        }
         try {
-            return res.getDrawable(resId);
+            Drawable fallback = res.getDrawable(resId);
+            // **纯 tint 型 drawable 的兜底**:单色矢量图标(以及"只由子矢量组成"的 selector)
+            // 本身没有色块可重建 —— 它们的颜色声明在 android:tint 或子项里,靠**着色**生效。
+            // 而 themedDrawable 原来"rebuild 拿到非 null 就返回",恰好跳过了着色那一步:
+            // 于是经这条入口取到的图标永远停在编译期色。真机实证:方形勾选框的描边
+            // 一直是 #1F2937(编译期 text_main),而运行时主题主色是 #00AB2E。
+            String tintKey = iconTintKey(resId, res);
+            if (tintKey != null) {
+                ThemePalette p = ThemeRuntime.palette();
+                if (p != null) {
+                    Drawable tinted = fallback.mutate();
+                    androidx.core.graphics.drawable.DrawableCompat.setTint(tinted, p.get(tintKey));
+                    logDrawablePath(resId, "system+tint(" + tintKey + ")");
+                    return tinted;
+                }
+            }
+            logDrawablePath(resId, "system");
+            return fallback;
         } catch (Throwable th) {
             return null;
         }
     }
+
+    /**
+     * 留痕:某个 drawable 最终是"按主题重建"还是"退回系统那份"。
+     *
+     * <p>用途:排查"颜色标签解析对了、装上去却没变色"—— 区分"根本没走到重建"
+     * 与"重建了但这层不着色",只有开关 {@link #TRACE} 才留痕,平时零开销。
+     */
+    private static void logDrawablePath(int resId, String path) {
+        if (!TRACE) return;
+        try {
+            android.util.Log.i("MBoxRadius", "取底 " + resId + " → " + path);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** 排障开关:打开后每次取底都会留一行"重建 / 退回系统" */
+    public static boolean TRACE = false;
 
     /**
      * 代码里设底的**安全入口**(代替 {@code View.setBackgroundResource})。
@@ -278,6 +345,7 @@ public final class ThemeDrawables {
         synchronized (CACHE) {
             CACHE.clear();
         }
+        ThemeDrawableFactory.clearCache();
     }
 
     // ------------------------------------------------------------------
@@ -324,9 +392,18 @@ public final class ThemeDrawables {
                     return new Scan(null, (ColorStateList) result, null);
                 }
                 if (result instanceof Drawable) {
-                    if (!b.usedThemed) return Scan.NONE;
-                    Drawable.ConstantState st = ((Drawable) result).getConstantState();
-                    return st == null ? Scan.NONE : new Scan(st, null, null);
+                    // **容器自己没主题色也没关系**:选择器/层级表常常只是"引用两个矢量",
+                    // 颜色声明在子项里(如 button_checkbox_square → ic_checkbox_square /
+                    // ic_checkbox_square_checked,两个都写着 tint=@color/text_foreground)。
+                    // 这种"子项一致"的情况必须把子项的颜色透出来,否则勾选框这类控件整体不跟主题:
+                    // 真机实测 `button_checkbox_square→无(不跟主题)`,而两个子图标各自都是 text_main。
+                    if (b.usedThemed) {
+                        Drawable.ConstantState st = ((Drawable) result).getConstantState();
+                        return st == null ? Scan.NONE : new Scan(st, null, null);
+                    }
+                    // 注意:上面的 buildSelector 已经把这份 parser 读到尾了,归纳子项必须**另开一份**
+                    String key = uniformChildTintKey(resId, res, building, 0);
+                    return key == null ? Scan.NONE : new Scan(null, null, key);
                 }
                 return Scan.NONE;
             }
@@ -392,10 +469,59 @@ public final class ThemeDrawables {
         return found;
     }
 
+    /**
+     * 容器(selector/layer-list)自身无主题色时,从子项里归纳出统一的 tint 概念名。
+     *
+     * <p>取法:逐个 {@code @drawable/*} 子项问 {@link #tintKeyOfDrawable};只有当**所有带色的子项
+     * 都指向同一个概念名**时才返回它 —— 一旦出现两个不同概念名(比如选中红、未选中蓝),
+     * 说明这个容器本来就是多色,返回 {@code null}(宁可不涂,也不能涂坏)。
+     *
+     * @param building 正在构建的 id 集合,用来挡"选择器引用自己"这类环
+     */
+    private static String uniformChildTintKey(int containerRes, Resources res,
+                                              Set<Integer> building, int depth) {
+        if (depth > 8) return null; // 嵌套过深直接放弃,别把解析拖进无底洞
+        String found = null;
+        try (XmlResourceParser parser = res.getXml(containerRes)) {
+            String[] attrs = {"drawable", "src"};
+            while (true) {
+                int event = parser.next();
+                if (event == XmlPullParser.END_DOCUMENT) break;
+                if (event != XmlPullParser.START_TAG) continue;
+                for (String attr : attrs) {
+                    int childRes = parser.getAttributeResourceValue(NS, attr, 0);
+                    if (childRes == 0 || childRes == android.R.color.transparent) continue;
+                    String key = tintKeyOfDrawable(childRes, res, building, depth + 1);
+                    if (key == null) continue; // 这个子项不带主题色:不影响结论
+                    if (found == null) {
+                        found = key;
+                    } else if (!found.equals(key)) {
+                        return null; // 子项颜色不一致 = 多色容器,不涂
+                    }
+                }
+            }
+        } catch (Throwable ignored) {
+            return null;
+        }
+        return found;
+    }
+
+    /** 单个 drawable 资源的 tint 概念名(带环保护);{@code null} = 它不随主题走 */
+    private static String tintKeyOfDrawable(int resId, Resources res, Set<Integer> building, int depth) {
+        if (resId == 0 || res == null || depth > 8) return null;
+        if (!building.add(resId)) return null; // 已经在解析链上:环
+        try {
+            return scan(resId, res).tintKey;
+        } catch (Throwable ignored) {
+            return null;
+        } finally {
+            building.remove(resId);
+        }
+    }
+
     // ------------------------------------------------------------------
     // 构建器
     // ------------------------------------------------------------------
-
     private static final class Builder {
         private final Resources res;
         /** 本次构建是否真的替换过主题色(没替换过就交回系统,避免多做一份 drawable) */

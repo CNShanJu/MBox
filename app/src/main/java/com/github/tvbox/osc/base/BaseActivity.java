@@ -114,8 +114,7 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
         }else {
             setContentView(getLayoutResID());
         }
-        // 换肤兜底:注入器抓不到的视图(实测 MainActivity 的底栏容器就属于这类),
-        // 按"背景色还是不是内置那份"再补一遍(见 theme/ThemeSweep)
+        // 临时兼容层只处理 ThemeSweep 明确登记的 View id/令牌；禁止按现有像素颜色猜语义。
         try {
             View content = getWindow() == null ? null : getWindow().getDecorView();
             com.github.tvbox.osc.theme.ThemeSweep.apply(content);
@@ -140,6 +139,27 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
         if (!App.getInstance().isNormalStart){
             AppUtils.relaunchApp(true);
         }
+        // 暂停页面创建时的主题诊断与按需全树采集。
+        /* 临时停用页面主题探针，保留代码供后续排障。
+        try {
+            final View probeRoot = getWindow() == null ? null : getWindow().getDecorView();
+            if (probeRoot != null) {
+                probeRoot.post(() -> com.github.tvbox.osc.theme.RadiusCheck.reportViews(
+                        probeRoot, getClass().getSimpleName(),
+                        new int[]{R.id.search, R.id.tvName, R.id.bottom_nav_surface,
+                                R.id.my_surface_card, R.id.btn_live, R.id.btn_filter,
+                                R.id.update_bubble, R.id.ivThumb, R.id.tvYear}));
+                // 按需全树体检:`adb shell am start -n <pkg>/<Activity> --ez dump_theme true`
+                // 会在 3 秒后把"所有带底的控件 + 真色"打进 logcat —— 换自定义主题后想在某个页面上
+                // 一次性看清"哪些控件没跟上",用它(平时不带这个参数,零开销)。
+                if (getIntent() != null && getIntent().getBooleanExtra("dump_theme", false)) {
+                    probeRoot.postDelayed(() ->
+                            com.github.tvbox.osc.theme.RadiusCheck.dumpAllBackgrounds(probeRoot, getClass().getSimpleName()), 3000);
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        */
     }
 
 
@@ -277,6 +297,24 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
             attachPageBackground();
         } catch (Throwable ignored) {
         }
+        // 暂停页面恢复时的主题与输入框诊断。
+        /* 临时停用页面恢复时的主题探针，避免定时采集与日志输出。
+        try {
+            final View probeRoot = getWindow() == null ? null : getWindow().getDecorView();
+            if (probeRoot != null) {
+                probeRoot.postDelayed(() -> com.github.tvbox.osc.theme.RadiusCheck.reportViews(
+                        probeRoot, getClass().getSimpleName(),
+                        new int[]{R.id.search, R.id.tvName, R.id.bottom_nav_surface,
+                                R.id.my_surface_card, R.id.btn_live, R.id.btn_filter,
+                                R.id.update_bubble, R.id.ivThumb, R.id.tvYear}), 1200);
+                // 输入框的颜色只能"等它真的弹出来"才测得准(裸 inflate 不经过主题工厂,读到的是编译期值):
+                // 这里延时再采一次**当前窗口里真实的 EditText**,给输入框一族颜色一个可核对的数字。
+                probeRoot.postDelayed(() -> com.github.tvbox.osc.theme.RadiusCheck.reportInputs(
+                        BaseActivity.this), 9000);
+            }
+        } catch (Throwable ignored) {
+        }
+        */
         // 全局更新悬浮圈:下载进行中时,当前页面顶部悬浮圆形进度钮(不依赖系统悬浮窗权限)
         try {
             com.github.tvbox.osc.update.UpdateFloatIndicator.get(this).attach(this);
@@ -340,8 +378,10 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
         }
         if (night == createdSystemNight) return;
         createdSystemNight = night;
-        // 显式浅色/深色、选了自定义主题:系统翻明暗跟本 App 无关(不重建,免得白白闪一下)
-        if (!com.github.tvbox.osc.theme.ThemeRuntime.followsSystem()) return;
+        // 跟随系统时换亮暗类型；固定的自定义主题也要重铺一次，防止系统配置刷新
+        // 把既有 View 的颜色/形状退回平台资源。显式内置主题由固定夜间模式与资源保证。
+        if (!com.github.tvbox.osc.theme.ThemeRuntime.followsSystem()
+                && !com.github.tvbox.osc.theme.ThemeRuntime.active()) return;
         if (!allowRecreateOnNightChange()) {
             nightRecreatePending = true;
             return;
@@ -446,6 +486,13 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
      * 传 null 即普通的阻塞式加载框(不显示取消)。
      */
     public void showLoadingDialog(CharSequence hint, Runnable onCancel) {
+        // 加载框是阻塞态:先把输入法收起来再弹。
+        // 输入框那边刚提交(如"添加订阅"确认)时键盘还立着 —— 加载框里的状态文字/取消键会被键盘挡住;
+        // 弹窗窗口本身不被输入法压矮由 ui/dialog/PopupKeyboardPolicy 负责,这里管的是"别让键盘压着加载框"。
+        try {
+            com.blankj.utilcode.util.KeyboardUtils.hideSoftInput(this);
+        } catch (Throwable ignored) {
+        }
         if (loadingPopup == null) {
             loadingPopup = com.github.tvbox.osc.ui.dialog.DialogCoordinator.loading(this);
         }

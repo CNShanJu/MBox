@@ -25,7 +25,7 @@ import java.util.Map;
  *       {@code btn_select_text} = {@code btn_confirm_text};
  *       {@code text_sub} = {@code text_disable} = {@code brand} <b>@60%</b>(次要 / 禁用两级由主色算出来);
  *       {@code switch_track_on} = {@code download_done} = {@code success}(正向状态色);</li>
- *   <li>{@code btn_stroke} = {@code btn_cancel_bg}(空心按钮边框线颜色;历史资源名,值同源);</li>
+ *   <li>{@code btn_stroke} = {@code btn_cancel_bg}(无文字容器与输入框的边框色;历史资源名,值同源);</li>
  *   <li>{@code text_danger} / {@code swipe_red} / {@code swipe_red_text} <b>不在这里</b>:
  *       它们已固定成 {@code res/values/colors.xml} 的字面量,不随主题走;
  *       {@code accent_on_dark} 已移除(直播页选中态走 {@code btn_select_bg} / {@code btn_select_text});</li>
@@ -61,19 +61,22 @@ public final class ThemePaletteFactory {
         // 占位/提示文字(搜索框里的「搜索」这类)同样不再单独配(用户口径:"搜索框里的提示文本颜色
         // 没走文字主色透明度那种"):取文字主色 @40% —— 内置主题下与原来的 #611C1B1F 基本同观感
         int textHint = ThemePalette.withAlpha(brand, 40);
+        // 「文字主色 50%」:链接/地址这类要压一档又要与主色同系的文字(订阅管理里的订阅地址用它)。
+        // 与 text_sub(60%)分开是因为用户对链接明确要求 50%。
+        int textMainHalf = ThemePalette.withAlpha(brand, 50);
         // 按钮两族的口径(用户口径,一次说清):
         //   ① 纯色按钮:底 = btn_confirm_bg(可以带透明度);**描边 = 底色的不透明版**
         //      ——"纯色按钮也要给边框线,颜色就是主按钮背景的颜色;把它设成透明度百分百时边框线要不透明";
-        //   ② 空心按钮:无填充、只有 1dp 描边,描边色 = 可配置键 btn_cancel_bg(标签「空心按钮边框线颜色」),
-        //      文字走文字主色 brand —— 所以「次按钮文字」这个键已删除;
-        //   ③ 小组件按钮:未选中 = 只有边框(同上描边色)+ 文字主色;
+        //   ② 空心按钮:无填充、只有 1dp 描边,描边与文字同取主色 brand;
+        //      btn_cancel_bg 仅供无文字容器与输入框使用;
+        //   ③ 小组件按钮:未选中 = 只有主色描边 + 主色文字;
         //      选中 = 填充**纯色按钮的底色本身**(btn_select_bg,<b>连透明度一起</b>)+ 文字 btn_confirm_text
         //      —— 口径(2026-09-27 用户明确):"选中态是背景透明无色啊,文字白色" ——
         //      所以主按钮底设成无色时,选中态也跟着无色,只剩描边与文字(不再强制"忽略透明度")。
         int confirmBg = color(in, "btn_confirm_bg", brand);
         int confirmSolid = ThemePalette.withAlpha(confirmBg, 100);
         int confirmText = color(in, "btn_confirm_text", builtin.get("btn_confirm_text"));
-        int hollowStroke = color(in, "btn_cancel_bg", builtin.get("btn_stroke"));
+        int containerStroke = color(in, "btn_cancel_bg", builtin.get("btn_stroke"));
         int bodyFallback = builtin.get("bg_body");
         // 面:**颜色只有一个**(bg_surface),页面层与浮层共用;**透明度是两档,分层不同**
         // (用户口径,原来接反过一次):
@@ -101,9 +104,7 @@ public final class ThemePaletteFactory {
         out.put("bg_card", cardBg);
         // 浮层:弹窗·抽屉·气泡·悬浮钮同一个值(颜色同上,只有透明度不同)
         out.put("bg_float", floatBg);
-        // 卡片类目(海报卡角上的小标签):底色 + 文字一对,可配置
-        out.put("card_category_bg", color(in, "card_category_bg", builtin.get("card_category_bg")));
-        out.put("card_category_text", color(in, "card_category_text", builtin.get("card_category_text")));
+        // (原 card_category_bg / card_category_text 已随主题键一起移除 —— 它们从未接到任何组件)
 
         // 正文颜色与主色**共用**同一个值(用户口径:"正文颜色和主题主色共用,移除正文颜色的key"):
         // 主题文件里已没有 text_main 这个键,资源名 text_main 仍由 brand 派生 ——
@@ -111,6 +112,7 @@ public final class ThemePaletteFactory {
         out.put("text_main", brand);
         out.put("text_sub", textSub);
         out.put("text_hint", textHint);
+        out.put("text_main_half", textMainHalf);
         out.put("text_disable", textSub);
         // 强调/选中文字没写就跟主色走(与 Gradle 侧一致)
         out.put("text_accent", color(in, "text_accent", brand));
@@ -118,21 +120,25 @@ public final class ThemePaletteFactory {
 
         out.put("color_highlight", brand);
         out.put("select_fill", brand);
+        out.put("press_overlay", ThemePalette.withAlpha(brand, 24));
         out.put("btn_confirm_bg", confirmBg);
         out.put("btn_confirm_text", confirmText);
         // 纯色按钮的描边:主按钮背景的不透明版(底色透明时边框线仍要实心)
         out.put("btn_confirm_stroke", confirmSolid);
-        // 空心按钮的描边色(主题编辑页那个键);空心/纯文字按钮的文字走文字主色
-        out.put("btn_cancel_bg", hollowStroke);
+        // 无文字容器与输入框的描边色;空心按钮的描边和文字都走文字主色
+        out.put("btn_cancel_bg", containerStroke);
         out.put("btn_plain_text", brand);
         // 选中态填充 = 纯色按钮的底色本身(透明就一起透明):暗色主题下主按钮无色,选中态也就无色
         out.put("btn_select_bg", confirmBg);
         out.put("btn_select_text", confirmText);
-        // btn_stroke 是"空心键描边"的历史资源名,现在与 btn_cancel_bg 同值(入口只有主题编辑页那个键)
-        out.put("btn_stroke", hollowStroke);
+        // btn_stroke 是无文字描边的历史资源名,与 btn_cancel_bg 同值
+        out.put("btn_stroke", containerStroke);
 
         out.put("switch_track_on", success);
-        out.put("switch_track_off", color(in, "switch_track_off", brand));
+        // 「开关-关」不再单独配(2026-10-01):派生自开关开启色的 **30% 透明**;
+        // 注意 withAlpha 这版吃的是**百分比**(0-100),生成侧(Gradle withAlpha)吃的是小数(0.30f)——
+        // 两边写错单位会被 ThemeDerivationParityTest 当场拦下。
+        out.put("switch_track_off", ThemePalette.withAlpha(success, 30));
         out.put("switch_thumb", color(in, "switch_thumb", builtin.get("switch_thumb")));
         out.put("download_active", color(in, "download_active", builtin.get("download_active")));
         out.put("download_done", success);
@@ -154,8 +160,6 @@ public final class ThemePaletteFactory {
         d.put("text_hint", 0x611C1B1F);
         d.put("text_disable", 0xFFB3B3B3);
         d.put("text_highlight", 0xFF1890FF);
-        d.put("card_category_bg", 0xFF1F2937);
-        d.put("card_category_text", 0xFFFFFFFF);
         d.put("color_highlight", 0xFF1F2937);
         d.put("btn_select_text", 0xFFFFFFFF);
         d.put("download_done", 0xFF08CA2C);

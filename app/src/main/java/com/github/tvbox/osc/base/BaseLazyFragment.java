@@ -66,6 +66,13 @@ public abstract class BaseLazyFragment extends Fragment implements CustomAdapt {
     @Override
     public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container, @Nullable Bundle savedInstanceState) {
         AutoSize.autoConvertDensity(getActivity(), getSizeInDp(), isBaseOnWidth());
+        // **在真正 inflate 的那一刻装注入器**:`onGetLayoutInflater` 不保证被走到
+        // (Fragment 会缓存/复用 inflater 实例,rootView 非空时更是直接返回),
+        // 而"哪个 inflater 造的这个布局"才是决定它能不能吃到主题的唯一因素。
+        try {
+            com.github.tvbox.osc.theme.ThemeInflaterFactory.install(inflater);
+        } catch (Throwable ignored) {
+        }
         if (null == rootView) {
             rootView = inflater.inflate(getLayoutResID(), container, false);
         }
@@ -78,6 +85,28 @@ public abstract class BaseLazyFragment extends Fragment implements CustomAdapt {
         } catch (Throwable ignored) {
         }
         return rootView;
+    }
+
+    /**
+     * **Fragment 自己的 inflater 也要装主题注入器**(2026-10-01 真机定位到的根因)。
+     *
+     * <p>{@code Fragment.getLayoutInflater()} 给的是 Activity inflater 的**克隆**
+     * ({@code LayoutInflater.cloneInContext}),而注入器是反射写进 {@code mFactory2} 私有字段的 ——
+     * 克隆不一定带过去。后果:同一个 Activity 里,{@code ThemeSweep} 兜底的那几个 id 跟着主题变了色,
+     * 而"布局属性注入"那一批(搜索框底、卡片底、文字色、图标 tint)全停在编译期色。
+     * 真机实测:{@code bottom_nav_surface} 拿到主题蓝 {@code #B84949FF},而同页 {@code search} 仍是
+     * 编译期灰 {@code #B8ECECF4}。
+     *
+     * <p>在"取 inflater"这一刻补装(幂等),本模块所有懒加载 Fragment 的布局都会走注入通道。
+     */
+    @Override
+    public LayoutInflater onGetLayoutInflater(@Nullable Bundle savedInstanceState) {
+        LayoutInflater inflater = super.onGetLayoutInflater(savedInstanceState);
+        try {
+            com.github.tvbox.osc.theme.ThemeInflaterFactory.install(inflater);
+        } catch (Throwable ignored) {
+        }
+        return inflater;
     }
 
     @Override

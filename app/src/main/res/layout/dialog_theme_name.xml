@@ -2,6 +2,7 @@
 <!-- 主题命名弹窗:标题 + 说明 + 输入框 + 取消/确定。
      重名时**不关闭弹窗**,就地提示,用户改完再点确定(用户口径:重名要求重新起一个,也允许取消)。 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="320dp"
     android:layout_height="wrap_content"
@@ -34,7 +35,9 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="@dimen/dp_10"
-        android:textColorHint="@color/text_sub_foreground">
+        app:boxStrokeColor="@color/text_main_half"
+        app:placeholderTextColor="@color/text_main_half"
+        app:hintTextColor="@color/text_main_half">
 
         <EditText
             android:id="@+id/et_name"
@@ -42,6 +45,7 @@
             android:layout_height="wrap_content"
             android:background="@null"
             android:hint="例如:暗夜紫"
+            android:textColorHint="@color/text_main_half"
             android:inputType="text"
             android:maxLength="6"
             android:maxLines="1"

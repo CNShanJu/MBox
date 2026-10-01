@@ -7,6 +7,7 @@ import com.github.tvbox.osc.bean.theme.ThemeJson;
 import com.github.tvbox.osc.bean.theme.ThemeKey;
 import com.github.tvbox.osc.bean.theme.ThemePalette;
 import com.github.tvbox.osc.bean.theme.ThemePaletteFactory;
+import com.github.tvbox.osc.bean.theme.ThemeShapePalette;
 import com.github.tvbox.osc.bean.theme.ThemeSpec;
 import com.github.tvbox.osc.bean.theme.ThemeType;
 import com.github.tvbox.osc.config.SystemConfig;
@@ -119,6 +120,7 @@ public final class ThemeStore {
     /** 内置主题文件与派生结果的解析缓存(assets 在进程内不会变,解析一次就够) */
     private static final Map<ThemeType, Map<String, String>> BUILTIN_INPUT_CACHE = new java.util.EnumMap<>(ThemeType.class);
     private static final Map<ThemeType, ThemePalette> BUILTIN_PALETTE_CACHE = new java.util.EnumMap<>(ThemeType.class);
+    private static final Map<ThemeType, ThemeShapePalette> BUILTIN_SHAPE_CACHE = new java.util.EnumMap<>(ThemeType.class);
 
     /** 内置主题的 <b>25 个可配置键</b>(直接读 assets 里那份人可读的主题文件) */
     public static Map<String, String> builtinInput(ThemeType type) {
@@ -197,6 +199,63 @@ public final class ThemeStore {
         return ThemePaletteFactory.derive(def.colors(), builtinPalette(def.getType()));
     }
 
+    /** 内置形状调色板。当前亮暗共用一份资产,API 保留类型参数以便未来分档。 */
+    public static ThemeShapePalette builtinShapes(ThemeType type) {
+        ThemeType resolved = type == null ? ThemeType.BRIGHT : type;
+        synchronized (BUILTIN_SHAPE_CACHE) {
+            ThemeShapePalette cached = BUILTIN_SHAPE_CACHE.get(resolved);
+            if (cached != null) return cached;
+            ThemeShapePalette parsed = parseBuiltinShapes();
+            BUILTIN_SHAPE_CACHE.put(resolved, parsed);
+            return parsed;
+        }
+    }
+
+    private static ThemeShapePalette parseBuiltinShapes() {
+        Context ctx = appContext;
+        if (ctx == null) return ThemeShapePalette.defaults();
+        try (InputStream in = ctx.getAssets().open("theme/theme_radii.json")) {
+            java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+            byte[] buffer = new byte[4 * 1024];
+            int count;
+            while ((count = in.read(buffer)) > 0) bos.write(buffer, 0, count);
+            com.google.gson.JsonObject object = com.google.gson.JsonParser
+                    .parseString(new String(bos.toByteArray(), StandardCharsets.UTF_8)).getAsJsonObject();
+            Map<String, Number> radii = new LinkedHashMap<>();
+            Map<String, Number> strokes = new LinkedHashMap<>();
+            for (ThemeSpec.ShapeKey key : ThemeSpec.shapeKeys()) {
+                if (!object.has(key.key) || !object.get(key.key).isJsonPrimitive()) continue;
+                try {
+                    float value = object.get(key.key).getAsFloat();
+                    if (key.kind == ThemeSpec.ShapeKey.Kind.RADIUS) radii.put(key.key, value);
+                    else strokes.put(key.key, value);
+                } catch (Throwable ignored) {
+                }
+            }
+            return new ThemeShapePalette(radii, strokes);
+        } catch (Throwable ignored) {
+            return ThemeShapePalette.defaults();
+        }
+    }
+
+    /** 自定义主题 → 完整形状调色板;缺失/非法项继承同类型内置值。 */
+    public static ThemeShapePalette shapePaletteOf(ThemeDef def) {
+        if (def == null) return builtinShapes(ThemeType.BRIGHT);
+        ThemeShapePalette fallback = builtinShapes(def.getType());
+        Map<String, Number> radii = new LinkedHashMap<>();
+        Map<String, Number> strokes = new LinkedHashMap<>();
+        for (ThemeSpec.ShapeKey key : ThemeSpec.shapeKeys()) {
+            if (key.kind == ThemeSpec.ShapeKey.Kind.RADIUS) {
+                Float value = def.radii().get(key.key);
+                radii.put(key.key, value == null ? fallback.radiusDp(key.key) : value);
+            } else {
+                Float value = def.strokes().get(key.key);
+                strokes.put(key.key, value == null ? fallback.strokeDp(key.key) : value);
+            }
+        }
+        return new ThemeShapePalette(radii, strokes);
+    }
+
     /**
      * <b>当前生效配色的指纹</b>(便宜、不读 assets):模式 + 选中的自定义主题 + 亮/暗默认主题 +
      * 生效类型 + 生效主题的 25 个键的哈希。
@@ -209,7 +268,8 @@ public final class ThemeStore {
     public static String activePaletteFingerprint() {
         Selection s = selection();
         ThemeDef def = resolveActive();
-        String content = def == null ? "builtin" : def.getId() + ":" + def.colors().hashCode();
+        String content = def == null ? "builtin" : def.getId() + ":" + def.colors().hashCode()
+                + ":" + def.radii().hashCode() + ":" + def.strokes().hashCode();
         return s.mode + "|" + s.customId + "|" + s.defaultBrightId + "|" + s.defaultDarkId
                 + "|" + activeType() + "|" + content;
     }
@@ -279,6 +339,7 @@ public final class ThemeStore {
                 if (def.getName().isEmpty()) def.setName(fileId);
                 if (def.getCreatedAt() <= 0) def.setCreatedAt(f.lastModified());
                 def.materialize(builtinInput(def.getType()));
+                def.materializeShapes(builtinShapes(def.getType()));
                 out.add(def);
             } catch (Throwable ignored) {
             }
@@ -325,6 +386,7 @@ public final class ThemeStore {
 
         // 键补齐到"这份主题类型"的内置值:导出的主题包永远是完整的
         def.materialize(builtinInput(def.getType()));
+        def.materializeShapes(builtinShapes(def.getType()));
 
         boolean isNew = def.getId() == null || def.getId().isEmpty();
         if (isNew) {
@@ -690,6 +752,14 @@ public final class ThemeStore {
         for (ThemeKey k : ThemeSpec.all()) {
             String v = builtin.get(k.key);
             if (v != null) def.setColor(k.key, v);
+        }
+        ThemeShapePalette shapes = builtinShapes(def.getType());
+        for (ThemeSpec.ShapeKey key : ThemeSpec.shapeKeys()) {
+            if (key.kind == ThemeSpec.ShapeKey.Kind.RADIUS) {
+                def.setRadius(key.key, shapes.radiusDp(key.key));
+            } else {
+                def.setStroke(key.key, shapes.strokeDp(key.key));
+            }
         }
     }
 

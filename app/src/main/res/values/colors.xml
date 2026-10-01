@@ -51,8 +51,8 @@
 
     <!-- 危险操作三色:**固定字面量**,不进主题文件、不随自定义主题走(用户口径:"删除,对应组件固定就是这个颜色")。
          以前它们是主题概念(text_danger / swipe_red / swipe_red_text),现在只在 res 里写死一次:
-         text_danger    = 不带底色的危险入口文字/图标(列表工具条的「删除」、条目上的删除图标、清空类按钮)
-         swipe_red      = 不可逆动作的红底(左滑删除、删除确认键)
+         text_danger    = 危险空心按钮的文字与描边、无底色危险入口文字/图标
+         swipe_red      = 不可逆动作的红底(左滑删除、实心删除确认键)
          swipe_red_text = 红底上的字 -->
     <color name="text_danger">#E5484D</color>
     <color name="swipe_red">#E5484D</color>
@@ -70,15 +70,19 @@
     <color name="orange">#ff4600</color>
 
     <color name="color_03DAC5">#03DAC5</color>
-    <color name="title_fouse_n">#ffce7900</color>
+    <!-- 搜索页「最近热搜」序号牌的前三名固定色(用户指定,不进主题文件):1=#F44747 / 2=#FF5C00 / 3=#FFB800。
+         4 名往后 = **文字主色 50% 透明**(见 HotRankAdapter);这三个是"名次语义色",亮/暗主题同一套。 -->
+    <color name="search_rank_top1">#F44747</color>
+    <color name="search_rank_top2">#FF5C00</color>
+    <color name="search_rank_top3">#FFB800</color>
     <!-- color_highlight(全局高亮/选中色)已上移到 assets/theme/theme_colors.json 统一维护,
          此处不再重复定义(重复会编译不过)。它与主按钮同色:亮色主题=页面主黑 #1F2937、
          暗色主题=#E5E7EB,开关/chip 选中/选中文字/进度条等都跟着走。
          直播页"选中/聚焦那一条频道"的底**也走主题了**:原来是写死的蓝 accent_on_dark(该键已移除),
          现在是 btn_select_bg(= 纯色按钮的底色,连透明度一起)+ 其上文字 btn_select_text(见 drawable/button_detail_quick_search 与
          res/color/live_channel_text.xml)—— 所以单靠写死色会被明暗主题拉成"白底白字"的那类问题不再有。
-         唯一还写死的直播页聚焦色是**左侧"分组"列**的橙 title_fouse_n(#ffce7900,它在中灰区间,
-         两种主题下配 text_foreground 都看得清);要不要也纳入主题待定。 -->
+         左侧"分组"列那条橙 title_fouse_n(#ffce7900)本次也收掉了(改走主题 btn_select_bg,
+         见 drawable/item_right_bg.xml)—— 直播页至此没有写死的聚焦色。 -->
     <color name="color_FFB6C1">#FFB6C1</color>
     <color name="color_66000000">#66000000</color>
     <color name="color_02F8E1">#02F8E1</color>

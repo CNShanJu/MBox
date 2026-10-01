@@ -1,6 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
+    <!-- 搜索页「最近热搜」词条名与「历史搜索」chip 的正文统一字号(用户口径:两个区块标题下的文字
+         要同字号同颜色)。**唯一来源** —— 两处都引它,别再各写一个 sp,免得又走岔。 -->
+    <dimen name="search_word_text_size">14sp</dimen>
+
     <!-- common_corners(空心/实心小按钮、抽屉里的小块统一圆角)已挪进主题圆角文件:
          见 app/src/main/assets/theme/theme_radii.json 的 common_corners,由 :app:generateThemeColors
          生成到 build/generated/theme_colors/values/theme_radii.xml。

@@ -45,16 +45,16 @@ public final class ThemeColorAliases {
             put(map, R.color.bg_surface, "bg_surface");
             put(map, R.color.bg_card, "bg_card");
             put(map, R.color.bg_float, "bg_float");
-            put(map, R.color.card_category_bg, "card_category_bg");
-            put(map, R.color.card_category_text, "card_category_text");
             put(map, R.color.text_main, "text_main");
             put(map, R.color.text_sub, "text_sub");
             put(map, R.color.text_hint, "text_hint");
+            put(map, R.color.text_main_half, "text_main_half");
             put(map, R.color.text_disable, "text_disable");
             put(map, R.color.text_accent, "text_accent");
             put(map, R.color.text_highlight, "text_highlight");
             put(map, R.color.color_highlight, "color_highlight");
             put(map, R.color.select_fill, "select_fill");
+            put(map, R.color.press_overlay, "press_overlay");
             put(map, R.color.btn_confirm_bg, "btn_confirm_bg");
             put(map, R.color.btn_confirm_text, "btn_confirm_text");
             put(map, R.color.btn_confirm_stroke, "btn_confirm_stroke");

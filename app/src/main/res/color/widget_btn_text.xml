@@ -3,6 +3,7 @@
      选中 = 主按钮文字(btn_select_text = btn_confirm_text,压在实心填充上);
      未选中 = **文字主色**(btn_plain_text 派生自 brand)。 -->
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_enabled="false" android:color="@color/text_disable" />
     <item android:state_selected="true" android:color="@color/btn_select_text" />
     <item android:color="@color/btn_plain_text" />
 </selector>

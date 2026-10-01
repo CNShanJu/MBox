@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 方形勾选框 - 未选中:**只有边框线,内部不填充**。
+     颜色直接写 @color 引用(而不是靠 android:tint):选择器型 drawable 的子项**无法在运行时被 tint**
+     —— StateListDrawable 换状态时画的是子 drawable,父层 tint 不下传,而本运行时的 android.jar
+     把 DrawableContainer.getChildren() 这类隐藏 API 剥掉了,公开面上拿不到子项。
+     所以颜色必须像其它底一样写进 XML 的颜色引用里,由主题重建通道(ThemeDrawables)换成主题色。
+     形状用"外框 + 内框"两条实心路径凑出空心方框,与圆形勾选(ic_unchecked_circle)同一套画法。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:height="24dp"
+    android:width="24dp"
+    android:viewportHeight="24"
+    android:viewportWidth="24">
+    <path
+        android:fillColor="@color/text_foreground"
+        android:pathData="M5,3h14c1.1,0 2,0.9 2,2v14c0,1.1 -0.9,2 -2,2H5c-1.1,0 -2,-0.9 -2,-2V5c0,-1.1 0.9,-2 2,-2zM5,5v14h14V5H5z"/>
+</vector>

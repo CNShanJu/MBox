@@ -1,0 +1,139 @@
+{
+  "selector_widget_btn": {
+    "radius": "radius_widget_btn",
+    "strokeWidth": "stroke_widget_btn",
+    "states": {
+      "disabled": { "fill": "transparent", "stroke": "text_disable" },
+      "selected": { "fill": "btn_select_bg", "stroke": "btn_confirm_stroke" },
+      "pressed": { "fill": "transparent", "stroke": "btn_plain_text" },
+      "default": { "fill": "transparent", "stroke": "btn_plain_text" }
+    }
+  },
+  "theme_btn_primary": {
+    "radius": "radius_btn",
+    "strokeWidthDp": 1,
+    "states": {
+      "disabled": { "fill": "btn_confirm_bg", "stroke": "btn_confirm_stroke" },
+      "pressed": { "fill": "btn_confirm_bg", "stroke": "btn_confirm_stroke" },
+      "default": { "fill": "btn_confirm_bg", "stroke": "btn_confirm_stroke" }
+    }
+  },
+  "theme_btn_secondary": {
+    "radius": "radius_btn",
+    "strokeWidthDp": 1,
+    "states": {
+      "disabled": { "fill": "transparent", "stroke": "text_disable" },
+      "pressed": { "fill": "transparent", "stroke": "btn_plain_text" },
+      "default": { "fill": "transparent", "stroke": "btn_plain_text" }
+    }
+  },
+  "theme_btn_ghost": {
+    "radius": "radius_btn",
+    "states": {
+      "disabled": { "fill": "transparent" },
+      "pressed": { "fill": "press_overlay" },
+      "default": { "fill": "transparent" }
+    }
+  },
+  "theme_btn_danger": {
+    "radius": "radius_btn",
+    "strokeWidthDp": 1,
+    "states": {
+      "disabled": { "fill": "#66E5484D", "stroke": "#66E5484D" },
+      "pressed": { "fill": "#E5484D", "stroke": "#E5484D" },
+      "default": { "fill": "#E5484D", "stroke": "#E5484D" }
+    }
+  },
+  "theme_btn_danger_entry": {
+    "radius": "radius_btn",
+    "strokeWidthDp": 1,
+    "states": {
+      "disabled": { "fill": "transparent", "stroke": "text_disable" },
+      "pressed": { "fill": "transparent", "stroke": "#E5484D" },
+      "default": { "fill": "transparent", "stroke": "#E5484D" }
+    }
+  },
+  "bg_large_round_float": {
+    "radius": "radius_background",
+    "states": { "default": { "fill": "bg_surface" } }
+  },
+  "bg_small_round_gray": {
+    "radius": "radius_card",
+    "states": { "default": { "fill": "bg_card" } }
+  },
+  "bg_thumb_round": {
+    "radius": "radius_thumb",
+    "states": { "default": { "fill": "bg_card" } }
+  },
+  "bg_dialog": {
+    "radius": "radius_dialog",
+    "states": { "default": { "fill": "bg_float" } }
+  },
+  "bg_bubble": {
+    "radius": "common_corners",
+    "states": { "default": { "fill": "bg_float" } }
+  },
+  "bg_bottom_dialog": {
+    "corners": {
+      "topLeft": "radius_dialog",
+      "topRight": "radius_dialog",
+      "bottomRightDp": 0,
+      "bottomLeftDp": 0
+    },
+    "states": { "default": { "fill": "bg_float" } }
+  },
+  "bg_drawer": {
+    "corners": {
+      "topLeft": "radius_dialog",
+      "topRightDp": 0,
+      "bottomRightDp": 0,
+      "bottomLeft": "radius_dialog"
+    },
+    "states": { "default": { "fill": "bg_float" } }
+  },
+  "bg_playing_control": {
+    "corners": {
+      "topLeft": "radius_dialog",
+      "topRight": "radius_dialog",
+      "bottomRightDp": 0,
+      "bottomLeftDp": 0
+    },
+    "states": { "default": { "fill": "bg_float" } }
+  },
+  "bg_search_round_float": {
+    "radius": "radius_search",
+    "states": { "default": { "fill": "bg_surface" } }
+  },
+  "bg_r_common_solid_select": {
+    "radius": "common_corners",
+    "states": { "default": { "fill": "btn_select_bg" } }
+  },
+  "bg_small_round_float": {
+    "radius": "radius_card",
+    "states": { "default": { "fill": "bg_surface" } }
+  },
+  "bg_theme_field": {
+    "radius": "common_corners",
+    "strokeWidthDp": 1,
+    "states": { "default": { "fill": "transparent", "stroke": "btn_stroke" } }
+  },
+  "button_detail_quick_search": {
+    "radius": "radius_widget_btn",
+    "strokeWidth": "stroke_widget_btn",
+    "states": {
+      "focused": { "fill": "btn_select_bg", "stroke": "btn_select_text" },
+      "default": { "fill": "btn_select_bg" }
+    }
+  },
+  "bg_swipe_pause": {
+    "states": { "default": { "fill": "download_active" } }
+  },
+  "bg_fab_oval": {
+    "shape": "oval",
+    "states": { "default": { "fill": "bg_float" } }
+  },
+  "placeholder_poster": {
+    "radius": "radius_card",
+    "states": { "default": { "fill": "bg_card" } }
+  }
+}
