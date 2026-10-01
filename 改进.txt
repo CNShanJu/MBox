@@ -9,6 +9,12 @@
 - :crash + :TabLayout + :ViewPager1Delegate + :quickjs → :thirdparty（纯第三方归堆，不依赖任何本仓模块）
 - :ui-common → :app（主题 JSON 在 app/src/main/assets/theme/，generateThemeColors 任务在 app/build.gradle）
 契约与实现合到同一模块后，边界不再靠拆 Gradle 模块保证，而是靠 **checkModuleDependencies 源码层门禁**：app/UI 禁止直连 :spider 的 ApiConfig/JsLoader/PlayUrlResolver，禁止 getCSP()/Hawk/EventBus/DownloadManager.get()/自建线程池与 OkHttpClient。
+播放器现状（2026-10-01，与 AGENTS.md §二/§七 同步）：旧 ExoPlayer 已迁至 Media3 1.4.1（匹配 compileSdk 34），类型 2 沿用旧配置；EXOmPlayer/xyz.doikki.videoplayer.exo 为兼容类名，实现只用 androidx.media3。禁止重新引入 com.google.android.exoplayer 依赖或旧包 import；Media3 各组件必须同版本，UI 不得 import androidx.media3。取流复用组合根注入的客户端，每个媒体源独立持有请求头快照；音轨/字幕选择用 Tracks/TrackSelectionOverride，字幕回调用 CueGroup。真机行为待用户人工回归。下文 Exo→Media3 的建议视为代码已完成，历史说明保留。
+播放器区样式不随主题（2026-10-01，与 AGENTS.md §七 同步）：播放器底恒为黑，压在**视频画面**上的元素（控制条/OSD、暂停与滑动进度浮层、字幕与 seek 进度图标、播放器菜单浮层）一律用**固定配色**（白/半透明黑/固定字面量），禁止接 `text_foreground`/`text_sub`/`btn_select_*`/`bg_float` 等主题色；反之，**带主题面板底**的浮层与页面元素照旧走主题（直播页 EPG 信息条与频道/分组卡片、直播设置与线路抽屉、播放设置面板里的小组件按钮）。判断口径：**画在黑画面/视频上 → 固定配色；有自己的（主题）面板底 → 跟主题。**
+空心组件边框线 = 它自己的文字颜色（2026-10-01，与 AGENTS.md §七 同步）：凡“无填充、只有描边”的组件（空心按钮 `BtnSecondary`、小组件键 `WidgetBtn`/`PageBgChip`、危险入口红字键 `BtnDangerGhost`、`bg_r_*_stroke_primary` 描边小件），描边色必须与该组件自己的文字色同源——普通键 = 文字主色（`btn_plain_text`/`text_foreground`）、危险入口 = 危险红 `#E5484D`、禁用态 = `text_disable`；**禁止**再挂“空心按钮边框线颜色”`btn_cancel_bg`（该键此后只服务没有自带文字的纯描边容器与输入框）。实心/选中态不受此条约束（描边按填充的不透明版 `btn_confirm_stroke`）。
+空心按钮按下仍为空心（2026-10-01，与 AGENTS.md §七 同步）：`BtnSecondary`、`BtnDangerGhost` 与未选中的 `WidgetBtn` 在 `state_pressed` 下保持透明填充，描边与文字继续同色；点击反馈不能把空心键临时刷成实心。`BtnPrimary` 按下/短时禁用时保留原来的填充与文字对比，不得切到浅色半透明底导致白字难辨；只有真正的选中件才允许持续显示实心选中态。
+点击型组件不得带“选中外观”（2026-10-01，与 AGENTS.md §七 同步）：`FlowTagLayout` 的 `app:max_select` 只给真·可选件；只做“点一下就触发动作”的 chip（搜索页历史/热词/相关搜索）一律不写 `max_select` —— 写了以后点击会 `setSelected(true)`，而 chip 的底 `selector_widget_btn` 带“选中 = 实心填充”状态，点过的词会变成一块选中色。新增点击型 chip 用无状态底（只有描边/无底），别挂带 `state_selected` 的选择器。
+搜索页数据源（2026-10-01，adb 抓本地 NewBox `com.github.tvbox.osd` 对齐）：最近热搜 = `https://api.web.360kan.com/v1/rank?cat=3`（取 `data[].title` 前 10 条，两列带序号网格展示）；相关搜索（输入联想）= `https://suggest.video.iqiyi.com/?if=mobile&key=<关键词>`（取 `data[].name`，内联 chip）。解析与 URL 编码收在 `util/SearchApiParsers`（纯逻辑带 JVM 单测）；原腾讯热词接口与浮层联想组件 `SearchSuggestionsDialog` 已下线。
 
 一、目标架构
 建议最终分成四层：
@@ -303,6 +309,7 @@ Gradle 依赖默认使用 implementation，谨慎使用 api。
 跨模块不共享可变对象。
 所有后台任务必须由模块级执行器管理，页面不得自行创建线程池。
 所有可滚动组件（RecyclerView/ScrollView/GridView/横向列表等）必须保留内边距并配合 clipToPadding=false，禁止内容贴边滚动。
+用户主动触发的删除、清除、清空操作必须先弹确认框；取消后不得改动数据。批量操作应说明影响范围，删除正在使用的直播源等会改变当前选择的操作应说明后续行为；输入框清字和页面临时状态重置不属于此类。
 图片占位只有一套实现：加载态与失败态都用 util/PosterPlaceholderDrawable（灰底+居中图标，图标随宿主尺寸只缩不放），统一加载入口 util/PicassoLoad（URL 走 into、本地文件走 intoFile）；XML 的 placeholder_poster 只作布局静态形态，运行时占位一律经 PicassoLoad 铺。
 占位必须放 ImageView 的背景层，禁止塞进 src 或 .placeholder()/.error()（塞 src 会被 scaleType 当普通图片放大再裁剪，小卡片上会超出显示范围）。
 失败态文案位置：海报卡底部有渐变信息条时，"图片加载失败"文字与图标必须排在该条上方可用区（由 PosterPlaceholderDrawable#failed 自动量覆盖条高度），禁止贴底绘制。
@@ -409,3 +416,10 @@ UI 只依赖门面和接口。
 
 6. debug 构建产物严禁提交（除非用户明确要求并二次确认）。
    发布含中文内容必须显式 UTF-8 写入并以字节发送，发布后抽查是否出现连续 “?” 乱码。
+
+## 下载鉴权与存储的持续约束（2026-10-01）
+
+- 下载权限必须按实际保存路径判断；Android 11+ 的应用私有目录不得要求“所有文件访问”权限。仅 Wi-Fi 等待属于排队状态。
+- URL、Cookie、Referer、UA 与自定义请求头通过公开契约刷新并原子替换；下载模块不得直接访问 WebView、ApiConfig 或具体登录实现，暂停/过期任务不得回写结果。
+- HLS 续传必须核对媒体序列、分片路径与顺序、字节范围、密钥/IV、init 布局；不能仅凭数组下标复用，也不能仅因短时鉴权参数变化清空进度。无法安全确认时暂停或清理后重下。
+- 401/403 先有限续期，404/410 先有限短重试并刷新清单，再确认永久缺片；登录失效必须可恢复暂停，不得高频循环请求旧地址。分片 URL 不整表持久化。

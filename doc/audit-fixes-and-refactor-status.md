@@ -7,6 +7,10 @@
 
 ## 0. 近期进展补充（2026-09-25）
 
+- **旧 ExoPlayer 迁至 Media3（2026-10-01）**：使用与 compileSdk 34 匹配的 Media3 1.4.1，移除旧 ExoPlayer 2.18.7 全部依赖；DASH/HLS/RTSP/RTMP、缓存及自定义 OkHttpDataSource 全部迁移。类型 2 和兼容类名保留，点播/直播选项改为 Media3；音轨/字幕用 `Tracks`/`TrackSelectionOverride`、`CueGroup`，字幕监听替换及释放时清理。保留 `PREVIOUS_SYNC`、同步 MediaCodec、解码回退和单次重试；请求头按媒体源复制，复用注入的客户端，避免跨源 UA/鉴权头污染及重复 UA。门禁增加旧依赖/import 拦截、Media3 版本对齐及 UI import 红线。
+  - **已机器验证**：`:app:assembleDebug :app:assembleRelease :app:testDebugUnitTest checkModuleDependencies` 全绿；新增请求头重播/隔离 2 个 JVM 用例通过；运行时依赖树 Media3 全为 1.4.1、无旧 ExoPlayer。
+  - **待人工验证**：点播/直播/本地起播、连续 seek、倍速、多音轨/字幕、全屏/PiP、后台播放/通知、安全 DNS 切换后起播；详见 `device-regression-checklist.md` §B。本批未操作真机。
+
 - **局域网服务弹窗（标题长按那个）三处收口（2026-09-27，用户反馈）**：
   - **「复制」改纯文字按钮 + 主题高亮色**：`item_lan_addr.xml` 原来是 `BtnGhost`（**带 1dp 描边**，所以看着像个描边按钮），文字色还是 `btn_plain_text`（主色）——同一个"复制"在播放详情弹窗里是 `text_accent` 的裸文字，两处观感不一致。现改 `TextView`：`text_accent` + 加粗 + `?selectableItemBackgroundBorderless` 涟漪，与详情页那份「复制」同档色（点击行为不变，整行/按钮都能复制）。
   - **两个按钮并排等宽**：原来「立即重启应用」「知道了」各占整行、上下叠着。现包一层横向 `LinearLayout`，两个按钮 `layout_width=0dp` + `layout_weight=1` + 定高 40dp —— 等宽、并排、吃掉整排；「立即重启应用」`GONE` 时「知道了」自动占满整排（顺序按其它弹窗口径：次要动作在左、主动作在右）。
@@ -473,14 +477,12 @@
   `View.dispatchDetachedFromWindow()` 会触发 `onVisibilityAggregated(false)` ——
   即**不可见/脱离窗口时框架自己就停了**，重新可见再启；`RoundChip` 内层还带默认重复次数上限。
   唯一残留是"VISIBLE 但被非回收型容器滚出视口仍算 aggregated-visible"，属框架口径，非本类引入。
-- **`BaseActivity.getResources()`：核对后判定"原判断不成立"，未改**。`ThemeResources.syncFrom()` 的第一行是
-  `latest == this.base` 的**引用比较**——只要 `ContextThemeWrapper` 缓存住 `mResources`（API 34 源码：
-  资源建好后 `applyOverrideConfiguration` 直接抛异常，说明实例是稳定的），热点路径上就**没有**锁、
-  没有 Configuration/DisplayMetrics 读取、也没有 equals，只是一次引用比较。另外"只在配置变化时才同步"的
-  缓存在这里**并不安全**：`Configuration`/`DisplayMetrics` 会被 `Resources.updateConfiguration` 原地改写，
-  按对象身份做键会漏掉真实配置变化，而那个 `cur.equals(now)` 恰恰是唯一安全的变更检测。
-  → 结论：**先不改**。若真机 profiler 仍显示这里占帧时间，再按"记录上一次实测到的 Configuration 内容指纹
-  （而非对象身份）+ 复用同一个 theme 资源实例"的方案做，并需要真机复核换肤/字号/日夜切换后的观感。
+- **`BaseActivity.getResources()` 配置同步（2026-10-01 更正）**：原先将
+  `latest == this.base` 视为可安全跳过的判断不成立：基础资源实例稳定，但配置和像素尺寸会原地更新。
+  自定义主题横屏全屏时因此可能仍持有竖屏宽度，让播放器把右半屏误判成屏幕边缘。
+  `ThemeResources` 现比较上一次基础资源的 Configuration / DisplayMetrics 内容副本，只有内容变化才同步，
+  保留 AutoSize 对包装资源的密度适配。播放器手势同时改用控制器局部坐标与实际宽高。
+  自定义主题、转屏、字号适配的实际观感仍需人工验证。
 
 - 验证（机器侧）：`:app:assembleDebug :app:testDebugUnitTest` 全绿；新增单测
   `DownloadProgressSignatureTest`（6 条：无变化不落盘/字节变化落盘/分片进度落盘/状态与合并文案落盘/
@@ -515,3 +517,33 @@
     ③成品能播且**时长/拖动正确**（fMP4 拼接产物若 init 段缺失或错位，表现为"文件在、打不开"或只有开头几秒）；
     ④日志里 `fMP4, init=…` / `字节范围分片` / `init 段下载完成` 与重封装结果（成功，或失败且**保留 `.mp4`**）；
     ⑤暂停/继续/杀进程重启后续传不重下 init 段、不产出坏文件。
+
+## 2026-10-01 下载优化批次
+
+- 已落地：私有目录权限回退、Wi-Fi 排队文案、worker 启动前注入解析/嗅探/上下文提供方、结构化 EnqueueResult。
+- 当前集直接复用最终播放 URL 和完整请求头；其它集逐集解析，同域补播放头，嗅探型地址先排队再由执行侧串行嗅探。跨域不继承旧 Cookie 等鉴权头。
+- HLS 通过 PlaylistSnapshot 分离布局与短时 URL；401/403 即时续期、404/410 最多两次短重试后刷新一次，安全映射后只替换请求上下文并保留完整分片。登录失效或布局/密钥/init 改变时暂停。
+- 新增“重启后自动继续下载”开关（默认关闭，保留手动暂停）；恢复前刷新地址。超星域/原课程页范围内并发上限为 2，其它站点保留全局设置。
+- DownloadExecutor 已拆为 DirectDownloader、HlsDownloader、HlsMerger、MediaRemuxer；下载页显示具体失败/暂停原因并提供任务日志入口。
+- 本机验证与人工回归分开记录，详情见 `doc/download-auth-renewal.md`。学习通登录续期、长视频、杀进程恢复尚待人工真机验证。
+
+## 2026-10-01 首页数据源选择弹窗
+
+- 首页入口改用 HomeSourceDialog，条目文字为 14sp，两列展示；其它通用选择弹窗保留原字号。
+- 固定顶部提供“切换订阅”动作，保留原弹窗后跳转 SubscriptionActivity；没有更换订阅时返回仍保留原筛选文字、滚动位置与选中项。搜索框实时按名称筛选，忽略英文大小写和首尾空白，清空恢复全部源。
+- 筛选结果通过 ListAdapter / DiffUtil 差量更新，当前选中项和点击回调按源 key 识别，避免过滤后下标变化导致选错源；无结果时显示提示。
+- 输入框容器、切换订阅按钮、列表项统一调用 createRowBackground，使用同一份主题派生的不透明底色。
+- 筛选框默认不自动弹键盘；手动输入时关闭 XPopup 的 isMoveUpToKeyboard；动态高度按列表实际起点扣除标题和搜索区域。
+- 新增 HomeSourceChoicesTest：部分名称匹配、清空恢复、过滤后的选中项、重名源和设备语言变化。
+- 已机器验证：`:app:assembleDebug :app:assembleRelease :app:testDebugUnitTest checkModuleDependencies` 全绿（日志 `build-home-source-gates.log`）。
+- 三项反馈调整后重新执行上述全量门禁，全绿（日志 `build-home-source-followup-gates.log`）；真机效果仍待人工确认。
+- 待人工验证：条目字号与换行、自定义主题下三类背景一致、键盘出现时面板不整体上移、过滤后选择正确源、进入订阅管理不操作再返回时弹窗和筛选/滚动状态保留；实际更换订阅后首页按新订阅刷新。
+
+## 2026-10-01 全屏手势与主页滚动位置
+
+- 自定义主题资源按基础配置的内容快照同步，支持同一 Resources 实例在旋转后改变像素宽高。
+- 两套播放器手势控制器统一使用局部触摸坐标及实际宽高判断边缘、亮度/音量半屏区域；保留四周 40dp 的边缘避让。
+- UserFragment 的网格布局管理器只在初始化时创建，切回主页复用滚动状态；窗口尺寸变化时只更新列数。
+- 新增 JVM 坐标回归覆盖横屏左右半屏、真实边缘、小窗局部坐标及未布局状态。
+- 已机器验证：`:app:assembleDebug :app:assembleRelease :app:testDebugUnitTest checkModuleDependencies` 全绿（2026-10-01，日志 `build-gesture-home-gates.log`）。
+- 待人工验证：自定义主题横屏左右半屏快进/快退与亮度/音量；主页滚动后切到相邻及较远分类再返回，确认原位置和像素偏移保留；旋转后列数和主题观感。

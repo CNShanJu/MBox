@@ -70,8 +70,8 @@
 | DownloadFragment.java | ~1208 | 已大量走 Facade，可继续薄化 |
 | SourceViewModel.java | ~970 | 源元信息已走 `SourceConfigApi` 契约；type0/1 内联解析仍留(进一步依赖注入化；EventBus 侧已改直调监听) |
 
-## 6. 现代化（§七·五）— 全部未启动（符合"最后做"）
-Exo→Media3、Hawk→DataStore、Java→Kotlin 渐进、Hilt（按需）。（EventBus→直调/明确监听接口**已完成**，见 §4；ui-common→ui-kit 见下方现状口径）
+## 6. 现代化（§七·五）— 按显式批次推进
+Exo→Media3 1.4.1 已完成代码迁移(2026-10-01，待播放器人工回归)，Hawk→DataStore 代码已完成；Java→Kotlin 渐进、Hilt（按需）。（EventBus→直调/明确监听接口**已完成**，见 §4；ui-common→ui-kit 见下方现状口径）
 现状口径：`:ui-common` 已并入 `:app`（主题 JSON 在 `app/src/main/assets/theme/`、`generateThemeColors` 任务在 `app/build.gradle`、公共资源在 `app/src/main/res/`），ui-kit 组件已在 app 内，只余"组件成熟后再评估拆模块"。
 
 ## 7. 近期可安全推进清单（按收益）
@@ -88,7 +88,7 @@ Exo→Media3、Hawk→DataStore、Java→Kotlin 渐进、Hilt（按需）。（E
    `util.SubscriptionConfig`;用户页热播缓存 `util.HomeHotCache`。UI/页面/Helper 对 Hawk 与 HawkConfig 键的
    裸读写全部改走门面;残留仅在装配(App 订阅注入/putDefault)与类内封装(RemoteTVBox)与门面自身。
 6. ⏸ playback shell + PlayFragment/DetailActivity 大拆分（需真机回归）。
-7. ⏸ feature 模块化、Media3/DataStore/Hilt（长期）。
+7. ⏸ feature 模块化/Hilt（长期）；Media3/DataStore 已完成代码迁移，待对应人工回归。
 
 ## 8. 边界规则抽查结果（§六逐条）
 - ✅ app 无 getCSP / UI 无裸建 OkHttpClient / `:common`（原 core-model）无 android 依赖 / `:download` 只经 `:spider` 公开契约（原 `:spider-api`，现契约与实现同模块，边界由源码门禁守）。
@@ -551,7 +551,7 @@ Exo→Media3、Hawk→DataStore、Java→Kotlin 渐进、Hilt（按需）。（E
 | 字符串通道 SpiderContentApi | ⚠️ 澄清:typed 底座,非删除项 | typed 实现(SpiderHome/Detail/SearchImpl)内部经 SpiderContentImpl 拉取后再解析,string 通道是运行底座;可治理点=收窄 app 直用面(SourceViewModel typed-first+fallback),需真机背书(见评估 §H) |
 | SourceViewModel type0/1/4 契约化 | ⏳ 解析层已收口 | typed 解析已与 VM 同源(AbsXmlParser,0cce8442);VM type0/1/4 六入口 typed-first 收敛为行为面,需逐源真机回归(见评估 §J/K5) |
 | 播放器内核收口 | ⚠️ | UI 层内核直用清零(SettingActivity DoT 收口 PlayerTrackHelper,45ea6745);MyVideoView 仍 7 文件 import(播放器全驱动 P1-P4 待真机) |
-| Exo→Media3 | ❌ | player 仍 exoplayer 2.18.7,media3 import 0 |
+| Exo→Media3 | ⏳ 代码已迁移,待人工回归 | Media3 1.4.1(匹配 compileSdk 34),类型 2 兼容旧设置；DASH/HLS/RTSP/RTMP/缓存、音轨选择与 CueGroup 字幕回调已迁移；关键帧 seek/同步 MediaCodec/单次重试保留 |
 | :app 的 ui-kit / ui-common（原 `:ui-common` 已并入 `:app`） | ✅ 达标 | ui-common 纯资源(0 java,107 res，现为 app 内资源，主题 JSON 在 `app/src/main/assets/theme/`);ui-kit 15 组件无 Hawk/EventBus/ApiConfig/Activity 强转/自建线程池违例;拆独立模块待复用稳定(见评估 §I) |
 
 ### B. 大页面物理拆分(改进.txt §三,阶段三)
@@ -566,7 +566,7 @@ EventBus 订阅方已收敛 4 个真实方;仍剩多源结果流(TYPE_SEARCH_RES
 直调/注入化未做(行为敏感,建议随播放器收口批、真机回归)。
 
 ### D. 现代化(改进.txt §八·第五阶段)
-✅ Hawk→DataStore(代码完成,发布前需 H 组旧版升级回归);❌ Media3;⚠️ Java→Kotlin 部分;
+✅ Hawk→DataStore(代码完成,发布前需 H 组旧版升级回归);⏳ Media3(代码完成,待 §B 播放人工回归);⚠️ Java→Kotlin 部分;
 ❌ Hilt(组合根复杂化后再评估);✅ 依赖方向门禁 + JVM 测试。
 
 ### E. 待修缺陷 / 待放行(已登记)

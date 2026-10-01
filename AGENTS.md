@@ -41,7 +41,7 @@ app / feature
 | `:core-network` | 收敛网络客户端(OkGoHelper/HttpClient/各 OkHttp 创建),业务不得自行 `new OkHttpClient.Builder()` |
 | `:core-storage` | Room/缓存/配置收口,对外只暴露 Repository/类型安全 Config,不暴露 DAO;storage 不得依赖 spider/download/player |
 | `:spider` | 爬虫**契约 + 实现同模块**(原 `:spider-api` 已并入):契约(SourcePage/Category/Detail/Search/Play 与 SourceConfigProviders/ParseConfigProviders/LiveChannelConfigApi/SourceLoaderApi/PlayUrlResolverProviders/IjkCodecConfigProviders/SpiderFaultProviders)、QuickJS/JarLoader/ApiConfig/具体 Spider;**app/UI 一律经契约,禁止直连 `ApiConfig`/`JsLoader`/`PlayUrlResolver`**(`checkModuleDependencies` 已加该红线,白名单只剩组合根/启动注入点) |
-| `:player` | 播放**契约 + 实现同模块**(原 `:player-api` 已并入):契约(PlayerSession/PlayerState/PlayerOptions/PlayerEvent/PlayerFactory)与 MyVideoView/IJK/Exo 同模块;UI 不得直接依赖具体内核 |
+| `:player` | 播放**契约 + 实现同模块**(原 `:player-api` 已并入):契约(PlayerSession/PlayerState/PlayerOptions/PlayerEvent/PlayerFactory)与 MyVideoView/IJK/Media3 同模块;UI 不得直接依赖具体内核 |
 | `:thirdparty` | 纯第三方归堆,不依赖任何本仓模块:TabLayout(`com.angcyo.tablayout`)、CustomActivityOnCrash(`cat.ereza.customactivityoncrash`,原 `:crash`)、QuickJS(`com.whl.quickjs.*` + `src/main/jniLibs`,原 `:quickjs`) |
 | `:download` | 只公开 DownloadFacade.enqueue/pause/resume/delete/observe;Manager/Scheduler/Executor/Archive 等为模块内部实现 |
 | `:share` | 分享/导入导出(传输层):契约(`ShareFacade`/`ShareTransport`/`ShareCapability`/`ShareLink`/`SharePackage`/`ShareManifest` 等)+ 实现(`online`=storage.to、`transport.lan`=局域网、`local`=本地文件)同模块;平台**可插拔**(注册顺序即优先级,`availablePlatforms/firstAvailable` 自动选可用平台),在线平台不可用时换实现而不改调用方。局域网 HTTP 服务在 `:app`,经 `transport.lan.LanShareHost` 桥接注入,故本模块**不得依赖 `:app`**;`internal`/`online`/`local` 为内部实现,**app 禁止 import**(门禁已加) |
@@ -49,7 +49,8 @@ app / feature
 | `:app` 的 ui-kit/ui-common | 主题资源(原 `:ui-common`)与通用组件已全部收在 app 内(app 的 `res` + `ui/kit` package);组件成熟后再考虑拆模块 |
 
 现状残留(持续治理,新代码勿新增同类):
-- app 仍直用 `MyVideoView`/IJK/Exo、`PlayerTrackHelper` 按内核分发(播放器收口长线)。
+- app 仍直用 `MyVideoView`/IJK/Media3、`PlayerTrackHelper` 经内核能力接口分发(播放器收口长线)。
+- **旧 ExoPlayer 已迁至 Media3 1.4.1**(匹配 compileSdk 34):类型 2 沿用旧配置,`EXOmPlayer`/`xyz.doikki.videoplayer.exo` 为兼容类名,实现只用 `androidx.media3`。禁止重新引入 `com.google.android.exoplayer` 依赖或旧包 import;Media3 各组件必须同版本,UI 不得 import `androidx.media3`。取流复用组合根注入的客户端,每个媒体源独立持有请求头快照;音轨/字幕选择用 `Tracks`/`TrackSelectionOverride`,字幕回调用 `CueGroup`。真机行为待用户人工回归。
 - `:core-network` 已只剩网络职责(OkGoHelper/HttpClient/HttpUrls/FCallBack/HCallBack/SSLCompat/urlhttp 的 brotli 拦截器);AES/MD5/AdBlocker/AppLog/LOG 已迁出。残留:网络客户端装配与通用工具仍同包,后续可按职责再分目录。
 - **日志只有一条写通道**:业务日志一律 `LogStore`(`:log` 模块,结构化落 Room),错误流由 `LogcatCapture` 落 `filesDir/app_logs/logcat-*.log`;旧 `AppLog` 按天文件通道**已删除**(它与 LogStore 共用 `"app_log"` 开关,一开日志就双写且 `app-*.log` 永不清理、界面不可见;调用点已全部迁移)。新代码**不得再新增文件级日志通道**。
 - `:spider` 字符串通道(SpiderContentApi)为过渡兼容层,新功能不得新增字符串协议依赖。
@@ -87,6 +88,8 @@ app / feature
 6. 业务/后台任务必须用模块级共享执行器(如 `HeavyTaskUtil`),且带取消/过期自检语义(epoch),不得每轮 new 线程池后 shutdown 了事。
 7. 所有可滚动组件(RecyclerView/ScrollView/GridView/横向列表等)必须保留**内边距**并配合
    `clipToPadding=false` 让首/末内容不贴到屏幕或容器边缘滚动;禁止内容贴边滚动影响视觉效果。
+8. 用户主动触发的删除、清除、清空操作必须先弹确认框;取消后不得改动数据。批量操作应说明影响范围,
+   删除正在使用的直播源等会改变当前选择的操作应说明后续行为;输入框清字和页面临时状态重置不属于此类。
 
 ## 七、安全与工程红线(持续约束)
 
@@ -109,7 +112,7 @@ app / feature
 - Manifest 权限最小化:只声明实际使用权限;组件(Activity/Service/Receiver/Provider)按需 `exported`,不对外暴露者一律 `android:exported="false"`,敏感暴露组件配权限保护。
 
 **依赖、构建与资源**
-- 依赖升级与版本对齐走显式批次(Room/exo 等跨模块依赖版本一致),禁止引入冗余/重复依赖;同步清理死源码与无效 import。
+- 依赖升级与版本对齐走显式批次(Room/Media3 等跨模块依赖版本一致),禁止引入冗余/重复依赖;同步清理死源码与无效 import。
 - Gradle 开启/维护缓存与并行构建,避免本地与 CI 行为漂移。
 - 图片加载统一单一图片库,不复用多套;网络状态/电量等系统状态统一经 SystemStateMonitor 单点订阅。
 - **全局复用同一个图片占位符**:全 App 图片(海报/封面/缩略图等)占位与加载失败统一用
@@ -134,6 +137,36 @@ app / feature
   新增海报卡布局时按上述形态摆覆盖条即可被自动识别,无需改绘制代码。
   不要再把失败文字贴底绘制,否则通栏/宫格等带信息条的形态会被整条盖住。
 - 多语言资源按需裁剪(`resConfigs`),禁止无界塞入语言包。
+- **播放器画面上的样式不随主题**(强制;2026-10-01 定):播放器底恒为黑,压在**视频画面**上的元素
+  (控制条/OSD、暂停与滑动进度浮层、字幕与 seek 进度图标、播放器菜单浮层)一律用**固定配色**
+  (白 / 半透明黑 / 固定字面量),**禁止**把 `text_foreground`/`text_sub`/`btn_select_*`/`bg_float` 等主题色接进去 ——
+  浅色主题下主题色压黑画面必然看不清。涉及 `player_vod_control_view.xml`、`dkplayer_layout_live_side.xml`、
+  `dkplayer_layout_live_normal.xml`、`player_live_control_view.xml`、`dkplayer_layout_menu_view.xml` 等。
+  反之,**带主题面板底的浮层与页面元素照旧走主题**:直播页 EPG 信息条(`bg_large_round_float`)与频道/分组卡片、
+  直播设置与线路抽屉(`bg_float`)、播放设置面板里的小组件按钮(`selector_widget_btn`/`WidgetBtn`)等。
+  判断口径一句话:**它画在黑画面/视频上 → 固定配色;它有自己的(主题)面板底 → 跟主题。**
+  新增播放器控件时按此写死配色,不要"顺手接主题";也不要把这条当成"整页不跟主题"的理由 —— 页面卡片照旧走主题。
+- **空心组件的边框线 = 它自己的文字颜色**(强制;2026-10-01 定):凡"无填充、只有描边"的组件
+  —— 空心按钮 `BtnSecondary`、小组件键 `WidgetBtn`/`PageBgChip`(搜索页历史/热词/联想、日志分类、背景预设、
+  播放器设置键)、危险入口红字键 `BtnDangerGhost`、`bg_r_*_stroke_primary` 描边小件 ——
+  描边色必须与该组件**自己的文字色同源**:普通键 = 文字主色(`btn_plain_text` / `text_foreground`),
+  危险入口 = 危险红 `#E5484D`,禁用态 = `text_disable`。
+  **禁止**再让它们各自去挂"空心按钮边框线颜色"`btn_cancel_bg`:描边和文字各配一个键,自定义主题下必然出现
+  "文字跟了主题、边框没跟"(用户口径"小组件的边框线还是写死的")。`btn_cancel_bg` 此后只服务
+  **没有自带文字**的纯描边容器与输入框(`bg_theme_field`/`bg_theme_input_underline` 未聚焦态/
+  `bg_r_*_stroke_primary` 之外的描边容器)。
+  实心/选中态不受此条约束(描边仍按填充的不透明版 `btn_confirm_stroke`);输入框底线的聚焦态仍换 `text_foreground`
+  做反馈(未聚焦用 `btn_cancel_bg`,故意与文字区分)。
+- **空心按钮按下仍为空心**(强制;2026-10-01 定):`BtnSecondary`、`BtnDangerGhost` 与未选中的 `WidgetBtn` 在
+  `state_pressed` 下保持透明填充,描边与文字继续同色;点击反馈不能把空心键临时刷成实心。
+  `BtnPrimary` 按下/短时禁用时保留原来的填充与文字对比,不得切到浅色半透明底导致白字难辨;
+  只有真正的选中件才允许持续显示实心选中态。
+- **点击型组件不得带"选中外观"**(强制;2026-10-01 定):`FlowTagLayout` 的 `app:max_select` 只给
+  **真·可选件**(确实要在多个选项里选一个的标签);只做"点一下就触发动作"的 chip
+  (搜索页历史/热词/相关搜索)一律**不写** `max_select` —— 写了以后点击会 `setSelected(true)`,
+  而 chip 的底 `selector_widget_btn` 恰好带"选中 = 实心填充"状态,点过的词就变成一块选中色
+  (用户口径"点击之后会给选中色背景……它只是点击组件,而不是当可选组件")。
+  同理:新增点击型 chip 时用无状态底(只有描边/无底),别挂带 `state_selected` 的选择器。
 
 ## 八、推荐推进顺序(供排期参考)
 
@@ -141,7 +174,7 @@ app / feature
 2. **第二阶段(抽基础)**:common(模型/工具/状态)→ spider 契约 → core-network → core-storage;已完成,且契约模块已回并业务模块(见 §二)。
 3. **第三阶段(拆播放器与大页)**:playback shell;拆 PlayFragment/DetailActivity;字幕迁 playback;ViewModel 只调接口。
 4. **第四阶段**:feature-* 按需模块化(不要在依赖未稳时先搬目录)。
-5. **第五阶段(现代化)**:Exo→Media3、EventBus→Flow/接口、Hawk→DataStore、Java→Kotlin、Hilt(按需)、依赖检查与测试门禁。
+5. **第五阶段(现代化)**:Exo→Media3(代码已迁移,待人工回归)、EventBus→Flow/接口、Hawk→DataStore、Java→Kotlin、Hilt(按需)、依赖检查与测试门禁。
 
 ## 九、开发与提交纪律
 
@@ -244,8 +277,15 @@ app / feature
 ## 十、常用基础设施速查
 
 - 配置:core-storage `config.PrefsDataStore`(DataStore,运行权威;历史 Hawk 一次性迁移通道 `KeyValueStore` 已随 hawk 退役下线);各业务 Config 门面见 `com.github.tvbox.osc.config`(SystemConfig)与各模块 config 包。
-- 契约 Providers(在 `:spider` 模块的契约包内,原 `:spider-api`):`SourceConfigProviders`/`ParseConfigProviders`/`LiveChannelConfigApi`/`SourceLoaderProviders`(含 `stopAllSourceTasks`/`resetSources` 源运行态)/`PlayUrlResolverProviders`(批量下载解析)/`IjkCodecConfigProviders`/`SpiderFaultProviders`(某源因插件缺类或初始化失败而不可用时的原因;页面据此给出说法,而不是只显示"暂无数据") 等,业务/UI 一律经它们取源元信息,禁止直触 ApiConfig。`checkModuleDependencies` 已把"app 直连 `ApiConfig`/`JsLoader`/`PlayUrlResolver`"设为红线,白名单只剩组合根 `di/AppCompositionRoot`、启动 `base/App`、`server/ControlManager` 三个装配/注入点。
+- 契约 Providers(在 `:spider` 模块的契约包内,原 `:spider-api`):`SourceConfigProviders`/`ParseConfigProviders`/`LiveChannelConfigApi`(含 `getSubscribeLiveSources()`:订阅自带的直播源清单(名字+地址),订阅管理「直播源」页据此列出「来自:&lt;订阅名&gt;」条目;与 `getFallbackChannelGroupList()` 的区别是**始终保留**解析结果,不受"未配用户直播源时兜底列表被清空"影响)/`SourceLoaderProviders`(含 `stopAllSourceTasks`/`resetSources` 源运行态)/`PlayUrlResolverProviders`(批量下载解析)/`IjkCodecConfigProviders`/`SpiderFaultProviders`(某源因插件缺类或初始化失败而不可用时的原因;页面据此给出说法,而不是只显示"暂无数据") 等,业务/UI 一律经它们取源元信息,禁止直触 ApiConfig。`checkModuleDependencies` 已把"app 直连 `ApiConfig`/`JsLoader`/`PlayUrlResolver`"设为红线,白名单只剩组合根 `di/AppCompositionRoot`、启动 `base/App`、`server/ControlManager` 三个装配/注入点。
 - 弹窗:统一 `ui/dialog/DialogCoordinator`(center/right/bottom/loading/confirm);同构内容层合并用共享 Panel(如 LiveSettingPanel/DownloadSeriesPanel/PlayingControlPanel),Bottom/Right 收敛为薄壳。
 - 流式标签(搜索页历史/热词 chip、联想弹窗 chip):统一 `ui/kit/FlowTagLayout` + `ui/kit/FlowLineBreaker`(**自研**,2026-09-27 起替代第三方 `com.hyman:flowlayout-lib` —— 那条库行高漏算子视图外边距,标签最后一行会被裁掉下半截;排版算术是纯函数并有 `FlowLineBreakerTest` 钉住)。间距只认条目自己的 `layout_margin`,别再引入第二套 spacing 属性,也别再引第三方流式布局库。
 - 共享执行器:`util/HeavyTaskUtil`(getBigTaskExecutorService 并行 / getSerialExecutorService 串行);配合 epoch/过期自检做取消语义。
 - 播放上下文:`util/player/{PlayRequest,PlaySessionKeys,PlayedVodKey,PlayHistoryRepository,SubtitleCoordinator,PlayParseCoordinator,PlaybackSessions}`。
+
+## 下载鉴权与存储的持续约束（2026-10-01）
+
+- 下载权限必须按实际保存路径判断；Android 11+ 的应用私有目录不得要求“所有文件访问”权限。仅 Wi-Fi 等待属于排队状态。
+- URL、Cookie、Referer、UA 与自定义请求头通过公开契约刷新并原子替换；下载模块不得直接访问 WebView、ApiConfig 或具体登录实现，暂停/过期任务不得回写结果。
+- HLS 续传必须核对媒体序列、分片路径与顺序、字节范围、密钥/IV、init 布局；不能仅凭数组下标复用，也不能仅因短时鉴权参数变化清空进度。无法安全确认时暂停或清理后重下。
+- 401/403 先有限续期，404/410 先有限短重试并刷新清单，再确认永久缺片；登录失效必须可恢复暂停，不得高频循环请求旧地址。分片 URL 不整表持久化。
