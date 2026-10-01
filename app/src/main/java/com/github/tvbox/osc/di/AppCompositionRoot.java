@@ -8,7 +8,7 @@ import android.content.Context;
  * - 播放地址解析契约(PlayUrlResolverApi)→ :spider 实现(下载/播放解析用)
  * - 手动视频判定(SpiderManualCheckApi)→ :spider 实现(嗅探 WebView 用)
  * - 爬虫内容服务(SpiderContentApi)→ :spider 实现(首页/分类/详情/搜索/播放用)
- * - PlayerFactory adapter 注册(type=1 IJK / type=2 Exo,roadmap 2.1 原型)
+ * - PlayerFactory adapter 注册(type=1 IJK / type=2 Media3,roadmap 2.1 原型)
  * 后续扩展位:NetworkProvider / StorageFacade 等。
  */
 public final class AppCompositionRoot {
@@ -25,18 +25,22 @@ public final class AppCompositionRoot {
         // "网络不可用"页路由:网络层报告"断网 + 真实请求失败"时拉起独立页面(有网自动返回)。
         // 触发条件是"真的发过请求",所以只是断网、用户在看本地内容时不会被打扰。
         com.github.tvbox.osc.util.NetworkIssueRouter.install();
-        // Exo 取流客户端提供方:ExoMediaSourceHelper 的 client 会被"安全 DNS 变更"作废(dropOkClient),
+        // Media3 取流客户端提供方:ExoMediaSourceHelper 的 client 会被"安全 DNS 变更"作废(dropOkClient),
         // 有了提供方就在下次取用时自取(懒建 + 变更后重建都在 App.playbackHttpClient 里)。
         // 缺了它 Exo 取流客户端恒为 null → 起播时 OkHttpDataSource 内部 checkNotNull(callFactory) 直接崩。
         try {
             xyz.doikki.videoplayer.exo.ExoMediaSourceHelper.setOkClientSupplier(
                     com.github.tvbox.osc.base.App::playbackHttpClient);
         } catch (Throwable th) {
-            android.util.Log.w("AppCompositionRoot", "Exo 取流客户端提供方注册失败", th);
+            android.util.Log.w("AppCompositionRoot", "Media3 取流客户端提供方注册失败", th);
         }
         // 下载侧播放地址解析(:spider 提供实现,download 不依赖 :spider 实现)
         com.github.tvbox.osc.download.DownloadFacade.setUrlResolverApi(
                 com.github.catvod.crawler.SpiderUrlResolverImpl.get());
+        com.github.tvbox.osc.download.DownloadFacade.setRequestContextProvider(
+                new com.github.tvbox.osc.util.DownloadWebContext(androidx.media3.common.util.Util.getUserAgent(
+                        com.github.tvbox.osc.base.App.getInstance(),
+                        com.github.tvbox.osc.base.App.getInstance().getApplicationInfo().name)));
         // app 侧批量下载解析:同一实现经契约持有者暴露(页面/工具不直连 :spider 实现)
         com.github.tvbox.osc.spiderapi.PlayUrlResolverProviders.set(
                 com.github.catvod.crawler.SpiderUrlResolverImpl.get());
@@ -68,6 +72,16 @@ public final class AppCompositionRoot {
             @Override
             public java.util.List<com.github.tvbox.osc.bean.LiveChannelGroup> getFallbackChannelGroupList() {
                 return com.github.tvbox.osc.api.ApiConfig.get().getFallbackChannelGroupList();
+            }
+
+            @Override
+            public java.util.List<com.github.tvbox.osc.spiderapi.LiveChannelConfigApi.SubscribeLiveSource> getSubscribeLiveSources() {
+                return com.github.tvbox.osc.api.ApiConfig.get().getSubscribeLiveSources();
+            }
+
+            @Override
+            public String getLoadedSubscriptionUrl() {
+                return com.github.tvbox.osc.api.ApiConfig.get().getLoadedSubscriptionUrl();
             }
 
             @Override
@@ -186,7 +200,7 @@ public final class AppCompositionRoot {
                 return com.github.tvbox.osc.api.ApiConfig.get().getIJKCodec(name);
             }
         });
-        // 网络客户端提供者:general/noRedirect 来自 OkGoHelper;playback 复用 Exo 已建实例
+        // 网络客户端提供者:general/noRedirect 来自 OkGoHelper;playback 复用 Media3 已建实例
         networkProvider = new com.github.tvbox.osc.net.NetworkProvider() {
             @Override
             public okhttp3.OkHttpClient general() {
@@ -209,10 +223,10 @@ public final class AppCompositionRoot {
 
     /**
      * PlayerFactory 内核适配器注册(roadmap 2.1 会话原型):
-     * type=1(IJK) / type=2(Exo) 注册引擎无关的 PlayerApi 适配器,
+     * type=1(IJK) / type=2(Media3) 注册引擎无关的 PlayerApi 适配器,
      * 供 PlaybackSessions 会话层/后续 PlayFragment 薄层化按 playType 取用。
      * 适配器仅作协议收敛:真机回归前 UI 仍由 mVideoView 直接驱动,此处不改变现有播放行为。
-     * 内核/渲染工厂语义与 PlayerHelper.updateCfg 一致(IJK=type1 / Exo=type2)。
+     * 内核/渲染工厂语义与 PlayerHelper.updateCfg 一致(IJK=type1 / Media3=type2)。
      */
     private static synchronized void registerPlayerAdapters() {
         if (playerAdaptersRegistered) return;
@@ -226,9 +240,9 @@ public final class AppCompositionRoot {
                 api.subscribe(listener);
                 return api;
             });
-            // type=2 Exo:复用 EXOmPlayer 内核工厂语义
+            // type=2 Media3:复用 EXOmPlayer 内核工厂语义
             com.github.tvbox.osc.player.api.PlayerFactory.register(2, (context, options, listener) -> {
-                android.util.Log.i("AppCompositionRoot", "PlayerFactory: 创建 Exo(type=2) 适配器");
+                android.util.Log.i("AppCompositionRoot", "PlayerFactory: 创建 Media3(type=2) 适配器");
                 xyz.doikki.videoplayer.player.VideoView vv = newVideoView(context, 2);
                 com.github.tvbox.osc.player.api.PlayerApi api =
                         new com.github.tvbox.osc.player.VideoViewPlayerApi(vv, true);
@@ -236,7 +250,7 @@ public final class AppCompositionRoot {
                 return api;
             });
             playerAdaptersRegistered = true;
-            android.util.Log.i("AppCompositionRoot", "PlayerFactory: IJK(1)/Exo(2) 适配器已注册");
+            android.util.Log.i("AppCompositionRoot", "PlayerFactory: IJK(1)/Media3(2) 适配器已注册");
         } catch (Throwable th) {
             android.util.Log.w("AppCompositionRoot", "PlayerFactory 适配器注册失败(不影响主链路)", th);
         }

@@ -75,6 +75,7 @@ public class App extends MultiDexApplication {
         // 崩溃兜底必须最先就位:下面 QuickJS(so)/P2P(so)/Room/爬虫任一环抛 Error 都要能落库 + 弹崩溃页;
         // 而 LogStore.init 在 initParams 里,故 installCrashHandler 紧随 initParams(否则是 no-op 实例,崩溃丢日志)
         initCrashConfig();
+        clearSplashNightModeOverride();
         initParams();
         LogStore.get().installCrashHandler();
         StartupGuard.scheduleHealthyMark(this);
@@ -122,18 +123,18 @@ public class App extends MultiDexApplication {
         LogStore.log(Category.SYSTEM, "应用启动(Android " + android.os.Build.VERSION.RELEASE + ")");
         // 业务日志(系统类目):记录本机屏幕尺寸(宽×高,px),便于按机型定位布局/适配问题
         logDeviceScreenToBiz();
-        // 业务日志(系统类目):圆角"包内值 vs 主题文件值"自检 —— 圆角是编译期资源,而 AS 点 Run 的部署
-        // 链路不带资源,"改了圆角不生效"只能靠这一行对比说清楚(不一致 = 需要完整安装)。失败静默。
-        com.github.tvbox.osc.theme.RadiusCheck.report(this);
+        // 暂停启动时的圆角资源自检日志，需要排障时恢复调用。
+        // com.github.tvbox.osc.theme.RadiusCheck.report(this);
         // 全局系统状态监控(网络/前后台/横竖屏/电量/磁盘, 基座层)必须先于下载模块初始化:
         // 下载模块在构造时会订阅网络事件(仅WiFi暂停/恢复),若监控未就绪订阅被跳过 → 切流量不停、恢复无法继续
         SystemStateMonitor.init(this);
         // 下载模块(:download) context 注入(保存目录/海报/网络监听/通知)
-        com.github.tvbox.osc.download.DownloadFacade.init(this);
         // 组合根:收敛爬虫契约(:spider)服务注入(解析/手动判定/内容服务),见 AppCompositionRoot
         com.github.tvbox.osc.di.AppCompositionRoot.init();
         // 方案A:注册无头 WebView 嗅探器(嗅探型源任务启动前用它拿真实播放地址,串行复用保会话)
         com.github.tvbox.osc.download.DownloadFacade.setUrlSniffer(com.github.tvbox.osc.util.WebSniffResolver.get());
+        // 解析器、请求上下文与嗅探器全部注入后，再加载任务并启动下载 worker。
+        com.github.tvbox.osc.download.DownloadFacade.init(this);
         // 下载完成通知渠道(可选增强)
 
         // 更新缓存清理:更新完成并安装后,首次启动删除"版本与当前一致"的本地 APK;并清半成品
@@ -149,14 +150,29 @@ public class App extends MultiDexApplication {
      * "资源已经是夜间、换肤层还按白天那套画(或压根没介入)"——弹窗、开关一类全错位。
      * <p>Application 的这个回调早于 Activity 重建,所以在这里做最早一次刷新;
      * {@code BaseActivity.attachBaseContext} 再兜一道(防某些 ROM 不派发应用级回调)。
+     * 当前主题身份不变时保持它的背景配置，避免系统配置变化重写用户正在使用的样式。
      */
     @Override
     public void onConfigurationChanged(android.content.res.Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
         try {
+            com.github.tvbox.osc.bean.theme.ThemeSnapshot previous =
+                    com.github.tvbox.osc.theme.ThemeRuntime.snapshot();
             com.github.tvbox.osc.theme.ThemeRuntime.refresh();
-            // 换主题顺带把"主题自带的默认背景"同步过去(明暗两套默认主题可以配不同的图)
-            com.github.tvbox.osc.storage.theme.ThemeStore.applyActiveBackground();
+            com.github.tvbox.osc.bean.theme.ThemeSnapshot current =
+                    com.github.tvbox.osc.theme.ThemeRuntime.snapshot();
+            if (com.github.tvbox.osc.theme.ThemeRuntime.followsSystem()) {
+                // 只借系统的明暗信号选主题类型，实际 -night 资源仍由应用明确指定。
+                androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(
+                        com.github.tvbox.osc.storage.theme.ThemeStore.activeType().isDark()
+                                ? androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES
+                                : androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_NO);
+            }
+            // 当前主题没变时不要重写背景位置/透明度等配置；跟随系统真正换了主题才同步。
+            if (previous == null || current == null
+                    || !previous.fingerprint.equals(current.fingerprint)) {
+                com.github.tvbox.osc.storage.theme.ThemeStore.applyActiveBackground();
+            }
         } catch (Throwable ignored) {
         }
     }
@@ -193,6 +209,19 @@ public class App extends MultiDexApplication {
             t.setPriority(Thread.MIN_PRIORITY);
             t.start();
         }, 5000L);
+    }
+
+    /** 撤销旧版为开屏设置的持久化应用级夜间覆盖，页面明暗仍由主题选择控制。 */
+    private void clearSplashNightModeOverride() {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S) return;
+        try {
+            android.app.UiModeManager manager = (android.app.UiModeManager)
+                    getSystemService(android.content.Context.UI_MODE_SERVICE);
+            if (manager != null) {
+                manager.setApplicationNightMode(android.app.UiModeManager.MODE_NIGHT_AUTO);
+            }
+        } catch (Throwable ignored) {
+        }
     }
 
     private void initParams() {
@@ -580,7 +609,7 @@ public class App extends MultiDexApplication {
         }
         try {
             android.widget.Toast.makeText(this,
-                    "连续崩溃 " + StartupGuard.bootAttempts() + " 次,已用安全模式启动(本次不加载 JS 源)",
+                    "连续崩溃，已进入安全模式（JS 源未加载）",
                     android.widget.Toast.LENGTH_LONG).show();
         } catch (Throwable ignored) {
         }
