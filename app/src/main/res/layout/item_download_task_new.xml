@@ -81,6 +81,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginEnd="6dp"
                 android:clickable="false"
+                android:button="@drawable/button_checkbox_square"
                 android:focusable="false"
                 android:visibility="gone" />
 
@@ -88,19 +89,22 @@
                  见 util/PosterPlaceholderDrawable)。
                  这里只给一层纯灰底:96dp 的占位猫图标放进 56×74dp 的封面会超出显示范围,
                  所以布局层不用 XML 占位图,交给按宿主尺寸自适应的统一占位组件(背景层) -->
+            <!-- 下载页小封面(56×74dp):圆角走**独立档** radius_thumb(不再跟卡片档 radius_card)+ clipToOutline,
+                 卡片档调大时这张小图不会被切成圆片(用户口径"正在下载里那个小图片的圆角太大了") -->
             <com.lihang.ShadowLayout
                 android:id="@+id/cover_container"
                 android:layout_width="56dp"
                 android:layout_height="74dp"
                 app:clickable="false"
-                app:hl_cornerRadius="@dimen/radius_card"
+                app:hl_cornerRadius="@dimen/radius_thumb"
                 app:hl_layoutBackground="@android:color/transparent">
 
                 <androidx.appcompat.widget.AppCompatImageView
                     android:id="@+id/iv_cover"
                     android:layout_width="match_parent"
                     android:layout_height="match_parent"
-                    android:background="@drawable/bg_small_round_gray"
+                    android:background="@drawable/bg_thumb_round"
+                    android:clipToOutline="true"
                     android:scaleType="centerCrop" />
             </com.lihang.ShadowLayout>
 
@@ -129,7 +133,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
                     android:ellipsize="end"
-                    android:maxLines="1"
+                    android:maxLines="3"
                     android:textSize="13sp" />
 
                 <!-- 行3:大小 · 速度 -->

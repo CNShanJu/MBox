@@ -4,6 +4,8 @@ import android.util.Log;
 
 import com.github.tvbox.osc.bean.DownloadTask;
 import com.github.tvbox.osc.download.DownloadSubType;
+import com.github.tvbox.osc.download.EnqueueResult;
+import com.github.tvbox.osc.util.DownloadHeaders;
 import com.github.tvbox.osc.state.SystemEvent;
 import com.github.tvbox.osc.state.SystemState;
 import com.github.tvbox.osc.state.SystemStateMonitor;
@@ -24,6 +26,12 @@ public class DownloadScheduler {
 
     private final DownloadManager dm;
     private Thread worker;
+    private final java.util.Set<String> inFlight = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private final java.util.concurrent.ExecutorService taskExecutor = java.util.concurrent.Executors.newFixedThreadPool(5, r -> {
+        Thread thread = new Thread(r, "mbox-download");
+        thread.setDaemon(true);
+        return thread;
+    });
 
     DownloadScheduler(DownloadManager dm) {
         this.dm = dm;
@@ -101,8 +109,8 @@ public class DownloadScheduler {
             for (DownloadTask t : dm.tasks) {
                 if (t.networkFailed && t.state == DownloadTask.STATE_FAILED) {
                     t.state = DownloadTask.STATE_WAITING;
+                    t.needReResolve = true;
                     t.networkFailed = false;
-                    t.needReResolve = true; // 断网期间代理签名可能过期,继续前重新解析
                     t.message = "";
                     changed = true;
                 }
@@ -243,9 +251,11 @@ public class DownloadScheduler {
                     if (toStart <= 0) break;
                     if (t.state == DownloadTask.STATE_WAITING || t.state == DownloadTask.STATE_SYSTEM_PAUSED) {
                         // 同目标(savePath)已有任务在下载时,不重复启动,避免并发下载同一文件互相踩踏
-                        if (isSameTargetDownloading(t, sorted)) continue;
+                        if (isSameTargetDownloading(t, sorted) || inFlight.contains(t.id)
+                                || !DownloadConcurrency.canStart(t, sorted)) continue;
                         if (t.state == DownloadTask.STATE_SYSTEM_PAUSED) {
-                            t.state = DownloadTask.STATE_WAITING; // 调度暂停自动恢复
+                            t.state = DownloadTask.STATE_WAITING;
+                    t.needReResolve = true; // 调度暂停自动恢复
                         }
                         startTask(t);
                         toStart--;
@@ -266,7 +276,7 @@ public class DownloadScheduler {
         if (t.savePath == null) return false;
         for (DownloadTask other : sorted) {
             if (other == t) continue;
-            if (other.state == DownloadTask.STATE_DOWNLOADING
+            if ((other.state == DownloadTask.STATE_DOWNLOADING || inFlight.contains(other.id))
                     && other.savePath != null && other.savePath.equals(t.savePath)) {
                 return true;
             }
@@ -274,20 +284,21 @@ public class DownloadScheduler {
         return false;
     }
 
-    /** 启动一个任务(独立线程下载,支持并发;失败自动重试) */
+    /** 启动任务到模块共享执行器；同一任务/目标的旧执行退出后才允许继续。 */
     private void startTask(final DownloadTask t) {
+        if (!inFlight.add(t.id)) return;
         t.state = DownloadTask.STATE_DOWNLOADING;
         t.message = "";
         t.speed = 0;
         dm.persist();
         dm.notifyChanged();
-        Thread th = new Thread(new Runnable() {
+        taskExecutor.execute(() -> { try { new Runnable() {
             @Override
             public void run() {
                 // Bug4: 存储权限硬门槛,启动前检查(权限被撤销则拒绝启动)
-                if (!FileCleaner.hasStoragePermission()) {
+                if (!FileCleaner.canWritePath(t.savePath)) {
                     t.state = DownloadTask.STATE_FAILED;
-                    t.message = "未授权存储权限,无法下载";
+                    t.message = "保存到公共目录需要所有文件访问权限，请授权后继续";
                     Log.i("TVBox-Download", "启动失败:无存储权限 " + t.fileName);
                     dm.persist();
                     dm.notifyChanged();
@@ -303,17 +314,42 @@ public class DownloadScheduler {
                 // 进程重启后首次启动:代理签名URL通常已过期,先重新解析一次(与下载中过期重解析共用逻辑)
                 if (t.needReResolve) {
                     t.needReResolve = false;
-                    reResolveUrl(t);
+                    if (!reResolveUrl(t)) {
+                        pauseFor(t, "未获取到可下载地址，请检查登录状态、切换线路或先播放该集后继续");
+                        return;
+                    }
                 }
                 // 方案A:嗅探型源(type0)首次启动——入队地址是剧集页(非视频),先嗅探真实播放地址
                 if (t.sourceKey != null && t.playFlag != null && t.episodeRawUrl != null
-                        && t.reResolveCount == 0 && !isPlayableUrl(t.url)) {
+                        && !t.resolvedRequest && t.reResolveCount == 0 && !isPlayableUrl(t.url)) {
                     t.reResolveCount++;
                     t.message = "地址嗅探中(1/" + DownloadManager.MAX_RE_RESOLVE + ")";
                     dm.persist();
                     dm.notifyChanged();
-                    if (!sniffResolve(t)) {
-                        Log.i("TVBox-Download", "首次嗅探未命中,按原地址尝试: " + t.fileName);
+                    if (!reResolveUrl(t)) {
+                        pauseFor(t, "解析或嗅探未获得视频地址，请切换线路或先播放该集后继续");
+                        return;
+                    }
+                }
+                try {
+                    if (!applyRequestContext(t, t.url, t.headers)) return;
+                } catch (Exception e) {
+                    pauseFor(t, "请求上下文读取失败，请稍后继续");
+                    return;
+                }
+                if (isTaskStopped(t)) return;
+                synchronized (dm.tasks) {
+                    if (DownloadConcurrency.scoped(t)) {
+                        int scoped = 0;
+                        for (DownloadTask task : dm.tasks)
+                            if (task.state == DownloadTask.STATE_DOWNLOADING && DownloadConcurrency.scoped(task)) scoped++;
+                        if (scoped > 2) {
+                            t.state = DownloadTask.STATE_SYSTEM_PAUSED;
+                            t.message = "已排队，该源同时下载上限为 2";
+                            t.needReResolve = true;
+                            dm.persist(); dm.notifyChanged(); wakeWorker();
+                            return;
+                        }
                     }
                 }
                 // 下载前磁盘空间预检:放在地址重解析/嗅探之后,确保大小探测按最终真实 URL 进行;
@@ -339,11 +375,18 @@ public class DownloadScheduler {
                     } catch (Throwable th) {
                         th.printStackTrace();
                         if (isTaskStopped(t)) return; // 暂停(用户/调度/网络)或已取消,不再重试
+                        if (th instanceof DownloadErrors.SessionExpired || th instanceof DownloadErrors.LayoutChanged) {
+                            pauseFor(t, th.getMessage());
+                            return;
+                        }
                         // 断网/切网等网络错误:允许更多次重试 + 指数退避(最长约2分钟),并标记网络失败待恢复后自动续传
                         boolean netErr = isNetworkError(th);
                         // 缺片全是"源侧永久失效":整任务重试等于把同一批 404 再请求一遍,直接失败并给出可读原因
                         boolean goneErr = DownloadErrors.isPermanentlyGone(th);
-                        int maxRetry = goneErr ? 0
+                        DownloadErrors.Kind kind = DownloadErrors.classify(th);
+                        int maxRetry = goneErr || kind == DownloadErrors.Kind.STORAGE ? 0
+                                : kind == DownloadErrors.Kind.MERGE ? 1
+                                : kind == DownloadErrors.Kind.SOURCE ? 2
                                 : (netErr ? DownloadManager.MAX_NETWORK_RETRY : DownloadManager.MAX_RETRY);
                         // 地址可能过期(HTTP 403/404/410 等或 HTML 防盗链响应):重新解析地址后继续,
                         // 重置下载重试计数;解析次数有限制(MAX_RE_RESOLVE),避免无限重解析
@@ -364,7 +407,15 @@ public class DownloadScheduler {
                             if (reResolveUrl(t)) {
                                 continue; // 用新地址继续下载
                             }
+                            if (DownloadErrors.isAuthentication(th)) {
+                                pauseFor(t, new DownloadErrors.SessionExpired().getMessage());
+                                return;
+                            }
                             // 解析失败:继续走普通重试逻辑
+                        }
+                        if (DownloadErrors.isAuthentication(th) && t.reResolveCount >= DownloadManager.MAX_RE_RESOLVE) {
+                            pauseFor(t, new DownloadErrors.SessionExpired().getMessage());
+                            return;
                         }
                         // 换线路(4.8②):同线路重解析已到上限,或本线路整体失效(整集缺片全是源侧永久失效 /
                         // 连续多片下载失败)→ 原地怎么试都是同一个结果,改走这条集的另一条线路:
@@ -436,9 +487,17 @@ public class DownloadScheduler {
                     }
                 }
             }
-        }, "tvbox-dl-" + (t.id != null && t.id.length() > 6 ? t.id.substring(0, 6) : "task"));
-        th.setDaemon(true);
-        th.start();
+        }.run(); } finally { inFlight.remove(t.id); wakeWorker(); } });
+    }
+
+    private void pauseFor(DownloadTask t, String reason) {
+        if (isTaskStopped(t)) return;
+        t.state = DownloadTask.STATE_PAUSED;
+        t.message = reason;
+        t.speed = 0;
+        DownloadLog.LOG.warn(DownloadSubType.RESOLVE, reason + ": " + t.fileName, DownloadLog.extras(t.episodeId));
+        dm.persist();
+        dm.notifyChanged();
     }
 
     /** 判断异常是否为网络类错误(断网/超时/无法连接/服务端中途断连/SSL):分类逻辑在 DownloadErrors(与分段循环共用) */
@@ -478,59 +537,51 @@ public class DownloadScheduler {
      *
      * @return true=地址或请求头已更新(调用方应继续重试下载)
      */
-    private boolean reResolveUrl(DownloadTask t) {
-        if (t.sourceKey == null || t.playFlag == null || t.episodeRawUrl == null) return false;
+    boolean reResolveUrl(DownloadTask t) {
+        if (isTaskStopped(t)) return false;
         try {
-            com.github.tvbox.osc.spiderapi.ResolveResult rr =
-                    DownloadManager.urlResolverApi.resolvePlayUrl(t.sourceKey, t.playFlag, t.episodeRawUrl);
-            if (rr == null) {
-                Log.i("TVBox-Download", "重解析无结果(契约未注入或解析失败),走嗅探兜底: " + t.fileName
-                        + " url=" + t.episodeRawUrl);
-            } else if (rr.url != null && !rr.url.isEmpty()) {
-                boolean urlChanged = !rr.url.equals(t.url);
-                t.headers = rr.headers; // 无论地址是否变化都同步请求头(防盗链源分片校验)
-                // 类型保护: 原地址是 m3u8 而新解析结果不是(或反之), 说明解析不稳定/源结构变化,
-                // 保留原地址——HLS↔直链切换会让下载算法完全错位(如 m3u8 被当直链下出播放列表)
-                boolean oldHls = t.url != null && t.url.toLowerCase().contains(".m3u8");
-                boolean newHls = rr.url.toLowerCase().contains(".m3u8");
-                if (urlChanged && oldHls != newHls) {
-                    Log.i("TVBox-Download", "重新解析地址类型变化(m3u8↔直链),保留原地址: " + t.fileName);
-                    DownloadLog.LOG.info(DownloadSubType.RESOLVE,
-                            "重新解析地址类型变化(m3u8↔直链),保留原地址: " + t.fileName,
-                            DownloadLog.extras(t.episodeId));
-                    urlChanged = false;
+            if (t.sourceKey != null && t.episodeRawUrl != null) {
+                com.github.tvbox.osc.spiderapi.ResolveResult rr = DownloadManager.urlResolverApi
+                        .resolvePlayUrl(t.sourceKey, t.playFlag, t.episodeRawUrl);
+                if (rr != null && rr.url != null && rr.url.startsWith("http")) {
+                    return applyRequestContext(t, rr.url, rr.headers);
                 }
-                if (urlChanged) {
-                    Log.i("TVBox-Download", "重新解析地址成功: " + t.fileName);
-                    DownloadLog.LOG.info(DownloadSubType.RESOLVE, "重新解析地址成功: " + t.fileName,
-                            DownloadLog.extras(t.episodeId));
-                    t.url = rr.url;
-                    // 地址已更新:直链进度作废(URL变了,原Range续传可能无效),分片/已下字节保留由下载逻辑按需处理
-                    if (t.downloadedBytes > 0 && !t.isHls()) {
-                        t.downloadedBytes = 0;
-                    }
-                    // 旧地址探测到的文件大小对新地址不再可信:清掉并允许下次按新地址重新探测一次
-                    t.totalBytes = 0;
-                    t.estimatedBytes = 0;
-                    t.probeDone = false;
-                } else {
-                    Log.i("TVBox-Download", "重新解析地址无变化,已同步请求头: " + t.fileName);
-                    DownloadLog.LOG.info(DownloadSubType.RESOLVE, "重新解析地址无变化,已同步请求头: " + t.fileName,
-                            DownloadLog.extras(t.episodeId));
-                }
-                return true;
+                return sniffResolve(t);
             }
-            // 嗅探型源(type0):爬虫解析不出地址 → 无头 WebView 嗅探剧集页(方案A)
-            if (sniffResolve(t)) return true;
-            Log.i("TVBox-Download", "重新解析地址失败/无有效地址,用原地址: " + t.fileName);
-            DownloadLog.LOG.warn(DownloadSubType.RESOLVE, "重新解析地址失败/无有效地址,用原地址: " + t.fileName,
+            return applyRequestContext(t, t.url, t.headers);
+        } catch (Exception e) {
+            DownloadLog.LOG.warn(DownloadSubType.RESOLVE, "请求上下文刷新失败: " + t.fileName,
                     DownloadLog.extras(t.episodeId));
-        } catch (Throwable th4) {
-            Log.i("TVBox-Download", "重新解析地址异常,用原地址: " + t.fileName);
+            return false;
         }
-        return false;
     }
 
+    private boolean applyRequestContext(DownloadTask t, String url, java.util.Map<String, String> headers)
+            throws Exception {
+        if (url == null || !(url.startsWith("https://") || url.startsWith("http://"))) return false;
+        java.util.Map<String, String> merged = DownloadHeaders.mergeForOrigin(t.url, url, t.headers, headers);
+        if (DownloadManager.contextProvider != null) {
+            merged = DownloadManager.contextProvider.refresh(t.sourceKey, t.playFlag, t.episodeRawUrl, url, merged);
+        }
+        synchronized (t) {
+            if (isTaskStopped(t)) return false;
+            // 已有 HLS 分片时不能切成直链；首次从剧集页解析出 m3u8 则允许。
+            if (t.totalSegments == 0 && !url.equals(t.url) && t.partPath != null
+                    && com.github.tvbox.osc.util.DirectResumePolicy.validator(t.entityTag, t.lastModified) == null) {
+                FileCleaner.deleteQuietly(new File(t.partPath));
+                t.downloadedBytes = 0;
+                t.totalBytes = 0;
+            }
+            t.url = url;
+            t.resolvedRequest = true;
+            t.headers = DownloadHeaders.merge(merged);
+            t.requestEpoch++;
+            t.estimatedBytes = 0;
+            t.probeDone = false;
+        }
+        dm.persist();
+        return true;
+    }
     /**
      * 入队时清洗备用线路候选:丢掉不可用/与本线路相同/重复线路名,并按上限截断。
      * 空结果返回 null(调用方只需一次判空)。
@@ -544,7 +595,7 @@ public class DownloadScheduler {
         for (com.github.tvbox.osc.bean.DownloadRoute r : altRoutes) {
             if (r == null || !r.isUsable()) continue;
             if (!flags.add(r.playFlag)) continue; // 当前线路与重复线路都跳过
-            out.add(r);
+            out.add(new com.github.tvbox.osc.bean.DownloadRoute(r.playFlag, r.episodeRawUrl, r.episodeName));
             if (out.size() >= com.github.tvbox.osc.util.DownloadRoutePlan.MAX_ALTERNATIVES) break;
         }
         return out.isEmpty() ? null : out;
@@ -667,24 +718,8 @@ public class DownloadScheduler {
                         DownloadLog.extras(t.episodeId));
                 return false;
             }
-            t.headers = sr.headers; // 分片/文件校验必须携带(UA/Referer/Cookie)
-            boolean urlChanged = !sr.url.equals(t.url);
-            boolean oldHls = t.url != null && t.url.toLowerCase().contains(".m3u8");
-            boolean newHls = sr.url.toLowerCase().contains(".m3u8");
-            if (urlChanged && oldHls != newHls) {
-                Log.i("TVBox-Download", "嗅探结果类型变化(m3u8↔直链),保留原地址: " + t.fileName);
-                DownloadLog.LOG.info(DownloadSubType.RESOLVE,
-                        "嗅探结果类型变化(m3u8↔直链),保留原地址: " + t.fileName,
-                        DownloadLog.extras(t.episodeId));
-                return false;
-            }
-            t.url = sr.url;
-            if (t.downloadedBytes > 0 && !t.isHls()) t.downloadedBytes = 0;
-            Log.i("TVBox-Download", "嗅探命中: " + t.fileName + " " + sr.url);
-            DownloadLog.LOG.success(DownloadSubType.RESOLVE, "嗅探命中: " + t.fileName
-                            + " -> " + (sr.url.length() > 120 ? sr.url.substring(0, 120) + "..." : sr.url),
-                    DownloadLog.extras(t.episodeId));
-            return true;
+            return applyRequestContext(t, sr.url, sr.headers);
+
         } catch (Throwable th) {
             Log.i("TVBox-Download", "嗅探异常: " + t.fileName + " " + th.getMessage());
             return false;
@@ -724,6 +759,22 @@ public class DownloadScheduler {
                             String episodeId, String pic, java.util.Map<String, String> headers,
                             String sourceName, String vodName, String episodeName,
                             java.util.List<com.github.tvbox.osc.bean.DownloadRoute> altRoutes) {
+        return enqueueResultInternal(url, sourceKey, playFlag, episodeRawUrl, episodeId, pic, headers,
+                sourceName, vodName, episodeName, altRoutes, false).isQueued();
+    }
+
+    synchronized EnqueueResult enqueueResultInternal(String url, String sourceKey, String playFlag,
+                            String episodeRawUrl, String episodeId, String pic, java.util.Map<String, String> headers,
+                            String sourceName, String vodName, String episodeName,
+                            java.util.List<com.github.tvbox.osc.bean.DownloadRoute> altRoutes, boolean requiresResolution) {
+        if ((url == null || url.trim().isEmpty()) && (episodeRawUrl == null || episodeRawUrl.trim().isEmpty())) {
+            return EnqueueResult.of(EnqueueResult.Code.RESOLVE_FAILED, "无可解析的剧集地址");
+        }
+        if (url == null || url.trim().isEmpty()) url = episodeRawUrl;
+        if (!(url.startsWith("https://") || url.startsWith("http://"))
+                && (sourceKey == null || episodeRawUrl == null)) {
+            return EnqueueResult.of(EnqueueResult.Code.RESOLVE_FAILED, "无有效下载地址或源解析上下文");
+        }
         String src = dm.sanitize(sourceName);
         if (src.isEmpty()) src = "未分类";
         String vn = dm.sanitize(vodName);
@@ -757,11 +808,20 @@ public class DownloadScheduler {
         // Bug4: 存储权限是硬门槛,无权限不入队、不触发调度
         if (!FileCleaner.hasStoragePermission()) {
             Log.i("TVBox-Download", "enqueue 拒绝:无存储权限 " + fileName);
-            return false;
+            return EnqueueResult.of(EnqueueResult.Code.PERMISSION_DENIED, "下载保存目录未就绪");
         }
 
         File dir = new File(dm.getSaveDir(), src + File.separator + vn);
-        if (!dir.exists()) dir.mkdirs();
+        if (!dir.isDirectory() && !dir.mkdirs()) {
+            return EnqueueResult.of(EnqueueResult.Code.STORAGE_ERROR, "无法创建下载目录");
+        }
+        if (!FileCleaner.canWritePath(dir.getAbsolutePath())) {
+            return EnqueueResult.of(EnqueueResult.Code.PERMISSION_DENIED, "保存到公共目录需要所有文件访问权限");
+        }
+        long free = com.github.tvbox.osc.state.StorageSpace.freeBytes(dir);
+        if (free >= 0 && free < DownloadPolicy.MIN_ABSOLUTE_FREE) {
+            return EnqueueResult.of(EnqueueResult.Code.NO_SPACE, "存储空间不足，清理后再下载");
+        }
         File finalFile = new File(dir, fileName);
         if (finalFile.exists()) {
             // 磁盘上已有同名成品文件,但没有对应记录(只删了记录没删文件 / 删除文件失败 / 文件是外部放进来的):
@@ -770,7 +830,7 @@ public class DownloadScheduler {
             if (dm.executor.looksLikeVideoFile(finalFile)) {
                 Log.i("TVBox-Download", "enqueue: 已存在成品文件,登记为已下载 " + finalFile.getAbsolutePath());
                 dm.adoptExistingAsDownloaded(finalFile, episodeId, sourceKey, src, vn, ep, pic);
-                return false;
+                return EnqueueResult.of(EnqueueResult.Code.ALREADY_DOWNLOADED, "该集已下载完成");
             }
             Log.i("TVBox-Download", "enqueue: 清理无效残留文件 " + finalFile.getAbsolutePath());
             FileCleaner.deleteQuietly(finalFile);
@@ -785,7 +845,7 @@ public class DownloadScheduler {
                         break;
                     }
                     Log.i("TVBox-Download", "enqueue 拒绝:任务已存在(episodeId) " + finalFile.getAbsolutePath());
-                    return false; // 任务已存在(任意状态),按统一剧集标识精确去重
+                    return EnqueueResult.of(EnqueueResult.Code.DUPLICATE, "该集已在下载任务中");
                 }
                 if (t.savePath != null && t.savePath.equals(finalFile.getAbsolutePath())) {
                     if (isStaleTaskRecord(t)) {
@@ -794,7 +854,7 @@ public class DownloadScheduler {
                         break;
                     }
                     Log.i("TVBox-Download", "enqueue 拒绝:任务已存在 " + finalFile.getAbsolutePath());
-                    return false; // 任务已存在(任意状态)
+                    return EnqueueResult.of(EnqueueResult.Code.DUPLICATE, "该集已在下载任务中");
                 }
             }
         }
@@ -813,7 +873,7 @@ public class DownloadScheduler {
         t.episodeName = episodeName;
         t.altRoutes = trimRoutes(altRoutes, playFlag);
         t.pic = pic;
-        t.headers = headers;
+        t.headers = DownloadHeaders.merge(headers);
         t.sourceName = src;
         t.vodName = vn;
         t.groupName = vn;
@@ -836,18 +896,22 @@ public class DownloadScheduler {
             // Bug2: tmpDir 由 episodeId 派生(稳定可复用)——重入队同 episodeId 复用旧碎片续传,
             // 不再因 taskId 变化导致全部重下;无 episodeId 的旧任务回退 taskId
             String dirKey = (episodeId != null && !episodeId.isEmpty())
-                    ? Integer.toHexString(episodeId.hashCode()) : t.id;
+                    ? com.github.tvbox.osc.util.MD5.encode(episodeId) : t.id;
             // 分片目录放应用私有目录(镜像 来源/剧名/tmp/key):相册/媒体库与魅族等系统
             // 文件管理都管不到,清理 = 彻底删除;成品 mp4 仍写公共 Download(savePath 不变)
             t.tmpDir = new File(com.github.tvbox.osc.download.internal.FileCleaner.getPrivateTmpRoot(),
                     src + File.separator + vn + File.separator + "tmp" + File.separator + dirKey).getAbsolutePath();
         }
         t.state = DownloadTask.STATE_WAITING;
+        t.message = dm.policy.isWifiOnly() && !DownloadPolicy.isWifiActive()
+                ? com.github.tvbox.osc.download.DownloadFacade.MSG_WAIT_WIFI : "已排队";
+        t.needReResolve = requiresResolution;
+        t.resolvedRequest = !requiresResolution && (url.startsWith("https://") || url.startsWith("http://"));
         synchronized (dm.tasks) {
             dm.tasks.add(t);
         }
-        Log.i("TVBox-Download", "enqueue 加入任务: " + episodeName + " -> " + t.savePath + " url=" + url
-                + " headers=" + (t.headers == null ? "null" : t.headers.toString()));
+        Log.i("TVBox-Download", "enqueue 加入任务: " + episodeName + " -> " + t.savePath
+                + " 请求头数=" + t.headers.size());
         DownloadLog.LOG.info(DownloadSubType.ENQUEUE, "加入任务: " + episodeName + " -> " + t.fileName,
                 DownloadLog.extras(episodeId));
         dm.persist();
@@ -857,8 +921,8 @@ public class DownloadScheduler {
         dm.store.ensurePosterAsync(t.pic, t.vodName);
         // 入队即预检任务大小(仅直链做一次轻量 HEAD;m3u8 估算由启动时的探测负责,避免多拉一份播放列表):
         // 直链写 totalBytes(精确),让下载页尽早显示大小、启动前的磁盘空间判断直接复用结果
-        dm.probeSizeAsync(t);
-        return true;
+        if (!requiresResolution && (!dm.policy.isWifiOnly() || DownloadPolicy.isWifiActive())) dm.probeSizeAsync(t);
+        return EnqueueResult.queued(t.id, t.message);
     }
 
     /** 暂停(用户手动):下载中/等待中/排队中的任务都可手动暂停,暂停后不再参与自动调度 */
@@ -899,6 +963,8 @@ public class DownloadScheduler {
         }
         t.state = DownloadTask.STATE_WAITING;
         t.message = "";
+        t.needReResolve = true;
+        t.reResolveCount = 0;
         synchronized (dm.tasks) {
             int running = 0;
             DownloadTask victim = null;
@@ -1029,6 +1095,7 @@ public class DownloadScheduler {
                         || t.state == DownloadTask.STATE_FAILED
                         || t.state == DownloadTask.STATE_SYSTEM_PAUSED) {
                     t.state = DownloadTask.STATE_WAITING;
+                    t.needReResolve = true;
                     t.message = "";
                     changed = true;
                 }
@@ -1043,10 +1110,7 @@ public class DownloadScheduler {
 
     /** 任务是否已停止(暂停/调度暂停/网络暂停/取消) */
     private static boolean isTaskStopped(DownloadTask t) {
-        return t.state == DownloadTask.STATE_PAUSED
-                || t.state == DownloadTask.STATE_SYSTEM_PAUSED
-                || t.state == DownloadTask.STATE_NETWORK_PAUSED
-                || t.state == DownloadTask.STATE_CANCELLED;
+        return t.state != DownloadTask.STATE_DOWNLOADING || Thread.currentThread().isInterrupted();
     }
 
     /**
@@ -1132,6 +1196,7 @@ public class DownloadScheduler {
             for (DownloadTask t : dm.tasks) {
                 if (t.state == DownloadTask.STATE_NETWORK_PAUSED) {
                     t.state = DownloadTask.STATE_WAITING;
+                    t.needReResolve = true;
                     changed = true;
                 }
             }
@@ -1201,9 +1266,9 @@ public class DownloadScheduler {
         boolean changed = false;
         synchronized (dm.tasks) {
             for (DownloadTask t : dm.tasks) {
-                if (t.state == DownloadTask.STATE_DOWNLOADING
+                if (!FileCleaner.canWritePath(t.savePath) && (t.state == DownloadTask.STATE_DOWNLOADING
                         || t.state == DownloadTask.STATE_WAITING
-                        || t.state == DownloadTask.STATE_SYSTEM_PAUSED) {
+                        || t.state == DownloadTask.STATE_SYSTEM_PAUSED)) {
                     t.state = DownloadTask.STATE_PAUSED;
                     t.message = "存储权限已撤销";
                     changed = true;

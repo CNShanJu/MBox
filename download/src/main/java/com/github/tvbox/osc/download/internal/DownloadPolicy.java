@@ -20,6 +20,10 @@ import java.io.File;
  */
 public class DownloadPolicy {
 
+    /** 最大并发下载数的**上限**(2026-10-01 由 5 收到 3):界面只给 1-3 档,
+     *  读回老值 / 越界入参都按它收口(见 getMaxConcurrent/setMaxConcurrent 与构造里的读回)。 */
+    static final int MAX_CONCURRENT = 3;
+
     /** 磁盘空间安全余量:下载完成后至少保留的可用空间(避免手机因空间耗尽卡死/无法开机) */
     static final long MIN_FREE_SPACE = 1536L * 1024 * 1024; // 1.5GB
     /** 磁盘空间不足时的兜底检查:可用空间低于该值直接拒绝(防止极端情况) */
@@ -27,7 +31,7 @@ public class DownloadPolicy {
 
     private final DownloadManager dm;
 
-    /** 最大并发下载数(1-5) */
+    /** 最大并发下载数(**1-3**,2026-10-01 起上限由 5 收到 3:用户口径"下载并发最多设置 3 个,移除 4 和 5") */
     private volatile int maxConcurrent = 3;
 
 
@@ -38,7 +42,8 @@ public class DownloadPolicy {
             savedConcurrent = PrefsDataStore.getInt(DownloadManager.HAWK_MAX_CONCURRENT, 3);
         } catch (Throwable ignored) {
         }
-        maxConcurrent = Math.max(1, Math.min(5, savedConcurrent));
+        // 老版本允许存到 5:读回来也按新上限(3)收一次,免得界面上最大只有 3、实际还在跑 5
+        maxConcurrent = Math.max(1, Math.min(MAX_CONCURRENT, savedConcurrent));
         // Bug1: 订阅全局状态监控(②)的网络事件——仅WiFi开启时切蜂窝/断网 → 暂停全部;
         // WiFi 恢复 → 自动恢复。决策器只下发指令,执行在 Scheduler。
         SystemStateMonitor monitor = SystemStateMonitor.get();
@@ -67,9 +72,17 @@ public class DownloadPolicy {
         return maxConcurrent;
     }
 
-    /** 设置最大并发数(1-5),触发重新调度 */
+    public boolean isAutoResume() {
+        return com.github.tvbox.osc.config.PrefsDataStore.getBoolean("download_auto_resume", false);
+    }
+
+    public void setAutoResume(boolean enabled) {
+        com.github.tvbox.osc.config.PrefsDataStore.put("download_auto_resume", enabled);
+    }
+
+    /** 设置最大并发数(1-3;上限见 {@link #MAX_CONCURRENT}),触发重新调度 */
     void setMaxConcurrent(int n) {
-        int v = Math.max(1, Math.min(5, n));
+        int v = Math.max(1, Math.min(MAX_CONCURRENT, n));
         maxConcurrent = v;
         try {
             PrefsDataStore.put(DownloadManager.HAWK_MAX_CONCURRENT, v);

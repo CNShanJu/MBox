@@ -40,7 +40,7 @@ public final class DownloadFacade {
     public static final String MSG_REMUX = "文件封装中";
     public static final String MSG_REPAIRING = "补片中";
     /** 仅WiFi开启且当前非WiFi时,等待任务的状态文案(让用户知道为何等待,而非莫名"等待中") */
-    public static final String MSG_WAIT_WIFI = "等待Wi-Fi";
+    public static final String MSG_WAIT_WIFI = "已排队，等待 Wi-Fi";
     /** 存储看门狗发现可用空间见底时,等待任务的文案(与"等待Wi-Fi"同性质:说清为何没在下载) */
     public static final String MSG_WAIT_STORAGE = "存储空间不足,清理后继续下载";
 
@@ -116,6 +116,10 @@ public final class DownloadFacade {
     /** 注册播放地址解析契约实现(:spider 提供;App 组合根注入) */
     public static void setUrlResolverApi(com.github.tvbox.osc.spiderapi.PlayUrlResolverApi api) {
         com.github.tvbox.osc.download.internal.DownloadManager.setUrlResolverApi(api);
+    }
+
+    public static void setRequestContextProvider(DownloadRequestContextProvider provider) {
+        com.github.tvbox.osc.download.internal.DownloadManager.contextProvider = provider;
     }
 
     /** 注册下载地址嗅探器(type0 嗅探源用;:app 模块实现并注入) */
@@ -201,11 +205,11 @@ public final class DownloadFacade {
     }
 
     /** 入队(DownloadRequest 化入口:UI 只构造请求对象,见改进.txt §六下载) */
-    public boolean enqueue(DownloadRequest request) {
-        if (request == null) return false;
-        return DownloadManager.get().enqueue(request.url, request.sourceKey, request.playFlag,
+    public EnqueueResult enqueue(DownloadRequest request) {
+        if (request == null) return EnqueueResult.of(EnqueueResult.Code.INVALID_REQUEST, "下载请求为空");
+        return DownloadManager.get().enqueueResult(request.url, request.sourceKey, request.playFlag,
                 request.episodeRawUrl, request.episodeId, request.pic, request.headers,
-                request.sourceName, request.vodName, request.episodeName, request.altRoutes);
+                request.sourceName, request.vodName, request.episodeName, request.altRoutes, request.requiresResolution);
     }
 
     /** 按任务对象暂停 */
@@ -313,16 +317,19 @@ public final class DownloadFacade {
         return com.github.tvbox.osc.download.internal.DownloadManager.get().isWifiOnly();
     }
 
+    public boolean isAutoResume() { return com.github.tvbox.osc.download.internal.DownloadManager.get().isAutoResume(); }
+    public void setAutoResume(boolean enabled) { com.github.tvbox.osc.download.internal.DownloadManager.get().setAutoResume(enabled); }
+
     public void setWifiOnly(boolean wifiOnly) {
         com.github.tvbox.osc.download.internal.DownloadManager.get().setWifiOnly(wifiOnly);
     }
 
-    /** 最大并发下载数(1-5) */
+    /** 最大并发下载数(**1-3**;2026-10-01 上限由 5 收到 3) */
     public int getMaxConcurrent() {
         return com.github.tvbox.osc.download.internal.DownloadManager.get().getMaxConcurrent();
     }
 
-    /** 设置最大并发数(1-5),触发重新调度 */
+    /** 设置最大并发数(1-3,上限见 DownloadPolicy.MAX_CONCURRENT),触发重新调度 */
     public void setMaxConcurrent(int n) {
         com.github.tvbox.osc.download.internal.DownloadManager.get().setMaxConcurrent(n);
     }

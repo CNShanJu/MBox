@@ -4,6 +4,7 @@ import android.util.Log
 import com.github.tvbox.osc.bean.VodInfo
 import com.github.tvbox.osc.download.DownloadFacade
 import com.github.tvbox.osc.download.DownloadRequest
+import com.github.tvbox.osc.download.EnqueueResult
 import com.github.tvbox.osc.spiderapi.PlayUrlResolverProviders
 import com.github.tvbox.osc.spiderapi.ResolveResult
 import com.github.tvbox.osc.util.DownloadRoutePlan
@@ -42,6 +43,9 @@ object EpisodeDownloadBatch {
         /** 因无存储权限被拒的集数(enqueue 硬门槛,任务未入队) */
         @JvmField
         var noPermission: Int = 0
+
+        @JvmField var noSpace: Int = 0
+        @JvmField var failureReason: String? = null
     }
 
     /**
@@ -51,8 +55,9 @@ object EpisodeDownloadBatch {
     @JvmStatic
     fun toastMessage(r: Outcome): String? {
         if (r.noPermission > 0) {
-            return "未授权存储权限,无法下载。请先在系统设置授予「所有文件访问」权限"
+            return "保存到公共目录需要授权，也可改用应用私有目录"
         }
+        if (r.noSpace > 0) return "存储空间不足，未加入 " + r.noSpace + " 个任务"
         if (r.added > 0) {
             val dups = r.downloadedExisted + r.existedInQueue
             return if (dups > 0) {
@@ -70,6 +75,7 @@ object EpisodeDownloadBatch {
             }
         }
         if (r.failed > 0) {
+            r.failureReason?.let { return it }
             return if (r.failed > 1) {
                 "所选剧集解析失败(" + r.failed + " 集),该源可能仅支持下载当前播放的剧集"
             } else {
@@ -119,6 +125,18 @@ object EpisodeDownloadBatch {
         }
     }
 
+    @JvmStatic
+    fun countEnqueueOutcome(result: EnqueueResult, out: Outcome) {
+        when (result.code) {
+            EnqueueResult.Code.ENQUEUED -> out.added++
+            EnqueueResult.Code.DUPLICATE -> out.existedInQueue++
+            EnqueueResult.Code.ALREADY_DOWNLOADED -> out.downloadedExisted++
+            EnqueueResult.Code.PERMISSION_DENIED -> out.noPermission++
+            EnqueueResult.Code.NO_SPACE -> out.noSpace++
+            else -> { out.failed++; out.failureReason = result.message }
+        }
+    }
+
     /**
      * 批量解析并入队。
      *
@@ -157,6 +175,8 @@ object EpisodeDownloadBatch {
         val vodId = vi.id
         // 播放地址解析经爬虫契约(:spider 实现由组合根注入;未注入时按"解析失败"处理)
         val resolver = PlayUrlResolverProviders.get()
+        val playbackUrl = current?.finalUrl()
+        val playbackHeaders = DownloadHeaders.merge(current?.playHeaders())
 
         for (s in sel) {
             if (s == null) continue
@@ -164,20 +184,23 @@ object EpisodeDownloadBatch {
                 // 解析真实地址 + 源要求的请求头(防盗链源下载必须携带,否则"能播不能下")
                 var rr: ResolveResult? = null
                 if (s.name != null && s.name == currentName && current != null) {
-                    val finalUrl = current.finalUrl()
+                    val finalUrl = playbackUrl
                     if (!finalUrl.isNullOrEmpty()) {
                         // 当前集:解析失败回退播放地址,解析结果无头时补播放器 UA/Referer
-                        rr = resolver.resolveCurrentWithPlaybackHeaders(
-                            sourceKey, playFlag, s.url, current.playHeaders(), finalUrl
-                        )
+                        rr = ResolveResult(finalUrl, playbackHeaders)
                     }
                 }
                 if (rr == null) {
                     rr = resolver.resolvePlayUrl(sourceKey, playFlag, s.url)
+                    rr?.let { resolved ->
+                        rr = ResolveResult(resolved.url, DownloadHeaders.mergeForOrigin(playbackUrl, resolved.url,
+                            playbackHeaders, resolved.headers))
+                    }
                 }
-                val url = rr?.url
-                if (url.isNullOrEmpty() || !(url.startsWith("http://") || url.startsWith("https://"))) {
-                    Log.i("TVBox-Download", "  - " + s.name + " 解析失败/无有效地址,跳过")
+                // WebView 型源可先保存原集标识，由 worker 串行解析/嗅探。
+                val resolvedUrl = rr?.url?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+                val url = resolvedUrl ?: s.url
+                if (url.isNullOrEmpty()) {
                     out.failed++
                     continue
                 }
@@ -196,16 +219,16 @@ object EpisodeDownloadBatch {
                 val altRoutes = DownloadRoutePlan.alternatives(
                     vi.seriesMap, playFlag, s.url, epIndex, s.name
                 )
-                val ok = DownloadFacade.get().enqueue(
+                val result = DownloadFacade.get().enqueue(
                     DownloadRequest(
                         url, sourceKey, playFlag, s.url, episodeId,
-                        vi.pic, rr?.headers, sourceName, vodName, epName, altRoutes
+                        vi.pic, rr?.headers, sourceName, vodName, epName, altRoutes, resolvedUrl == null
                     )
                 )
-                Log.i("TVBox-Download", "  - " + s.name + " enqueue=" + ok + " 文件名=" + epName
-                    + " 备用线路=" + altRoutes.size + " url=" + url)
+                Log.i("TVBox-Download", "  - " + s.name + " enqueue=" + result.code + " 文件名=" + epName
+                    + " 备用线路=" + altRoutes.size)
                 // 归类:added / 已下载完成(状态1) / 已在任务中
-                countEnqueueOutcome(ok, DownloadFacade.get().getEpisodeState(episodeId, sourceName, vodName, s.name), out)
+                countEnqueueOutcome(result, out)
             } catch (th: Throwable) {
                 Log.e("TVBox-Download", "批量入队异常: " + (s.name ?: ""), th)
                 out.failed++

@@ -40,9 +40,14 @@ public class DownloadManager {
 
     private static DownloadManager instance;
 
+    public static volatile com.github.tvbox.osc.download.DownloadRequestContextProvider contextProvider;
+
+    public boolean isAutoResume() { return policy.isAutoResume(); }
+    public void setAutoResume(boolean enabled) { policy.setAutoResume(enabled); }
+
     /** 播放地址解析契约(:spider 实现经 App 组合根注入;download 模块不依赖 :spider 实现) */
     static volatile com.github.tvbox.osc.spiderapi.PlayUrlResolverApi urlResolverApi =
-            com.github.tvbox.osc.spiderapi.PlayUrlResolverApi.NONE;
+                com.github.tvbox.osc.spiderapi.PlayUrlResolverApi.NONE;
 
     public static void setUrlResolverApi(com.github.tvbox.osc.spiderapi.PlayUrlResolverApi api) {
         if (api != null) {
@@ -475,6 +480,7 @@ public class DownloadManager {
         if (name == null) return "";
         String n = name.trim();
         n = n.replaceAll("[\\\\/:*?\"<>|]", "_").trim();
+        if (n.equals(".") || n.equals("..")) return "";
         return n;
     }
 
@@ -488,6 +494,14 @@ public class DownloadManager {
     }
 
     /** 新增下载任务(简化入口,不含重新解析信息) */
+    public com.github.tvbox.osc.download.EnqueueResult enqueueResult(String url, String sourceKey, String playFlag,
+            String episodeRawUrl, String episodeId, String pic, Map<String, String> headers,
+            String sourceName, String vodName, String episodeName, List<com.github.tvbox.osc.bean.DownloadRoute> altRoutes,
+            boolean requiresResolution) {
+        return scheduler.enqueueResultInternal(url, sourceKey, playFlag, episodeRawUrl, episodeId,
+                pic, headers, sourceName, vodName, episodeName, altRoutes, requiresResolution);
+    }
+
     public boolean enqueue(String url, String sourceName, String vodName, String episodeName) {
         return scheduler.enqueueInternal(url, null, null, null, null, null, null, sourceName, vodName, episodeName, null);
     }
@@ -665,7 +679,7 @@ public class DownloadManager {
         return policy.getMaxConcurrent();
     }
 
-    /** 设置最大并发数(1-5),触发重新调度 */
+    /** 设置最大并发数(1-3,上限见 DownloadPolicy.MAX_CONCURRENT),触发重新调度 */
     public void setMaxConcurrent(int n) {
         policy.setMaxConcurrent(n);
         com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.DOWNLOAD, "下载设置: 并发数=" + n);

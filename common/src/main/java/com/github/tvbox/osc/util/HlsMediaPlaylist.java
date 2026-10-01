@@ -99,11 +99,17 @@ public final class HlsMediaPlaylist {
         public final String url;
         public final ByteRange range;
         public final Key key;
+        public final long mediaSequence;
+        public final int discontinuity;
+        public final String duration;
 
-        Segment(String url, ByteRange range, Key key) {
+        Segment(String url, ByteRange range, Key key, long mediaSequence, int discontinuity, String duration) {
             this.url = url;
             this.range = range;
             this.key = key;
+            this.mediaSequence = mediaSequence;
+            this.discontinuity = discontinuity;
+            this.duration = duration;
         }
 
         @Override
@@ -213,6 +219,8 @@ public final class HlsMediaPlaylist {
         LenOff pendingRange = null;
         long mediaSequence = 0;
         boolean warnedDiscontinuity = false;
+        int discontinuity = 0;
+        String duration = "";
 
         for (String raw : LINE_BREAK.split(content, -1)) {
             String line = raw.trim();
@@ -274,9 +282,14 @@ public final class HlsMediaPlaylist {
                         warnings.add("连续两个 EXT-X-BYTERANGE,前一个被覆盖: " + v);
                     }
                     pendingRange = p;
-                } else if (line.startsWith(TAG_DISCONTINUITY) && !warnedDiscontinuity) {
-                    warnedDiscontinuity = true;
-                    warnings.add("清单含 EXT-X-DISCONTINUITY(分片时间戳可能重置,合并后由重封装按轨钳制)");
+                } else if (line.startsWith("#EXTINF:")) {
+                    duration = line.substring(8).split(",", 2)[0].trim();
+                } else if (line.equals(TAG_DISCONTINUITY)) {
+                    discontinuity++;
+                    if (!warnedDiscontinuity) {
+                        warnedDiscontinuity = true;
+                        warnings.add("清单含 EXT-X-DISCONTINUITY(分片时间戳可能重置,合并后由重封装按轨钳制)");
+                    }
                 }
                 continue;
             }
@@ -288,7 +301,8 @@ public final class HlsMediaPlaylist {
                 range = applyOffset(pendingRange, url, nextOffsetOfResource, warnings);
                 pendingRange = null;
             }
-            segments.add(new Segment(url, range, curKey));
+            segments.add(new Segment(url, range, curKey, mediaSequence + segments.size(), discontinuity, duration));
+            duration = "";
         }
         if (pendingRange != null) {
             warnings.add("清单末尾的 EXT-X-BYTERANGE 没有对应分片(已忽略)");

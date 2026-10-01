@@ -37,6 +37,55 @@ public final class DownloadErrors {
     private DownloadErrors() {
     }
 
+    public static final class HttpFailure extends IOException {
+        public final int code;
+        public HttpFailure(int code, String resource) { super(resource + " HTTP " + code); this.code = code; }
+    }
+
+    public static final class SessionExpired extends IOException {
+        public SessionExpired() { super("鉴权续期失败，请重新登录或刷新源后继续（已保留进度）"); }
+    }
+
+    public static final class LayoutChanged extends IOException {
+        public LayoutChanged() { super("播放清单的分片布局或密钥已改变，已暂停以保留进度，请换源重下"); }
+    }
+
+    public static final class MergeFailure extends IOException {
+        public MergeFailure(String reason, Throwable cause) { super(reason, cause); }
+    }
+    public enum Kind { NETWORK, AUTHENTICATION, STORAGE, SOURCE, MERGE, UNKNOWN }
+    public static Kind classify(Throwable th) {
+        if (isStorageError(th)) return Kind.STORAGE;
+        if (isAuthentication(th) || th instanceof SessionExpired) return Kind.AUTHENTICATION;
+        if (isNetworkError(th)) return Kind.NETWORK;
+        if (th instanceof MergeFailure) return Kind.MERGE;
+        int code = httpCode(th);
+        if (code == 404 || code == 410 || isRouteSuspect(th) || th instanceof LayoutChanged
+                || reasonOf(th).contains("不是视频") || reasonOf(th).contains("解析失败")) return Kind.SOURCE;
+        return Kind.UNKNOWN;
+    }
+
+    public static int httpCode(Throwable th) {
+        for (Throwable c = th; c != null; c = c.getCause()) {
+            if (c instanceof HttpFailure) return ((HttpFailure) c).code;
+            String msg = c.getMessage();
+            if (msg != null) {
+                java.util.regex.Matcher m = HTTP_CODE.matcher(msg);
+                if (m.find()) return Integer.parseInt(m.group(1));
+            }
+        }
+        return 0;
+    }
+    private static final java.util.regex.Pattern HTTP_CODE = java.util.regex.Pattern.compile("(?i)HTTP\\s*(\\d{3})");
+
+    public static boolean isAuthentication(Throwable th) { int c = httpCode(th); return c == 401 || c == 403; }
+
+    public static boolean isStorageError(Throwable th) {
+        String msg = reasonOf(th);
+        return msg.contains("空间不足") || msg.contains("No space left") || msg.contains("ENOSPC")
+                || msg.contains("EACCES") || msg.contains("Permission denied");
+    }
+
     /**
      * 本线路是否"整体不可用":连续多片下载失败,或整集缺片全是源侧永久失效(HTTP 404/410)。
      * 调用方(调度器)据此决定换线路而不是继续原地重试。

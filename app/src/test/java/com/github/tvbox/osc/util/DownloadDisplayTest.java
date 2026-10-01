@@ -175,6 +175,11 @@ public class DownloadDisplayTest {
         assertEquals(DownloadDisplay.StatusTone.MUTED, DownloadDisplay.statusToneOf(state(DownloadTask.STATE_CANCELLED, null)));
         assertEquals(DownloadDisplay.StatusTone.ACTIVE, DownloadDisplay.statusToneOf(state(DownloadTask.STATE_DOWNLOADING, null)));
     }
+    @Test public void failureLoginPauseAndWifiQueueExposeTheirReason() {
+        assertEquals("失败：磁盘空间不足", DownloadDisplay.statusTextOf(state(DownloadTask.STATE_FAILED, "磁盘空间不足")));
+        assertEquals("已暂停：登录状态已失效", DownloadDisplay.statusTextOf(state(DownloadTask.STATE_PAUSED, "登录状态已失效")));
+        assertEquals("已排队，等待 Wi-Fi", DownloadDisplay.statusTextOf(state(DownloadTask.STATE_WAITING, "已排队，等待 Wi-Fi")));
+    }
 
     @Test
     public void stageAndSpeedJudgements() {

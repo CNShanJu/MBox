@@ -121,12 +121,19 @@
                         android:textSize="16sp" />
                 </LinearLayout>
 
+                <!-- 两个 Tab 共用同一内容区域；切换时旧页滑出、新页滑入。 -->
+                <FrameLayout
+                    android:id="@+id/tab_page_container"
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"
+                    android:clipChildren="true">
+
                 <!-- 正在下载:该剧任务列表 -->
                 <androidx.recyclerview.widget.RecyclerView
                     android:id="@+id/rv_downloading"
                     android:layout_width="match_parent"
-                    android:layout_height="0dp"
-                    android:layout_weight="1" 
+                    android:layout_height="match_parent"
                     android:paddingBottom="6dp"
                     android:clipToPadding="false"
                     />
@@ -136,16 +143,14 @@
                     android:id="@+id/ll_downloading_empty"
                     layout="@layout/view_empty"
                     android:layout_width="match_parent"
-                    android:layout_height="0dp"
-                    android:layout_weight="1"
+                    android:layout_height="match_parent"
                     android:visibility="gone" />
 
                 <!-- 下载完成:该剧文件列表 -->
                 <androidx.recyclerview.widget.RecyclerView
                     android:id="@+id/rv_done"
                     android:layout_width="match_parent"
-                    android:layout_height="0dp"
-                    android:layout_weight="1"
+                    android:layout_height="match_parent"
                     android:visibility="gone" 
                     android:paddingBottom="6dp"
                     android:clipToPadding="false"
@@ -156,9 +161,9 @@
                     android:id="@+id/ll_done_empty"
                     layout="@layout/view_empty"
                     android:layout_width="match_parent"
-                    android:layout_height="0dp"
-                    android:layout_weight="1"
+                    android:layout_height="match_parent"
                     android:visibility="gone" />
+                </FrameLayout>
             </LinearLayout>
         </FrameLayout>
 

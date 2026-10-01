@@ -104,8 +104,10 @@ public class DownloadStore {
                 for (DownloadTask t : dm.tasks) {
                     if (t.state == DownloadTask.STATE_DOWNLOADING
                             || t.state == DownloadTask.STATE_SYSTEM_PAUSED
-                            || t.state == DownloadTask.STATE_WAITING) {
-                        t.state = DownloadTask.STATE_PAUSED;
+                            || t.state == DownloadTask.STATE_WAITING
+                            || t.state == DownloadTask.STATE_NETWORK_PAUSED) {
+                        t.state = dm.policy.isAutoResume() ? DownloadTask.STATE_WAITING : DownloadTask.STATE_PAUSED;
+                        t.message = dm.policy.isAutoResume() ? "已排队，启动前刷新播放地址" : "重启后已暂停，继续时刷新播放地址";
                         t.needReResolve = true;
                         needPersist = true;
                     }
@@ -127,7 +129,7 @@ public class DownloadStore {
             }
             if (needPersist) {
                 dm.persist();
-                Log.i("TVBox-Download", "进程重启:未完成任务置为暂停,等待用户手动开始(继续时自动重新解析地址)");
+                Log.i("TVBox-Download", "进程重启:按自动继续设置恢复任务，开跑前刷新地址");
             }
             // 启动磁盘对账(4.5):内存计数被杀后滞后,以磁盘实况修正
             synchronized (dm.tasks) {

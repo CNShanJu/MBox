@@ -31,9 +31,21 @@ public class FileCleaner {
     private FileCleaner() {
     }
 
-    /** Bug4: 存储权限硬门槛(Android 10+ 需要 MANAGE_EXTERNAL_STORAGE 才能写公共目录) */
+    /** 默认目录有私有目录回退，无所有文件访问权限也可入队。 */
     public static boolean hasStoragePermission() {
-        return Build.VERSION.SDK_INT < 30 || Environment.isExternalStorageManager();
+        return appContext != null;
+    }
+
+    /** 旧任务仍可能指向公共目录；权限按实际保存路径检查，私有任务不受撤权影响。 */
+    static boolean canWritePath(String path) {
+        if (path == null || appContext == null) return false;
+        try {
+            return DownloadStoragePolicy.canWrite(new File(path), appContext.getFilesDir(),
+                    appContext.getExternalFilesDir(null), Build.VERSION.SDK_INT,
+                    Build.VERSION.SDK_INT >= 30 && Environment.isExternalStorageManager());
+        } catch (IOException e) {
+            return false;
+        }
     }
 
     /**

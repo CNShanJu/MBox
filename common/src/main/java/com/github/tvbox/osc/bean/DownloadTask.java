@@ -48,7 +48,14 @@ public class DownloadTask {
     public int doneSegments;
     public long segmentBytes; // 当前分段已下载字节(用于段内断点续传)
 
-    public int state = STATE_WAITING;
+    public volatile int state = STATE_WAITING;
+    /** 直链续传的内容校验器，签名地址续期时用 If-Range 防止拼接新内容。 */
+    public String entityTag;
+    public String lastModified;
+    /** 已选择的媒体清单身份（不含 token），续期优先原变体。 */
+    public String hlsMediaIdentity;
+    public transient volatile long requestEpoch;
+    public boolean resolvedRequest;
     public String message = "";
     public long createTime = System.currentTimeMillis();
 

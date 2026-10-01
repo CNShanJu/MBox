@@ -45,7 +45,7 @@ public final class DownloadTaskRegistry {
         // 若顺序颠倒, t->true 兜底会永远排在最前, 所有任务(含 m3u8)都被分发成直链,
         // 导致 m3u8 被当直链下载(下出播放列表/几KB假文件/魔数校验失败)。这是历史根因。
         register(t -> true, NormalFileDownloadTask::new);
-        register(t -> t.url != null && t.url.toLowerCase().contains(".m3u8"), M3u8DownloadTask::new);
+        register(t -> t.totalSegments > 0 || (t.url != null && t.url.toLowerCase().contains(".m3u8")), M3u8DownloadTask::new);
     }
 
     private DownloadTaskRegistry() {

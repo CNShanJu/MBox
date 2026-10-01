@@ -4,13 +4,11 @@ import android.content.Context;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
-import androidx.recyclerview.widget.DiffUtil;
 
 import com.github.tvbox.osc.R;
 import com.github.tvbox.osc.download.DownloadFacade;
 import com.github.tvbox.osc.ui.adapter.SelectDialogAdapter;
 import com.github.tvbox.osc.util.FastClickCheckUtil;
-import com.lxj.xpopup.core.CenterPopupView;
 
 import org.jetbrains.annotations.NotNull;
 
@@ -19,10 +17,12 @@ import java.util.ArrayList;
 /**
  * 下载设置弹窗(跟随主题):
  * - 仅 WiFi 下载:AppSwitch 开关组件
- * - 下载并发:点击弹 SelectDialog(1-5)
+ * - 下载并发:点击弹 SelectDialog(**1-3**;2026-10-01 上限由 5 收到 3)
  * - 下载限速:点击弹 SelectDialog(不限速 / 512KB/s / 1MB/s / 2MB/s / 5MB/s)
+ * - 重启后自动继续下载:AppSwitch 开关组件
  * 与下载页标题栏齿轮、全局设置页共用 DownloadFacade,单一事实源;
  * 档位与文案取自 util/ThrottlePolicy(同一份,避免两处设置项漂移)。
+ * 各设置项之间**不放分割线**(用户口径"每个 item 有个分割线,看着很丑"):靠行高与留白分区。
  */
 public class DownloadSettingsDialog extends AppCenterPopupView {
 
@@ -45,6 +45,13 @@ public class DownloadSettingsDialog extends AppCenterPopupView {
         mTvConcurrent = findViewById(R.id.tv_concurrent);
         mTvSpeed = findViewById(R.id.tv_speed);
         mSwitchWifi = findViewById(R.id.switch_wifi);
+        com.github.tvbox.osc.ui.kit.AppSwitch autoResume = findViewById(R.id.switch_auto_resume);
+        autoResume.setChecked(DownloadFacade.get().isAutoResume());
+        findViewById(R.id.ll_auto_resume).setOnClickListener(v -> {
+            boolean enabled = !DownloadFacade.get().isAutoResume();
+            DownloadFacade.get().setAutoResume(enabled);
+            autoResume.setChecked(enabled);
+        });
 
         // 仅 WiFi 下载开关(点击整行切换,AppSwitch 展示状态)
         mSwitchWifi.setChecked(DownloadFacade.get().isWifiOnly());
@@ -54,13 +61,13 @@ public class DownloadSettingsDialog extends AppCenterPopupView {
             mSwitchWifi.setChecked(newVal);
         });
 
-        // 下载并发:弹 SelectDialog(1-5)
+        // 下载并发:弹 SelectDialog(**1-3 档**,2026-10-01 起上限由 5 收到 3)
         refreshConcurrent();
         findViewById(R.id.ll_concurrent).setOnClickListener(v -> {
             FastClickCheckUtil.check(v);
             ArrayList<String> types = new ArrayList<>();
-            for (int i = 1; i <= 5; i++) types.add("并发 " + i);
-            int defaultPos = DownloadFacade.get().getMaxConcurrent() - 1;
+            for (int i = 1; i <= 3; i++) types.add("并发 " + i);
+            int defaultPos = Math.max(1, Math.min(3, DownloadFacade.get().getMaxConcurrent())) - 1;
             SelectDialog<String> dialog = new SelectDialog<>(getContext());
             dialog.setTip("选择同时下载任务数");
             dialog.setAdapter(new SelectDialogAdapter.SelectDialogInterface<String>() {

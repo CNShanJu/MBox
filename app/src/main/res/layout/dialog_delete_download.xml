@@ -33,6 +33,7 @@
             android:layout_height="wrap_content"
             android:background="@null"
             android:clickable="false"
+            android:button="@drawable/button_checkbox_square"
             android:focusable="false" />
 
         <TextView

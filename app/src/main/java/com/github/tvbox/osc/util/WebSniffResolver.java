@@ -8,6 +8,7 @@ import android.net.http.SslError;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Log;
 import android.view.ViewGroup;
 import android.view.ViewParent;
 import android.webkit.ConsoleMessage;
@@ -28,7 +29,10 @@ import com.github.tvbox.osc.base.App;
 import com.github.tvbox.osc.bean.SourceBean;
 import com.github.tvbox.osc.download.DownloadUrlSniffer;
 import com.github.tvbox.osc.config.SystemConfig;
+import com.github.tvbox.osc.spiderapi.PlayUrlResolverProviders;
+import com.github.tvbox.osc.spiderapi.ResolveResult;
 
+import java.net.URL;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
@@ -39,7 +43,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * 方案 A：单例无头 WebView，串行复用（下载侧）。
  * <p>
- * 对嗅探型源（type 0，播放靠 WebView 页面嗅探）的每个剧集页：加载后经
+ * 对嗅探型源的每个剧集：先经播放解析契约取得真正的网页，再加载并经
  * shouldInterceptRequest 拦截真实视频地址，复用同一个 WebView 上下文/Cookie/登录会话，
  * 逐集串行消费，零多 WebView 炸机风险。App 启动时注册到
  * {@link com.github.tvbox.osc.util.DownloadManager}，DownloadScheduler 在任务
@@ -73,12 +77,14 @@ public class WebSniffResolver implements DownloadUrlSniffer {
 
     /** 单例复用的无头 WebView（一批连续嗅探内复用；空闲 {@link #IDLE_RELEASE_MS} 后由 {@link #releaseWebView} 销毁） */
     private WebView webView;
+    private String defaultUserAgent;
     private SourceBean sourceBean;
     /** 当前嗅探的剧集页地址（VideoParseRuler 过滤用） */
     private String sniffWebUrl;
 
     // 单次嗅探状态
-    private final Map<String, Boolean> loadedUrls = new HashMap<>();
+    private final Map<String, Boolean> loadedUrls = new java.util.concurrent.ConcurrentHashMap<>();
+    private final AtomicInteger generation = new AtomicInteger();
     private final AtomicInteger loadFoundCount = new AtomicInteger(0);
     private volatile String foundUrl;
     private volatile Map<String, String> foundHeaders;
@@ -91,9 +97,36 @@ public class WebSniffResolver implements DownloadUrlSniffer {
     private WebSniffResolver() {
     }
 
+    private static boolean isHttpPage(String url) {
+        if (url == null || !(url.startsWith("http://") || url.startsWith("https://"))) return false;
+        try {
+            String host = new URL(url).getHost();
+            return host != null && !host.isEmpty() && !host.contains("|") && !host.contains("%");
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
     @Override
     public SniffResult sniff(String sourceKey, String playFlag, String episodeRawUrl, long timeoutMs) {
         if (episodeRawUrl == null || episodeRawUrl.isEmpty()) return null;
+        if (Looper.myLooper() == Looper.getMainLooper()) return null;
+        ResolveResult page;
+        try {
+            page = PlayUrlResolverProviders.get().resolveSniffPage(sourceKey, playFlag, episodeRawUrl);
+            // 普通 HTTP 剧集页可直接嗅探；内部集标识绝不能走这条回退。
+            if (page == null && isHttpPage(episodeRawUrl)) {
+                page = new ResolveResult(episodeRawUrl, null);
+            }
+        } catch (Throwable th) {
+            Log.w("TVBox-Download", "嗅探页解析异常: " + sourceKey + "/" + playFlag, th);
+            return null;
+        }
+        if (page == null || !isHttpPage(page.url)) {
+            Log.i("TVBox-Download", "嗅探跳过: 源未提供可访问的播放页 " + sourceKey + "/" + playFlag);
+            return null;
+        }
+        final ResolveResult sniffPage = page;
         // 串行:等待前一嗅探结束再开始(并发下载任务可能同时触发,避免抢同一 WebView)
         long deadline = System.currentTimeMillis() + Math.max(5000L, timeoutMs) + 5000L;
         while (!busy.compareAndSet(false, true)) {
@@ -104,18 +137,29 @@ public class WebSniffResolver implements DownloadUrlSniffer {
                 return null;
             }
         }
-        foundUrl = null;
-        foundHeaders = null;
+        final int token;
+        synchronized (generation) {
+            token = generation.incrementAndGet();
+            foundUrl = null;
+            foundHeaders = null;
+        }
         try {
             final CountDownLatch done = new CountDownLatch(1);
             latch = done;
             final long tmo = Math.max(5000L, timeoutMs);
-            mainHandler.post(() -> runSniff(sourceKey, episodeRawUrl, tmo, done));
+            mainHandler.post(() -> { if (generation.get() == token)
+                runSniff(sourceKey, sniffPage.url, sniffPage.headers, tmo, done, token); });
             boolean ok = done.await(tmo + 3000L, TimeUnit.MILLISECONDS);
             return ok && foundUrl != null ? new SniffResult(foundUrl, foundHeaders) : null;
         } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
             return null;
         } finally {
+            final int expired;
+            synchronized (generation) { generation.compareAndSet(token, token + 1); expired = generation.get(); }
+            mainHandler.post(() -> {
+                if (generation.get() == expired && webView != null) webView.stopLoading();
+            });
             busy.set(false);
             // 本轮结束:排一次"空闲释放"(下一轮嗅探开始前会撤掉它,所以连续几集的串行复用不受影响)
             scheduleIdleRelease();
@@ -124,15 +168,32 @@ public class WebSniffResolver implements DownloadUrlSniffer {
 
     /** 主线程:重置状态 → 复用/创建 WebView → 加载剧集页,命中或超时放行 latch */
     @SuppressLint("SetJavaScriptEnabled")
-    private void runSniff(String sourceKey, String rawUrl, long timeoutMs, CountDownLatch done) {
+    private void runSniff(String sourceKey, String pageUrl, Map<String, String> pageHeaders,
+                          long timeoutMs, CountDownLatch done, int token) {
         try {
             // 新一轮要开始了:撤掉上一轮排下的空闲释放,免得"刚要用就被销毁"(即便真撞上,
             // 下面的 ensureWebView() 也会按需重建,不会出错)
             mainHandler.removeCallbacks(idleRelease);
             resetState();
             sourceBean = com.github.tvbox.osc.spiderapi.SourceConfigProviders.get().getSource(sourceKey);
-            sniffWebUrl = rawUrl;
+            sniffWebUrl = pageUrl;
             ensureWebView();
+            webView.setWebViewClient(new SniffWebClient(token));
+
+            HashMap<String, String> requestHeaders = new HashMap<>();
+            String userAgent = null;
+            if (pageHeaders != null) {
+                for (Map.Entry<String, String> header : pageHeaders.entrySet()) {
+                    if (header.getKey() == null || header.getValue() == null) continue;
+                    if (header.getKey().equalsIgnoreCase("User-Agent")) {
+                        userAgent = header.getValue().trim();
+                    } else {
+                        requestHeaders.put(header.getKey(), header.getValue().trim());
+                    }
+                }
+            }
+            webView.getSettings().setUserAgentString(userAgent == null || userAgent.isEmpty()
+                    ? defaultUserAgent : userAgent);
 
             timeoutRunnable = () -> {
                 if (done.getCount() > 0) done.countDown();
@@ -140,7 +201,8 @@ public class WebSniffResolver implements DownloadUrlSniffer {
             mainHandler.postDelayed(timeoutRunnable, timeoutMs);
 
             webView.stopLoading();
-            webView.loadUrl(rawUrl);
+            if (requestHeaders.isEmpty()) webView.loadUrl(pageUrl);
+            else webView.loadUrl(pageUrl, requestHeaders);
         } catch (Throwable th) {
             th.printStackTrace();
             if (done.getCount() > 0) done.countDown();
@@ -165,6 +227,7 @@ public class WebSniffResolver implements DownloadUrlSniffer {
         }
         webView = new WebView(ctx);
         final WebSettings settings = webView.getSettings();
+        defaultUserAgent = settings.getUserAgentString();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
@@ -204,7 +267,6 @@ public class WebSniffResolver implements DownloadUrlSniffer {
                 return true;
             }
         });
-        webView.setWebViewClient(new SniffWebClient());
         // 附着到当前 Activity(1x1,同播放侧),保证页面 JS 正常执行;无 Activity 时 detached 也能加载
         if (act != null) {
             try {
@@ -260,6 +322,7 @@ public class WebSniffResolver implements DownloadUrlSniffer {
         if (busy.get()) return;
         WebView view = webView;
         webView = null;
+        defaultUserAgent = null;
         sourceBean = null;
         sniffWebUrl = null;
         latch = null;
@@ -291,6 +354,8 @@ public class WebSniffResolver implements DownloadUrlSniffer {
     }
 
     private class SniffWebClient extends WebViewClient {
+        private final int token;
+        SniffWebClient(int token) { this.token = token; }
 
         @SuppressLint("WebViewClientOnReceivedSslError")
         @Override
@@ -315,6 +380,7 @@ public class WebSniffResolver implements DownloadUrlSniffer {
 
         @Override
         public void onPageFinished(WebView view, String url) {
+            if (generation.get() != token) return;
             super.onPageFinished(view, url);
             // 站点配置的播放按钮选择器:部分页面需点击才出流(与播放侧一致)
             try {
@@ -338,19 +404,20 @@ public class WebSniffResolver implements DownloadUrlSniffer {
 
         @Override
         public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+            if (generation.get() != token) return null;
             String url = request.getUrl().toString();
             HashMap<String, String> webHeaders = new HashMap<>();
             Map<String, String> hds = request.getRequestHeaders();
             if (hds != null) {
                 for (String k : hds.keySet()) {
-                    if (k.equalsIgnoreCase("user-agent")
-                            || k.equalsIgnoreCase("referer")
-                            || k.equalsIgnoreCase("origin")) {
-                        webHeaders.put(k, " " + hds.get(k));
+                    if (!k.equalsIgnoreCase("host") && !k.equalsIgnoreCase("connection")
+                            && !k.equalsIgnoreCase("content-length") && !k.equalsIgnoreCase("range")
+                            && !k.equalsIgnoreCase("accept-encoding")) {
+                        webHeaders.put(k, hds.get(k));
                     }
                 }
             }
-            return checkIsVideo(url, webHeaders);
+            return checkIsVideo(url, webHeaders, token);
         }
 
         @Override
@@ -359,7 +426,7 @@ public class WebSniffResolver implements DownloadUrlSniffer {
         }
     }
 
-    private WebResourceResponse checkIsVideo(String url, HashMap<String, String> headers) {
+    private WebResourceResponse checkIsVideo(String url, HashMap<String, String> headers, int token) {
         try {
             if (url.endsWith("/favicon.ico")) {
                 return null;
@@ -378,6 +445,8 @@ public class WebSniffResolver implements DownloadUrlSniffer {
                 return AdBlocker.createEmptyResource();
             }
             if (checkVideoFormat(url)) {
+                synchronized (generation) {
+                if (generation.get() != token) return null;
                 if (loadFoundCount.incrementAndGet() == 1) {
                     foundUrl = url;
                     Map<String, String> h = new HashMap<>(headers);
@@ -388,13 +457,12 @@ public class WebSniffResolver implements DownloadUrlSniffer {
                     }
                     foundHeaders = h;
                     // 命中:停止加载,放行等待线程(下一轮复用前由 resetState 再清理)
-                    try {
-                        webView.stopLoading();
-                        webView.loadUrl("about:blank");
-                    } catch (Throwable ignored) {
-                    }
+                    mainHandler.post(() -> {
+                        if (generation.get() == token && webView != null) { webView.stopLoading(); webView.loadUrl("about:blank"); }
+                    });
                     if (timeoutRunnable != null) mainHandler.removeCallbacks(timeoutRunnable);
                     if (latch != null && latch.getCount() > 0) latch.countDown();
+                }
                 }
                 return AdBlocker.createEmptyResource();
             }

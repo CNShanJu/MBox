@@ -5,7 +5,7 @@ import java.util.Map;
 /**
  * 下载地址嗅探器（方案 A：单例无头 WebView，串行复用）。
  * <p>
- * 嗅探型源（type 0，播放靠 WebView 页面嗅探）的剧集地址是源站页面而非真实视频，
+ * 嗅探型源的剧集地址可能是源站页面，也可能是爬虫内部集标识，
  * 批量下载非当前集时无法靠解析器直接拿地址，需在任务启动前经此接口嗅探出
  * 真实播放地址 + 请求头（UA/Referer/Cookie），防盗链源的分片才能下载。
  * <p>
@@ -31,7 +31,7 @@ public interface DownloadUrlSniffer {
      *
      * @param sourceKey     来源 key
      * @param playFlag      线路名（可空，当前未使用，预留）
-     * @param episodeRawUrl 源站剧集页地址
+     * @param episodeRawUrl 源站剧集页地址或内部集标识；实现须先解析成可访问网页，不能直接加载内部标识
      * @param timeoutMs     单集嗅探超时（毫秒）
      * @return 命中返回地址 + 请求头；超时/失败/无命中返回 null。任意线程可调（实现内部转主线程）。
      */

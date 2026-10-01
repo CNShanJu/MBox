@@ -22,12 +22,12 @@ public class DownloadConfig {
         DownloadManager.get().setWifiOnly(wifiOnly);
     }
 
-    /** 最大并发下载数(1-5) */
+    /** 最大并发下载数(**1-3**;2026-10-01 上限由 5 收到 3) */
     public static int getMaxConcurrent() {
         return DownloadManager.get().getMaxConcurrent();
     }
 
-    /** 设置最大并发数(1-5),触发重新调度 */
+    /** 设置最大并发数(1-3,上限见 DownloadPolicy.MAX_CONCURRENT),触发重新调度 */
     public static void setMaxConcurrent(int n) {
         DownloadManager.get().setMaxConcurrent(n);
     }

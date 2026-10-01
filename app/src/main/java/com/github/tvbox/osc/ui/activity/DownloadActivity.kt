@@ -13,6 +13,21 @@ import com.lxj.xpopup.XPopup
  * 标题栏:返回 + "下载管理" + 右侧齿轮(下载设置弹窗:并发 SelectDialog + 仅WiFi 开关,与全局设置页同一事实源)。
  */
 class DownloadActivity : BaseVbActivity<ActivityDownloadBinding>() {
+
+    /** 内容区左右滑动切 tab 的手势追踪(只观察、不消费事件;见 TabSwipeHelper 的说明) */
+    private val swipeTracker by lazy {
+        com.github.tvbox.osc.ui.kit.TabSwipeHelper.tracker(this) { dir ->
+            // 左滑 = 下一个 tab(下载完成),右滑 = 上一个(正在下载);不在详情态时这个调用是空转
+            (supportFragmentManager.findFragmentById(mBinding.container.id) as? DownloadFragment)
+                ?.onTabSwipe(dir)
+        }
+    }
+
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        swipeTracker.onTouch(ev)
+        return super.dispatchTouchEvent(ev)
+    }
+
     override fun init() {
         supportFragmentManager.beginTransaction()
             .replace(mBinding.container.id, DownloadFragment())

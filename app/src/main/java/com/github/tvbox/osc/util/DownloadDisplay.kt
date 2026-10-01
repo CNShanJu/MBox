@@ -104,10 +104,10 @@ object DownloadDisplay {
     @JvmStatic
     fun statusTextOf(t: DownloadTask): String {
         when (t.state) {
-            DownloadTask.STATE_FAILED -> return "失败"
-            DownloadTask.STATE_PAUSED -> return "已暂停"
-            DownloadTask.STATE_NETWORK_PAUSED -> return "网络中断"
-            DownloadTask.STATE_SYSTEM_PAUSED -> return "排队中"
+            DownloadTask.STATE_FAILED -> return t.message?.takeIf { it.isNotEmpty() }?.let { "失败：$it" } ?: "失败"
+            DownloadTask.STATE_PAUSED -> return t.message?.takeIf { it.isNotEmpty() }?.let { "已暂停：$it" } ?: "已暂停"
+            DownloadTask.STATE_NETWORK_PAUSED -> return t.message?.takeIf { it.isNotEmpty() } ?: "网络中断"
+            DownloadTask.STATE_SYSTEM_PAUSED -> return t.message?.takeIf { it.isNotEmpty() } ?: "排队中"
             DownloadTask.STATE_WAITING -> {
                 // 排队/等待:被"仅WiFi"闸门拦住的任务带"等待Wi-Fi"说明,避免用户不知为何等待
                 val msg = t.message
@@ -116,6 +116,7 @@ object DownloadDisplay {
             DownloadTask.STATE_CANCELLED -> return "已取消"
         }
         val msg = t.message
+        if (msgIs(msg, "鉴权") || msgIs(msg, "地址") || msgIs(msg, "解析") || msgIs(msg, "下载中（")) return msg!!
         if (msgIs(msg, DownloadFacade.MSG_REPAIRING)
             || msgIs(msg, DownloadFacade.MSG_VERIFYING)
             || msgIs(msg, DownloadFacade.MSG_MERGING)

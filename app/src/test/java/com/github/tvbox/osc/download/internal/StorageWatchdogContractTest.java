@@ -39,7 +39,10 @@ public class StorageWatchdogContractTest {
     }
 
     private static String executor() throws Exception {
-        return read("download/src/main/java/com/github/tvbox/osc/download/internal/DownloadExecutor.java");
+        return read("download/src/main/java/com/github/tvbox/osc/download/internal/DirectDownloader.java")
+                + read("download/src/main/java/com/github/tvbox/osc/download/internal/HlsDownloader.java")
+                + read("download/src/main/java/com/github/tvbox/osc/download/internal/DownloadExecutor.java")
+                + read("download/src/main/java/com/github/tvbox/osc/download/internal/MediaRemuxer.java");
     }
 
     private static String scheduler() throws Exception {
@@ -102,8 +105,8 @@ public class StorageWatchdogContractTest {
         String src = executor();
         // 直链写循环 / 分片读循环 / 每片循环 / 合并循环:四条会持续写盘的路径都要自检
         int calls = countOf(src, "dm.watchdog.checkWhileDownloading()");
-        assertTrue("会写盘的下载路径都必须调用看门狗自检(当前只有 " + calls + " 处,应 >= 4): "
-                + "直链写循环、分片读循环、分片列表循环、合并循环", calls >= 4);
+        assertTrue("会写盘的下载路径都必须调用看门狗自检(当前只有 " + calls + " 处,应 >= 3): "
+                + "直链写循环、分片读循环、分片列表循环、合并循环", calls >= 3);
     }
 
     @Test

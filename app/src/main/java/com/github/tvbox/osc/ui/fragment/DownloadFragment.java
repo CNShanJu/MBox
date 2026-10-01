@@ -40,6 +40,7 @@ import com.github.tvbox.osc.ui.dialog.ConfirmDialog;
 import com.github.tvbox.osc.ui.dialog.DeleteDownloadDialog;
 import com.github.tvbox.osc.ui.dialog.DialogCoordinator;
 import com.github.tvbox.osc.ui.kit.SelectActionBar;
+import com.github.tvbox.osc.ui.kit.TabPageAnimator;
 import com.github.tvbox.osc.util.Utils;
 
 import java.io.File;
@@ -94,6 +95,7 @@ public class DownloadFragment extends BaseVbFragment<FragmentDownloadBinding> {
     /** 当前剧集来源(路径展示用) */
     private String currentSourceName = null;
     private int currentTab = TAB_DOWNLOADING;
+    private final TabPageAnimator tabPageAnimator = new TabPageAnimator();
     /** 该剧正在下载任务列表 */
     private BaseQuickAdapter<DownloadTask, BaseViewHolder> downloadingAdapter;
     private LocalVideoAdapter localVideoAdapter;
@@ -210,7 +212,9 @@ public class DownloadFragment extends BaseVbFragment<FragmentDownloadBinding> {
                     // 整条铺在卡片下面会被透出来(见 item_download_task_new.xml 顶部说明)
                     setSwipeBehindWidth(swipeBehind, -tx);
                     attachSwipe(front, swipeBehind, task);
-                    helper.addOnClickListener(R.id.btn_swipe_pause, R.id.btn_swipe_delete);
+                    // "查看任务日志"入口已移除(2026-10-01,用户口径):条目上不再挂它;按任务看日志仍可去
+        // 运行日志页(LogActivity 支持 download_task_key 过滤),只是不再从下载条目直跳
+        helper.addOnClickListener(R.id.btn_swipe_pause, R.id.btn_swipe_delete);
                 }
                 // 多选勾选框:仅长按多选时显示
                 CheckBox cb = helper.getView(R.id.cb);
@@ -250,7 +254,6 @@ public class DownloadFragment extends BaseVbFragment<FragmentDownloadBinding> {
             if (id == R.id.btn_swipe_pause) {
                 if (t.state == DownloadTask.STATE_PAUSED || t.state == DownloadTask.STATE_FAILED
                         || t.state == DownloadTask.STATE_NETWORK_PAUSED) {
-                    if (blockedByWifiOnly()) return;
                     DownloadFacade.get().resume(t);
                 } else {
                     DownloadFacade.get().pause(t);
@@ -442,13 +445,56 @@ public class DownloadFragment extends BaseVbFragment<FragmentDownloadBinding> {
         if (percent != null && !percent.contentEquals(tvSize.getText())) tvSize.setText(percent);
     }
 
+    /**
+     * 本次手势是否已被"条目左滑操作区"接管。
+     *
+     * <p>两者都是横向拖动、判据也一样(横向明显大于纵向),所以必须互相让路:条目一旦开始横滑露出
+     * 操作区,这次手势就**不许再切 tab**(否则滑一次既露出操作区又跳 tab);抬手/取消后清零,
+     * 下次手势照旧可以切 tab。手势判定在页面 dispatchTouchEvent 里(见 [onTabSwipe])。
+     */
+    private boolean rowSwipeActive;
+
     private void switchTab(int tab) {
+        tabPageAnimator.finish();
+        boolean animate = currentTab != tab && currentVodGroup != null
+                && mBinding.llDetail.getVisibility() == View.VISIBLE
+                && mBinding.llTabs.getVisibility() == View.VISIBLE;
+        View outgoing = animate ? currentTabPage() : null;
         currentTab = tab;
         applyTabStyle();
         // 切 tab 时退出两页的多选
         exitDlSelectMode();
         if (localVideoAdapter.isSelectMode()) localVideoAdapter.setSelectMode(false);
         updateNavBar();
+        if (animate && mBinding.llTabs.getVisibility() == View.VISIBLE) {
+            tabPageAnimator.slide(mBinding.tabPageContainer, outgoing, currentTabPage(),
+                    tab == TAB_DONE ? -1 : 1);
+        }
+    }
+
+    private View currentTabPage() {
+        if (currentTab == TAB_DOWNLOADING) {
+            return mBinding.rvDownloading.getVisibility() == View.VISIBLE
+                    ? mBinding.rvDownloading : mBinding.llDownloadingEmpty.getRoot();
+        }
+        return mBinding.rvDone.getVisibility() == View.VISIBLE
+                ? mBinding.rvDone : mBinding.llDoneEmpty.getRoot();
+    }
+
+    /**
+     * 内容区左右滑动切 tab(2026-10-01,用户口径"下载那块 tab 为啥没法从底下那些区域左右滑动切 tab")。
+     *
+     * <p>手势在宿主 {@code DownloadActivity.dispatchTouchEvent} 里统一观察后转进来(挂在列表上会被
+     * 条目自己消费掉的触摸屏蔽,见 {@code ui/kit/TabSwipeHelper});这里只判"当前是不是详情态
+     * (tab 行可见)",是才切 —— 聚合列表态没有 tab,滑动不该有任何反应。
+     *
+     * @param dir -1 = 左滑(下一个 tab:下载完成);1 = 右滑(上一个 tab:正在下载)
+     */
+    public void onTabSwipe(int dir) {
+        if (mBinding.llTabs.getVisibility() != View.VISIBLE) return;
+        // 本次手势已被条目左滑接管(手指按在条目上横滑):让给操作区,不切 tab
+        if (rowSwipeActive) return;
+        switchTab(dir < 0 ? TAB_DONE : TAB_DOWNLOADING);
     }
 
     /** 刷新 tab 行的选中样式(加粗+主题色) */
@@ -463,6 +509,7 @@ public class DownloadFragment extends BaseVbFragment<FragmentDownloadBinding> {
     }
 
     private void refresh() {
+        tabPageAnimator.finish();
         refreshAggregate();
         refreshDetailLists();
         updateTabCounts();
@@ -745,7 +792,6 @@ public class DownloadFragment extends BaseVbFragment<FragmentDownloadBinding> {
 
     /** 全部开始(仅详情下载中多选):作用于作用域内已暂停/失败/网络中断的任务 */
     private void startSelected() {
-        if (blockedByWifiOnly()) return;
         List<DownloadTask> scope = currentDlScope();
         int n = 0;
         for (DownloadTask t : scope) {
@@ -1098,6 +1144,7 @@ public class DownloadFragment extends BaseVbFragment<FragmentDownloadBinding> {
                     startTx[0] = v.getTranslationX();
                     dragging[0] = false;
                     longPressed[0] = false;
+                    rowSwipeActive = false;   // 新手势:默认不接管(上一手势若异常结束也不会串味)
                     // 必须消费 DOWN 才能成为触摸目标收到 MOVE/UP;定时触发长按。
                     // 注意: 已展开时不在 DOWN 立即收拢——否则手指按住时的微动 MOVE 会
                     // 从收起位置拖回, 造成"收回去又弹出来"的抖动; 收拢判定移到 UP
@@ -1110,6 +1157,8 @@ public class DownloadFragment extends BaseVbFragment<FragmentDownloadBinding> {
                     if (!dragging[0] && !longPressed[0] && Math.abs(dx) > touchSlop
                             && Math.abs(dx) > Math.abs(dy) * 1.5f) {
                         dragging[0] = true;
+                        // 这次手势归条目左滑:页面级的"横滑切 tab"要放行(见 onTabSwipe)
+                        rowSwipeActive = true;
                         swipeHandler.removeCallbacks(longPressRunnable);
                         v.getParent().requestDisallowInterceptTouchEvent(true);
                     }
@@ -1124,8 +1173,11 @@ public class DownloadFragment extends BaseVbFragment<FragmentDownloadBinding> {
                 }
                 case MotionEvent.ACTION_UP:
                     swipeHandler.removeCallbacks(longPressRunnable);
+                    // 手势结束:清掉"条目左滑已接管"的标记(必须放在本分支末尾 —— 页面级的切 tab 判定
+                    // 在这个 UP 事件里比这里先跑,先跑时还得靠这个标记把 tab 切换挡掉)
                     if (longPressed[0]) {
                         longPressed[0] = false;
+                        rowSwipeActive = false;
                         return true;
                     }
                     if (dragging[0]) {
@@ -1137,6 +1189,7 @@ public class DownloadFragment extends BaseVbFragment<FragmentDownloadBinding> {
                         }
                         settleSwipe(v, behind, open ? -reveal : 0);
                         dragging[0] = false;
+                        rowSwipeActive = false;
                         return true;
                     }
                     // 未拖动:已展开点按 → 收拢;未展开快速点击 → 切换 暂停/开始
@@ -1146,6 +1199,7 @@ public class DownloadFragment extends BaseVbFragment<FragmentDownloadBinding> {
                     } else {
                         toggleTaskPlay(task);
                     }
+                    rowSwipeActive = false;
                     return true;
                 case MotionEvent.ACTION_CANCEL:
                     swipeHandler.removeCallbacks(longPressRunnable);
@@ -1155,6 +1209,7 @@ public class DownloadFragment extends BaseVbFragment<FragmentDownloadBinding> {
                         settleSwipe(v, behind, startTx[0]);
                         dragging[0] = false;
                     }
+                    rowSwipeActive = false;
                     return true;
                 default:
                     return true;
@@ -1177,7 +1232,6 @@ public class DownloadFragment extends BaseVbFragment<FragmentDownloadBinding> {
         if (t.state == DownloadTask.STATE_PAUSED
                 || t.state == DownloadTask.STATE_FAILED
                 || t.state == DownloadTask.STATE_NETWORK_PAUSED) {
-            if (blockedByWifiOnly()) return;
             DownloadFacade.get().resume(t);
         } else {
             DownloadFacade.get().pause(t);
@@ -1187,7 +1241,7 @@ public class DownloadFragment extends BaseVbFragment<FragmentDownloadBinding> {
     /** 仅WiFi + 当前移动网络时明确提示并拦截,避免"点了没反应";@return true=已拦截 */
     private boolean blockedByWifiOnly() {
         if (DownloadFacade.get().isWifiOnly() && DownloadFacade.get().isMobileNetwork()) {
-            AppBubble.toast("已开启仅Wi-Fi下载,当前为移动网络,任务不会开始。请连接 Wi-Fi,或将下载设置为“Wi-Fi+流量”。");
+            AppBubble.toast("连 Wi-Fi 或开启流量下载");
             return true;
         }
         return false;
@@ -1208,7 +1262,13 @@ public class DownloadFragment extends BaseVbFragment<FragmentDownloadBinding> {
             jumpActivity(LocalPlayActivity.class, bundle);
         } catch (Throwable th) {
             th.printStackTrace();
-            AppBubble.toast("播放失败:" + th.getMessage());
+            AppBubble.toast("播放失败");
         }
+    }
+
+    @Override
+    public void onDestroyView() {
+        tabPageAnimator.finish();
+        super.onDestroyView();
     }
 }

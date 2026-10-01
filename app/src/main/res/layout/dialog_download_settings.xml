@@ -43,13 +43,8 @@
             android:clickable="false" />
     </LinearLayout>
 
-    <View
-        android:layout_width="match_parent"
-        android:layout_height="1dp"
-        android:layout_marginHorizontal="20dp"
-        android:background="@color/gray_darker_press_alpha" />
-
-    <!-- 下载并发:点击弹 SelectDialog -->
+    <!-- 下载并发:点击弹 SelectDialog;设置项之间**不放分割线**(用户口径"每个 item 有个分割线,看着很丑"),
+         靠 56dp 行高与左右内边距分区即可 -->
     <LinearLayout
         android:id="@+id/ll_concurrent"
         android:layout_width="match_parent"
@@ -83,12 +78,6 @@
             android:src="@drawable/ic_seek_right"
             app:tint="@color/text_foreground" />
     </LinearLayout>
-
-    <View
-        android:layout_width="match_parent"
-        android:layout_height="1dp"
-        android:layout_marginHorizontal="20dp"
-        android:background="@color/gray_darker_press_alpha" />
 
     <!-- 下载限速:点击弹 SelectDialog(不限速 / 512KB/s / 1MB/s / 2MB/s / 5MB/s) -->
     <LinearLayout
@@ -125,4 +114,27 @@
             app:tint="@color/text_foreground" />
     </LinearLayout>
 
+    <LinearLayout
+        android:id="@+id/ll_auto_resume"
+        android:layout_width="match_parent"
+        android:layout_height="56dp"
+        android:foreground="?android:selectableItemBackground"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="20dp">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="重启后自动继续下载"
+            android:textColor="@color/text_foreground"
+            android:textSize="15sp" />
+
+        <com.github.tvbox.osc.ui.kit.AppSwitch
+            android:id="@+id/switch_auto_resume"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:clickable="false" />
+    </LinearLayout>
 </LinearLayout>

@@ -27,8 +27,8 @@ public class RemuxBufferContractTest {
     private static File executorSource() {
         // 单测工作目录 = :app 模块目录(Gradle 默认),故实现文件在 ../download/...
         String[] candidates = {
-                "../download/src/main/java/com/github/tvbox/osc/download/internal/DownloadExecutor.java",
-                "download/src/main/java/com/github/tvbox/osc/download/internal/DownloadExecutor.java",
+                "../download/src/main/java/com/github/tvbox/osc/download/internal/MediaRemuxer.java",
+                "download/src/main/java/com/github/tvbox/osc/download/internal/MediaRemuxer.java",
         };
         for (String c : candidates) {
             File f = new File(c);
