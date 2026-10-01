@@ -22,7 +22,14 @@ import com.lxj.xpopup.interfaces.XPopupCallback;
  */
 public final class DialogCoordinator {
 
+    /** 加载过程压暗页面内容，避免底层列表文字透进进度提示。 */
+    private static final int LOADING_SHADOW_COLOR = 0x99000000;
+
     private DialogCoordinator() {
+    }
+
+    private static XPopup.Builder builder(Context context) {
+        return new XPopup.Builder(context).moveUpToKeyboard(false);
     }
 
     // ------------------------------------------------------------------
@@ -31,20 +38,20 @@ public final class DialogCoordinator {
 
     /** 居中弹窗（XPopup 默认尺寸） */
     public static BasePopupView center(Context ctx, BasePopupView content) {
-        return new XPopup.Builder(ctx)
+        return builder(ctx)
                 .asCustom(content);
     }
 
     /** 居中弹窗 + 暗色主题（内容含系统默认色元素时用，如 XPopup 内置列表/输入框） */
     public static BasePopupView centerDark(Context ctx, BasePopupView content) {
-        return new XPopup.Builder(ctx)
+        return builder(ctx)
                 .isDarkTheme(Utils.isDarkTheme())
                 .asCustom(content);
     }
 
     /** 居中弹窗，限最大宽度（px；转 dp 语义见调用处注释） */
     public static BasePopupView centerMaxWidth(Context ctx, BasePopupView content, int maxWidthDp) {
-        return new XPopup.Builder(ctx)
+        return builder(ctx)
                 .maxWidth(ConvertUtils.dp2px(maxWidthDp))
                 .asCustom(content);
     }
@@ -73,7 +80,7 @@ public final class DialogCoordinator {
     /** 全参数右侧抽屉：可关阴影（列表类抽屉常 hasShadowBg(false) 更清爽） */
     public static BasePopupView right(Context ctx, BasePopupView content, int widthDp, boolean enableDrag,
                                       boolean hasShadowBg, XPopupCallback callback) {
-        XPopup.Builder builder = new XPopup.Builder(ctx)
+        XPopup.Builder builder = builder(ctx)
                 .isViewMode(true)         // 隐藏导航栏(手势条)在 dialog 模式下会闪一下，改 view 模式（onBack 由调用方处理）
                 .hasNavigationBar(false)
                 .popupHeight(ScreenUtils.getScreenHeight())
@@ -104,7 +111,7 @@ public final class DialogCoordinator {
 
     /** 底部弹窗 + 生命周期回调；heightPx<=0 用弹窗自身高度（如 App*PopupView 自带 getMaxHeight） */
     public static BasePopupView bottom(Context ctx, BasePopupView content, int heightPx, XPopupCallback callback) {
-        XPopup.Builder builder = new XPopup.Builder(ctx)
+        XPopup.Builder builder = builder(ctx)
                 .isViewMode(true)
                 .hasNavigationBar(false);
         if (heightPx > 0) {
@@ -128,7 +135,7 @@ public final class DialogCoordinator {
     /** {@link #bottomDraggable(Context, BasePopupView, int)} + 生命周期回调 */
     public static BasePopupView bottomDraggable(Context ctx, BasePopupView content, int heightPx,
                                                 XPopupCallback callback) {
-        XPopup.Builder builder = new XPopup.Builder(ctx)
+        XPopup.Builder builder = builder(ctx)
                 .isViewMode(true)
                 .hasNavigationBar(false)
                 .enableDrag(true);
@@ -143,7 +150,7 @@ public final class DialogCoordinator {
 
     /** 底部弹窗，指定最高值（Builder.maxHeight，可小于 popupHeight 封顶内容高度） */
     public static BasePopupView bottomMaxHeight(Context ctx, BasePopupView content, int maxHeightPx) {
-        return new XPopup.Builder(ctx)
+        return builder(ctx)
                 .isViewMode(true)
                 .hasNavigationBar(false)
                 .maxHeight(maxHeightPx)
@@ -153,7 +160,7 @@ public final class DialogCoordinator {
     /** 底部弹窗 + 生命周期回调 */
     public static BasePopupView bottomMaxHeight(Context ctx, BasePopupView content, int maxHeightPx,
                                                 XPopupCallback callback) {
-        XPopup.Builder builder = new XPopup.Builder(ctx)
+        XPopup.Builder builder = builder(ctx)
                 .isViewMode(true)
                 .hasNavigationBar(false)
                 .maxHeight(maxHeightPx);
@@ -175,10 +182,12 @@ public final class DialogCoordinator {
 
     /** 加载框（替代 XPopup asLoading 默认转圈;统一走全局加载态 Lottie,可挂任意 Activity 上） */
     public static BasePopupView loading(Activity activity) {
-        return new XPopup.Builder(activity)
+        return builder(activity)
                 .isLightNavigationBar(true)
-                .hasShadowBg(true)              // 暗色遮罩垫底(加载框无卡片背景)
+                .hasShadowBg(true)
+                .shadowBgColor(LOADING_SHADOW_COLOR)
                 .dismissOnTouchOutside(false)   // 加载框不点外关闭
+                .dismissOnBackPressed(false)   // 长任务只能经显式取消键退出，避免后台仍继续导入
                 .asCustom(new LoadingDialog(activity));
     }
 

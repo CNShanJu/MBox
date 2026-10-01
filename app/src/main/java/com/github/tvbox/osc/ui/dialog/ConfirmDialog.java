@@ -1,13 +1,12 @@
 package com.github.tvbox.osc.ui.dialog;
 
 import android.content.Context;
+import android.view.View;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
-import androidx.core.content.ContextCompat;
 
 import com.github.tvbox.osc.R;
-import com.google.android.material.button.MaterialButton;
 import com.lxj.xpopup.XPopup;
 import com.lxj.xpopup.core.CenterPopupView;
 
@@ -32,9 +31,8 @@ public class ConfirmDialog extends AppCenterPopupView {
     }
 
     /**
-     * 危险动作确认(无可撤销的删除/清空):确定键走主题的危险色(红底 + 红底上的文字)。
-     * 入口与"无底危险文字"是两档色:{@code swipe_red}/{@code swipe_red_text} 给"确认执行"键,
-     * {@code text_danger} 给列表工具条/条目上那些没有底色的危险入口。
+     * 危险动作确认(无可撤销的删除/清空):确定键使用红色空心样式,
+     * 描边和文字都取 {@code text_danger}。
      */
     public static void showDanger(Context context, String title, String message,
                                   String confirmText, Runnable onConfirm) {
@@ -52,7 +50,7 @@ public class ConfirmDialog extends AppCenterPopupView {
     private final String mMessage;
     private final String mConfirmText;
     private final Runnable mOnConfirm;
-    /** true = 确定键用危险色(红底白字),给不可逆的删除/清空用 */
+    /** true = 确定键用红边红字,给不可逆的删除/清空用 */
     private final boolean mDanger;
 
     public ConfirmDialog(@NonNull @NotNull Context context, String title, String message,
@@ -85,9 +83,12 @@ public class ConfirmDialog extends AppCenterPopupView {
         if (mTitle != null) tvTitle.setText(mTitle);
         tvMessage.setText(mMessage == null ? "" : mMessage);
 
-        TextView tvOk = findViewById(R.id.tv_ok);
+        TextView normalOk = findViewById(R.id.tv_ok);
+        TextView dangerOk = findViewById(R.id.tv_ok_danger);
+        normalOk.setVisibility(mDanger ? View.GONE : View.VISIBLE);
+        dangerOk.setVisibility(mDanger ? View.VISIBLE : View.GONE);
+        TextView tvOk = mDanger ? dangerOk : normalOk;
         if (mConfirmText != null && !mConfirmText.isEmpty()) tvOk.setText(mConfirmText);
-        if (mDanger) applyDangerStyle(tvOk);
         findViewById(R.id.tv_cancel).setOnClickListener(v -> dismiss());
         tvOk.setOnClickListener(v -> {
             dismiss();
@@ -97,16 +98,4 @@ public class ConfirmDialog extends AppCenterPopupView {
         });
     }
 
-    /**
-     * 把确定键换成危险色(主题 swipe_red 底 + swipe_red_text 字)。
-     * 就地改 tint/文字色而不换 style:布局里 tv_ok 是 MaterialButton(BtnPrimary),
-     * 换 style 得在 XML 里并排两套按钮再让代码挑,资源与调用点都要动,这两个属性就够。
-     */
-    private void applyDangerStyle(TextView tvOk) {
-        if (tvOk instanceof MaterialButton) {
-            ((MaterialButton) tvOk).setBackgroundTintList(android.content.res.ColorStateList.valueOf(
-                    ContextCompat.getColor(getContext(), R.color.swipe_red)));
-        }
-        tvOk.setTextColor(ContextCompat.getColor(getContext(), R.color.swipe_red_text));
-    }
 }

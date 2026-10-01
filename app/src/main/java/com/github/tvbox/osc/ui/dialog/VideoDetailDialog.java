@@ -88,7 +88,7 @@ public class VideoDetailDialog extends SheetResizableBottomPopup {
         binding.tvLinkCopy.setOnClickListener(view -> {
             if (TextUtils.isEmpty(vodUrl)) return;
             ClipboardUtils.copyText(vodUrl);
-            AppBubble.toastLong("已复制");
+            AppBubble.toast("已复制");
         });
         String picUrl = DefaultConfig.checkReplaceProxy(mVideo.pic);
         // 走全 App 统一图片入口:空封面/加载失败都会切到 PosterPlaceholderDrawable

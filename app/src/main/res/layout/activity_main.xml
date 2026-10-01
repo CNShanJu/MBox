@@ -17,6 +17,7 @@
     <!-- 底部导航栏:占真实布局高度(不再悬浮覆盖内容), 上层内容不会被其遮挡,
          页面滚动区域底部在导航栏上沿结束, 版本号等底部内容可正常显示/滚动 -->
     <FrameLayout
+        android:id="@+id/bottom_nav_surface"
         android:layout_width="match_parent"
         android:layout_height="58dp"
         android:elevation="10dp"

@@ -28,6 +28,19 @@ public class SelectDialogAdapter<T> extends ListAdapter<T, SelectDialogAdapter.S
     /** 行背景图标的尺寸(dp):当背景水印用,别再放大(太大会压过行文字) */
     private static final float ICON_SIZE_DP = 22f;
 
+    /**
+     * 选择行的底色与页面底色之间的混合比例(0~1)。
+     *
+     * <p>用户口径:"单个item背景颜色看能不能通过 {@code bg_surface} 计算出来,有点区别就行,
+     * 纯色不透明"。所以这里**不新增主题键**,直接由主题的"实心面"({@code bg_card} 去掉透明度的
+     * 不透明版)向页面底色 {@code bg_body} 稍微靠一点:亮色主题略微压深、暗色主题略微提亮,
+     * 与页面有分别但同属一个色系。
+     *
+     * <p>2026-10-01 真机实测:0.12 时行底 {@code #4642F1} 与弹窗底 {@code #4848F9}
+     * **几乎看不出差别**(用户要的是"有点区别"),故提到 0.3(实测 {@code #3833CB},能看出分区)。
+     */
+    private static final float ROW_MIX = 0.30f;
+
     class SelectViewHolder extends RecyclerView.ViewHolder {
 
         /** 行布局自带的背景(圆角底色):加了居中图标后要与它合成,所以留一份原样 */
@@ -178,25 +191,71 @@ public class SelectDialogAdapter<T> extends ListAdapter<T, SelectDialogAdapter.S
      * 透明度由 {@link RowStyle#rowIconAlpha} 决定(背景图标必须压暗,否则会盖住文字的可读性)。
      */
     private void applyRowIcon(SelectDialogAdapter.SelectViewHolder holder, T value) {
-        if (rowStyle == null || holder.baseBackground == null) return;
-        int iconRes = rowStyle.rowIcon(value);
+        if (holder.baseBackground == null) return;
+        // 行底:统一换成"由主题面派生出来的不透明色",与页面有轻微分别(用户口径:
+        // "对应单个 item 背景颜色看能不能通过 bg_surface 计算出来,有点区别就行,纯色不透明")。
+        // 布局里那份 bg_small_round_gray 是**半透明**的,直接用它当底会让下面透出来,所以这里整层替换。
+        Drawable base = createRowBackground(holder.itemView.getContext(), holder.baseBackground);
+        int iconRes = rowStyle == null ? 0 : rowStyle.rowIcon(value);
         if (iconRes == 0) {
-            if (holder.itemView.getBackground() != holder.baseBackground) {
-                holder.itemView.setBackground(holder.baseBackground);
-            }
+            if (holder.itemView.getBackground() != base) holder.itemView.setBackground(base);
             return;
         }
         Context ctx = holder.itemView.getContext();
         Drawable icon = androidx.core.content.ContextCompat.getDrawable(ctx, iconRes);
-        if (icon == null) return;
+        if (icon == null) {
+            holder.itemView.setBackground(base);
+            return;
+        }
         icon = icon.mutate();
         int tint = rowStyle.rowIconTint(value);
         if (tint != 0) icon.setTint(tint);
-        icon.setAlpha(Math.max(0, Math.min(255, rowStyle.rowIconAlpha(value))));
-        LayerDrawable layer = new LayerDrawable(new Drawable[]{holder.baseBackground, icon});
+        int alpha = Math.max(0, Math.min(255, rowStyle.rowIconAlpha(value)));
+        icon.setAlpha(alpha);
+        LayerDrawable layer = new LayerDrawable(new Drawable[]{base, icon});
         int size = Math.round(ICON_SIZE_DP * ctx.getResources().getDisplayMetrics().density);
         layer.setLayerSize(1, size, size);
         layer.setLayerGravity(1, Gravity.CENTER);
         holder.itemView.setBackground(layer);
+    }
+
+    /**
+     * 选择行的底:由主题的"不透明面"向页面底色轻微混合,并保留行布局原本的圆角。
+     *
+     * <p>为什么要保留圆角:行布局那份底是"圆角色块",直接 {@code setBackgroundColor} 会把圆角一起丢掉。
+     * 所以这里用原 drawable 的 ConstantState 复制一份、只改颜色 —— 圆角/形状/内边距全都不动。
+     */
+    public static Drawable createRowBackground(Context ctx, Drawable base) {
+        try {
+            com.github.tvbox.osc.bean.theme.ThemeColorPalette palette =
+                    com.github.tvbox.osc.theme.ThemeRuntime.palette();
+            if (palette == null) return base;
+            int mixed = mix(opaqueSurface(palette), palette.get("bg_body", 0xFFFAF8FF), ROW_MIX);
+            Drawable copy = base.getConstantState() == null
+                    ? base : base.getConstantState().newDrawable();
+            if (copy instanceof android.graphics.drawable.GradientDrawable) {
+                ((android.graphics.drawable.GradientDrawable) copy).setColor(mixed);
+                return copy;
+            }
+            return base;
+        } catch (Throwable th) {
+            return base;
+        }
+    }
+
+    /** 主题的"实心面":bg_card 的**不透明版**(行底要求纯色不透明,而 bg_card 带透明度档) */
+    private static int opaqueSurface(com.github.tvbox.osc.bean.theme.ThemeColorPalette palette) {
+        int card = palette.get("bg_card", 0xFFECECF4);
+        return (card & 0x00FFFFFF) | 0xFF000000;
+    }
+
+    /** 两色按比例混合(返回不透明色) */
+    private static int mix(int base, int target, float ratio) {
+        float r = Math.max(0f, Math.min(1f, ratio));
+        int a = Math.round(((base >>> 24) & 0xFF) * (1 - r) + ((target >>> 24) & 0xFF) * r);
+        int red = Math.round(((base >> 16) & 0xFF) * (1 - r) + ((target >> 16) & 0xFF) * r);
+        int green = Math.round(((base >> 8) & 0xFF) * (1 - r) + ((target >> 8) & 0xFF) * r);
+        int blue = Math.round((base & 0xFF) * (1 - r) + (target & 0xFF) * r);
+        return (a << 24) | (red << 16) | (green << 8) | blue;
     }
 }

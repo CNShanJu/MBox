@@ -3,6 +3,8 @@ package com.github.tvbox.osc.util;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.TextUtils;
+import android.graphics.drawable.Drawable;
+import android.graphics.drawable.GradientDrawable;
 import android.widget.ImageView;
 
 import com.github.tvbox.osc.ui.kit.PicassoShimmer;
@@ -83,7 +85,40 @@ public class PicassoLoad {
      */
     public static void setLoadingPlaceholder(ImageView iv) {
         if (iv == null) return;
-        iv.setBackground(PosterPlaceholderDrawable.loading(iv.getContext()));
+        iv.setBackground(PosterPlaceholderDrawable.loading(iv.getContext(), slotRadiusPx(iv)));
+    }
+
+    /** 从槽位背景读取圆角。首次绑定通常早于测量，不能只依赖尚无 bounds 的 outline。 */
+    private static float slotRadiusPx(ImageView iv) {
+        try {
+            Drawable bg = iv.getBackground();
+            if (bg != null) {
+                // 列表复用时背景已经换成统一占位，直接沿用上次确定的槽位圆角。
+                if (bg instanceof PosterPlaceholderDrawable) {
+                    return ((PosterPlaceholderDrawable) bg).cornerRadiusPx();
+                }
+                // bg_thumb_round 是 GradientDrawable；未测量时它仍保存着 radius_thumb。
+                if (bg instanceof GradientDrawable) {
+                    GradientDrawable shape = (GradientDrawable) bg;
+                    float radius = shape.getCornerRadius();
+                    if (radius > 0f) return radius;
+                    float[] corners = shape.getCornerRadii();
+                    if (corners != null && corners.length == 8) {
+                        radius = corners[0];
+                        boolean uniform = radius > 0f;
+                        for (float corner : corners) uniform &= corner == radius;
+                        if (uniform) return radius;
+                    }
+                }
+                // 其它已完成测量的背景仍可通过轮廓读取。
+                android.graphics.Outline outline = new android.graphics.Outline();
+                bg.getOutline(outline);
+                if (outline.getRadius() > 0f) return outline.getRadius();
+            }
+        } catch (Throwable ignored) {
+            // 背景无可读圆角时沿用占位的默认卡片档。
+        }
+        return 0f;
     }
 
     /** 加载态占位 + 清 src + 停扫光:换绑新图前"露出占位"用(下载页等本地图源入口) */
@@ -100,8 +135,9 @@ public class PicassoLoad {
         if (iv == null) return;
         cancelShimmer(iv);
         PicassoShimmer.stop(iv);
+        float radius = slotRadiusPx(iv);   // 先读原背景(下面就要把它换掉)
         iv.setImageDrawable(null);
-        iv.setBackground(PosterPlaceholderDrawable.failed(iv.getContext()));
+        iv.setBackground(PosterPlaceholderDrawable.failed(iv.getContext(), radius));
     }
 
     public static void into(final ImageView iv, String url) {

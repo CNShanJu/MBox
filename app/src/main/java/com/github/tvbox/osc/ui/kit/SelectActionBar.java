@@ -25,9 +25,12 @@ import com.github.tvbox.osc.R;
  * <ul>
  *   <li><b>背景</b>=主题悬浮面 {@code @color/bg_surface} —— 颜色与透明度都来自主题文件
  *       ({@code bg_surface} + {@code bg_float_alpha}),与底栏/标题栏/卡片同一个面;</li>
- *   <li><b>键色</b>两档:{@link Kind#NORMAL} 普通键用 {@code text_accent}(即原来的 colorPrimary)、
- *       {@link Kind#DANGER} 危险键(删除/清空)用 {@code text_danger};不可用时统一 {@code text_disable}。
- *       注意"红底 + 红底上的字"是弹窗里的确认键那一档({@code BtnDanger}),不在这条裸文字栏上。</li>
+ *   <li><b>键色</b>两档:{@link Kind#NORMAL} 普通键用<b>文字主色</b> {@code btn_plain_text}
+ *       (= 全站"纯文字按钮"那一档:复制/展开/选集下载同款,派生自 brand),{@link Kind#DANGER}
+ *       危险键(删除/清空)用 {@code text_danger};不可用时统一 {@code text_disable}。
+ *       注意"红底 + 红底上的字"是弹窗里的确认键那一档({@code BtnDanger}),不在这条裸文字栏上。
+ *       <p>历史:普通键原来用 {@code text_accent}(强调文字),自定义主题里它常被配成深灰,
+ *       压在主题面板上就成了"这条栏的文字没跟着主题走"(2026-10-01 收口到文字主色)。</li>
  * </ul>
  *
  * <p>用法:调用方用 {@link #addAction} 现加动作键(等宽排开、按加入顺序从左到右),拿回 TextView 后
@@ -38,7 +41,7 @@ public class SelectActionBar extends LinearLayout {
 
     /** 动作键性质:决定"可用"时的文字色 */
     public enum Kind {
-        /** 普通动作(全选/取消全选/暂停…):text_accent */
+        /** 普通动作(全选/取消全选/暂停…):文字主色 btn_plain_text(= 纯文字按钮那一档) */
         NORMAL,
         /** 危险动作(删除/清空):text_danger */
         DANGER
@@ -94,7 +97,7 @@ public class SelectActionBar extends LinearLayout {
     }
 
     /**
-     * 设置某个动作键的可用态:可用=按 Kind 取色(普通 text_accent / 危险 text_danger),
+     * 设置某个动作键的可用态:可用=按 Kind 取色(普通 文字主色 / 危险 text_danger),
      * 不可用=text_disable。页面只报"能不能点",取色这件事只在这里发生。
      */
     public void setActionEnabled(TextView action, boolean enabled) {
@@ -120,7 +123,9 @@ public class SelectActionBar extends LinearLayout {
         } else if (kind == Kind.DANGER) {
             res = R.color.text_danger;
         } else {
-            res = R.color.text_accent;
+            // 普通键 = 文字主色(btn_plain_text 派生自 brand):与纯文字按钮/高亮文字同一档,
+            // 不再用 text_accent(自定义主题里常是深灰,压在面板上像"没跟主题")
+            res = R.color.btn_plain_text;
         }
         return ContextCompat.getColor(getContext(), res);
     }

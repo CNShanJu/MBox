@@ -67,19 +67,26 @@ public abstract class AppCenterPopupView extends CenterPopupView {
 
     @Override
     protected void onCreate() {
+        PopupKeyboardPolicy.onCreate(this);
         super.onCreate();
-        // 换肤兜底:居中弹窗(主题颜色 / 加载动画 / 确认框…都走这里)创建时机晚于 Activity,
-        // Activity 那次补色扫描覆盖不到 —— 面板与里面的行只要还画着内置面,就在这里补成主题色。
-        // (上一轮只给"底部弹窗/抽屉"加了这一趟,漏了本类,用户口径:"弹窗还是没变")
-        try {
-            com.github.tvbox.osc.theme.ThemeSweep.apply(getPopupImplView());
-            com.github.tvbox.osc.theme.ThemeSweep.watchItems(getPopupImplView());
-        } catch (Throwable ignored) {
+        // 弹窗晚于 Activity 创建:显示时按明确资源重新应用,不扫描像素颜色猜面板语义。
+        View root = getPopupImplView();
+        if (root != null) {
+            com.github.tvbox.osc.theme.ThemeDrawables.applyBackground(root, R.drawable.bg_dialog);
+            com.github.tvbox.osc.theme.ThemeSweep.watchItems(root);
         }
+        // 暂停弹窗圆角诊断日志，需要排障时恢复调用。
+        // com.github.tvbox.osc.theme.RadiusCheck.reportPopup(getContext(), getClass().getSimpleName());
         // 内容超高且不自带滚动区时,自动包一层 ScrollView:防止被 maxHeight 裁剪(纯文本/按钮弹窗兜底)
         if (!contentSelfScrollable()) {
             wrapContentInScrollIfOverflow();
         }
+    }
+
+    @Override
+    public void focusAndProcessBackPress() {
+        super.focusAndProcessBackPress();
+        PopupKeyboardPolicy.afterFocus(this);
     }
 
     private void wrapContentInScrollIfOverflow() {

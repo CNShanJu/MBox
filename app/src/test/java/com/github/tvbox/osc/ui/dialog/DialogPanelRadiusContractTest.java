@@ -99,6 +99,9 @@ public class DialogPanelRadiusContractTest {
             String drawableName = bg.substring("@drawable/".length());
             if (isBubble(drawableName)) continue;
             File drawable = child("app/src/main/res/drawable/" + drawableName + ".xml");
+            if (!drawable.isFile()) {
+                drawable = child("app/build/generated/theme_shapes/drawable/" + drawableName + ".xml");
+            }
             if (!drawable.isFile()) continue;
             List<String> dimens = cornerDimens(read(drawable));
             if (dimens.isEmpty()) continue; // 不是带圆角的 shape(纯色/selector):由壳或自身颜色决定

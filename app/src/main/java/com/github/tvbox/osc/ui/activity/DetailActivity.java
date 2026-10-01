@@ -369,11 +369,17 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
                     AppBubble.toast("已加入收藏夹");
                     mBinding.tvCollect.setText("取消收藏");
                 } else {
-                    com.github.tvbox.osc.repo.HistoryRepositories.collect().delete(sourceKey, vodInfo.id);
-                    com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM,
-                            "取消收藏: " + (vodInfo.name == null ? "?" : vodInfo.name));
-                    AppBubble.toast("已移除收藏夹");
-                    mBinding.tvCollect.setText("加入收藏");
+                    com.github.tvbox.osc.ui.dialog.ConfirmDialog.showDanger(
+                            DetailActivity.this, "取消收藏",
+                            "确定将《" + (vodInfo.name == null ? "该影片" : vodInfo.name) + "》移出收藏夹吗？",
+                            "移除", () -> {
+                                if (!"取消收藏".contentEquals(mBinding.tvCollect.getText())) return;
+                                com.github.tvbox.osc.repo.HistoryRepositories.collect().delete(sourceKey, vodInfo.id);
+                                com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM,
+                                        "取消收藏: " + (vodInfo.name == null ? "?" : vodInfo.name));
+                                AppBubble.toast("已移除收藏夹");
+                                mBinding.tvCollect.setText("加入收藏");
+                            });
                 }
             }
         });

@@ -10,9 +10,7 @@
     app:hl_cornerRadius="@dimen/common_corners"
     app:hl_layoutBackground="@android:color/transparent"
     app:hl_layoutBackground_true="@color/color_highlight"
-    app:hl_shapeMode="selected"
-    app:hl_textColor="@color/text_foreground"
-    app:hl_textColor_true="@color/btn_select_text">
+    app:hl_shapeMode="selected">
 
     <TextView
         android:id="@+id/filterValue"
@@ -20,10 +18,11 @@
         android:layout_height="wrap_content"
         android:layout_margin="@dimen/dp_5"
         android:ellipsize="end"
+        android:duplicateParentState="true"
         android:focusable="true"
         android:gravity="center_vertical"
         android:paddingHorizontal="6dp"
         android:singleLine="true"
         tools:text="中国大陆"
-        android:textColor="@color/text_foreground" />
+        android:textColor="@color/grid_filter_text" />
 </com.lihang.ShadowLayout>

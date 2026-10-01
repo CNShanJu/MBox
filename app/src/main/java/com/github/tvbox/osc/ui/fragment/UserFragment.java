@@ -77,10 +77,7 @@ public class UserFragment extends BaseLazyFragment {
     protected void onFragmentResume() {
         super.onFragmentResume();
 
-        tvHotList1.setHasFixedSize(true);
-        // 列数自适应:单卡宽度不超过 GRID_CARD_MAX_WIDTH_DP,屏幕越宽列数越多
-        final int span = Utils.getAdaptiveGridSpan(Utils.GRID_CARD_MAX_WIDTH_DP);
-        tvHotList1.setLayoutManager(new GridLayoutManager(this.mContext, span));
+        updateGridSpan();
         // 回到主页再校正一次:期间可能换过订阅/改过直播源,频道列表有无会变
         syncLiveButton();
     }
@@ -105,8 +102,14 @@ public class UserFragment extends BaseLazyFragment {
     @Override
     public void onConfigurationChanged(@NonNull Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
+        updateGridSpan();
+    }
+
+    private void updateGridSpan() {
         if (tvHotList1 != null && tvHotList1.getLayoutManager() instanceof GridLayoutManager) {
-            ((GridLayoutManager) tvHotList1.getLayoutManager()).setSpanCount(Utils.getAdaptiveGridSpan(Utils.GRID_CARD_MAX_WIDTH_DP));
+            GridLayoutManager manager = (GridLayoutManager) tvHotList1.getLayoutManager();
+            int span = Utils.getAdaptiveGridSpan(Utils.GRID_CARD_MAX_WIDTH_DP);
+            if (manager.getSpanCount() != span) manager.setSpanCount(span);
         }
     }
 
@@ -118,6 +121,10 @@ public class UserFragment extends BaseLazyFragment {
     @Override
     protected void init() {
         tvHotList1 = findViewById(R.id.tvHotList1);
+        tvHotList1.setHasFixedSize(true);
+        // 布局管理器只在首次初始化时创建，切回主页复用它的滚动位置。
+        tvHotList1.setLayoutManager(new GridLayoutManager(mContext,
+                Utils.getAdaptiveGridSpan(Utils.GRID_CARD_MAX_WIDTH_DP)));
         // 主页右下角直播悬浮按钮(无频道列表时隐藏,见 syncLiveButton)
         findViewById(R.id.btn_live).setOnClickListener(view -> jumpActivity(LiveActivity.class));
         syncLiveButton();

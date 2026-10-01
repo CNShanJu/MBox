@@ -56,8 +56,11 @@ public class BackupDialog extends AppBottomPopupView {
                 if (view.getId() == R.id.tvName) {
                     restore((String) adapter.getItem(position));
                 } else if (view.getId() == R.id.tvDel) {
-                    delete((String) adapter.getItem(position));
-                    adapter.setNewData(allBackup());
+                    String name = (String) adapter.getItem(position);
+                    ConfirmDialog.showDanger(getContext(), "删除备份", "确定删除备份「" + name + "」吗？", "删除", () -> {
+                        delete(name);
+                        adapter.setNewData(allBackup());
+                    });
                 }
             }
         });
@@ -139,7 +142,7 @@ public class BackupDialog extends AppBottomPopupView {
             }
 
             if (prefsCount <= 0 && !dbOk) {
-                AppBubble.toast("未找到可恢复的数据,请先备份");
+                AppBubble.toast("备份中无可恢复数据");
                 com.github.tvbox.osc.log.LogStore.fail(com.github.tvbox.osc.log.Category.SYSTEM,
                         "备份还原: 未找到可恢复的数据(目录 " + backup.getName() + ")");
                 return;
@@ -151,13 +154,13 @@ public class BackupDialog extends AppBottomPopupView {
                 msg.append("播放历史/收藏");
             }
             msg.append(" 已恢复,即将重启应用!");
-            AppBubble.toast(msg.toString());
+            AppBubble.toast("恢复完成，正在重启");
             com.github.tvbox.osc.log.LogStore.success(com.github.tvbox.osc.log.Category.SYSTEM,
                     "备份还原: 恢复成功 " + msg + " (键数=" + prefsCount + ",db=" + dbOk + ")");
             restartApp();
         } catch (Throwable e) {
             e.printStackTrace();
-            AppBubble.toast("恢复数据流异常");
+            AppBubble.toast("恢复失败");
             com.github.tvbox.osc.log.LogStore.fail(com.github.tvbox.osc.log.Category.SYSTEM,
                     "备份还原: 数据流异常 " + e);
         }
@@ -186,9 +189,7 @@ public class BackupDialog extends AppBottomPopupView {
             FileUtils.writeSimple(buildManifest().getBytes("UTF-8"), new File(backup, "manifest.json"));
 
             if (cfgOk) {
-                String tip = dbOk
-                        ? "备份成功(设置/订阅/搜索历史+播放历史/收藏)"
-                        : "备份成功(设置/订阅/搜索历史,暂无播放历史/收藏)";
+                String tip = dbOk ? "备份完成" : "设置已备份，播放记录未备份";
                 AppBubble.toast(tip);
                 com.github.tvbox.osc.log.LogStore.success(com.github.tvbox.osc.log.Category.SYSTEM,
                         "数据备份: 备份成功 " + backup.getName() + " (cfg=" + cfgOk + ",db=" + dbOk + ")");

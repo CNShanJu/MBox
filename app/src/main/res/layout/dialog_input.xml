@@ -33,7 +33,9 @@
         style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.Dense"
         android:layout_height="wrap_content"
         android:layout_marginTop="10dp"
-        android:textColorHint="@color/text_sub_foreground">
+        app:boxStrokeColor="@color/text_main_half"
+        app:placeholderTextColor="@color/text_main_half"
+        app:hintTextColor="@color/text_main_half">
 
         <EditText
             android:id="@+id/et_input"
@@ -42,9 +44,9 @@
             android:background="@null"
             android:layout_marginTop="10dp"
             android:hint="请输入..."
+            android:textColorHint="@color/text_main_half"
             android:inputType="textUri"
             android:textColor="@color/text_foreground"
-            android:textColorHint="@color/text_sub_foreground"
             android:textSize="14sp"/>
 
     </com.google.android.material.textfield.TextInputLayout>

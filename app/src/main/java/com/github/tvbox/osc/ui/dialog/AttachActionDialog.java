@@ -24,8 +24,8 @@ import java.util.List;
  *
  * <p>为什么不用 XPopup 自带的 {@code asAttachList}:它的面/文字色来自库内固定样式,
  * 不吃我们的主题文件 —— 自定义主题下气泡会是一块"外来"的白/深底,看着很割裂。
- * 这里自己出布局:{@code bg_bubble}(主题悬浮面 bg_float,与底栏/标题栏/弹窗同一个面;圆角走小件档,
- * 与同屏的 chip 同档,见 {@code res/drawable/bg_bubble.xml} 的说明)+
+ * 这里自己出布局:{@code theme_shapes.json#bg_bubble}(主题悬浮面 bg_float;圆角走小件档,
+ * 与同屏的 chip 同档)+
  * 文字色按动作类型取主题色(普通 {@code text_main}、危险 {@code text_danger},与列表工具条上的"删除"同色)。
  *
  * <p>用法:
@@ -54,22 +54,20 @@ public class AttachActionDialog extends AttachPopupView {
     }
 
     @Override
+    protected int getMaxWidth() {
+        return Math.round(DialogStyle.CENTER_MAX_WIDTH_DP
+                * getContext().getResources().getDisplayMetrics().density);
+    }
+
+    @Override
     protected int getImplLayoutId() {
         return R.layout.dialog_attach_actions;
     }
 
     @Override
     protected void onCreate() {
+        PopupKeyboardPolicy.onCreate(this);
         super.onCreate();
-        // 换肤兜底:本类直接继承 XPopup 的 *PopupView,没走 AppBottom/Center/Drawer 那层壳,
-        // 面板底不会被换肤注入覆盖到 —— 这里补同一趟扫描。
-        // **注意范围**:这一趟只管气泡**内部**的行/文字/分割线;气泡那层面底不在这里,
-        // 见 {@link #applyBg()}(XPopup 会把 impl 的底搬走,在这里改 impl 是白改)。
-        try {
-            com.github.tvbox.osc.theme.ThemeSweep.apply(getPopupImplView());
-            com.github.tvbox.osc.theme.ThemeSweep.watchItems(getPopupImplView());
-        } catch (Throwable ignored) {
-        }
         LinearLayout container = findViewById(R.id.ll_actions);
         if (container == null) return;
         container.removeAllViews();
@@ -78,29 +76,25 @@ public class AttachActionDialog extends AttachPopupView {
         }
     }
 
+    @Override
+    public void focusAndProcessBackPress() {
+        super.focusAndProcessBackPress();
+        PopupKeyboardPolicy.afterFocus(this);
+    }
+
     /**
-     * 气泡那层面底必须在这里接管,不能在 {@code onCreate} 里补:
+     * 气泡那层面底必须在这里接管,不能只在 {@code onCreate} 里补:
      * XPopup 的 {@code AttachPopupView#applyBg} 会把 impl 视图自己的 background **搬到外层容器上**
      * 并把 impl 的底**置空**,而搬过去的那份是它自己从资源表**重新解析**出来的
      * (重新解析走的是编译期/内置主题那份 {@code @color/bg_float},换肤层拦不到 native 取色),
      * 于是自定义主题下气泡永远是内置白底/暗色深底(用户口径:"切换布局气泡的背景色没走卡片与悬浮层颜色")。
-     * <p>
-     * **只补色,不换整份 drawable**:这里用 {@code ThemeDrawables.applyBackground} 装回一份重建的
-     * {@code bg_bubble} 也能上色,但圆角/描边/尺寸就改成重建那份的了(用户口径:"tips 也是圆角不对了")。
-     * {@link com.github.tvbox.osc.theme.ThemeSweep} 是就地改已有 drawable 的纯色,几何一律原样保留。
-     * <p>
-     * 两层各用各的:气泡**内部**(行/文字/分割线)走按值比对的 {@code apply};那层**面**走
-     * {@code applyFloatFace} —— 按设计就知道它是 {@code bg_float},不必去猜搬过来的颜色等不等于内置那份
-     * (只调 {@code apply} 时圆角对、颜色却还是内置档,就是这个原因)。
+     * <p>这里明确装回 {@code bg_bubble} 配方；颜色与圆角都由统一工厂生成，不再保留页面级补色逻辑。
      */
     @Override
     protected void applyBg() {
         super.applyBg();
-        try {
-            com.github.tvbox.osc.theme.ThemeSweep.apply(attachPopupContainer);
-            com.github.tvbox.osc.theme.ThemeSweep.applyFloatFace(attachPopupContainer);
-        } catch (Throwable ignored) {
-        }
+        com.github.tvbox.osc.theme.ThemeDrawables.applyBackground(
+                attachPopupContainer, R.drawable.bg_bubble);
     }
 
     private TextView buildRow(LinearLayout parent, final int position, String text, int kind) {

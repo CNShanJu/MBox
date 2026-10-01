@@ -39,7 +39,7 @@ public abstract class SheetResizableBottomPopup extends AppBottomPopupView {
     /**
      * 绑定“root(纵向内容根) + flex(weight=1 弹性区) + content(测量用内容)”并进入收起态 50% 占位。
      *
-     * @param autoSync true:布局完成后自动 sync(短内容→自适应,超高→可展开);需自行编排(如 loading→setData)
+     * @param autoSync true:布局完成后自动 sync(短内容→保持收起高度,超高→可展开);需自行编排(如 loading→setData)
      *                 时传 false,自行在数据就绪后调用 sync。
      */
     protected final SheetResizeController attachSheet(@IdRes int rootId, @IdRes int flexId,

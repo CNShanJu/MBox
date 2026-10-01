@@ -12,6 +12,9 @@
     >
 
     <!-- 定义一个用于显示图像的 ImageView -->
+    <!-- 合集封面(120×72dp):圆角与"本地视频行的小图"同档 radius_thumb(2026-10-01)。
+         以前它跟卡片档(radius_card 16dp)、行内小图跟 radius_thumb(8dp),同一页两种圆角看着不一致
+         (用户口径"本地视频的图片位置的圆角显示怪怪的")。 -->
     <com.lihang.ShadowLayout
         android:id="@+id/iv_container"
         android:layout_width="120dp"
@@ -19,7 +22,7 @@
         android:layout_gravity="center_horizontal"
         android:baselineAlignBottom="true"
         app:clickable="false"
-        app:hl_cornerRadius="@dimen/radius_card"
+        app:hl_cornerRadius="@dimen/radius_thumb"
         app:hl_layoutBackground="@android:color/transparent"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toStartOf="parent"
@@ -37,6 +40,7 @@
             android:id="@+id/iv"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
+            android:background="@drawable/bg_thumb_round"
             android:clipToOutline="true"
             android:scaleType="centerCrop" />
 

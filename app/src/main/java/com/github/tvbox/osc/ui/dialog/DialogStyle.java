@@ -16,6 +16,9 @@ public final class DialogStyle {
     /** 居中弹窗统一最大宽度(dp) */
     public static final int CENTER_MAX_WIDTH_DP = 320;
 
+    /** 底部弹窗在平板、宽屏上的最大宽度(dp) */
+    public static final int BOTTOM_MAX_WIDTH_DP = 560;
+
     /** 固定宽度弹窗(确认/删除)统一宽度(dp) */
     public static final int FIXED_WIDTH_DP = 300;
 

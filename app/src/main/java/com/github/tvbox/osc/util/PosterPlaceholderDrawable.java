@@ -90,20 +90,43 @@ public class PosterPlaceholderDrawable extends Drawable {
 
     /** 加载态占位:灰底 + 居中图标(无文字),图标随宿主缩放,永不超出 */
     public static Drawable loading(Context context) {
-        return new PosterPlaceholderDrawable(context, false);
+        return loading(context, 0f);
+    }
+
+    /**
+     * 加载态占位,**圆角可指定**(px,{@code <=0} 表示沿用卡片档 radius_card)。
+     *
+     * <p>为什么要能指定:占位是铺在 ImageView 的**背景层**的,而背景 drawable 决定该 ImageView 的
+     * outline —— outline 的圆角就是实图被 {@code clipToOutline} 裁出来的圆角。原来这个值恒为
+     * radius_card,于是"容器圆角档 ≠ 占位圆角档"的槽位(缩略图用 radius_thumb 的那几处:
+     * 下载页小封面 / 下载完成列表 / 本地视频行与合集)会出现**双圆角**:
+     * 外层的 ShadowLayout 按 8dp 裁,里面这张图按 16dp 裁,四个角上露出一块没对齐的弧
+     * (用户口径"图片位置的圆角显示怪怪的,不对啊")。现在由 {@link PicassoLoad} 从槽位**原有背景**
+     * 的 outline 里读出圆角再传进来,占位与容器自然同档。
+     */
+    public static Drawable loading(Context context, float cornerRadiusPx) {
+        return new PosterPlaceholderDrawable(context, false, cornerRadiusPx);
     }
 
     /** 失败/无封面占位:灰底 + 居中图标 + "图片加载失败" */
     public static Drawable failed(Context context) {
-        return new PosterPlaceholderDrawable(context, true);
+        return failed(context, 0f);
+    }
+
+    /** 失败态占位,**圆角可指定**(见 {@link #loading(Context, float)}) */
+    public static Drawable failed(Context context, float cornerRadiusPx) {
+        return new PosterPlaceholderDrawable(context, true, cornerRadiusPx);
     }
 
     /** 每个 ImageView 需各自持有实例(Drawable 有 bounds 状态),故按次新建;开销很小 */
-    private PosterPlaceholderDrawable(Context context, boolean withText) {
+    private PosterPlaceholderDrawable(Context context, boolean withText, float radiusPx) {
         this.withText = withText;
         density = context.getResources().getDisplayMetrics().density;
         bgPaint.setColor(ContextCompat.getColor(context, R.color.bg_card));
-        cornerRadiusPx = context.getResources().getDimension(R.dimen.radius_card);
+        // 圆角:调用方没给(<=0)就沿用卡片档 —— 与 XML 占位 placeholder_poster 同源
+        cornerRadiusPx = radiusPx > 0f
+                ? radiusPx
+                : context.getResources().getDimension(R.dimen.radius_card);
         icon = ContextCompat.getDrawable(context, R.drawable.ic_placeholder_cat);
         textSizePx = 12f * density;
         minTextSizePx = 9f * density;
@@ -111,6 +134,11 @@ public class PosterPlaceholderDrawable extends Drawable {
         minIconPx = MIN_ICON_DP * density;
         textPaint.setColor(ContextCompat.getColor(context, R.color.text_sub_foreground));
         textPaint.setTextAlign(Paint.Align.CENTER);
+    }
+
+    /** 列表复用时保留槽位圆角，避免未测量的背景轮廓回退到卡片档。 */
+    float cornerRadiusPx() {
+        return cornerRadiusPx;
     }
 
     @Override

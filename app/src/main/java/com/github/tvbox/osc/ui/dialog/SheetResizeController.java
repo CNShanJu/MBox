@@ -122,7 +122,7 @@ public class SheetResizeController implements View.OnTouchListener {
         this.listener = listener;
     }
 
-    /** 内容就绪后调用(布局完成后):只做一次“内容自适应 or 可展开”决策;
+    /** 内容就绪后调用(布局完成后):只做一次“固定收起高度 or 可展开”决策;
      *  之后再调用(如数据刷新/重查)不改动当前展开高度,避免“展开后被压回 50%”。 */
     void sync() {
         try {
@@ -138,12 +138,12 @@ public class SheetResizeController implements View.OnTouchListener {
                 visualH = collapsedH;
                 applyHeight(visualH);
             } else {
-                // 内容少:按内容固定高展示;手势仍生效,只做越界回弹反馈
+                // 内容少:保持默认收起高度作为下限,避免选集少时抽屉缩成窄条。
                 resizable = false;
                 expanded = false;
-                curH = natural;
-                visualH = natural;
-                applyHeight(natural);
+                curH = Math.max(natural, collapsedH);
+                visualH = curH;
+                applyHeight(curH);
             }
         } catch (Throwable ignored) {
         }
@@ -166,7 +166,7 @@ public class SheetResizeController implements View.OnTouchListener {
         inited = true;
         expanded = false;
         if (collapsedPx > 0 && collapsedPx <= expandedH) {
-            collapsedH = collapsedPx;
+            collapsedH = Math.max(collapsedH, collapsedPx);
         }
         expandH = Math.round(collapsedH + (expandedH - collapsedH)
                 * DialogHeightPolicy.SHEET_EXPAND_THRESHOLD_RATIO);
@@ -182,7 +182,7 @@ public class SheetResizeController implements View.OnTouchListener {
     }
 
     /**
-     * 内容不足展开(短内容):按调用方算好的高度固定展示,不进 50↔70 展开状态机。
+     * 内容不足展开(短内容):按调用方算好的高度固定展示,下限为默认收起高度,不进 50↔70 展开状态机。
      * <p>
      * 与 {@link #sync()} 的"内容少"分支同一意图,区别是高度由宿主给(它掌握简介/内边距口径),
      * 且上限压到展开高 —— 短内容不该被 50% 档截断(那个状态下又没有"展开"入口,用户就读不全)。
@@ -193,6 +193,7 @@ public class SheetResizeController implements View.OnTouchListener {
         resizable = false;
         expanded = false;
         int h = heightPx > 0 ? Math.min(heightPx, expandedH) : expandedH;
+        h = Math.max(collapsedH, h);
         curH = h;
         visualH = h;
         applyHeight(h);

@@ -47,6 +47,15 @@
             android:layout_height="40dp"
             android:layout_weight="1"
             android:text="确定" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/tv_ok_danger"
+            style="@style/BtnDangerGhost"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_weight="1"
+            android:text="确定"
+            android:visibility="gone" />
     </LinearLayout>
 
 </LinearLayout>

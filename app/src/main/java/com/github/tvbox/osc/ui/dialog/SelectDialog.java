@@ -48,6 +48,7 @@ public class SelectDialog<T> extends AppCenterPopupView {
 
     /** 是否按“屏幕可用高度分档”动态调高(默认关闭;首页数据源等大列表场景经 setDynamicHeightByScreen(true) 开启) */
     private boolean dynamicHeightByScreen = false;
+    private boolean autoFocusEditText = true;
 
     public SelectDialog(@NonNull @NotNull Context context) {
         this(context, R.layout.dialog_select);
@@ -113,6 +114,11 @@ public class SelectDialog<T> extends AppCenterPopupView {
         }
     }
 
+    /** 含筛选框的选择弹窗可关闭自动聚焦，用户点输入框时再弹键盘。 */
+    public void setAutoFocusEditText(boolean enable) {
+        autoFocusEditText = enable;
+    }
+
     /** 是否为“整卡固定高”分档(大屏 60% / 小屏铺满);区间档走 wrap 内容自适应 */
     private boolean isFixedFillBucket() {
         int base = getMeasuredHeight();
@@ -159,10 +165,9 @@ public class SelectDialog<T> extends AppCenterPopupView {
                     targetH = available; // 兜底:不超出弹窗实际可用区域
                 }
                 if (targetH <= 0) return;
-                android.view.View title = findViewById(R.id.title);
-                int titleBottom = title != null ? title.getBottom() : 0;
                 int footerPx = getResources().getDimensionPixelSize(R.dimen.dp_30);
-                int listH = targetH - titleBottom - footerPx;
+                // 列表上方可能有筛选框等固定内容，按真实起点预留，而非仅扣标题。
+                int listH = targetH - list.getTop() - footerPx;
                 int minListH = Math.round(60f * getResources().getDisplayMetrics().density);
                 if (listH < minListH) listH = minListH;
                 android.view.ViewGroup.LayoutParams lp = list.getLayoutParams();
@@ -230,7 +235,8 @@ public class SelectDialog<T> extends AppCenterPopupView {
     public BasePopupView show() {
         if (popupInfo == null) {
             XPopup.Builder builder = new XPopup.Builder(getContext())
-                    .isDarkTheme(Utils.isDarkTheme());
+                    .isDarkTheme(Utils.isDarkTheme())
+                    .autoFocusEditText(autoFocusEditText);
             if (onDismissListener != null) {
                 builder.setPopupCallback(new XPopupCallback() {
                     @Override public void onCreated(BasePopupView v) { }
@@ -414,4 +420,3 @@ public class SelectDialog<T> extends AppCenterPopupView {
         if (rowStyle != null) adapter.setRowStyle(rowStyle);
     }
 }
-

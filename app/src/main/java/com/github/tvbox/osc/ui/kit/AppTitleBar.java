@@ -9,6 +9,7 @@ import android.text.TextUtils;
 import android.util.AttributeSet;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -207,6 +208,16 @@ public class AppTitleBar extends FrameLayout {
         // 标题居中显示,长标题自动省略,不会压到返回键/右侧动作上
         measureChild(backView, widthMeasureSpec, heightMeasureSpec);
         measureChild(rightBox, widthMeasureSpec, heightMeasureSpec);
+        // 布局内直接声明的小图标没有 40dp 触区；按最右图标的实际中心补齐尾部留白，
+        // 使它到屏幕边缘的距离与左侧返回图标一致。setRightIcon 的 40dp 触区无需补白。
+        int rightIconDistance = rightmostIconCenterDistance(rightBox);
+        int endPadding = rightIconDistance < 0 ? 0 : Math.max(0,
+                rightBox.getPaddingEnd() + dp(BACK_TOUCH_DP) / 2 - rightIconDistance);
+        if (rightBox.getPaddingEnd() != endPadding) {
+            rightBox.setPaddingRelative(rightBox.getPaddingStart(), rightBox.getPaddingTop(),
+                    endPadding, rightBox.getPaddingBottom());
+            measureChild(rightBox, widthMeasureSpec, heightMeasureSpec);
+        }
         int side = Math.max(
                 backView.getVisibility() == VISIBLE ? backView.getMeasuredWidth() : 0,
                 rightBox.getMeasuredWidth()) + dp(TITLE_SIDE_DP);
@@ -214,6 +225,29 @@ public class AppTitleBar extends FrameLayout {
             titleView.setMaxWidth(Math.max(0, width - side * 2));
         }
         super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+    }
+
+    /** 最右侧可见图标的中心距容器尾端；文字动作返回 -1，不改它的排版。 */
+    private int rightmostIconCenterDistance(ViewGroup group) {
+        for (int i = group.getChildCount() - 1; i >= 0; i--) {
+            View child = group.getChildAt(i);
+            if (child.getVisibility() == GONE) continue;
+            int distance;
+            if (child instanceof ImageView) {
+                distance = (child.getMeasuredWidth() - child.getPaddingStart()
+                        + child.getPaddingEnd()) / 2;
+            } else if (child instanceof ViewGroup) {
+                distance = rightmostIconCenterDistance((ViewGroup) child);
+            } else {
+                return -1;
+            }
+            if (distance < 0) return -1;
+            ViewGroup.LayoutParams params = child.getLayoutParams();
+            int margin = params instanceof ViewGroup.MarginLayoutParams
+                    ? ((ViewGroup.MarginLayoutParams) params).getMarginEnd() : 0;
+            return group.getPaddingEnd() + margin + distance;
+        }
+        return -1;
     }
 
     // ------------------------------------------------------------------

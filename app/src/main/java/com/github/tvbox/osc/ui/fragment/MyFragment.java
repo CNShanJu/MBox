@@ -6,6 +6,7 @@ import android.text.TextUtils;
 
 import com.blankj.utilcode.util.AppUtils;
 import com.blankj.utilcode.util.ClipboardUtils;
+import com.blankj.utilcode.util.ConvertUtils;
 import com.github.tvbox.osc.util.AppBubble;
 import com.github.tvbox.osc.R;
 import com.github.tvbox.osc.base.BaseLazyFragment;
@@ -22,13 +23,16 @@ import com.github.tvbox.osc.ui.activity.SettingActivity;
 import com.github.tvbox.osc.ui.activity.SubscriptionActivity;
 import com.github.tvbox.osc.ui.dialog.AboutDialog;
 import com.github.tvbox.osc.ui.dialog.DialogCoordinator;
+import com.github.tvbox.osc.ui.dialog.DialogStyle;
+import com.github.tvbox.osc.ui.dialog.PopupKeyboardPolicy;
 import com.github.tvbox.osc.util.FastClickCheckUtil;
 import com.github.tvbox.osc.util.Utils;
 import com.hjq.permissions.OnPermissionCallback;
 import com.hjq.permissions.Permission;
 import com.hjq.permissions.XXPermissions;
 import com.lxj.xpopup.XPopup;
-import com.lxj.xpopup.interfaces.OnInputConfirmListener;
+import com.lxj.xpopup.core.BasePopupView;
+import com.lxj.xpopup.interfaces.SimpleCallback;
 
 import java.util.Arrays;
 import java.util.List;
@@ -47,6 +51,14 @@ public class MyFragment extends BaseVbFragment<FragmentMyBinding> {
 
         mBinding.addrPlay.setOnClickListener(v ->{
             new XPopup.Builder(getContext())
+                    .maxWidth(ConvertUtils.dp2px(DialogStyle.CENTER_MAX_WIDTH_DP))
+                    .moveUpToKeyboard(false)
+                    .setPopupCallback(new SimpleCallback() {
+                        @Override
+                        public void onCreated(BasePopupView popupView) {
+                            PopupKeyboardPolicy.afterFocus(popupView);
+                        }
+                    })
                     .asInputConfirm("播放", "", isPush(ClipboardUtils.getText().toString())?ClipboardUtils.getText():"", "地址", text -> {
                         if (!TextUtils.isEmpty(text)){
                             Intent newIntent = new Intent(mContext, DetailActivity.class);
@@ -102,14 +114,14 @@ public class MyFragment extends BaseVbFragment<FragmentMyBinding> {
                         if (all) {
                             jumpActivity(MovieFoldersActivity.class);
                         }else {
-                            AppBubble.toastLong("部分权限未正常授予,请授权");
+                            AppBubble.toast("请授予所需权限");
                         }
                     }
 
                     @Override
                     public void onDenied(List<String> permissions, boolean never) {
                         if (never) {
-                            AppBubble.toastLong("读写文件权限被永久拒绝，请手动授权");
+                            AppBubble.toast("请在系统设置中授予文件权限");
                             // 如果是被永久拒绝就跳转到应用权限系统设置页面
                             XXPermissions.startPermissionActivity(mActivity, permissions);
                         } else {
