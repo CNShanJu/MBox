@@ -59,8 +59,9 @@ public final class LogCollector {
             if (pending.isEmpty()) return;
             batch = new ArrayList<>(pending);
             pending.clear();
+            // 与查询前的 awaitWrites 保持同一顺序：不能先清 pending，后提交写任务。
+            repository.insertAllAsync(batch);
         }
-        repository.insertAllAsync(batch);
     }
 
     /**
@@ -73,11 +74,17 @@ public final class LogCollector {
      */
     public boolean flushNowBlocking(long timeoutMs) {
         final List<LogEntry> batch;
+        final boolean onWriteThread = repository.isWriteThread();
         synchronized (pendingLock) {
-            if (pending.isEmpty()) return true;
-            batch = new ArrayList<>(pending);
-            pending.clear();
+            batch = pending.isEmpty() ? null : new ArrayList<>(pending);
+            if (batch != null) {
+                pending.clear();
+                // 清队列和提交写任务必须连续，查询的写屏障才能看到这批日志。
+                if (!onWriteThread) repository.insertAllAsync(batch);
+            }
         }
-        return repository.insertAllBlocking(batch, timeoutMs);
+        // 定时 flush 可能已取走 pending，但异步写入仍排在仓储队列里。
+        if (batch != null && onWriteThread) return repository.insertAllBlocking(batch, timeoutMs);
+        return repository.awaitWrites(timeoutMs);
     }
 }

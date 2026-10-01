@@ -15,7 +15,9 @@ import com.github.tvbox.osc.util.AppBubble
 import com.github.tvbox.osc.R
 import com.github.tvbox.osc.base.BaseVbActivity
 import com.github.tvbox.osc.databinding.ActivityLogBinding
+import com.github.tvbox.osc.util.HeavyTaskUtil
 import com.github.tvbox.osc.util.LogViewAssembler
+import com.github.tvbox.osc.ui.kit.WidgetPressEffect
 import java.io.File
 import java.util.Locale
 
@@ -37,6 +39,8 @@ class LogActivity : BaseVbActivity<ActivityLogBinding>() {
     private var filterCategory: String? = null
     /** 业务日志筛选：仅失败（fail/异常打点） */
     private var filterErrorOnly = false
+    private var downloadTaskKey: String? = null
+    private val bizEpoch = java.util.concurrent.atomic.AtomicInteger()
 
     // ── 全文搜索(类浏览器 Ctrl+F)──
     /** 当前展示的未高亮全文 */
@@ -49,9 +53,12 @@ class LogActivity : BaseVbActivity<ActivityLogBinding>() {
     private var matchIndex = 0
 
     override fun init() {
+        downloadTaskKey = intent.getStringExtra("download_task_key")
+        if (!downloadTaskKey.isNullOrEmpty()) filterCategory = Category.DOWNLOAD.name
         mBinding.btnClear.setOnClickListener { confirmClear() }
         mBinding.btnExport.setOnClickListener { export() }
         mBinding.btnScrollBottom.setOnClickListener { scrollBottom() }
+        WidgetPressEffect.attach(mBinding.btnScrollBottom)
         mBinding.btnCopy.setOnClickListener { copyContent() }
         mBinding.llDatePicker.setOnClickListener { showDatePicker() }
         wireSearch()
@@ -130,21 +137,29 @@ class LogActivity : BaseVbActivity<ActivityLogBinding>() {
     private fun loadBizLogs() {
         val category = filterCategory
         val errorOnly = filterErrorOnly
+        val taskKey = downloadTaskKey
+        val epoch = bizEpoch.incrementAndGet()
         mBinding.tvContent.text = "加载中..."
-        Thread {
+        HeavyTaskUtil.getSerialExecutorService().execute {
             val text = try {
-                LogViewAssembler.bizText(LogStore.get(), category, errorOnly)
+                LogViewAssembler.bizText(LogStore.get(), category, errorOnly, taskKey)
             } catch (th: Throwable) {
                 th.printStackTrace()
                 null
             }
             runOnUiThread {
+                if (bizEpoch.get() != epoch || isFinishing || isDestroyed) return@runOnUiThread
                 setRawText(text ?: "暂无业务日志（设置→业务日志 开启后记录）")
                 if (searchQuery.isEmpty()) {
                     mBinding.scrollLog.post { mBinding.scrollLog.fullScroll(View.FOCUS_UP) }
                 }
             }
-        }.start()
+        }
+    }
+
+    override fun onDestroy() {
+        bizEpoch.incrementAndGet()
+        super.onDestroy()
     }
 
     /** Tab2 错误日志：文件列表/读尾也走 LogStore 门面，后台线程读取,避免大文件卡主线程 */
@@ -348,7 +363,7 @@ class LogActivity : BaseVbActivity<ActivityLogBinding>() {
     }
 
     private fun confirmClear() {
-        // 清空不可逆 → 确认键走危险色(与下载/本地视频的删除确认同一套)
+        // 清空不可逆 → 确认键走红边红字的危险空心样式
         com.github.tvbox.osc.ui.dialog.ConfirmDialog.showDanger(this, "清空日志",
             "确定清空${if (currentTab == 0) "业务日志" else "错误日志"}吗？", "清空", {
                 if (currentTab == 0) {
@@ -365,18 +380,19 @@ class LogActivity : BaseVbActivity<ActivityLogBinding>() {
 
     private fun export() {
         val store = LogStore.get()
-        val file = if (currentTab == 0) {
-            LogViewAssembler.exportBiz(store, filterCategory, filterErrorOnly)
-        } else {
-            LogViewAssembler.exportRaw(store)
+        val tab = currentTab
+        val category = filterCategory
+        val errorOnly = filterErrorOnly
+        val taskKey = downloadTaskKey
+        HeavyTaskUtil.getSerialExecutorService().execute {
+            val file = if (tab == 0) LogViewAssembler.exportBiz(store, category, errorOnly, taskKey)
+                else LogViewAssembler.exportRaw(store)
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                if (file == null) AppBubble.toast("暂无日志可导出") else shareFile(file)
+            }
         }
-        if (file == null) {
-            AppBubble.toast("暂无日志可导出")
-            return
-        }
-        shareFile(file)
     }
-
     private fun shareFile(file: File) {
         try {
             val uri = androidx.core.content.FileProvider.getUriForFile(
@@ -391,7 +407,7 @@ class LogActivity : BaseVbActivity<ActivityLogBinding>() {
             startActivity(Intent.createChooser(intent, "导出运行日志"))
         } catch (th: Throwable) {
             th.printStackTrace()
-            AppBubble.toast("导出失败:" + th.message)
+            AppBubble.toast("导出失败")
         }
     }
 }

@@ -259,18 +259,20 @@ public final class LogStore {
     }
 
     // ------------------------------------------------------------------
-    // 查询（读通道与写通道分离，不排队等写；降级模式返回 null）
+    // 查询（先冲刷采集队列，确保刚发生的业务事件可以立即查到）
     // ------------------------------------------------------------------
 
     /** 组合筛选查询（阻塞至结果返回；页面调用建议放后台线程）；降级模式返回 null */
     @Nullable
     public List<LogEntry> query(final LogFilter f) {
+        collector.flushNowBlocking(2_000);
         return repository.query(f);
     }
 
     /** 任务维度视图（"任务详情→查看日志"）；降级模式返回 null */
     @Nullable
     public List<LogEntry> queryByTask(String taskKey, int limit, int offset) {
+        collector.flushNowBlocking(2_000);
         return repository.queryByTask(taskKey, limit, offset);
     }
 

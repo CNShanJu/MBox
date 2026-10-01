@@ -75,6 +75,10 @@ public final class LogRepository {
         return db == null;
     }
 
+    public boolean isWriteThread() {
+        return Thread.currentThread() == writeThread;
+    }
+
     // ------------------------------------------------------------------
     // 写通道（批量落库）
     // ------------------------------------------------------------------
@@ -107,6 +111,18 @@ public final class LogRepository {
             return true;
         } catch (Throwable th) {
             Log.e("LogRepository", "崩溃日志等待落库失败/超时", th);
+            return false;
+        }
+    }
+
+    /** 等待已排入写队列的日志落库，供查询前建立读写顺序。 */
+    public boolean awaitWrites(long timeoutMs) {
+        if (db == null || Thread.currentThread() == writeThread) return true;
+        try {
+            writeExecutor.submit(() -> { }).get(Math.max(1L, timeoutMs), TimeUnit.MILLISECONDS);
+            return true;
+        } catch (Throwable th) {
+            Log.e("LogRepository", "等待业务日志写入失败/超时", th);
             return false;
         }
     }

@@ -31,20 +31,24 @@ object LogViewAssembler {
     }
 
     /** Tab1 组装：查询结构化日志并格式化成文本。无数据/降级返回 null（页面展示空态文案）。后台线程调用。 */
-    fun bizText(store: LogStore, category: String?, errorOnly: Boolean): String? {
+    fun bizText(store: LogStore, category: String?, errorOnly: Boolean, taskKey: String? = null): String? {
         val entries = try {
+            if (!taskKey.isNullOrEmpty()) {
+                com.github.tvbox.osc.download.DownloadFacade.get().getTaskLog(taskKey, BIZ_MAX_LINES, 0)
+            } else {
             val filter = LogFilter().apply {
                 this.category = category
                 minLevel = if (errorOnly) LogStore.LEVEL_ERROR else LogStore.LEVEL_INFO
                 limit = BIZ_MAX_LINES
             }
             store.query(filter)
+            }
         } catch (th: Throwable) {
             null
         }
         if (entries == null || entries.isEmpty()) return null
         val sb = StringBuilder(entries.size * 96)
-        for (e in entries) sb.append(store.formatEntry(e)).append("\n")
+        for (e in entries) if (!errorOnly || e.level >= LogStore.LEVEL_ERROR) sb.append(store.formatEntry(e)).append("\n")
         return sb.toString()
     }
 
@@ -63,9 +67,10 @@ object LogViewAssembler {
     }
 
     /** Tab1 导出：按当前筛选导出业务日志 txt（cacheDir）。无结果返回 null。 */
-    fun exportBiz(store: LogStore, category: String?, errorOnly: Boolean): File? {
+    fun exportBiz(store: LogStore, category: String?, errorOnly: Boolean, taskKey: String? = null): File? {
         val filter = LogFilter().apply {
             this.category = category
+            this.taskKey = taskKey
             minLevel = if (errorOnly) LogStore.LEVEL_ERROR else LogStore.LEVEL_INFO
             limit = BIZ_EXPORT_LIMIT
         }

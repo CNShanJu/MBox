@@ -13,16 +13,16 @@
         <!-- 搜索按钮:在当前日志全文内查找关键词(类浏览器 Ctrl+F) -->
         <ImageView
             android:id="@+id/btn_search"
-            android:layout_width="20dp"
-            android:layout_height="20dp"
+            android:layout_width="16dp"
+            android:layout_height="16dp"
             android:contentDescription="搜索日志"
             android:src="@drawable/ic_search" />
 
         <!-- 复制按钮:子 View 方式,与左侧返回图标保持同一水平线 -->
         <ImageView
             android:id="@+id/btn_copy"
-            android:layout_width="20dp"
-            android:layout_height="20dp"
+            android:layout_width="16dp"
+            android:layout_height="16dp"
             android:contentDescription="复制日志"
             android:src="@drawable/ic_copy" />
     </com.github.tvbox.osc.ui.kit.AppTitleBar>
@@ -273,7 +273,6 @@
             android:layout_margin="12dp"
             android:background="@drawable/bg_semi_black_circle"
             android:contentDescription="滚动到底部"
-            android:foreground="?selectableItemBackgroundBorderless"
             android:padding="9dp"
             android:src="@drawable/ic_arrow_down" />
     </FrameLayout>
@@ -288,12 +287,11 @@
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btn_clear"
             android:layout_marginRight="12dp"
-            style="@style/BtnSecondary"
+            style="@style/BtnDangerGhost"
             android:layout_width="0dp"
             android:layout_height="38dp"
             android:layout_weight="1"
-            android:text="清 空"
-            android:textColor="@color/text_danger" />
+            android:text="清 空" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btn_export"
