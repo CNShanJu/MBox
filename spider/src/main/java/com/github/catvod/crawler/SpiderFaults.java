@@ -58,6 +58,14 @@ public final class SpiderFaults implements SpiderFaultApi {
         return "源初始化失败（" + clsKey + "，源可能已失效）";
     }
 
+    /**
+     * 插件会让整个 App 闪退(其 native 在 null 类加载器上调 loadClass,触发 CheckJNI abort,进程内接不住),
+     * 已被隔离停用。实测见 {@link JarLoader} 的插件崩溃隔离注释。
+     */
+    public static String pluginCrashReason(String clsKey) {
+        return "该源插件会导致 App 闪退，已停用（" + clsKey + "，请更新订阅或换源）";
+    }
+
     /** JS 源:编译/初始化失败（api 地址失效、JS 语法不兼容等） */
     public static String jsLoadFailedReason() {
         return "JS 源加载失败（源地址或脚本可能已失效）";

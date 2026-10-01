@@ -20,9 +20,16 @@ import java.util.ArrayList;
 public class LiveApiDialog extends AppCenterPopupView {
 
     private com.github.tvbox.osc.databinding.DialogLiveApiBinding mBinding;
+    /** 点"确定"保存成功后的回调(订阅管理-直播源页用它刷新列表;不传则与原来完全一致) */
+    private final Runnable mOnSaved;
 
     public LiveApiDialog(@NonNull Context context) {
+        this(context, null);
+    }
+
+    public LiveApiDialog(@NonNull Context context, Runnable onSaved) {
         super(context);
+        mOnSaved = onSaved;
     }
 
     @Override
@@ -62,6 +69,7 @@ public class LiveApiDialog extends AppCenterPopupView {
                 LiveConfig.setLiveHistory(liveHistory);
             }
             AppBubble.toast("设置成功");
+            if (mOnSaved != null) mOnSaved.run();
             dismiss();
         });
     }

@@ -88,5 +88,19 @@ public class SubsciptionDialog extends AppCenterPopupView {
         binding.tvJson.setOnClickListener(view -> { //JSON 导入:粘贴 JSON 文本直接导入
             dismissWith(() -> listener.chooseJson(binding.cbCheck.isChecked()));
         });
+
+        // 暂停订阅导入弹窗的输入框颜色诊断。
+        /* 临时停用输入框颜色探针，保留代码供后续排障。
+        try {
+            getPopupImplView().postDelayed(() -> {
+                try {
+                    com.github.tvbox.osc.theme.RadiusCheck.reportInputsIn(
+                            getPopupImplView(), "订阅导入弹窗");
+                } catch (Throwable ignored) {
+                }
+            }, 600);
+        } catch (Throwable ignored) {
+        }
+        */
     }
 }

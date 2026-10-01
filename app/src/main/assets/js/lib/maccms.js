@@ -11,6 +11,7 @@
  *     "prefix": "/jiejie",                        // 站点挂载子目录(无则 ""),相对链接按它拼接
  *     "listUrl": "/index.php/vod/type/id/{id}.html",
  *     "listPageUrl": "/index.php/vod/type/id/{id}/page/{pg}.html",
+ *     "classRoutes": {"251":{"listUrl":"/index.php/vod/show/id/{id}.html", "listPageUrl":"/index.php/vod/show/id/{id}/page/{pg}.html"}},
  *     "searchUrl": "/index.php/vod/search.html?wd={key}",
  *     "searchPageUrl": "/index.php/vod/search/page/{pg}/wd/{key}.html",
  *     "homeUrl": "/",                             // 首页(首页推荐用,缺省 "/")
@@ -263,10 +264,13 @@ function fill(tpl, map) {
 
 function listUrl(tid, pg) {
     const page = parseInt(pg, 10) > 0 ? parseInt(pg, 10) : 1;
-    if (cfg.listUrl) {
-        if (page <= 1) return sitePath(fill(cfg.listUrl, { id: tid }));
-        if (cfg.listPageUrl) return sitePath(fill(cfg.listPageUrl, { id: tid, pg: page }));
-        const base = fill(cfg.listUrl, { id: tid });
+    const perClass = cfg.classRoutes && cfg.classRoutes[str(tid)];
+    const firstUrl = perClass && perClass.listUrl ? perClass.listUrl : cfg.listUrl;
+    const pageUrl = perClass ? perClass.listPageUrl : cfg.listPageUrl;
+    if (firstUrl) {
+        if (page <= 1) return sitePath(fill(firstUrl, { id: tid }));
+        if (pageUrl) return sitePath(fill(pageUrl, { id: tid, pg: page }));
+        const base = fill(firstUrl, { id: tid });
         return sitePath(base.replace(/\.html?$/i, '/page/' + page + '.html'));
     }
     return sitePath('/index.php/vod/type/id/' + tid + (page > 1 ? '/page/' + page : '') + '.html');

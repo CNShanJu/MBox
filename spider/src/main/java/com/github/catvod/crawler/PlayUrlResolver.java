@@ -9,6 +9,7 @@ import com.github.tvbox.osc.bean.SourceBean;
 import com.github.tvbox.osc.util.DefaultConfig;
 import com.github.tvbox.osc.util.HttpClient;
 import com.github.tvbox.osc.util.ParseBeanUrls;
+import com.github.tvbox.osc.util.DownloadHeaders;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -23,7 +24,7 @@ import java.util.Map;
  * 解析成真实可下载的 HTTP 地址，解析逻辑与播放流程（getPlay → playerContent/解析）保持一致。
  * <p>
  * 支持：直接 HTTP 地址、爬虫（playerContent）返回 parse=0 的直链、
- * json:/parse: 类型的解析接口；需要 WebView 嗅探的地址无法批量解析，返回 null 由调用方跳过。
+ * json:/parse: 类型的解析接口；需要 WebView 嗅探时，直链解析返回 null，下载侧再取嗅探页。
  * <p>
  * 解析结果除地址外还携带源要求的请求头（{@link ResolveResult#headers}，如 User-Agent/Referer，
  * 与播放端取值一致，值带前导空格）。防盗链源的分片/文件校验这些头，下载必须携带。
@@ -59,13 +60,9 @@ public class PlayUrlResolver {
     /** 同 {@link #resolve(String, String, String)}，同时返回请求头（下载防盗链源必须使用） */
     public static ResolveResult resolveWithHeader(String sourceKey, String playFlag, String url) {
         if (TextUtils.isEmpty(url)) return null;
-        // 已是有效 HTTP 地址，直接使用（无额外请求头）
-        if (url.startsWith("http://") || url.startsWith("https://")) {
-            return new ResolveResult(url, null);
-        }
         try {
             SourceBean sb = ApiConfig.get().getSource(sourceKey);
-            if (sb == null) return null;
+            if (sb == null) return DefaultConfig.isVideoFormat(url) ? new ResolveResult(url, null) : null;
             int type = sb.getType();
             if (type == 3) {
                 // 爬虫源：playerContent 返回播放信息
@@ -95,6 +92,81 @@ public class PlayUrlResolver {
         return null;
     }
 
+    /** 播放器会加载的 WebView 解析页；仅在能构成真实 HTTP 页面时返回。 */
+    public static ResolveResult resolveSniffPage(String sourceKey, String playFlag, String rawUrl) {
+        if (TextUtils.isEmpty(rawUrl)) return null;
+        try {
+            SourceBean source = ApiConfig.get().getSource(sourceKey);
+            if (source == null) return null;
+            JSONObject result;
+            if (source.getType() == 3) {
+                Spider spider = ApiConfig.get().getCSP(source);
+                if (spider == null) return null;
+                result = new JSONObject(spider.playerContent(playFlag, rawUrl, ApiConfig.get().getVipParseFlags()));
+            } else if (source.getType() == 4) {
+                String api = source.getApi();
+                if (TextUtils.isEmpty(api)) return null;
+                String separator = api.contains("?") ? "&" : "?";
+                result = new JSONObject(HttpClient.getSync(api + separator + "play=" + encode(rawUrl)
+                        + "&flag=" + encode(playFlag), null));
+            } else if (source.getType() == 0 || source.getType() == 1) {
+                result = new JSONObject();
+                result.put("parse", 1);
+                result.put("url", rawUrl);
+                result.put("playUrl", source.getPlayerUrl());
+            } else {
+                return null;
+            }
+            boolean parse = result.optString("parse", "1").equals("1");
+            boolean jx = result.optString("jx", "0").equals("1");
+            if (!parse && !jx) return null;
+            String input = result.optString("url", "");
+            String playUrl = result.optString("playUrl", "");
+            boolean useDefault = jx || (playUrl.isEmpty()
+                    && ApiConfig.get().getVipParseFlags().contains(playFlag));
+            ParseBean parser = SniffPagePlanner.webParser(playUrl, useDefault,
+                    ApiConfig.get().getDefaultParse(), ApiConfig.get().getParseBeanList());
+            if (parser == null || parser.getType() != 0) {
+                Log.i(TAG, "嗅探页不可用: 未选到 WebView 解析器 " + sourceKey + "/" + playFlag);
+                return null;
+            }
+            String page = SniffPagePlanner.pageUrl(ParseBeanUrls.url(parser), input);
+            if (page == null) {
+                Log.i(TAG, "嗅探页不可用: 解析器未生成 HTTP 页面 " + sourceKey + "/" + playFlag);
+                return null;
+            }
+            Map<String, String> sourceHeaders = extractHeaders(result);
+            Map<String, String> parserHeaders = new HashMap<>();
+            try {
+                JSONObject ext = new JSONObject(parser.getExt());
+                JSONObject extraHeaders = ext.optJSONObject("header");
+                if (extraHeaders != null) {
+                    Iterator<String> keys = extraHeaders.keys();
+                    while (keys.hasNext()) {
+                        String key = keys.next();
+                        parserHeaders.put(key, extraHeaders.optString(key, ""));
+                    }
+                }
+            } catch (Throwable ignored) { }
+            // 源播放头可能带登录 Cookie/Authorization。解析页换域时只保留通用 UA，
+            // 解析器 ext 的头则明确属于该解析页，可直接使用。
+            Map<String, String> browserDefaults = new HashMap<>();
+            if (sourceHeaders != null) {
+                for (Map.Entry<String, String> header : sourceHeaders.entrySet()) {
+                    if ("User-Agent".equalsIgnoreCase(header.getKey())) {
+                        browserDefaults.put("User-Agent", header.getValue());
+                    }
+                }
+            }
+            Map<String, String> headers = DownloadHeaders.merge(browserDefaults,
+                    DownloadHeaders.mergeForOrigin(input, page, sourceHeaders, null), parserHeaders);
+            return new ResolveResult(page, headers);
+        } catch (Throwable th) {
+            Log.i(TAG, "嗅探页解析失败: " + sourceKey + "/" + playFlag + " -> " + th.getMessage());
+            return null;
+        }
+    }
+
     /**
      * 当前播放集下载解析（防盗链代理特例）:
      * 1. 解析成功但结果无请求头 → 补播放器请求头(UA/Referer)——部分代理(如 jx.91by.top)
@@ -107,6 +179,9 @@ public class PlayUrlResolver {
      */
     public static ResolveResult resolveCurrentWithPlaybackHeaders(String sourceKey, String playFlag, String url,
                                                                   Map<String, String> playbackHeaders, String fallbackUrl) {
+        if (!TextUtils.isEmpty(fallbackUrl)) {
+            return new ResolveResult(fallbackUrl, DownloadHeaders.merge(playbackHeaders));
+        }
         ResolveResult rr = resolveWithHeader(sourceKey, playFlag, url);
         if (rr == null || TextUtils.isEmpty(rr.url)) {
             return new ResolveResult(fallbackUrl, playbackHeaders);
@@ -146,13 +221,13 @@ public class PlayUrlResolver {
         if (jx) {
             // 自定义解析(jx=1):与播放端 initParse/doParse 同款(默认解析器),
             // 批量支持 json 接口/jsonExt/jsonExtMix, WebView 嗅探型不支持返回 null
-            return resolveJx(playFlag, realUrl);
+            ResolveResult rr = resolveJx(playFlag, realUrl);
+            return rr == null ? null : new ResolveResult(rr.url, DownloadHeaders.merge(headers, rr.headers));
         }
         ResolveResult rr = parseJson(playUrl, realUrl);
         if (rr == null) return null;
         // json 解析结果未给 header 时，继承爬虫结果自带的 header
-        if (rr.headers == null) rr.headers = headers;
-        return rr;
+        return new ResolveResult(rr.url, DownloadHeaders.merge(headers, rr.headers));
     }
 
     /** 自定义解析(jx=1):复用播放端 doParse 的解析路径(默认解析器), 批量下载可用 */

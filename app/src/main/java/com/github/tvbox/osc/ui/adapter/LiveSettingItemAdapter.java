@@ -41,9 +41,12 @@ public class LiveSettingItemAdapter extends BaseQuickAdapter<LiveSettingItem, Ba
         TextView tvItemName = holder.getView(R.id.tvSettingItemName);
         tvItemName.setText(item.getItemName());
         boolean selected = item.isItemSelected();
-        // 与选集 chip 一致:选中 = colorPrimary 加粗大一号;未选中 = text_sub_foreground 常规
+        // 与选集 chip(RoundChip.updateColor)同一口径:选中 = **文字主色** text_foreground + 加粗 + 大一号;
+        // 未选中 = text_sub_foreground 常规。
+        // 原来用的是 colorPrimary(= text_accent,主题里的"高亮文字"蓝):直播设置/线路抽屉在自定义主题下
+        // 就成了"别的都跟着主题、只有这两个选中项不跟"(用户口径"选中文字的样式没跟主题走")。
         tvItemName.setTextColor(ContextCompat.getColor(mContext,
-                selected ? R.color.colorPrimary : R.color.text_sub_foreground));
+                selected ? R.color.text_foreground : R.color.text_sub_foreground));
         tvItemName.setTypeface(null, selected ? Typeface.BOLD : Typeface.NORMAL);
         tvItemName.setTextSize(TypedValue.COMPLEX_UNIT_SP, selected ? SIZE_SP_SELECTED : SIZE_SP);
     }

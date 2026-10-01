@@ -48,12 +48,86 @@
         </LinearLayout>
     </com.github.tvbox.osc.ui.kit.AppTitleBar>
 
+    <!-- 两个标签页:视频源(订阅配置)/ 直播源(订阅自带的 + 用户自建的直播源)。
+         选中态 = 文字主色 + 加粗(全站"选中=文字主色加粗"口径);未选中 = text_sub_foreground。
+         指示条**只有一条**(ind_tab):切 tab 时用动画滑到目标 tab 下方,而不是"两个 tab 各挂一条、
+         靠显示/隐藏硬切"(用户口径"为啥是直接跳过去的,我希望是滑到对应的位置的")。
+         两个 tab 也**不带点击高亮**(原来挂了 foreground=selectableItemBackground,点一下整块泛灰,
+         用户口径"点击的时候背景的阴影看着很丑,移除吧")—— 反馈只靠指示条滑动与文字变色。 -->
+    <FrameLayout
+        android:id="@+id/ll_tabs"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:orientation="horizontal">
+
+            <LinearLayout
+                android:id="@+id/tab_video"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:orientation="vertical"
+                android:paddingTop="10dp"
+                android:paddingBottom="8dp">
+
+                <TextView
+                    android:id="@+id/tv_tab_video"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="视频源"
+                    android:textColor="@color/text_foreground"
+                    android:textSize="16sp"/>
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/tab_live"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:orientation="vertical"
+                android:paddingTop="10dp"
+                android:paddingBottom="8dp">
+
+                <TextView
+                    android:id="@+id/tv_tab_live"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="直播源"
+                    android:textColor="@color/text_sub_foreground"
+                    android:textSize="16sp"/>
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- 唯一一条指示条:位置由 SubscriptionActivity.moveIndicator() 计算并**动画滑过去**;
+             初始 invisible,首帧摆好位置再显示(避免先闪在左边) -->
+        <View
+            android:id="@+id/ind_tab"
+            android:layout_width="28dp"
+            android:layout_height="2dp"
+            android:layout_gravity="bottom|start"
+            android:background="@color/btn_select_bg"
+            android:visibility="invisible"/>
+    </FrameLayout>
+
     <!-- 卡片容器:悬浮面圆角底放在容器上(不放在列表上),这样列表越界回弹时只有内容在动、卡片不动
          (与「我的」页/底栏同一个面 bg_surface);clipToOutline 让回弹中的条目仍被圆角裁住 -->
     <FrameLayout
+        android:id="@+id/tab_page_container"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
+        android:clipChildren="true">
+
+    <FrameLayout
+        android:id="@+id/fl_video"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
         android:layout_margin="10dp"
         android:background="@drawable/bg_large_round_float"
         android:clipToOutline="true">
@@ -78,6 +152,35 @@
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:visibility="gone" />
+    </FrameLayout>
+
+    <!-- 「直播源」页:与视频源同一张卡片(同圆角底/同内边距),只是列表换了数据 -->
+    <FrameLayout
+        android:id="@+id/fl_live"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_margin="10dp"
+        android:background="@drawable/bg_large_round_float"
+        android:clipToOutline="true"
+        android:visibility="gone">
+
+        <com.github.tvbox.osc.ui.kit.RubberBandRecyclerView
+            android:id="@+id/rv_live"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@android:color/transparent"
+            android:clipToPadding="true"
+            android:paddingVertical="10dp"
+            tools:listitem="@layout/item_live_source"
+            app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"/>
+
+        <include
+            android:id="@+id/ll_empty_live"
+            layout="@layout/view_empty"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
+        </FrameLayout>
     </FrameLayout>
 
     <!-- 导出操作条:仅在标题栏点"导出"后出现,勾选要合并的订阅 -->
@@ -141,4 +244,15 @@
             android:text="导 出"
             style="@style/BtnPrimary"/>
     </LinearLayout>
+
+    <!-- 长按多选操作栏(公共组件 select_action_bar,与本地视频/下载页/合集页同款):
+         背景=主题悬浮面、普通键=文字主色、危险键=text_danger,颜色全由组件按主题取;
+         订阅源与直播源共用这一条(两边互斥),动作键(全选/删除/取消全选)由页面现加。
+         与上面的导出条互斥显示(进多选时把导出条收起来)。 -->
+    <com.github.tvbox.osc.ui.kit.SelectActionBar
+        android:id="@+id/select_action_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:visibility="gone"
+        tools:visibility="gone" />
 </LinearLayout>

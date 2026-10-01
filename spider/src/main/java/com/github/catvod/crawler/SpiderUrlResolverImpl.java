@@ -40,6 +40,18 @@ public final class SpiderUrlResolverImpl implements PlayUrlResolverApi {
     }
 
     @Override
+    public ResolveResult resolveSniffPage(String sourceKey, String playFlag, String episodeRawUrl) {
+        if (sourceKey == null || playFlag == null || episodeRawUrl == null) return null;
+        try {
+            PlayUrlResolver.ResolveResult rr = SpiderApi.resolveSniffPage(sourceKey, playFlag, episodeRawUrl);
+            return rr == null ? null : new ResolveResult(rr.url, rr.headers);
+        } catch (Throwable th) {
+            android.util.Log.w("SpiderBridge", "resolveSniffPage 异常: " + sourceKey + "/" + playFlag, th);
+            return null;
+        }
+    }
+
+    @Override
     public ResolveResult resolveCurrentWithPlaybackHeaders(String sourceKey, String playFlag, String episodeRawUrl,
                                                            Map<String, String> playbackHeaders,
                                                            String playbackFinalUrl) {
@@ -63,4 +75,3 @@ public final class SpiderUrlResolverImpl implements PlayUrlResolverApi {
         }
     }
 }
-

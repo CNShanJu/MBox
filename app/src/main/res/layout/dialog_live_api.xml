@@ -37,7 +37,9 @@
         style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.Dense"
         android:layout_height="wrap_content"
         android:layout_marginVertical="10dp"
-        android:textColorHint="@color/text_sub_foreground">
+        app:boxStrokeColor="@color/text_main_half"
+        app:placeholderTextColor="@color/text_main_half"
+        app:hintTextColor="@color/text_main_half">
 
         <EditText
             android:id="@+id/et_url"
@@ -46,6 +48,7 @@
             android:background="@null"
             android:layout_marginTop="10dp"
             android:hint="清空则跟随订阅"
+            android:textColorHint="@color/text_main_half"
             android:ellipsize="middle"
             android:singleLine="true"
             android:textColor="@color/text_foreground"

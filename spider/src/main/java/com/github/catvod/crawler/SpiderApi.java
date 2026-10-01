@@ -41,6 +41,12 @@ public final class SpiderApi {
                 () -> PlayUrlResolver.resolveWithHeader(sourceKey, playFlag, rawUrl));
     }
 
+    /** 与播放页相同的 type0 WebView 解析入口，供下载嗅探使用。 */
+    public static PlayUrlResolver.ResolveResult resolveSniffPage(String sourceKey, String playFlag, String rawUrl) {
+        return EXECUTOR.call(sourceKey, DEFAULT_TIMEOUT,
+                () -> PlayUrlResolver.resolveSniffPage(sourceKey, playFlag, rawUrl));
+    }
+
     /** 解析单集真实播放地址（只取 url） */
     public static String resolvePlayUrlString(String sourceKey, String playFlag, String rawUrl) {
         PlayUrlResolver.ResolveResult rr = resolvePlayUrl(sourceKey, playFlag, rawUrl);

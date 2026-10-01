@@ -1,14 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- 直播设置面板(全屏=右侧抽屉 LiveSettingRightDialog / 非全屏=底部面板 LiveSettingDialog,同一个布局)。
+     两列 = 分组列 + 条目列,各自一个 TvRecyclerView。
+
+     **内边距口径(2026-10-01,用户口径"全屏播放界面的设置抽屉的滚动贴着上下两个边了,没有内边距")**:
+     竖向内边距放在**面板根容器**上,列表自己只留左右内边距 —— 这样内容永远进不到面板的上下边,
+     与"第三方列表是否认自己那份 padding"无关(com.owen.tvrecyclerview 的 TvRecyclerView 带聚焦滚动,
+     不能假设它按标准 RecyclerView 处理 padding)。
+     同时面板根从 wrap_content 改成 match_parent:原来两列是 match_parent 高、根是 wrap_content,
+     属于退化测量(子视图撑到可用高度后底边会顶出根的内边距之外),这也是"贴边"的一半原因。 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/bg"
     android:layout_width="match_parent"
-    android:layout_height="wrap_content"
+    android:layout_height="match_parent"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_gravity="center"
     android:background="@color/bg_float"
     android:paddingTop="20dp"
-    android:paddingBottom="10dp"
+    android:paddingBottom="20dp"
     android:gravity="center_horizontal"
     >
 
@@ -17,7 +26,8 @@
         android:layout_width="0dp"
         android:layout_weight="1"
         android:layout_height="match_parent"
-        android:padding="20dp"
+        android:paddingHorizontal="20dp"
+        android:clipToPadding="false"
         android:gravity= "center"
         app:tv_selectedItemIsCentered="true"
         app:tv_verticalSpacingWithMargins="10dp" />
@@ -28,7 +38,8 @@
         android:layout_width="0dp"
         android:layout_weight="1"
         android:layout_height="match_parent"
-        android:padding="20dp"
+        android:paddingHorizontal="20dp"
+        android:clipToPadding="false"
         android:visibility="visible"
         android:gravity= "center"
         app:tv_selectedItemIsCentered="true"

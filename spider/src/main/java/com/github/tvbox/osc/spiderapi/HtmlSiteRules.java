@@ -4,6 +4,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.net.URI;
+import java.util.LinkedHashSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -52,6 +54,12 @@ public final class HtmlSiteRules {
             "/([A-Za-z0-9_\\-]{1,24})/(?:index\\.php/)?(?:vod/|vodshow/|vodtype/|voddetail/|vodplay/|vodsearch/)",
             Pattern.CASE_INSENSITIVE);
 
+    /** 首页入口链接或简单跳转:根页面有时只给 /xxx/，没有任何 vod 路由。 */
+    private static final Pattern ENTRY_URL = Pattern.compile(
+            "(?:href\\s*=\\s*|location(?:\\.href)?\\s*=\\s*|location\\.replace\\(\\s*)[\"']([^\"']+)[\"']",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern ENTRY_DIR = Pattern.compile("^/([A-Za-z0-9_\\-]{1,24})/?$");
+
     private static final Pattern TITLE = Pattern.compile(
             "<title[^>]*>([\\s\\S]{0,200}?)</title>", Pattern.CASE_INSENSITIVE);
     private static final Pattern TAG = Pattern.compile("<[^>]*>");
@@ -96,6 +104,64 @@ public final class HtmlSiteRules {
             return "/" + dir;
         }
         return "";
+    }
+
+    /**
+     * 抓页面的目录候选。先用明确的 vod 路由，再试用户填写的目录及站点根，最后试首页入口链接。
+     * 入口链接只接受同域的一级目录；后续仍须完整探通分类、详情和播放页。
+     */
+    public static List<String> prefixCandidates(String inputUrl, String knownText, String rootHtml, int max) {
+        LinkedHashSet<String> prefixes = new LinkedHashSet<>();
+        addPrefix(prefixes, subdirHint(knownText));
+        addPrefix(prefixes, subdirHint(inputUrl));
+        addPrefix(prefixes, subdirHint(rootHtml));
+        addPrefix(prefixes, pathDirectory(inputUrl));
+        prefixes.add("");
+        if (rootHtml != null && inputUrl != null) {
+            try {
+                URI origin = URI.create(inputUrl.trim());
+                Matcher links = ENTRY_URL.matcher(rootHtml);
+                while (links.find() && prefixes.size() < max) {
+                    URI link = origin.resolve(links.group(1).trim());
+                    if (!origin.getScheme().equalsIgnoreCase(link.getScheme())
+                            || !origin.getAuthority().equalsIgnoreCase(link.getAuthority())) continue;
+                    addPrefix(prefixes, entryDirectory(link.getPath()));
+                }
+            } catch (RuntimeException ignored) {
+                // 页面里的非法链接不能中止其它候选的探测。
+            }
+        }
+        List<String> result = new ArrayList<>(prefixes);
+        return result.size() <= max ? result : result.subList(0, max);
+    }
+
+    private static String pathDirectory(String url) {
+        if (url == null) return "";
+        try {
+            String path = URI.create(url.trim()).getPath();
+            if (path == null || path.length() < 2) return "";
+            String[] segments = path.split("/");
+            if (segments.length < 2 || segments[1].contains(".")) return "";
+            return entryDirectory("/" + segments[1]);
+        } catch (RuntimeException ignored) {
+            return "";
+        }
+    }
+
+    private static String entryDirectory(String path) {
+        if (path == null) return "";
+        Matcher match = ENTRY_DIR.matcher(path);
+        if (!match.matches()) return "";
+        String segment = match.group(1);
+        String lower = segment.toLowerCase(java.util.Locale.ROOT);
+        if (lower.equals("api") || lower.equals("vod") || lower.equals("static")
+                || lower.equals("images") || lower.equals("img") || lower.equals("js")
+                || lower.equals("css") || lower.equals("assets")) return "";
+        return "/" + segment;
+    }
+
+    private static void addPrefix(LinkedHashSet<String> prefixes, String prefix) {
+        if (prefix != null && !prefix.isEmpty()) prefixes.add(prefix);
     }
 
     /** 页面标题(去标签),站点名兜底用 */
@@ -284,6 +350,13 @@ public final class HtmlSiteRules {
     public static String buildExtJson(String siteName, String host, String prefix,
                                       Map<String, String> classes, String listUrl, String listPageUrl,
                                       String searchUrl, String searchPageUrl) {
+        return buildExtJson(siteName, host, prefix, classes, listUrl, listPageUrl,
+                searchUrl, searchPageUrl, null);
+    }
+
+    public static String buildExtJson(String siteName, String host, String prefix,
+                                      Map<String, String> classes, String listUrl, String listPageUrl,
+                                      String searchUrl, String searchPageUrl, Map<String, Route> classRoutes) {
         StringBuilder sb = new StringBuilder();
         sb.append("{\"siteName\":\"").append(esc(siteName)).append("\",");
         sb.append("\"host\":\"").append(esc(host)).append("\",");
@@ -309,7 +382,22 @@ public final class HtmlSiteRules {
                         .append("\",\"type_name\":\"").append(esc(e.getValue())).append("\"}");
             }
         }
-        sb.append("]}");
+        sb.append("],\"classRoutes\":{");
+        first = true;
+        if (classRoutes != null && classes != null) {
+            for (Map.Entry<String, Route> e : classRoutes.entrySet()) {
+                if (!classes.containsKey(e.getKey()) || e.getValue() == null) continue;
+                if (!first) sb.append(',');
+                first = false;
+                sb.append('"').append(esc(e.getKey())).append("\":{\"listUrl\":\"")
+                        .append(esc(e.getValue().listUrl)).append('"');
+                if (e.getValue().listPageUrl != null) {
+                    sb.append(",\"listPageUrl\":\"").append(esc(e.getValue().listPageUrl)).append('"');
+                }
+                sb.append('}');
+            }
+        }
+        sb.append("}}");
         return sb.toString();
     }
 
@@ -403,6 +491,72 @@ public final class HtmlSiteRules {
             }
         }
         return out;
+    }
+
+    /** 「阅读」书源 sortUrl 里明确列出的苹果 CMS 分类及搜索地址，只作为实探线索。 */
+    public static SortUrlHints sortUrlHints(String sortUrl, String host, String prefix, int maxClasses) {
+        SortUrlHints hints = new SortUrlHints();
+        if (sortUrl == null || host == null || maxClasses <= 0) return hints;
+        String origin;
+        try {
+            URI base = URI.create(host);
+            origin = base.getScheme() + "://" + base.getAuthority();
+        } catch (RuntimeException ignored) {
+            return hints;
+        }
+        for (String line : sortUrl.split("\\r?\\n")) {
+            int sep = line.indexOf("::");
+            if (sep <= 0) continue;
+            String name = line.substring(0, sep).trim();
+            String address = line.substring(sep + 2).trim();
+            if (name.isEmpty() || address.isEmpty() || address.length() > 500) continue;
+            boolean search = address.contains("{{source.getVariable()}}");
+            String candidate = address.replace("{{source.getVariable()}}", "KEYWORD");
+            String path;
+            try {
+                URI uri = URI.create(origin + "/").resolve(candidate);
+                if (!origin.equalsIgnoreCase(uri.getScheme() + "://" + uri.getAuthority())) continue;
+                path = uri.getRawPath() + (uri.getRawQuery() == null ? "" : "?" + uri.getRawQuery());
+            } catch (RuntimeException ignored) {
+                continue;
+            }
+            if (search && hints.searchRoute == null && path.contains("KEYWORD")
+                    && (path.contains("/vod/search") || path.contains("/vodsearch"))) {
+                String template = path.replace("KEYWORD", "{key}");
+                Route matched = null;
+                for (Route route : searchRoutes(prefix)) {
+                    if (route.listUrl.equals(template)) {
+                        matched = route;
+                        break;
+                    }
+                }
+                hints.searchRoute = matched == null ? new Route(template, null) : matched;
+                continue;
+            }
+            if (hints.classes.size() >= maxClasses) continue;
+            for (Route route : listRoutes(prefix)) {
+                String[] parts = route.listUrl.split("\\{id\\}", -1);
+                if (parts.length != 2) continue;
+                Matcher match = Pattern.compile("^" + Pattern.quote(parts[0]) + "(\\d+)"
+                        + Pattern.quote(parts[1]) + "$").matcher(path);
+                if (!match.matches()) continue;
+                String id = match.group(1);
+                if (!hints.classes.containsKey(id)) {
+                    hints.classes.put(id, name);
+                    hints.classProbes.add(new Probe(path, route));
+                    hints.classRoutes.put(id, route);
+                }
+                break;
+            }
+        }
+        return hints;
+    }
+
+    public static final class SortUrlHints {
+        public final LinkedHashMap<String, String> classes = new LinkedHashMap<>();
+        public final List<Probe> classProbes = new ArrayList<>();
+        public final LinkedHashMap<String, Route> classRoutes = new LinkedHashMap<>();
+        public Route searchRoute;
     }
 
     /** 搜索探测计划:每个搜索路由一条(关键词已编码) */

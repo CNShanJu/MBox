@@ -22,10 +22,26 @@ import java.util.List;
 
 public class SubscriptionAdapter extends BaseQuickAdapter<Subscription, BaseViewHolder> {
 
-    /** 导出选择态:勾选语义从"当前订阅(单选)"切到"要导出的订阅(多选)" */
-    private boolean exportMode = false;
-    /** 导出态下已勾选的地址(与列表顺序解耦,列表重排也不丢) */
-    private final LinkedHashSet<String> exportSelected = new LinkedHashSet<>();
+    /**
+     * 勾选语义(点条目干什么):
+     * <ul>
+     *   <li>{@link #NORMAL}:点条目 = 切换"当前订阅"(单选);</li>
+     *   <li>{@link #EXPORT}:点条目 = 勾选<b>要导出</b>的订阅(多选,标题栏「导出」进入);</li>
+     *   <li>{@link #DELETE}:点条目 = 勾选<b>要删除</b>的订阅(多选,长按菜单「多选」进入)。</li>
+     * </ul>
+     * 两种多选态的列表呈现完全一样(复选框 + 收起删除/置顶标记),只是动作不同。
+     */
+    public enum Mode {NORMAL, EXPORT, DELETE}
+
+    /** 多选勾选数变化(操作栏"删除"键的可用态看它) */
+    public interface OnSelectCountListener {
+        void onSelectCount(int count);
+    }
+
+    private Mode mode = Mode.NORMAL;
+    /** 多选态下已勾选的地址(与列表顺序解耦,列表重排也不丢) */
+    private final LinkedHashSet<String> selected = new LinkedHashSet<>();
+    private OnSelectCountListener selectCountListener;
 
     public SubscriptionAdapter() {
         super(R.layout.item_subscription);
@@ -36,9 +52,10 @@ public class SubscriptionAdapter extends BaseQuickAdapter<Subscription, BaseView
         helper.setText(R.id.tv_name,item.getName())
         .setText(R.id.tv_url,item.getUrl());
 
-        if (exportMode) {
-            // 导出态:复选框表示"要导出",删除/置顶标记先收起来(避免与当前订阅勾选混为一谈)
-            helper.setChecked(R.id.cb, item.getUrl() != null && exportSelected.contains(item.getUrl()))
+        if (mode != Mode.NORMAL) {
+            // 多选态(导出/删除):复选框表示"选中",删除/置顶标记先收起来
+            // (避免与"当前订阅"那颗勾混为一谈)
+            helper.setChecked(R.id.cb, item.getUrl() != null && selected.contains(item.getUrl()))
                     .setVisible(R.id.iv_del, false)
                     .setVisible(R.id.iv_pushpin, false);
             return;
@@ -51,64 +68,90 @@ public class SubscriptionAdapter extends BaseQuickAdapter<Subscription, BaseView
     }
 
     // ------------------------------------------------------------------
-    // 导出选择
+    // 多选(导出 / 删除共用同一套勾选)
     // ------------------------------------------------------------------
 
-    public boolean isExportMode() {
-        return exportMode;
+    public Mode getMode() {
+        return mode;
     }
 
-    /** 进出导出态(进入即清空上次勾选) */
-    public void setExportMode(boolean on) {
-        exportMode = on;
-        exportSelected.clear();
+    /** 是否处于"导出选择"态(导出条的显隐与文案看它) */
+    public boolean isExportMode() {
+        return mode == Mode.EXPORT;
+    }
+
+    /** 是否处于任意多选态 */
+    public boolean inSelectMode() {
+        return mode != Mode.NORMAL;
+    }
+
+    /** 切换勾选语义(进入/退出多选:一律清空上次勾选) */
+    public void setMode(Mode newMode) {
+        mode = newMode == null ? Mode.NORMAL : newMode;
+        selected.clear();
         notifyDataSetChanged();
+        notifySelectCount();
+    }
+
+    /** 兼容旧调用(导出流程用) */
+    public void setExportMode(boolean on) {
+        setMode(on ? Mode.EXPORT : Mode.NORMAL);
+    }
+
+    public void setOnSelectCountListener(OnSelectCountListener listener) {
+        selectCountListener = listener;
+    }
+
+    private void notifySelectCount() {
+        if (selectCountListener != null) selectCountListener.onSelectCount(selected.size());
     }
 
     /** 勾选/取消一条;返回该条当前是否被勾选 */
-    public boolean toggleExport(String url) {
+    public boolean toggleSelection(String url) {
         if (url == null) return false;
-        boolean selected;
-        if (!exportSelected.remove(url)) {
-            exportSelected.add(url);
-            selected = true;
+        boolean nowSelected;
+        if (!selected.remove(url)) {
+            selected.add(url);
+            nowSelected = true;
         } else {
-            selected = false;
+            nowSelected = false;
         }
         notifyDataSetChanged();
-        return selected;
+        notifySelectCount();
+        return nowSelected;
     }
 
-    public int getExportSelectedCount() {
-        return exportSelected.size();
+    public int selectedCount() {
+        return selected.size();
     }
 
     /** 全选/全不选(按当前列表数据) */
-    public void setExportAll(boolean all) {
-        exportSelected.clear();
+    public void setSelectAll(boolean all) {
+        selected.clear();
         if (all) {
             for (Subscription s : getData()) {
-                if (s != null && s.getUrl() != null) exportSelected.add(s.getUrl());
+                if (s != null && s.getUrl() != null) selected.add(s.getUrl());
             }
         }
         notifyDataSetChanged();
+        notifySelectCount();
     }
 
     /** 是否已全选(列表非空时才有意义) */
-    public boolean isExportAllSelected() {
+    public boolean isAllSelected() {
         List<Subscription> data = getData();
         if (data == null || data.isEmpty()) return false;
         for (Subscription s : data) {
-            if (s == null || s.getUrl() == null || !exportSelected.contains(s.getUrl())) return false;
+            if (s == null || s.getUrl() == null || !selected.contains(s.getUrl())) return false;
         }
         return true;
     }
 
-    /** 按列表顺序返回勾选的订阅(导出抓取顺序 = 列表顺序,先到先得) */
-    public List<Subscription> exportSelection() {
+    /** 按列表顺序返回勾选的订阅(导出抓取顺序 / 删除顺序 = 列表顺序) */
+    public List<Subscription> selection() {
         List<Subscription> out = new ArrayList<>();
         for (Subscription s : getData()) {
-            if (s != null && s.getUrl() != null && exportSelected.contains(s.getUrl())) out.add(s);
+            if (s != null && s.getUrl() != null && selected.contains(s.getUrl())) out.add(s);
         }
         return out;
     }

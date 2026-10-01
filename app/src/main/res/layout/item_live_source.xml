@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 直播源条目(订阅管理-「直播源」页):与视频源条目 item_subscription 同构 —— 勾选圈 + 名称 + 地址 + 删除键,
+     多一个「来自:<订阅名>」徽标:订阅导入的直播源跟着订阅走(不可删除,故 iv_del 不显示);
+     没有徽标的就是用户自建的可删条目。
+     排版要点(踩过的坑):
+      1) 名称/徽标那一行用 LinearLayout + 名称 weight=1 + ellipsize=end —— 名称再长也只会自己省略,
+         不会把「来自:xx」挤出屏幕(以前名称 wrap_content 顶在徽标左边,长名字直接把徽标推出可视区);
+      2) 内容区 toLeftOf 删除键 + marginEnd,地址与文字都不会钻到 ✕ 底下(用户口径"x 和文字都贴着了")。 -->
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/item"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:padding="10dp">
+
+    <CheckBox
+        android:id="@+id/cb"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:clickable="false"
+        android:checked="false"
+        android:button="@drawable/button_checkbox_square"
+        android:focusable="false"/>
+
+    <ImageView
+        android:id="@+id/iv_del"
+        android:layout_width="30dp"
+        android:layout_height="30dp"
+        android:layout_alignParentRight="true"
+        android:layout_alignParentTop="true"
+        android:layout_marginStart="@dimen/dp_8"
+        android:layout_marginLeft="@dimen/dp_8"
+        android:paddingHorizontal="6dp"
+        android:src="@drawable/dkplayer_ic_action_close"
+        app:tint="@color/text_danger"/>
+
+    <LinearLayout
+        android:id="@+id/content"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_toRightOf="@+id/cb"
+        android:layout_toLeftOf="@+id/iv_del"
+        android:layout_marginStart="@dimen/dp_8"
+        android:layout_marginLeft="@dimen/dp_8"
+        android:orientation="vertical">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/tv_name"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:singleLine="true"
+                android:textColor="@color/text_foreground"
+                android:textSize="16sp"
+                tools:text="Kimentanm"/>
+
+            <!-- 「来自:<订阅名>」徽标:订阅导入的才有(用户自建的隐藏)。底与字都走主题,不写死色 -->
+            <TextView
+                android:id="@+id/tv_from"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="@dimen/dp_8"
+                android:layout_marginLeft="@dimen/dp_8"
+                android:background="@drawable/bg_small_round_gray"
+                android:ellipsize="end"
+                android:maxWidth="140dp"
+                android:paddingHorizontal="6dp"
+                android:paddingVertical="2dp"
+                android:singleLine="true"
+                android:textColor="@color/text_highlight"
+                android:textSize="11sp"
+                android:visibility="gone"
+                tools:text="来自: 饭太硬"
+                tools:visibility="visible"/>
+        </LinearLayout>
+
+        <!-- 地址色与视频源条目同口径(文字主色 50%),不再走系统默认色 -->
+        <TextView
+            android:id="@+id/tv_url"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:ellipsize="middle"
+            android:singleLine="true"
+            android:textColor="@color/text_main_half"
+            tools:text="https://gh.927223.xy…ster/m3u/iptv.m3u"/>
+    </LinearLayout>
+
+</RelativeLayout>

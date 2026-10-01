@@ -9,10 +9,14 @@ import com.github.tvbox.osc.util.MD5;
 import org.json.JSONObject;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
 import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import dalvik.system.DexClassLoader;
@@ -44,6 +48,131 @@ public class JarLoader {
     private static final long CREATE_FAIL_COOLDOWN_MS = 5 * 60 * 1000L;
     private volatile String recentJarKey = "";
 
+    // ------------------------------------------------------------------
+    // 插件崩溃隔离(2026-10-01)
+    //
+    // 现象(真机实测,魅族 21 / Android 16):社区 csp 包的 guard 类(DouDouGuard / BaseSpiderGuard)
+    // 在构造器里就调自己的 native 库(`DexNative.getSpider`),而那段 native 拿到的类加载器是 null,
+    // 于是在 null 上直接调 `ClassLoader.loadClass` → CheckJNI 抛
+    // "JNI DETECTED ERROR IN APPLICATION: can't call ... loadClass ... on null object" → abort(SIGABRT)。
+    // 那个 null 由 native 自己产生(`Init.loader()` 的值来自 native `DexNative.getLoader(ctx)`),
+    // 宿主侧给不了它任何加载器(实测:把当前线程的 contextClassLoader 指向 jar 的 DexClassLoader 也无效)。
+    // 关键:这是**进程级 native abort** —— Java 侧 catch 不到,崩溃页(CustomActivityOnCrash)也不会起来
+    // (它只在 Java 未捕获异常时被拉起),于是 StartupGuard 的崩溃计数永远是 0、安全模式永不触发,
+    // 用户看到的就是"每次进 App 直接退出",连进设置换源的机会都没有。
+    //
+    // 做法:进 native 之前先落一个"正在加载这份插件"的标记(files/spider_plugin_loading),
+    // 加载与实例化都成功返回后再清掉。下次启动若发现标记还在,说明上个进程就死在这份插件上 ——
+    // 把它的身份(路径+大小+mtime)记进 files/spider_plugin_blocked,之后不再加载它:
+    // 该源的插件按 SpiderFaults 报"插件会导致 App 闪退(已停用)",App 照常起来,用户可去换源/更新订阅。
+    // jar 一变(源更新、换订阅后重下 → 大小或时间必变)身份就不同,自动获得一次重试机会,无需人工清黑名单。
+    // ------------------------------------------------------------------
+    /** 进 native 前落的"正在加载这份插件"标记(崩溃后残留 = 上个进程死在这里) */
+    private static final String PLUGIN_MARK_FILE = "spider_plugin_loading";
+    /** 已确认"会让 App 闪退"的插件身份(每行一个,见 {@link #pluginId}) */
+    private static final String PLUGIN_BLOCKED_FILE = "spider_plugin_blocked";
+    private final Set<String> blockedPlugins = ConcurrentHashMap.newKeySet();
+    private volatile boolean crashMarkChecked = false;
+    /** 主 jar 因"会让 App 闪退"被停用(load() 判定):源取用它时据此给出说法,而不是只显示"暂无数据" */
+    private volatile boolean mainJarBlocked = false;
+
+    /**
+     * 插件身份:路径 + 大小 + mtime。
+     * <p>取"路径+大小+修改时间"而非单纯路径:源更新 / 换订阅后 jar 会被重下(大小或时间必变),
+     * 身份随之改变、黑名单自然失效,相当于自动给新 jar 一次机会,不需要任何"解除停用"的人工操作。
+     */
+    private static String pluginId(File jar) {
+        return jar.getAbsolutePath() + "|" + jar.length() + "|" + jar.lastModified();
+    }
+
+    private File pluginStateFile(String name) {
+        return context == null ? null : new File(context.getFilesDir(), name);
+    }
+
+    /** 读一次上次进程留下的标记:还在 → 上个进程死在它上面 → 记进黑名单并停用 */
+    private void checkPluginCrashMark() {
+        if (crashMarkChecked) return;
+        crashMarkChecked = true;
+        try {
+            File mark = pluginStateFile(PLUGIN_MARK_FILE);
+            if (mark == null || !mark.exists()) return;
+            String id = readText(mark).trim();
+            //noinspection ResultOfMethodCallIgnored
+            mark.delete();
+            if (!id.isEmpty()) {
+                appendLine(pluginStateFile(PLUGIN_BLOCKED_FILE), id);
+                LOG.e("Csp", "上次启动死在这份插件上(native abort),已停用不再加载: " + id);
+            }
+        } catch (Throwable th) {
+            th.printStackTrace();
+        } finally {
+            loadBlockedPlugins();
+        }
+    }
+
+    private void loadBlockedPlugins() {
+        File blocked = pluginStateFile(PLUGIN_BLOCKED_FILE);
+        if (blocked == null) return;
+        for (String line : readText(blocked).split("\n")) {
+            String id = line.trim();
+            if (!id.isEmpty()) blockedPlugins.add(id);
+        }
+    }
+
+    /** 这份插件是否已被判定"会让 App 闪退" */
+    private boolean isPluginBlocked(File jar) {
+        checkPluginCrashMark();
+        return jar != null && blockedPlugins.contains(pluginId(jar));
+    }
+
+    /** 进 native 前落标记:必须同步落盘 —— abort 随时会来,异步写就丢了 */
+    private void markPluginLoading(File jar) {
+        File mark = pluginStateFile(PLUGIN_MARK_FILE);
+        if (mark == null || jar == null) return;
+        try (FileOutputStream out = new FileOutputStream(mark)) {
+            out.write(pluginId(jar).getBytes(StandardCharsets.UTF_8));
+            out.flush();
+            out.getFD().sync();
+        } catch (Throwable th) {
+            th.printStackTrace();
+        }
+    }
+
+    /** 插件加载/实例化成功返回:撤掉标记(标记还在 = 这次没走到这里,下次启动据此停用) */
+    private void clearPluginLoading() {
+        File mark = pluginStateFile(PLUGIN_MARK_FILE);
+        if (mark == null) return;
+        //noinspection ResultOfMethodCallIgnored
+        mark.delete();
+    }
+
+    private static String readText(File f) {
+        try (FileInputStream in = new FileInputStream(f)) {
+            byte[] buf = new byte[(int) Math.max(1, Math.min(f.length(), 8192))];
+            int len = in.read(buf);
+            return len <= 0 ? "" : new String(buf, 0, len, StandardCharsets.UTF_8);
+        } catch (Throwable th) {
+            return "";
+        }
+    }
+
+    private static void appendLine(File f, String line) {
+        if (f == null) return;
+        try (FileOutputStream out = new FileOutputStream(f, true)) {
+            out.write((line + "\n").getBytes(StandardCharsets.UTF_8));
+            out.flush();
+            out.getFD().sync();
+        } catch (Throwable th) {
+            th.printStackTrace();
+        }
+    }
+
+    /** 站点自带 jar 的缓存文件(files/&lt;jarKey&gt;.jar);main 就是订阅主 jar files/csp.jar */
+    private File pluginJarFile(String jarKey) {
+        if (context == null) return null;
+        return new File(context.getFilesDir(), "main".equals(jarKey) ? "csp.jar" : jarKey + ".jar");
+    }
+
     /**
      * 不要在主线程调用我
      *
@@ -52,13 +181,43 @@ public class JarLoader {
     public boolean load(String cache) {
         clearSources();
         recentJarKey = "main";
-        return loadClassLoader(cache, "main");
+        File jar = new File(cache);
+        // 主 jar 已被判定会让 App 闪退:直接不加载(native abort 接不住,只能不进它的 native)
+        mainJarBlocked = isPluginBlocked(jar);
+        if (mainJarBlocked) {
+            LOG.e("Csp", "主 jar 已停用(上次启动死在它上面),本次不加载: " + jar.getAbsolutePath());
+            return false;
+        }
+        markPluginLoading(jar);
+        boolean ok = loadClassLoader(cache, "main");
+        clearPluginLoading();
+        return ok;
     }
 
     /** 放掉全部源实例与缓存(jar 重载 / 换订阅都走这里);与 load 的差别:不重新加载任何 jar */
     public void reset() {
         clearSources();
         recentJarKey = "";
+        // 换订阅 / jar 地址变了:插件层"会让 App 闪退"的结论一并作废(换的是另一份 jar);
+        // 这也给用户留了恢复路径 —— 换个订阅再换回来,即重新给这份插件一次机会
+        clearPluginCrashGuard();
+    }
+
+    /** 清掉插件崩溃隔离的全部状态(残留标记 + 黑名单);换订阅时调用,见 {@link #reset()} */
+    private void clearPluginCrashGuard() {
+        blockedPlugins.clear();
+        mainJarBlocked = false;
+        crashMarkChecked = false;
+        File mark = pluginStateFile(PLUGIN_MARK_FILE);
+        if (mark != null) {
+            //noinspection ResultOfMethodCallIgnored
+            mark.delete();
+        }
+        File blocked = pluginStateFile(PLUGIN_BLOCKED_FILE);
+        if (blocked != null) {
+            //noinspection ResultOfMethodCallIgnored
+            blocked.delete();
+        }
     }
 
     private void clearSources() {
@@ -69,8 +228,48 @@ public class JarLoader {
         downloadFailedAt.clear();
         createFailedAt.clear();
         createFailedReason.clear();
+        // 注意:这里**不能**清 loaderCache(见下方注释)—— 同一个 jar 反复新建 DexClassLoader
+        // 会让插件里的原生库被 System.load 多次,第二次起 ART 拒绝在另一个 classloader 里打开同一个 .so。
         // jar/订阅整体换了:旧的"插件不可用"结论一并作废(新 jar 里可能已经有那个类了)
         SpiderFaults.get().clear();
+    }
+
+    // ------------------------------------------------------------------
+    // 同一个 jar 只建一次 DexClassLoader(跨订阅解析 / 换源 / 重载复用)
+    //
+    // 为什么:每次解析订阅、每次换源都会走 load() → 新建 DexClassLoader,而插件里的原生库会因此被
+    // System.load 再加载一次,ART 拒绝在另一个 classloader 里打开同一个 .so ——
+    // 真机日志(2026-10-01,魅族 21 / Android 16):
+    //   Shared library ".../files/soproxy-android-arm64.so" already opened by ClassLoader 0x11c7
+    //   (DexClassLoader[… /files/csp.jar]); can't open in ClassLoader 0x78f26d289c(… /files/csp.jar)
+    // csp 包的 soproxy 代理因此起不来,源请求永远等不到结果(首页只能靠 45s 看门狗收尾成空态)。
+    //
+    // 口径与插件崩溃隔离一致:身份 = 路径 + 大小 + mtime(jar 一变——源更新/换订阅重下——自动重建)。
+    // 缓存是静态的:clearSources()/换源都会走,但同一份 jar 的 classloader 必须活下来。
+    // ------------------------------------------------------------------
+    private static final Map<String, DexClassLoader> loaderCache = new ConcurrentHashMap<>();
+    /** loaderCache 上限:单进程内用到的 jar 不会多,超了丢一份最早的,避免长期驻留 */
+    private static final int LOADER_CACHE_MAX = 6;
+
+    /** 取这份 jar 已建好的 classloader(文件没变才复用) */
+    private static DexClassLoader cachedClassLoader(File jar) {
+        return jar == null ? null : loaderCache.get(pluginId(jar));
+    }
+
+    /** 记住这份 jar 的 classloader,并清掉同路径的旧身份、限制总量 */
+    private static void rememberClassLoader(File jar, DexClassLoader loader) {
+        if (jar == null || loader == null) return;
+        String id = pluginId(jar);
+        String prefix = jar.getAbsolutePath() + "|";
+        for (String key : loaderCache.keySet()) {
+            if (key.startsWith(prefix) && !key.equals(id)) loaderCache.remove(key);
+        }
+        loaderCache.put(id, loader);
+        while (loaderCache.size() > LOADER_CACHE_MAX) {
+            java.util.Iterator<String> it = loaderCache.keySet().iterator();
+            if (!it.hasNext()) break;
+            loaderCache.remove(it.next());
+        }
     }
 
     private boolean loadClassLoader(String jar, String key) {
@@ -86,7 +285,13 @@ public class JarLoader {
             if (jarFile.exists()) {
                 jarFile.setReadOnly();
             }
-            DexClassLoader classLoader = new DexClassLoader(jar, cacheDir.getAbsolutePath(), null, context.getClassLoader());
+            // 复用同一份 jar 的 classloader(见上方 loaderCache 注释):新建会让插件的原生库被二次 System.load。
+            // 复用时 Init.init 与 Proxy 注册照旧再走一遍 —— 它们是幂等的,而且 proxyMethods 已随 clearSources 清空。
+            DexClassLoader classLoader = cachedClassLoader(jarFile);
+            if (classLoader == null) {
+                classLoader = new DexClassLoader(jar, cacheDir.getAbsolutePath(), null, context.getClassLoader());
+                rememberClassLoader(jarFile, classLoader);
+            }
             // make force wait here, some device async dex load
             int count = 0;
             do {
@@ -240,6 +445,13 @@ public class JarLoader {
         if (cached != null) {
             return cached;
         }
+        // 已判定"会让 App 闪退"的插件(见上方 #pluginCrashGuard 注释)不再进它的 native,
+        // 否则每次启动都会在同一处 abort,用户连换源的机会都没有。
+        // 放在快路径之后:这个判定要读 jar 的大小/时间(两次 stat),不压到已建好的源的热路径上。
+        if (isPluginBlocked(pluginJarFile(jarKey))) {
+            SpiderFaults.get().markUnavailable(key, SpiderFaults.pluginCrashReason(clsKey));
+            return new SpiderNull();
+        }
         Long failedAt = createFailedAt.get(key);
         if (failedAt != null && System.currentTimeMillis() - failedAt < CREATE_FAIL_COOLDOWN_MS) {
             // 冷却期内不再重试（每次重试都是 loadClass + 一行 E 日志）；原因重新登记一次,UI 仍能给出说法
@@ -258,8 +470,16 @@ public class JarLoader {
             else {
                 classLoader = loadJarInternal(jarUrl, jarMd5, jarKey);
             }
-            if (classLoader == null)
+            if (classLoader == null) {
+                // 主 jar 被停用(会让 App 闪退)时给出明确说法:页面据此说明"为什么这个源不可用",
+                // 而不是只显示"暂无数据"(与 SpiderFaultApi 的口径一致)
+                if ("main".equals(jarKey) && mainJarBlocked)
+                    SpiderFaults.get().markUnavailable(key, SpiderFaults.pluginCrashReason(clsKey));
                 return new SpiderNull();
+            }
+            // guard 类的构造器里就调自己的 native 库 —— 先落标记:进程若在这里被 abort,
+            // 下次启动就能知道"是这份插件干的",把它停用(见上方 #pluginCrashGuard 注释)
+            markPluginLoading(pluginJarFile(jarKey));
             try {
                 Spider sp = (Spider) classLoader.loadClass("com.github.catvod.spider." + clsKey).newInstance();
                 sp.init(context, ext);
@@ -280,6 +500,9 @@ public class JarLoader {
                 createFailedAt.put(key, System.currentTimeMillis());
                 createFailedReason.put(key, reason);
                 SpiderFaults.get().markUnavailable(key, reason);
+            } finally {
+                // 走到这里说明这次没被 abort:撤掉标记,别把这份插件误判成"会让 App 闪退"
+                clearPluginLoading();
             }
             return new SpiderNull();
         }

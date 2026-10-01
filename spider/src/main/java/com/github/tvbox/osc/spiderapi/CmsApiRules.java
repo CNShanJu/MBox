@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.nio.charset.StandardCharsets;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -569,6 +570,90 @@ public final class CmsApiRules {
             return head.contains("<rss") && body.toLowerCase().contains("<video") ? 0 : -1;
         }
         return -1;
+    }
+
+    /**
+     * 解开"图片裹配置"套路(8 位字母/0 + {@code **} + base64(配置)),并**确认解出来真能当订阅配置**:
+     * 解出的正文是完整配置({@code sites} 数组)或自包含的 AES 包头({@code 2423}…)才算成功,否则返回 null。
+     *
+     * <p>为什么必须"解出来验一遍":网页正文里偶然出现的 8 位 + {@code **}(帮助页里的示例文本)同样会命中
+     * {@link #subscriptionShape} 的加密判据;这种地址一旦当成订阅收下,加载阶段必然"解析配置失败",
+     * 还会把当前可用订阅挤掉(见 {@link #subscriptionShape} 的说明)。所以这里不认"像",只认"解得开且是配置"。
+     *
+     * <p>用途:订阅地址导入时,远端响应可能是**二进制/乱码**(图片 + 尾部 base64 这类分享地址,
+     * 如 {@code www.饭太硬.net/tv}),按 JSON 解析必然失败、接着会被当成资源站去嗅探采集接口
+     * (用户口径"接口明明可以用啊,为啥弹未识别到采集接口")。调用方拿本方法的返回值当"这份响应其实是配置"
+     * 的证据,走与 JSON 响应同一条判定流程;地址本身仍原样存成订阅(加载阶段 {@code ApiConfig.FindResult}
+     * 用的是同一套解包规则,配置更新时能跟着变)。
+     *
+     * @param text 远端响应原文(图片裹配置时是二进制解码出来的乱码字符串)
+     * @return 解出来的配置正文;不是这个套路、或解出来不是配置时返回 null
+     */
+    public static String unwrapPackedConfig(String text) {
+        if (text == null || text.isEmpty()) return null;
+        Matcher matcher = ENCRYPTED_MARK.matcher(text);
+        if (!matcher.find()) return null;
+        byte[] raw = decodeBase64(matcher.end() >= text.length() ? "" : text.substring(matcher.end()));
+        if (raw.length == 0) return null;
+        String decoded = new String(raw, StandardCharsets.UTF_8);
+        String body = stripJsonNoise(decoded);
+        if (body.isEmpty()) return null;
+        // 自包含 AES 包头("2423…"):加载阶段(FindResult)能解,这里只确认它就是这个套路
+        if (body.startsWith("2423")) return body;
+        if (subscriptionShape(body) == SHAPE_CONFIG) return body;
+        // 多线路/多仓清单:不是配置本身,但调用方会展开成各自的地址(与 JSON 响应的判定同一套)
+        return looksLikeListJson(body) ? body : null;
+    }
+
+    /**
+     * 是否"多线路/多仓清单"({@code urls} / {@code storeHouse} 顶层键):这内容是订阅**清单**,
+     * 调用方要展开成多条订阅(见 {@code SubscriptionActivity} 的多线路/多仓分支),不是一份配置。
+     */
+    public static boolean looksLikeListJson(String text) {
+        String t = stripJsonNoise(text);
+        if (t.isEmpty() || t.charAt(0) != '{') return false;
+        String body = objBody(t);
+        if (body == null || body.isEmpty()) return false;
+        return indexOfKey(body, "urls") >= 0 || indexOfKey(body, "storeHouse") >= 0;
+    }
+
+    /** base64 字母表:与加载阶段 FindResult 用的 android Base64.DEFAULT 同一套(标准表,非 url-safe) */
+    private static final String BASE64_ALPHABET =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    private static final int[] BASE64_VALUE = base64Table();
+
+    private static int[] base64Table() {
+        int[] table = new int[128];
+        for (int i = 0; i < table.length; i++) table[i] = -1;
+        for (int i = 0; i < BASE64_ALPHABET.length(); i++) {
+            table[BASE64_ALPHABET.charAt(i)] = i;
+        }
+        return table;
+    }
+
+    /**
+     * 宽松 base64 解码:跳过空白/换行,遇到填充符或第一个非 base64 字符即停(尾部混进的 HTML/文本不算错)。
+     * 本类必须保持"纯字符串逻辑、不依赖 Android、可 JVM 单测",故不用 {@code android.util.Base64}
+     * (它在 JVM 单测里是空实现)。半个字节的余位直接丢弃:真配置带填充,截断的正文后面也过不了形态判定。
+     */
+    private static byte[] decodeBase64(String s) {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        int buf = 0, bits = 0;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '=') break;
+            if (c == '\r' || c == '\n' || c == ' ' || c == '\t') continue;
+            int v = c < 128 ? BASE64_VALUE[c] : -1;
+            if (v < 0) break;
+            buf = (buf << 6) | v;
+            bits += 6;
+            if (bits >= 8) {
+                bits -= 8;
+                out.write((buf >> bits) & 0xFF);
+            }
+        }
+        return out.toByteArray();
     }
 
     // ------------------------------------------------------------------

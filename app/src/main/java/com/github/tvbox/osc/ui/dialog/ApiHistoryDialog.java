@@ -62,9 +62,13 @@ public class ApiHistoryDialog extends AppBottomPopupView {
         adapter.setNewData(mLiveHistory);
         adapter.setOnItemChildClickListener((adapter1, view, position) -> {
             if (view.getId() == R.id.tvDel) {
-                mLiveHistory.remove(position);
-                adapter1.notifyDataSetChanged();
-                LiveConfig.setLiveHistory(mLiveHistory);
+                String url = mLiveHistory.get(position);
+                ConfirmDialog.showDanger(getContext(), "删除直播源", "确定从历史直播源中删除这条地址吗？", "删除", () -> {
+                    if (mLiveHistory.remove(url)) {
+                        adapter1.notifyDataSetChanged();
+                        LiveConfig.setLiveHistory(mLiveHistory);
+                    }
+                });
             }else {
                 mOnInputConfirmListener.onConfirm(mLiveHistory.get(position));
                 dismiss();

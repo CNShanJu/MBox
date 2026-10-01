@@ -61,10 +61,10 @@ public class JsonImportDialog extends AppCenterPopupView {
                 AppBubble.toast("JSON 格式不正确,请检查内容");
                 return; // 不关闭弹窗,保留内容供修改
             }
-            if (listener != null) {
-                listener.onConfirm(json);
-            }
-            dismiss();
+            // 先关输入弹窗再开始读取地址/显示加载框，与本地文件选择入口一致。
+            dismissWith(() -> {
+                if (listener != null) listener.onConfirm(json);
+            });
         });
     }
 

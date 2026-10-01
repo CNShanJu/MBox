@@ -6,6 +6,9 @@ import android.os.SystemClock;
 
 import com.github.tvbox.osc.spiderapi.CmsApiRules;
 import com.github.tvbox.osc.spiderapi.HtmlSiteRules;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -14,7 +17,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 
@@ -56,6 +58,8 @@ public final class HtmlSiteImporter {
 
     /** 分类页最多试几个分类(有的分类是空的) */
     private static final int MAX_CLASS_TRY = 3;
+    private static final int MAX_DECLARED_CLASSES = 30;
+    private static final int MAX_HINT_PROBES = 8;
 
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
 
@@ -68,7 +72,8 @@ public final class HtmlSiteImporter {
      * 实探站点并生成抓取源配置。
      *
      * @param inputUrl  用户填入/书源里写的站点地址(可带二级路径)
-     * @param knownText 已知内容(书源 JSON 文本或已抓到的页面):用于推断站点子目录(如 /jiejie),可为 null
+     * @param knownText 已知内容(书源 JSON 文本或已抓到的页面):推断子目录;
+     *                  书源 sortUrl 还提供分类与搜索地址,可为 null
      * @param outDir    生成的配置落盘目录(应用专属外部存储:clan 本地服务器可读,无需存储权限)
      * @param progress  可为 null;已在主线程回调
      */
@@ -105,31 +110,48 @@ public final class HtmlSiteImporter {
         String host = hostOf(inputUrl);
         if (host == null) return null;
 
-        // 站点可能挂在子目录下(用户/书源常只写到域名),根目录还可能是无关落地页:
-        // 先抓根目录,再从书源文本、输入地址、根页面链接里收集子目录候选
-        String rootHtml = fetch(HtmlSiteRules.homeUrl(host, ""));
-        LinkedHashSet<String> prefixes = new LinkedHashSet<>();
-        addPrefix(prefixes, HtmlSiteRules.subdirHint(knownText == null ? "" : knownText));
-        addPrefix(prefixes, HtmlSiteRules.subdirHint(inputUrl));
-        addPrefix(prefixes, HtmlSiteRules.subdirHint(rootHtml));
-        addPrefix(prefixes, "");    // 根目录兜底
+        BookSource bookSource = bookSource(knownText, host);
+        // 书源已明确列出分类路径时，先走这些地址；无需等可能无关或不可达的站点根首页。
+        String rootHtml = bookSource != null && !bookSource.sortUrl.isEmpty()
+                ? "" : fetch(HtmlSiteRules.homeUrl(host, ""));
+        List<String> prefixes = HtmlSiteRules.prefixCandidates(inputUrl, knownText, rootHtml,
+                MAX_PREFIX_CANDIDATES);
+        boolean readHome = rootHtml != null && !rootHtml.isEmpty();
+        boolean foundClasses = false;
+        boolean foundDetail = false;
+        boolean foundPlayPage = false;
 
         int tried = 0;
         for (String prefix : prefixes) {
             if (tried++ >= MAX_PREFIX_CANDIDATES || expired(deadline)) break;
             reportProgress(progress, "正在识别站点结构 " + host + prefix);
-            String home = prefix.isEmpty() ? rootHtml : fetch(HtmlSiteRules.homeUrl(host, prefix));
-            if (home == null || home.isEmpty()) continue;
-            LinkedHashMap<String, String> classes = HtmlSiteRules.classes(home);
+            HtmlSiteRules.SortUrlHints hints = HtmlSiteRules.sortUrlHints(
+                    bookSource == null ? null : bookSource.sortUrl, host, prefix, MAX_DECLARED_CLASSES);
+            String home = hints.classes.isEmpty()
+                    ? (prefix.isEmpty() ? rootHtml : fetch(HtmlSiteRules.homeUrl(host, prefix))) : "";
+            if (home != null && !home.isEmpty()) readHome = true;
+            LinkedHashMap<String, String> classes = new LinkedHashMap<>(hints.classes);
+            for (Map.Entry<String, String> entry : HtmlSiteRules.classes(home).entrySet()) {
+                if (!classes.containsKey(entry.getKey())) classes.put(entry.getKey(), entry.getValue());
+            }
             if (classes.isEmpty()) continue;
+            foundClasses = true;
 
             // 分类页 → 详情页 → 播放页 整条链路都要探通,才算"能抓";
             // 列表路由按候选逐个试(v10 默认 / show 写法 / 伪静态),探通哪个就把哪个模板写进配置
             String categoryUrl = null;
             HtmlSiteRules.Route listRoute = null;
             String detailUrl = null;
-            List<HtmlSiteRules.Probe> plan = HtmlSiteRules.listProbePlan(prefix, new ArrayList<>(classes.keySet()),
-                    MAX_CLASS_TRY);
+            List<HtmlSiteRules.Probe> plan = new ArrayList<>(hints.classProbes.subList(0,
+                    Math.min(hints.classProbes.size(), MAX_HINT_PROBES)));
+            for (HtmlSiteRules.Probe probe : HtmlSiteRules.listProbePlan(prefix,
+                    new ArrayList<>(classes.keySet()), MAX_CLASS_TRY)) {
+                boolean duplicate = false;
+                for (HtmlSiteRules.Probe existing : plan) {
+                    if (existing.url.equals(probe.url)) { duplicate = true; break; }
+                }
+                if (!duplicate) plan.add(probe);
+            }
             for (HtmlSiteRules.Probe probe : plan) {
                 if (expired(deadline)) break;
                 String url = HtmlSiteRules.siteUrl(host, prefix, probe.url);
@@ -142,12 +164,14 @@ public final class HtmlSiteImporter {
                 break;
             }
             if (detailUrl == null || listRoute == null) continue;
+            foundDetail = true;
 
             reportProgress(progress, "正在读取详情页 " + CmsApiRules.displayHost(detailUrl));
             String detailHtml = fetch(detailUrl);
             String vodId = HtmlSiteRules.vodIdOfDetailUrl(detailUrl);
             List<String> plays = HtmlSiteRules.playHrefs(detailHtml, vodId);
             if (plays.isEmpty()) continue;
+            foundPlayPage = true;
             String playPageUrl = absolute(host, prefix, plays.get(0));
 
             reportProgress(progress, "正在读取播放页 " + CmsApiRules.displayHost(playPageUrl));
@@ -155,10 +179,18 @@ public final class HtmlSiteImporter {
             if (media == null || media.isEmpty()) continue;
 
             // 搜索:站点名/分类名前两个字当关键词实搜一次,搜得出来才把搜索地址与模板写进配置
-            String keyword = searchKeyword(HtmlSiteRules.siteName(home, host), classes);
+            String siteName = bookSource != null && !bookSource.name.isEmpty()
+                    ? bookSource.name : HtmlSiteRules.siteName(home, host);
+            String keyword = searchKeyword(HtmlSiteRules.siteName(detailHtml, host), classes);
             HtmlSiteRules.Route searchRoute = null;
             reportProgress(progress, "正在验证站点搜索");
+            if (hints.searchRoute != null && !expired(deadline)) {
+                String url = HtmlSiteRules.siteUrl(host, prefix,
+                        HtmlSiteRules.fill(hints.searchRoute.listUrl, "{key}", encode(keyword)));
+                if (!HtmlSiteRules.detailHrefs(fetch(url), 1).isEmpty()) searchRoute = hints.searchRoute;
+            }
             for (HtmlSiteRules.Probe probe : HtmlSiteRules.searchProbePlan(prefix, encode(keyword))) {
+                if (searchRoute != null) break;
                 if (expired(deadline)) break;
                 String url = HtmlSiteRules.siteUrl(host, prefix, probe.url);
                 if (HtmlSiteRules.detailHrefs(fetch(url), 1).isEmpty()) continue;
@@ -166,12 +198,11 @@ public final class HtmlSiteImporter {
                 break;
             }
 
-            String siteName = HtmlSiteRules.siteName(home, host);
             String key = "maccms_" + CmsApiRules.siteKey(host);
             String extJson = HtmlSiteRules.buildExtJson(siteName, host, prefix, limit(classes, 30),
                     listRoute.listUrl, listRoute.listPageUrl,
                     searchRoute == null ? null : searchRoute.listUrl,
-                    searchRoute == null ? null : searchRoute.listPageUrl);
+                    searchRoute == null ? null : searchRoute.listPageUrl, hints.classRoutes);
             String json = CmsApiRules.buildSubscriptionJson(key, siteName, 3, RUNTIME_API, extJson,
                     searchRoute != null ? 1 : 0, 1, 0);
             File dest = write(outDir, key, json);
@@ -183,7 +214,47 @@ public final class HtmlSiteImporter {
                     + " -> " + dest.getAbsolutePath());
             return new Result(siteName, dest, playPageUrl);
         }
+        String stage = !foundClasses ? (readHome ? "首页未识别到分类" : "首页均未读到内容")
+                : !foundDetail ? "分类页未识别到详情"
+                : !foundPlayPage ? "详情页未识别到播放链接"
+                : "播放页未取得媒体地址";
+        com.github.tvbox.osc.log.LogStore.fail(com.github.tvbox.osc.log.Category.SUBSCRIPTION,
+                "订阅导入: 抓页面未探通 " + host + " 阶段=" + stage + " 候选目录=" + prefixes);
         return null;
+    }
+
+    private static BookSource bookSource(String text, String host) {
+        if (text == null || !CmsApiRules.looksLikeBookSource(text)) return null;
+        try {
+            JsonElement root = JsonParser.parseString(text);
+            JsonObject obj = root.isJsonObject() ? root.getAsJsonObject()
+                    : root.isJsonArray() && root.getAsJsonArray().size() > 0
+                    && root.getAsJsonArray().get(0).isJsonObject()
+                    ? root.getAsJsonArray().get(0).getAsJsonObject() : null;
+            if (obj == null) return null;
+            String sourceUrl = stringField(obj, "sourceUrl");
+            if (sourceUrl.isEmpty()) sourceUrl = stringField(obj, "bookSourceUrl");
+            if (!host.equalsIgnoreCase(hostOf(sourceUrl))) return null;
+            return new BookSource(stringField(obj, "sourceName"), stringField(obj, "sortUrl"));
+        } catch (RuntimeException ignored) {
+            return null;
+        }
+    }
+
+    private static String stringField(JsonObject obj, String key) {
+        JsonElement field = obj.get(key);
+        return field != null && field.isJsonPrimitive() && field.getAsJsonPrimitive().isString()
+                ? field.getAsString().trim() : "";
+    }
+
+    private static final class BookSource {
+        final String name;
+        final String sortUrl;
+
+        BookSource(String name, String sortUrl) {
+            this.name = name;
+            this.sortUrl = sortUrl;
+        }
     }
 
     /** 生成的配置落盘(UTF-8) */
@@ -242,17 +313,6 @@ public final class HtmlSiteImporter {
             out.put(e.getKey(), e.getValue());
         }
         return out;
-    }
-
-    private static void addPrefix(LinkedHashSet<String> prefixes, String prefix) {
-        if (prefix == null) return;
-        String v = prefix.trim();
-        if (v.endsWith("/")) v = v.substring(0, v.length() - 1);
-        if (v.isEmpty() || "/".equals(v)) {
-            prefixes.add("");
-            return;
-        }
-        prefixes.add(v);
     }
 
     private static String encode(String keyword) {

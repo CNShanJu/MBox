@@ -28,8 +28,6 @@ import com.github.tvbox.osc.config.HawkConfig;
 import com.github.tvbox.osc.util.MD5;
 import com.github.tvbox.osc.config.SystemConfig;
 import com.github.tvbox.osc.config.PrefsDataStore;
-import com.google.gson.reflect.TypeToken;
-import java.lang.reflect.Type;
 import com.github.tvbox.osc.spiderapi.CmsApiRules;
 import com.github.tvbox.osc.spiderapi.JarCachePolicy;
 import com.github.tvbox.osc.util.VideoParseRuler;
@@ -105,6 +103,13 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
     private List<LiveChannelGroup> liveChannelGroupList;
     /** 订阅源自带的直播(主直播源 = 设置里配置的直播源不可用时的兜底;没有则为空) */
     private List<LiveChannelGroup> subscribeLiveGroupList;
+    /**
+     * 订阅源自带的<b>直播源清单</b>(名字+地址):随配置加载刷新,与"用户是否配了直播源"无关
+     * (不像 {@link #subscribeLiveGroupList} 会在用订阅直播当主列表时被清空)。
+     * 供订阅管理页的「直播源」标签列出"跟着订阅走、不可删除"的条目(标注「来自:订阅名」)。
+     */
+    private final List<com.github.tvbox.osc.spiderapi.LiveChannelConfigApi.SubscribeLiveSource> subscribeLiveSources = new ArrayList<>();
+    private volatile String loadedSubscriptionUrl = "";
     private List<ParseBean> parseBeanList;
     private List<String> vipParseFlags;
     private List<IJKCode> ijkCodes;
@@ -198,6 +203,23 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
 
     public void loadConfig(boolean useCache, LoadConfigCallback callback, Activity activity) {
         String apiUrl = PrefsDataStore.getString(HawkConfig.API_URL, "");
+        if (!apiUrl.equals(loadedSubscriptionUrl)) {
+            // 切换或删光订阅时，旧主页源和直播源都不再属于当前订阅。
+            sourceBeanList.clear();
+            mHomeSource = null;
+            spider = "";
+            subscribeLiveSources.clear();
+            subscribeLiveGroupList.clear();
+            liveChannelGroupList.clear();
+            String userLiveUrl = SystemConfig.getLiveUrl();
+            if (!StringUtils.isBlank(userLiveUrl)) {
+                LiveChannelGroup userLiveGroup = proxyLiveGroup(userLiveUrl);
+                if (userLiveGroup != null) liveChannelGroupList.add(userLiveGroup);
+            }
+            LogStore.log(Category.SUBSCRIPTION,
+                    "订阅: 切换配置时清理旧订阅直播源 " + loadedSubscriptionUrl + " -> " + apiUrl);
+            loadedSubscriptionUrl = "";
+        }
         if (apiUrl.isEmpty()) {
             callback.error("-1");
             return;
@@ -535,6 +557,7 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
         SourceBean firstSite = null;
         if (sourceBeanList!= null)
             sourceBeanList.clear();
+        mHomeSource = null;
         // 远端站点源:缺 sites 说明这份内容不是订阅配置(如误把单站点条目/采集数据当订阅存了),
         // 给出可读原因,交由 loadConfig 的 onError/缓存兜底处理;不再直接抛 NPE
         JsonElement sitesEl = infoJson == null ? null : infoJson.get("sites");
@@ -609,6 +632,7 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
         // 两个都没有 → 主列表为空(主页不显示直播入口,直播页提示"频道列表为空")。
         liveChannelGroupList.clear();           //修复从后台切换重复加载频道列表
         subscribeLiveGroupList.clear();
+        subscribeLiveSources.clear();
         String liveURL = SystemConfig.getLiveUrl();
         String subscribeLiveUrl = null;
         try {
@@ -635,9 +659,11 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
                         }
 
                         System.out.println("Live URL :" + extUrlFix);
-                        putLiveHistory(extUrlFix);
                         // 订阅源的直播地址:留着当兜底(用户直播源为空/失败时才用)
                         subscribeLiveUrl = extUrlFix;
+                        // 订阅管理「直播源」页的条目(订阅没给名字,name 留空 → 页面按地址推导展示名)。
+                        // 不再往"用户直播源历史"里塞订阅地址:那一份是用户自建的清单,订阅来的要单独标「来自:订阅名」。
+                        addSubscribeLiveSource("", extUrlFix);
                     }
 
                     // takagen99 : Getting EPG URL from File Config & put into Settings
@@ -653,25 +679,20 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
                     if (!lives.contains("type")) {
                         // 订阅源内嵌频道列表:只作兜底,不直接当主列表(否则会顶掉用户配的直播源)
                         loadLivesInto(infoJson.get("lives").getAsJsonArray(), subscribeLiveGroupList);
+                        // 同一份解析结果再折算成"直播源清单"给订阅管理页(单频道分组 = 一个直播源地址)
+                        collectSubscribeLiveSources(subscribeLiveGroupList);
                     } else {
-                        JsonObject fengMiLives = infoJson.get("lives").getAsJsonArray().get(0).getAsJsonObject();
-                        String type = fengMiLives.get("type").getAsString();
-                        if (type.equals("0")) {
-                            String url = fengMiLives.get("url").getAsString();
-
-                            // takagen99 : Getting EPG URL from File Config & put into Settings
-                            if (fengMiLives.has("epg")) {
-                                String epg = fengMiLives.get("epg").getAsString();
-                                System.out.println("EPG URL :" + epg);
-                                PrefsDataStore.put(HawkConfig.EPG_URL, epg);
-                            }
-
-                            if (url.startsWith("http")) {
-                                System.out.println("Live URL :" + url);
-                                putLiveHistory(url);
-                                // 订阅源的直播地址:留着当兜底(用户直播源为空/失败时才用)
-                                subscribeLiveUrl = url;
-                            }
+                        // type=0 可以出现多次:每条都是独立直播源。首条仍作为未指定用户直播源时的默认兜底。
+                        for (com.github.tvbox.osc.spiderapi.LiveChannelConfigApi.SubscribeLiveSource source
+                                : SubscriptionLiveSourceParser.parseTypedSources(infoJson.get("lives").getAsJsonArray())) {
+                            addSubscribeLiveSource(source.name, source.url);
+                            if (subscribeLiveUrl == null && source.hasUrl()) subscribeLiveUrl = source.url;
+                        }
+                        if (livesOBJ.has("type") && !livesOBJ.get("type").isJsonNull()
+                                && "0".equals(livesOBJ.get("type").getAsString()) && livesOBJ.has("epg")) {
+                            String epg = livesOBJ.get("epg").getAsString();
+                            System.out.println("EPG URL :" + epg);
+                            PrefsDataStore.put(HawkConfig.EPG_URL, epg);
                         }
                     }
                 }
@@ -795,20 +816,33 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
                 ijkCodes.get(0).selected(true);
             }
         }
+        loadedSubscriptionUrl = apiUrl;
     }
 
-    /** 直播源历史列表 gson 类型(LiveConfig 同格式,DataStore json 共享) */
-    private static final Type LIVE_HISTORY_TYPE = new TypeToken<ArrayList<String>>() {
-    }.getType();
+    /** 记一条"订阅源自带的直播源"(订阅管理页「直播源」标签用;跟着订阅走,页面不允许删除) */
+    private void addSubscribeLiveSource(String name, String url) {
+        subscribeLiveSources.add(
+                new com.github.tvbox.osc.spiderapi.LiveChannelConfigApi.SubscribeLiveSource(name, url));
+    }
 
-    private void putLiveHistory(String url) {
-        if (!url.isEmpty()) {
-            ArrayList<String> liveHistory = PrefsDataStore.getJson(HawkConfig.LIVE_HISTORY, LIVE_HISTORY_TYPE, new ArrayList<String>());
-            if (!liveHistory.contains(url))
-                liveHistory.add(0, url);
-            if (liveHistory.size() > 20)
-                liveHistory.remove(20);
-            PrefsDataStore.putJson(HawkConfig.LIVE_HISTORY, liveHistory);
+    /**
+     * 把订阅里 lives 解析出的分组折算成"直播源清单":
+     * <b>单频道分组</b> = 一个直播源地址(源里常见写法:每个分组一个频道,频道地址就是直播源地址);
+     * <b>多频道分组 / 取不到地址</b> = 内嵌频道分组(url 留空,页面上不能单独指定为直播源)。
+     */
+    private void collectSubscribeLiveSources(List<LiveChannelGroup> groups) {
+        if (groups == null) return;
+        for (LiveChannelGroup group : groups) {
+            if (group == null) continue;
+            String name = group.getGroupName() == null ? "" : group.getGroupName();
+            String url = "";
+            ArrayList<LiveChannelItem> channels = group.getLiveChannels();
+            if (channels != null && channels.size() == 1) {
+                LiveChannelItem only = channels.get(0);
+                ArrayList<String> urls = only == null ? null : only.getChannelUrls();
+                if (urls != null && !urls.isEmpty() && urls.get(0) != null) url = urls.get(0).trim();
+            }
+            addSubscribeLiveSource(name, url);
         }
     }
 
@@ -1021,6 +1055,18 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
      */
     public List<LiveChannelGroup> getFallbackChannelGroupList() {
         return subscribeLiveGroupList;
+    }
+
+    /**
+     * 订阅源自带的直播源清单(名字+地址):订阅管理页「直播源」标签据此列出「来自:&lt;订阅名&gt;」的条目。
+     * 与用户自建的直播源不同,这些条目跟着订阅走(页面不允许删除),每次加载配置时重新解析。
+     */
+    public List<com.github.tvbox.osc.spiderapi.LiveChannelConfigApi.SubscribeLiveSource> getSubscribeLiveSources() {
+        return subscribeLiveSources;
+    }
+
+    public String getLoadedSubscriptionUrl() {
+        return loadedSubscriptionUrl;
     }
 
     /**

@@ -23,6 +23,16 @@ public final class LiveChannelConfigProviders {
         }
 
         @Override
+        public List<LiveChannelConfigApi.SubscribeLiveSource> getSubscribeLiveSources() {
+            return Collections.emptyList();
+        }
+
+        @Override
+        public String getLoadedSubscriptionUrl() {
+            return "";
+        }
+
+        @Override
         public void loadLives(JsonArray livesArray) {
         }
     };

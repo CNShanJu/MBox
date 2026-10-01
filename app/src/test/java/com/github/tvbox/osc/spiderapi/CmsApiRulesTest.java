@@ -443,6 +443,68 @@ public class CmsApiRulesTest {
                 CmsApiRules.subscriptionShape("2423abcdefghijklmnop"));
     }
 
+    // ------------------------------------------------------------------
+    // 「图片裹配置」解包(订阅地址导入:响应是二进制,不能当成资源站去嗅探接口)
+    // ------------------------------------------------------------------
+
+    /** 真实形态:饭太硬 http://www.饭太硬.net/tv = 一张图的二进制 + 8 位标记 + ** + base64(整份配置) */
+    private static final String PACKED_CONFIG_TAIL =
+            "eyJzcGlkZXIiOiJodHRwczovL2EuY29tL3guanBnO21kNTthYmMiLCJzaXRlcyI6W3sia2V5IjoiYSIsIm5hbWUiOiJqaWEiLCJ0eXBlIjozLCJhcGkiOiJjc3BfQSJ9XX0=";
+
+    @Test
+    public void unwrapPackedConfig_decodesConfigBehindImageBytes() {
+        // 图片字节按 UTF-8 解出来是乱码(\ufffd 即 OkHttp 对非法字节的替换符),标记与 base64 正文原样保留
+        String packed = "\ufffd\ufffd\u0010JFIF\ufffd\ufffd\ufffd\ufffdzfBUZLYa**" + PACKED_CONFIG_TAIL;
+        String decoded = CmsApiRules.unwrapPackedConfig(packed);
+        assertNotNull(decoded);
+        assertTrue(decoded.contains("\"sites\""));
+        assertTrue(decoded.contains("csp_A"));
+        assertEquals(CmsApiRules.SHAPE_CONFIG, CmsApiRules.subscriptionShape(decoded));
+    }
+
+    /** 多仓/多线路清单被裹进图片时也要解出来(调用方按清单展开成各自的地址) */
+    @Test
+    public void unwrapPackedConfig_keepsListJson() {
+        String urls = CmsApiRules.unwrapPackedConfig("iVBORw0K**"
+                + "eyJ1cmxzIjpbeyJuYW1lIjoiamlhIiwidXJsIjoiaHR0cHM6Ly9hLmNvbS9ib3guanNvbiJ9XX0=");
+        assertNotNull(urls);
+        assertTrue(CmsApiRules.looksLikeListJson(urls));
+        // 自包含 AES 包头(2423…):只能确认套路,交加载阶段解
+        String aes = CmsApiRules.unwrapPackedConfig("iVBORw0K**MjQyM2FiY2RlZmdoaWprbG1ub3A=");
+        assertNotNull(aes);
+        assertTrue(aes.startsWith("2423"));
+    }
+
+    /**
+     * 不能"看着像"就收下:网页正文里偶然出现的 8 位 + ** 很常见(帮助页里的示例文本),
+     * 一旦当成加密配置存成订阅,加载阶段必然"解析配置失败"并把当前可用订阅挤掉。
+     */
+    @Test
+    public void unwrapPackedConfig_rejectsWhatIsNotConfig() {
+        assertNull(CmsApiRules.unwrapPackedConfig(null));
+        assertNull(CmsApiRules.unwrapPackedConfig(""));
+        assertNull(CmsApiRules.unwrapPackedConfig(HOME_HTML));
+        // 标记后面不是 base64
+        assertNull(CmsApiRules.unwrapPackedConfig("iVBORw0K**这不是 base64"));
+        // 解出来是网页
+        assertNull(CmsApiRules.unwrapPackedConfig("iVBORw0K**"
+                + "PGh0bWw+PGJvZHk+YmFuZ3podSB6aG9uZ3hpbjwvYm9keT48L2h0bWw+"));
+        // 解出来只有直播源(不是订阅配置,直播源另有填写入口)
+        assertNull(CmsApiRules.unwrapPackedConfig("iVBORw0K**eyJsaXZlcyI6W3sibmFtZSI6ImEifV19"));
+        // 正文被截断(base64 半截 / JSON 没闭合)同样不收
+        assertNull(CmsApiRules.unwrapPackedConfig("iVBORw0K**" + PACKED_CONFIG_TAIL.substring(0, 40)));
+    }
+
+    /** 多线路/多仓清单判定:顶层有 urls/storeHouse 才算,普通配置与网页都不算 */
+    @Test
+    public void looksLikeListJson_onlyListShapes() {
+        assertTrue(CmsApiRules.looksLikeListJson("{\"urls\":[{\"name\":\"甲\",\"url\":\"https://a\"}]}"));
+        assertTrue(CmsApiRules.looksLikeListJson("{\"storeHouse\":[{\"sourceName\":\"甲\",\"sourceUrl\":\"https://a\"}]}"));
+        assertFalse(CmsApiRules.looksLikeListJson("{\"sites\":[{\"key\":\"a\",\"type\":3,\"api\":\"csp_A\"}]}"));
+        assertFalse(CmsApiRules.looksLikeListJson(HOME_HTML));
+        assertFalse(CmsApiRules.looksLikeListJson(null));
+    }
+
     private static int countOccurrences(String haystack, String needle) {
         int n = 0;
         for (int i = haystack.indexOf(needle); i >= 0; i = haystack.indexOf(needle, i + needle.length())) n++;

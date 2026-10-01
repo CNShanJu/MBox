@@ -42,8 +42,11 @@ public class LiveSettingGroupAdapter extends BaseQuickAdapter<LiveSettingGroup, 
         TextView tvGroupName = holder.getView(R.id.tvSettingGroupName);
         tvGroupName.setText(group.getGroupName());
         boolean selected = group.getGroupIndex() == selectedGroupIndex && selectedGroupIndex != -1;
+        // 与右侧条目列、选集 chip(RoundChip.updateColor)同一口径:
+        // 选中 = 文字主色 text_foreground + 加粗 + 大一号;未选中 = text_sub_foreground 常规。
+        // (原来用 colorPrimary = text_accent:自定义主题下"别的都跟主题、只有这两个选中项不跟")
         tvGroupName.setTextColor(ContextCompat.getColor(mContext,
-                selected ? R.color.colorPrimary : R.color.text_sub_foreground));
+                selected ? R.color.text_foreground : R.color.text_sub_foreground));
         tvGroupName.setTypeface(null, selected ? Typeface.BOLD : Typeface.NORMAL);
         tvGroupName.setTextSize(TypedValue.COMPLEX_UNIT_SP, selected ? SIZE_SP_SELECTED : SIZE_SP);
     }

@@ -504,6 +504,14 @@ public class LiveActivity extends BaseActivity implements LiveLineSelectHost, Li
                         mHandler.removeCallbacks(mConnectTimeoutChangeSourceRun);
                         break;
                     case VideoView.STATE_ERROR:
+                        if (currentLiveChannelItem != null) {
+                            recordLivePlaybackError("直播播放错误: 频道=" + currentLiveChannelItem.getChannelName()
+                                    + "，线路=" + (currentLiveChannelItem.getSourceIndex() + 1)
+                                    + "/" + currentLiveChannelItem.getSourceNum() + "，准备切换线路");
+                        }
+                        mHandler.removeCallbacks(mConnectTimeoutChangeSourceRun);
+                        mHandler.postDelayed(mConnectTimeoutChangeSourceRun, 2000);
+                        break;
                     case VideoView.STATE_PLAYBACK_COMPLETED:
                         mHandler.removeCallbacks(mConnectTimeoutChangeSourceRun);
                         mHandler.postDelayed(mConnectTimeoutChangeSourceRun, 2000);
@@ -537,6 +545,14 @@ public class LiveActivity extends BaseActivity implements LiveLineSelectHost, Li
     private Runnable mConnectTimeoutChangeSourceRun = new Runnable() {
         @Override
         public void run() {
+            if (mVideoView == null || currentLiveChannelItem == null || isFinishing() || isDestroyed()) return;
+            int state = mVideoView.getCurrentPlayState();
+            if (state == VideoView.STATE_PREPARING || state == VideoView.STATE_BUFFERING) {
+                recordLivePlaybackError("直播" + (state == VideoView.STATE_BUFFERING ? "缓冲" : "连接")
+                        + "超时: 频道=" + currentLiveChannelItem.getChannelName() + "，线路="
+                        + (currentLiveChannelItem.getSourceIndex() + 1) + "/"
+                        + currentLiveChannelItem.getSourceNum());
+            }
             currentLiveChangeSourceTimes++;
             if (currentLiveChannelItem.getSourceNum() == currentLiveChangeSourceTimes) {
                 // 当前频道所有线路都失败:停止播放,不自动切下一个频道
@@ -545,12 +561,17 @@ public class LiveActivity extends BaseActivity implements LiveLineSelectHost, Li
                     mVideoView.release();
                 } catch (Throwable ignored) {
                 }
-                AppBubble.toastLong("当前频道无可用线路,请手动切换频道");
+                AppBubble.toast("无可用线路，请切换频道");
             } else {
                 playNextSource();
             }
         }
     };
+
+    private static void recordLivePlaybackError(String detail) {
+        com.github.tvbox.osc.log.LogStore.fail(com.github.tvbox.osc.log.Category.PLAYER, detail);
+        android.util.Log.e("MBoxPlayer", detail);
+    }
 
     private void initChannelGroupView() {
         mChannelGroupView.setHasFixedSize(true);

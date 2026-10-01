@@ -1,7 +1,6 @@
 package com.github.tvbox.osc.ui.dialog;
 
 import android.content.Context;
-import android.view.View;
 
 import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.LinearLayoutManager;
@@ -11,11 +10,8 @@ import com.chad.library.adapter.base.BaseQuickAdapter;
 import com.github.tvbox.osc.R;
 import com.github.tvbox.osc.bean.Source;
 import com.github.tvbox.osc.ui.adapter.SourceAdapter;
-import com.lxj.xpopup.core.BottomPopupView;
-import com.lxj.xpopup.core.CenterPopupView;
 import com.lxj.xpopup.interfaces.OnSelectListener;
 
-import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -27,11 +23,19 @@ import java.util.List;
 public class ChooseSourceDialog extends AppBottomPopupView {
     List<Source> mSources;
     private final OnSelectListener mListener;
+    private final Runnable onDismissWithoutSelection;
+    private boolean selectionRequested;
 
     public ChooseSourceDialog(@NonNull Context context, List<Source> sources, OnSelectListener listener) {
+        this(context, sources, listener, null);
+    }
+
+    public ChooseSourceDialog(@NonNull Context context, List<Source> sources, OnSelectListener listener,
+                              Runnable onDismissWithoutSelection) {
         super(context);
         mSources = sources;
         mListener = listener;
+        this.onDismissWithoutSelection = onDismissWithoutSelection;
     }
 
     @Override
@@ -49,11 +53,18 @@ public class ChooseSourceDialog extends AppBottomPopupView {
         sourceAdapter.setNewData(mSources);
 
         sourceAdapter.setOnItemClickListener((adapter, view, position) -> {
+            selectionRequested = true;
             dismissWith(() -> {
                 if (mListener!=null){
                     mListener.onSelect(position, mSources.get(position).getSourceUrl());
                 }
             });
         });
+    }
+
+    @Override
+    protected void onDismiss() {
+        super.onDismiss();
+        if (!selectionRequested && onDismissWithoutSelection != null) onDismissWithoutSelection.run();
     }
 }

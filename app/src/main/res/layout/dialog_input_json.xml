@@ -64,7 +64,9 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="10dp"
         style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.Dense"
-        app:boxStrokeColor="@color/colorPrimary"
+        app:boxStrokeColor="@color/text_main_half"
+        app:placeholderTextColor="@color/text_main_half"
+        app:hintTextColor="@color/text_main_half"
         app:hintEnabled="false">
 
         <EditText
@@ -76,6 +78,7 @@
             android:fontFamily="monospace"
             android:gravity="top|start"
             android:hint="在此粘贴或输入 JSON"
+            android:textColorHint="@color/text_main_half"
             android:importantForAutofill="no"
             android:inputType="textMultiLine|textNoSuggestions"
             android:paddingStart="12dp"
@@ -84,7 +87,6 @@
             android:paddingBottom="12dp"
             android:scrollbars="vertical"
             android:textColor="@color/text_foreground"
-            android:textColorHint="@color/text_sub_foreground"
             android:textSize="12sp"/>
 
     </com.google.android.material.textfield.TextInputLayout>

@@ -106,6 +106,73 @@ public class HtmlSiteRulesTest {
     }
 
     @Test
+    public void prefixCandidates_findsGenericSameOriginEntryWithoutVodLinks() {
+        String home = "<a href='https://outside.example/bad/'>外站</a>"
+                + "<a href='/jiejie/'>进入影视站</a>"
+                + "<a href='/static/'>资源</a>";
+        assertEquals(java.util.Arrays.asList("", "/films"),
+                HtmlSiteRules.prefixCandidates("https://video.example", null,
+                        home.replace("/jiejie/", "/films/"), 4));
+    }
+
+    @Test
+    public void prefixCandidates_usesExplicitPathAndVodHintBeforeLandingLinks() {
+        String home = "<a href='/wrong/'>入口</a>";
+        assertEquals(java.util.Arrays.asList("/films", "", "/wrong"),
+                HtmlSiteRules.prefixCandidates("https://video.example/films/", null, home, 4));
+        assertEquals(java.util.Arrays.asList("/films", "", "/wrong"),
+                HtmlSiteRules.prefixCandidates("https://video.example",
+                        "{\"list\":\"/films/index.php/vod/type/id/1.html\"}", home, 4));
+    }
+
+    @Test
+    public void prefixCandidates_readsSimpleLandingRedirect() {
+        assertEquals(java.util.Arrays.asList("", "/films"),
+                HtmlSiteRules.prefixCandidates("https://video.example", null,
+                        "<script>location.replace('/films/')</script>", 4));
+    }
+
+    @Test
+    public void sortUrlHints_usesDeclaredCmsCategoriesAndSearch() {
+        String sort = "搜索::/catalog/index.php/vod/search.html?wd={{source.getVariable()}}\n"
+                + "电影::/catalog/index.php/vod/type/id/87.html\n"
+                + "剧集::/catalog/index.php/vod/show/id/251.html\n"
+                + "外站::https://other.example/catalog/index.php/vod/type/id/9.html\n"
+                + "动态::/catalog/index.php/vod/type/id/{{id}}.html";
+        HtmlSiteRules.SortUrlHints hints = HtmlSiteRules.sortUrlHints(
+                sort, "https://video.example", "/catalog", 8);
+        assertEquals(2, hints.classes.size());
+        assertEquals("电影", hints.classes.get("87"));
+        assertEquals("剧集", hints.classes.get("251"));
+        assertEquals("/catalog/index.php/vod/type/id/87.html", hints.classProbes.get(0).url);
+        assertEquals("/catalog/index.php/vod/type/id/{id}.html", hints.classProbes.get(0).route.listUrl);
+        assertEquals("/catalog/index.php/vod/show/id/{id}.html", hints.classProbes.get(1).route.listUrl);
+        assertEquals("/catalog/index.php/vod/search.html?wd={key}", hints.searchRoute.listUrl);
+        String ext = HtmlSiteRules.buildExtJson("影视站", "https://video.example", "/catalog",
+                hints.classes, hints.classProbes.get(0).route.listUrl,
+                hints.classProbes.get(0).route.listPageUrl,
+                hints.searchRoute.listUrl, hints.searchRoute.listPageUrl, hints.classRoutes);
+        JsonObject routes = JsonParser.parseString(ext).getAsJsonObject().getAsJsonObject("classRoutes");
+        assertEquals("/catalog/index.php/vod/type/id/{id}.html",
+                routes.getAsJsonObject("87").get("listUrl").getAsString());
+        assertEquals("/catalog/index.php/vod/show/id/{id}.html",
+                routes.getAsJsonObject("251").get("listUrl").getAsString());
+    }
+
+    @Test
+    public void sortUrlHints_keepsAllDeclaredClassesWithinConfigLimit() {
+        StringBuilder sort = new StringBuilder();
+        for (int id = 1; id <= 12; id++) {
+            sort.append("分类").append(id).append("::/catalog/index.php/vod/type/id/")
+                    .append(id).append(".html\n");
+        }
+        HtmlSiteRules.SortUrlHints hints = HtmlSiteRules.sortUrlHints(
+                sort.toString(), "https://video.example", "/catalog", 30);
+        assertEquals(12, hints.classes.size());
+        assertEquals("分类12", hints.classes.get("12"));
+    }
+
+    @Test
     public void classes_keepsOrderAndDedupes() {
         LinkedHashMap<String, String> classes = HtmlSiteRules.classes(HOME_HTML);
         assertEquals(3, classes.size());
