@@ -15,27 +15,29 @@
  */
 package xyz.doikki.videoplayer.exo;
 
-import static com.google.android.exoplayer2.upstream.HttpUtil.buildRangeRequestHeader;
-import static com.google.android.exoplayer2.util.Util.castNonNull;
+import static androidx.media3.datasource.HttpUtil.buildRangeRequestHeader;
+import static androidx.media3.common.util.Util.castNonNull;
 import static java.lang.Math.min;
 
 import android.net.Uri;
 
 import androidx.annotation.Nullable;
+import androidx.media3.common.util.UnstableApi;
 
-import com.google.android.exoplayer2.C;
-import com.google.android.exoplayer2.ExoPlayerLibraryInfo;
-import com.google.android.exoplayer2.PlaybackException;
-import com.google.android.exoplayer2.upstream.BaseDataSource;
-import com.google.android.exoplayer2.upstream.DataSource;
-import com.google.android.exoplayer2.upstream.DataSourceException;
-import com.google.android.exoplayer2.upstream.DataSpec;
-import com.google.android.exoplayer2.upstream.HttpDataSource;
-import com.google.android.exoplayer2.upstream.HttpUtil;
-import com.google.android.exoplayer2.upstream.TransferListener;
-import com.google.android.exoplayer2.util.Assertions;
-import com.google.android.exoplayer2.util.Util;
+import androidx.media3.common.C;
+import androidx.media3.common.MediaLibraryInfo;
+import androidx.media3.common.PlaybackException;
+import androidx.media3.datasource.BaseDataSource;
+import androidx.media3.datasource.DataSource;
+import androidx.media3.datasource.DataSourceException;
+import androidx.media3.datasource.DataSpec;
+import androidx.media3.datasource.HttpDataSource;
+import androidx.media3.datasource.HttpUtil;
+import androidx.media3.datasource.TransferListener;
+import androidx.media3.common.util.Assertions;
+import androidx.media3.common.util.Util;
 import com.google.common.base.Predicate;
+import com.google.common.io.ByteStreams;
 import com.google.common.net.HttpHeaders;
 
 import java.io.IOException;
@@ -63,10 +65,11 @@ import okhttp3.ResponseBody;
  * priority) the {@code dataSpec}, {@link #setRequestProperty} and the default parameters used to
  * construct the instance.
  */
+@UnstableApi
 public class OkHttpDataSource extends BaseDataSource implements HttpDataSource {
 
     static {
-        ExoPlayerLibraryInfo.registerModule("goog.exo.okhttp");
+        MediaLibraryInfo.registerModule("mbox.media3.datasource.okhttp");
     }
 
     /** {@link DataSource.Factory} for {@link OkHttpDataSource} instances. */
@@ -305,7 +308,7 @@ public class OkHttpDataSource extends BaseDataSource implements HttpDataSource {
 
             byte[] errorResponseBody;
             try {
-                errorResponseBody = Util.toByteArray(Assertions.checkNotNull(responseByteStream));
+                errorResponseBody = ByteStreams.toByteArray(Assertions.checkNotNull(responseByteStream));
             } catch (IOException e) {
                 errorResponseBody = Util.EMPTY_BYTE_ARRAY;
             }

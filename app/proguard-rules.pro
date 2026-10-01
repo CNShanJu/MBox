@@ -168,9 +168,8 @@
 -keep class tv.danmaku.ijk.** { *; }
 -dontwarn tv.danmaku.ijk.**
 
-# ExoPlayer
--keep class com.google.android.exoplayer2.** { *; }
--dontwarn com.google.android.exoplayer2.**
+# Media3 ExoPlayer（渲染器/协议扩展另带 consumer rules）
+-keep class androidx.media3.** { *; }
 
 # 实体类
 -keep class com.github.tvbox.osc.bean.** { *; }
@@ -198,4 +197,3 @@
   public static * inflate(android.view.LayoutInflater, android.view.ViewGroup, boolean);
   public static * bind(android.view.View);
 }
-

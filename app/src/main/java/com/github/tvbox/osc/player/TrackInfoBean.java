@@ -6,9 +6,9 @@ public class TrackInfoBean {
     public int trackId;
     public boolean selected;
 
-    //渲染器ID（exo）
+    // 旧 Exo 适配器的渲染器 ID；Media3 直接按 Tracks.Group 选择，不再使用。
     public int renderId;
-    //分组ID（exo）
+    // Media3 当前 Tracks 中的分组索引
     public int trackGroupId;
 
 }

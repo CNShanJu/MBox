@@ -323,14 +323,14 @@ public final class SubtitleCoordinator {
                         if (all) {
                             showSubtitleFileChooser();
                         } else {
-                            AppBubble.toastLong("部分权限未正常授予,请授权");
+                            AppBubble.toast("请授予所需权限");
                         }
                     }
 
                     @Override
                     public void onDenied(List<String> permissions, boolean never) {
                         if (never) {
-                            AppBubble.toastLong("存储访问权限被永久拒绝,请手动授权");
+                            AppBubble.toast("请在系统设置中授予存储权限");
                             XXPermissions.startPermissionActivity(mActivity, permissions);
                         } else {
                             AppBubble.toast("获取存储权限失败");

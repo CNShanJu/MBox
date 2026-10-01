@@ -317,6 +317,7 @@ public class VodController extends BaseController implements PlaybackSettingsCon
             @Override
             public void onStartTrackingTouch(SeekBar seekBar) {
                 mIsDragging = true;
+                beginSeeking();
                 mControlWrapper.stopProgress();
                 mControlWrapper.stopFadeOut();
             }
@@ -329,6 +330,7 @@ public class VodController extends BaseController implements PlaybackSettingsCon
                 long newPosition = (duration * seekBar.getProgress()) / seekBar.getMax();
                 mControlWrapper.seekTo((int) newPosition);
                 mIsDragging = false;
+                finishSeeking(true);
                 mControlWrapper.startProgress();
                 mControlWrapper.startFadeOut();
             }
@@ -791,6 +793,25 @@ public class VodController extends BaseController implements PlaybackSettingsCon
         }
     }
 
+    @Override
+    public int getRenderType() {
+        return mPlayerConfig == null ? PlayConfig.getRenderType()
+                : mPlayerConfig.optInt("pr", PlayConfig.getRenderType());
+    }
+
+    @Override
+    public void setRenderType(int renderType) {
+        if (renderType != 0 && renderType != 1) return;
+        try {
+            mPlayerConfig.put("pr", renderType);
+            listener.updatePlayerCfg();
+            listener.replay(false);
+            hideBottom();
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
+    }
+
     // ------------------------------------------------------------------
     // PlaybackSettingsController:设置抽屉(在线全屏与本地共用)取控制器按钮/状态
     // ------------------------------------------------------------------
@@ -979,6 +1000,7 @@ public class VodController extends BaseController implements PlaybackSettingsCon
         if (!simSlideStart)
             return;
         mControlWrapper.seekTo(simSeekPosition);
+        finishSeeking(true);
         if (!mControlWrapper.isPlaying())
             mControlWrapper.start();
         simSlideStart = false;
@@ -993,6 +1015,7 @@ public class VodController extends BaseController implements PlaybackSettingsCon
             return;
         if (!simSlideStart) {
             simSlideStart = true;
+            beginSeeking();
         }
         // 每次10秒
         simSlideOffset += (10000.0f * dir);

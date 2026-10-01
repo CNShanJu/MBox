@@ -1,9 +1,11 @@
 package com.github.tvbox.osc.ui.dialog;
 
 import android.content.Context;
+import android.view.View;
 
 import androidx.annotation.NonNull;
 
+import com.blankj.utilcode.util.ScreenUtils;
 import com.github.tvbox.osc.R;
 import com.github.tvbox.osc.databinding.DialogPlayingControlBinding;
 import com.github.tvbox.osc.player.MyVideoView;
@@ -34,6 +36,13 @@ public class PlayingControlDialog extends AppBottomPopupView {
     @Override
     protected void onCreate() {
         super.onCreate();
+        View root = getPopupImplView();
+        if (root != null) {
+            int minHeight = Math.round(ScreenUtils.getScreenHeight()
+                    * DialogHeightPolicy.SHEET_RATIO_COLLAPSED);
+            int maxHeight = getMaxHeight();
+            root.setMinimumHeight(maxHeight > 0 ? Math.min(minHeight, maxHeight) : minHeight);
+        }
         mPanel.init(DialogPlayingControlBinding.bind(getPopupImplView()));
     }
 }

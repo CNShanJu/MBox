@@ -88,6 +88,8 @@ public class VideoView<P extends AbstractPlayer> extends FrameLayout
     public static final int STATE_BUFFERED = 7;
     public static final int STATE_START_ABORT = 8;//开始播放中止
     protected int mCurrentPlayState = STATE_IDLE;//当前播放器的状态
+    /** 同步报错后不能再把错误态覆盖成“正在准备”。 */
+    private volatile int mErrorSerial;
 
     public static final int PLAYER_NORMAL = 10;        // 普通播放器
     public static final int PLAYER_FULL_SCREEN = 11;   // 全屏播放器
@@ -288,13 +290,38 @@ public class VideoView<P extends AbstractPlayer> extends FrameLayout
      * 开始准备播放（直接播放）
      */
     protected void startPrepare(boolean reset) {
+        String engine = mMediaPlayer == null ? "播放器" : mMediaPlayer.getClass().getSimpleName();
         if (reset) {
-            mMediaPlayer.reset();
-            //重新设置option，media player reset之后，option会失效
-            setOptions();
+            try {
+                mMediaPlayer.reset();
+                //重新设置option，media player reset之后，option会失效
+                setOptions();
+            } catch (RuntimeException error) {
+                PlaybackErrorReporter.failure(engine, "重置", PlaybackErrorReporter.source(mUrl), error);
+                onError();
+                return;
+            }
         }
-        if (prepareDataSource()) {
-            mMediaPlayer.prepareAsync();
+        int errorSerial = mErrorSerial;
+        boolean hasSource;
+        try {
+            hasSource = prepareDataSource();
+        } catch (RuntimeException error) {
+            PlaybackErrorReporter.failure(engine, "设置播放源", PlaybackErrorReporter.source(mUrl), error);
+            onError();
+            return;
+        }
+        if (hasSource) {
+            // setDataSource 可能同步回调 onError；此时不再调用 prepareAsync，也不覆盖错误态。
+            if (mErrorSerial != errorSerial) return;
+            try {
+                mMediaPlayer.prepareAsync();
+            } catch (RuntimeException error) {
+                PlaybackErrorReporter.failure(engine, "准备播放", PlaybackErrorReporter.source(mUrl), error);
+                onError();
+                return;
+            }
+            if (mErrorSerial != errorSerial) return;
             setPlayState(STATE_PREPARING);
             setPlayerState(isFullScreen() ? PLAYER_FULL_SCREEN : isTinyScreen() ? PLAYER_TINY_SCREEN : PLAYER_NORMAL);
         } else {
@@ -302,6 +329,7 @@ public class VideoView<P extends AbstractPlayer> extends FrameLayout
             // !isInIdleState() 守卫会把整个清理逻辑跳掉,而 startPlay() 里已经建好的
             // 播放器/渲染视图/音频焦点就再也释放不掉(内存与 surface 泄漏)。
             // 语义与播放中出错一致(见 onError),上层也能收到失败通知而不是一直无响应。
+            PlaybackErrorReporter.failure(engine, "设置播放源", PlaybackErrorReporter.source(mUrl), "播放地址为空");
             mPlayerContainer.setKeepScreenOn(false);
             setPlayState(STATE_ERROR);
         }
@@ -572,6 +600,7 @@ public class VideoView<P extends AbstractPlayer> extends FrameLayout
      */
     @Override
     public void onError() {
+        mErrorSerial++;
         mPlayerContainer.setKeepScreenOn(false);
         setPlayState(STATE_ERROR);
     }

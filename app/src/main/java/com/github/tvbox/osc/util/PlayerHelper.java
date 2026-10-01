@@ -21,7 +21,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 
 import tv.danmaku.ijk.media.player.IjkLibLoader;
-import xyz.doikki.videoplayer.exo.ExoMediaPlayerFactory;
 import xyz.doikki.videoplayer.player.AndroidMediaPlayerFactory;
 import xyz.doikki.videoplayer.player.PlayerFactory;
 import xyz.doikki.videoplayer.player.VideoView;
@@ -90,7 +89,7 @@ public class PlayerHelper {
             HashMap<Integer, String> playersInfo = new HashMap<>();
             playersInfo.put(0, "系统播放器");
             playersInfo.put(1, "IJK播放器");
-            playersInfo.put(2, "Exo播放器");
+            playersInfo.put(2, "Media3播放器");
             playersInfo.put(10, "MX播放器");
             playersInfo.put(11, "Reex播放器");
             playersInfo.put(12, "Kodi播放器");

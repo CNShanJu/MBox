@@ -136,7 +136,7 @@ public abstract class GestureVideoController extends BaseVideoController impleme
     public boolean onDown(MotionEvent e) {
         if (!isInPlaybackState() //不处于播放状态
                 || !mIsGestureEnabled //关闭了手势
-                || PlayerUtils.isEdge(getContext(), e)) //处于屏幕边沿
+                || PlayerUtils.isEdge(this, e)) //处于控制器边沿
             return true;
         mStreamVolume = mAudioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
         Activity activity = PlayerUtils.scanForActivity(getContext());
@@ -181,7 +181,7 @@ public abstract class GestureVideoController extends BaseVideoController impleme
                 || !mIsGestureEnabled //关闭了手势
                 || !mCanSlide //关闭了滑动手势
                 || isLocked() //锁住了屏幕
-                || PlayerUtils.isEdge(getContext(), e1)) //处于屏幕边沿
+                || PlayerUtils.isEdge(this, e1)) //处于控制器边沿
             return true;
         float deltaX = e1.getX() - e2.getX();
         float deltaY = e1.getY() - e2.getY();
@@ -189,8 +189,8 @@ public abstract class GestureVideoController extends BaseVideoController impleme
             mChangePosition = Math.abs(distanceX) >= Math.abs(distanceY);
             if (!mChangePosition) {
                 //半屏宽度
-                int halfScreen = PlayerUtils.getScreenWidth(getContext(), true) / 2;
-                if (e2.getX() > halfScreen) {
+                float halfScreen = getWidth() / 2f;
+                if (e1.getX() > halfScreen) {
                     mChangeVolume = true;
                 } else {
                     mChangeBrightness = true;

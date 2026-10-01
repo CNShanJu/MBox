@@ -7,28 +7,28 @@ import android.view.Surface;
 import android.view.SurfaceHolder;
 
 import androidx.annotation.NonNull;
+import androidx.media3.common.util.UnstableApi;
 
-import com.github.tvbox.osc.log.Category;
-import com.github.tvbox.osc.log.LogStore;
-import com.google.android.exoplayer2.DefaultLoadControl;
-import com.google.android.exoplayer2.DefaultRenderersFactory;
-import com.google.android.exoplayer2.ExoPlayer;
-import com.google.android.exoplayer2.LoadControl;
-import com.google.android.exoplayer2.PlaybackException;
-import com.google.android.exoplayer2.PlaybackParameters;
-import com.google.android.exoplayer2.Player;
-import com.google.android.exoplayer2.SeekParameters;
-import com.google.android.exoplayer2.Tracks;
-import com.google.android.exoplayer2.source.MediaSource;
-import com.google.android.exoplayer2.source.TrackGroupArray;
-import com.google.android.exoplayer2.trackselection.DefaultTrackSelector;
-import com.google.android.exoplayer2.trackselection.TrackSelectionArray;
-import com.google.android.exoplayer2.video.VideoSize;
+import androidx.media3.exoplayer.DefaultLoadControl;
+import androidx.media3.exoplayer.DefaultRenderersFactory;
+import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.exoplayer.LoadControl;
+import androidx.media3.common.PlaybackException;
+import androidx.media3.common.PlaybackParameters;
+import androidx.media3.common.Player;
+import androidx.media3.exoplayer.SeekParameters;
+import androidx.media3.common.Tracks;
+import androidx.media3.exoplayer.source.MediaSource;
+import androidx.media3.exoplayer.trackselection.DefaultTrackSelector;
+import androidx.media3.common.VideoSize;
 
 import java.util.Map;
 
 import xyz.doikki.videoplayer.player.AbstractPlayer;
+import xyz.doikki.videoplayer.player.PlaybackErrorReporter;
 
+/** DKVideoPlayer 的 Media3 ExoPlayer 内核，沿用类名以兼容现有工厂。 */
+@UnstableApi
 public class ExoMediaPlayer extends AbstractPlayer implements Player.Listener {
 
     protected Context mAppContext;
@@ -36,7 +36,6 @@ public class ExoMediaPlayer extends AbstractPlayer implements Player.Listener {
     protected MediaSource mMediaSource;
     protected ExoMediaSourceHelper mMediaSourceHelper;
     protected ExoTrackNameProvider trackNameProvider;
-    protected TrackSelectionArray mTrackSelections;
     private PlaybackParameters mSpeedPlaybackParameters;
     private boolean mIsPreparing;
 
@@ -46,6 +45,7 @@ public class ExoMediaPlayer extends AbstractPlayer implements Player.Listener {
 
     private int errorCode = -100;
     private String path;
+    private String sourceSummary = "未知来源";
     private Map<String, String> headers;
 
     public ExoMediaPlayer(Context context) {
@@ -71,15 +71,6 @@ public class ExoMediaPlayer extends AbstractPlayer implements Player.Listener {
             mLoadControl = new DefaultLoadControl();
         }
         mTrackSelector.setParameters(mTrackSelector.getParameters().buildUpon().setTunnelingEnabled(true));
-        /*mMediaPlayer = new SimpleExoPlayer.Builder(
-                mAppContext,
-                mRenderersFactory,
-                mTrackSelector,
-                new DefaultMediaSourceFactory(mAppContext),
-                mLoadControl,
-                DefaultBandwidthMeter.getSingletonInstance(mAppContext),
-                new AnalyticsCollector(Clock.DEFAULT))
-                .build();*/
         mMediaPlayer = new ExoPlayer.Builder(mAppContext)
                 .setLoadControl(mLoadControl)
                 .setRenderersFactory(mRenderersFactory)
@@ -106,14 +97,21 @@ public class ExoMediaPlayer extends AbstractPlayer implements Player.Listener {
     @Override
     public void setDataSource(String path, Map<String, String> headers) {
         this.path = path;
+        this.sourceSummary = PlaybackErrorReporter.source(path);
         this.headers = headers;
+        mMediaSource = null;
         mMediaSource = mMediaSourceHelper.getMediaSource(path, headers, false, errorCode);
         errorCode = -1;
     }
 
     @Override
     public void setDataSource(AssetFileDescriptor fd) {
-        //no support
+        path = null;
+        headers = null;
+        sourceSummary = "本地文件描述符";
+        mMediaSource = null;
+        PlaybackErrorReporter.failure("Media3", "设置本地文件", sourceSummary, "不支持文件描述符播放");
+        if (mPlayerEventListener != null) mPlayerEventListener.onError();
     }
 
     @Override
@@ -139,9 +137,16 @@ public class ExoMediaPlayer extends AbstractPlayer implements Player.Listener {
 
     @Override
     public void prepareAsync() {
-        if (mMediaPlayer == null)
+        if (mMediaPlayer == null) {
+            PlaybackErrorReporter.failure("Media3", "准备播放", sourceSummary, "播放器未初始化");
+            if (mPlayerEventListener != null) mPlayerEventListener.onError();
             return;
-        if (mMediaSource == null) return;
+        }
+        if (mMediaSource == null) {
+            PlaybackErrorReporter.failure("Media3", "准备播放", sourceSummary, "媒体源为空或格式不支持");
+            if (mPlayerEventListener != null) mPlayerEventListener.onError();
+            return;
+        }
         if (mSpeedPlaybackParameters != null) {
             mMediaPlayer.setPlaybackParameters(mSpeedPlaybackParameters);
         }
@@ -349,14 +354,21 @@ public class ExoMediaPlayer extends AbstractPlayer implements Player.Listener {
         // path 在重试后被置空,天然保证"同一地址最多重试一次"。
         if (path != null && isRetryableError(error.errorCode)) {
             // 重试前留下原因:否则日志里只能看到最终那次失败,看不出"中途重试过"
-            LogStore.log(Category.PLAYER, "Exo 播放出错,重新请求一次: " + describeError(error));
-            setDataSource(path, headers);
-            path = null;
-            prepareAsync();
-            start();
+            PlaybackErrorReporter.retrying("Media3", sourceSummary, describeError(error));
+            String retryPath = path;
+            try {
+                setDataSource(retryPath, headers);
+                path = null;
+                prepareAsync();
+                if (mMediaSource != null && mMediaPlayer != null) start();
+            } catch (RuntimeException retryError) {
+                path = null;
+                PlaybackErrorReporter.failure("Media3", "重新请求播放源", sourceSummary, retryError);
+                if (mPlayerEventListener != null) mPlayerEventListener.onError();
+            }
             return;
         }
-        LogStore.fail(Category.PLAYER, "Exo 播放失败: " + describeError(error));
+        PlaybackErrorReporter.failure("Media3", "播放回调", sourceSummary, describeError(error));
         if (mPlayerEventListener != null) {
             mPlayerEventListener.onError();
         }
@@ -390,13 +402,7 @@ public class ExoMediaPlayer extends AbstractPlayer implements Player.Listener {
         StringBuilder sb = new StringBuilder(error.getErrorCodeName())
                 .append("(code=").append(error.errorCode).append(")");
         Throwable cause = error.getCause();
-        if (cause != null && cause.getMessage() != null) {
-            String msg = cause.getMessage().trim().replace('\n', ' ');
-            if (msg.length() > 200) {
-                msg = msg.substring(0, 200);
-            }
-            sb.append(' ').append(cause.getClass().getSimpleName()).append(": ").append(msg);
-        }
+        if (cause != null) sb.append(' ').append(PlaybackErrorReporter.cause(cause));
         return sb.toString();
     }
 

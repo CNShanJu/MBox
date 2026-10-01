@@ -56,7 +56,7 @@ public class AllVodSeriesRightDialog extends AppDrawerPopupView {
         super.onCreate();
 
         RecyclerView mGridViewFlag = findViewById(R.id.mGridViewFlag);
-        mGridViewFlag.setHasFixedSize(true);
+        mGridViewFlag.setHasFixedSize(false);
         mGridViewFlag.setLayoutManager(new LinearLayoutManager(getContext(), LinearLayoutManager.HORIZONTAL, false));
         if (seriesFlagAdapter != null) {//复用activity的adapter
             seriesFlagAdapter.setDetailStyle(false); // 抽屉里线路保持原样(详情页才与选集 chip 对齐)

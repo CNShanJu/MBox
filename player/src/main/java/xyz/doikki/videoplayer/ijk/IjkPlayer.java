@@ -16,6 +16,7 @@ import tv.danmaku.ijk.media.player.IjkMediaPlayer;
 import tv.danmaku.ijk.media.player.misc.ITrackInfo;
 import tv.danmaku.ijk.media.player.misc.IjkTrackInfo;
 import xyz.doikki.videoplayer.player.AbstractPlayer;
+import xyz.doikki.videoplayer.player.PlaybackErrorReporter;
 import xyz.doikki.videoplayer.player.VideoViewManager;
 
 public class IjkPlayer extends AbstractPlayer implements IMediaPlayer.OnErrorListener,
@@ -26,6 +27,7 @@ public class IjkPlayer extends AbstractPlayer implements IMediaPlayer.OnErrorLis
     protected IjkMediaPlayer mMediaPlayer;
     private int mBufferedPercent;
     private final Context mAppContext;
+    private String sourceSummary = "未知来源";
 
     public IjkPlayer(Context context) {
         mAppContext = context;
@@ -53,6 +55,7 @@ public class IjkPlayer extends AbstractPlayer implements IMediaPlayer.OnErrorLis
 
     @Override
     public void setDataSource(String path, Map<String, String> headers) {
+        sourceSummary = PlaybackErrorReporter.source(path);
         try {
             Uri uri = Uri.parse(path);
             if (ContentResolver.SCHEME_ANDROID_RESOURCE.equals(uri.getScheme())) {
@@ -71,15 +74,18 @@ public class IjkPlayer extends AbstractPlayer implements IMediaPlayer.OnErrorLis
                 mMediaPlayer.setDataSource(mAppContext, uri, headers);
             }
         } catch (Exception e) {
+            PlaybackErrorReporter.failure("IJK", "设置播放地址", sourceSummary, e);
             mPlayerEventListener.onError();
         }
     }
 
     @Override
     public void setDataSource(AssetFileDescriptor fd) {
+        sourceSummary = "本地文件描述符";
         try {
             mMediaPlayer.setDataSource(new RawDataSourceProvider(fd));
         } catch (Exception e) {
+            PlaybackErrorReporter.failure("IJK", "设置本地文件", sourceSummary, e);
             mPlayerEventListener.onError();
         }
     }
@@ -88,7 +94,8 @@ public class IjkPlayer extends AbstractPlayer implements IMediaPlayer.OnErrorLis
     public void pause() {
         try {
             mMediaPlayer.pause();
-        } catch (IllegalStateException e) {
+        } catch (RuntimeException e) {
+            PlaybackErrorReporter.failure("IJK", "暂停", sourceSummary, e);
             mPlayerEventListener.onError();
         }
     }
@@ -97,7 +104,8 @@ public class IjkPlayer extends AbstractPlayer implements IMediaPlayer.OnErrorLis
     public void start() {
         try {
             mMediaPlayer.start();
-        } catch (IllegalStateException e) {
+        } catch (RuntimeException e) {
+            PlaybackErrorReporter.failure("IJK", "开始播放", sourceSummary, e);
             mPlayerEventListener.onError();
         }
     }
@@ -106,7 +114,8 @@ public class IjkPlayer extends AbstractPlayer implements IMediaPlayer.OnErrorLis
     public void stop() {
         try {
             mMediaPlayer.stop();
-        } catch (IllegalStateException e) {
+        } catch (RuntimeException e) {
+            PlaybackErrorReporter.failure("IJK", "停止", sourceSummary, e);
             mPlayerEventListener.onError();
         }
     }
@@ -115,7 +124,8 @@ public class IjkPlayer extends AbstractPlayer implements IMediaPlayer.OnErrorLis
     public void prepareAsync() {
         try {
             mMediaPlayer.prepareAsync();
-        } catch (IllegalStateException e) {
+        } catch (RuntimeException e) {
+            PlaybackErrorReporter.failure("IJK", "准备播放", sourceSummary, e);
             mPlayerEventListener.onError();
         }
     }
@@ -136,7 +146,8 @@ public class IjkPlayer extends AbstractPlayer implements IMediaPlayer.OnErrorLis
     public void seekTo(long time) {
         try {
             mMediaPlayer.seekTo((int) time);
-        } catch (IllegalStateException e) {
+        } catch (RuntimeException e) {
+            PlaybackErrorReporter.failure("IJK", "跳转进度", sourceSummary, e);
             mPlayerEventListener.onError();
         }
     }
@@ -147,6 +158,7 @@ public class IjkPlayer extends AbstractPlayer implements IMediaPlayer.OnErrorLis
         // (VideoView 每次起播都会 new 一个新内核实例),把新内核释放掉 —— 表现就是换源/切集后起不来。
         final IjkMediaPlayer player = mMediaPlayer;
         if (player == null) return;
+        final String releasedSource = sourceSummary;
         // 与 Surface 解绑必须在这里、且在异步释放之前做完:宿主紧接着就会释放渲染视图的
         // Surface/SurfaceTexture(TextureRenderView.release),此刻原生输出线程若还挂在它上面就是 SIGSEGV。
         // 这一步执行时播放器还活着,是安全的。
@@ -170,7 +182,7 @@ public class IjkPlayer extends AbstractPlayer implements IMediaPlayer.OnErrorLis
                     player.release();
                 } catch (Throwable e) {
                     // 必须兜 Throwable:native 释放失败会抛 Error,只 catch Exception 会让它逃到释放线程上
-                    e.printStackTrace();
+                    PlaybackErrorReporter.failure("IJK", "释放", releasedSource, e);
                 }
             }
         });
@@ -229,8 +241,23 @@ public class IjkPlayer extends AbstractPlayer implements IMediaPlayer.OnErrorLis
 
     @Override
     public boolean onError(IMediaPlayer mp, int what, int extra) {
+        PlaybackErrorReporter.failure("IJK", "播放回调", sourceSummary,
+                "what=" + what + "(" + errorName(what) + "), extra=" + extra);
         mPlayerEventListener.onError();
         return true;
+    }
+
+    private static String errorName(int what) {
+        switch (what) {
+            case IMediaPlayer.MEDIA_ERROR_UNKNOWN: return "未知错误";
+            case IMediaPlayer.MEDIA_ERROR_SERVER_DIED: return "播放器服务异常";
+            case IMediaPlayer.MEDIA_ERROR_NOT_VALID_FOR_PROGRESSIVE_PLAYBACK: return "不支持渐进播放";
+            case IMediaPlayer.MEDIA_ERROR_IO: return "读取失败";
+            case IMediaPlayer.MEDIA_ERROR_MALFORMED: return "媒体格式损坏";
+            case IMediaPlayer.MEDIA_ERROR_UNSUPPORTED: return "格式不支持";
+            case IMediaPlayer.MEDIA_ERROR_TIMED_OUT: return "超时";
+            default: return "其他";
+        }
     }
 
     @Override

@@ -16,6 +16,7 @@ import android.view.Display;
 import android.view.KeyCharacterMap;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
+import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.WindowManager;
 
@@ -163,6 +164,18 @@ public final class PlayerUtils {
                 || e.getRawX() > getScreenWidth(context, true) - edgeSize
                 || e.getRawY() < edgeSize
                 || e.getRawY() > getScreenHeight(context, true) - edgeSize;
+    }
+
+    /** 手势坐标与边界均取控制器本身，避免换肤资源/转屏后的屏幕尺寸与触摸坐标不一致。 */
+    public static boolean isEdge(View view, MotionEvent event) {
+        return isEdge(event.getX(), event.getY(), view.getWidth(), view.getHeight(),
+                dp2px(view.getContext(), 40));
+    }
+
+    public static boolean isEdge(float x, float y, int width, int height, int edgeSize) {
+        if (width <= 0 || height <= 0 || !Float.isFinite(x) || !Float.isFinite(y)) return true;
+        int inset = Math.max(0, edgeSize);
+        return x < inset || x > width - inset || y < inset || y > height - inset;
     }
 
 

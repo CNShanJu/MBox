@@ -311,6 +311,7 @@ public class LocalVideoController extends BaseController implements PlaybackSett
             @Override
             public void onStartTrackingTouch(SeekBar seekBar) {
                 mIsDragging = true;
+                beginSeeking();
                 mControlWrapper.stopProgress();
                 mControlWrapper.stopFadeOut();
             }
@@ -323,6 +324,7 @@ public class LocalVideoController extends BaseController implements PlaybackSett
                 long newPosition = (duration * seekBar.getProgress()) / seekBar.getMax();
                 mControlWrapper.seekTo((int) newPosition);
                 mIsDragging = false;
+                finishSeeking(true);
                 mControlWrapper.startProgress();
                 mControlWrapper.startFadeOut();
             }
@@ -899,6 +901,25 @@ public class LocalVideoController extends BaseController implements PlaybackSett
     }
 
     @Override
+    public int getRenderType() {
+        return mPlayerConfig == null ? PlayConfig.getRenderType()
+                : mPlayerConfig.optInt("pr", PlayConfig.getRenderType());
+    }
+
+    @Override
+    public void setRenderType(int renderType) {
+        if (renderType != 0 && renderType != 1) return;
+        try {
+            mPlayerConfig.put("pr", renderType);
+            listener.updatePlayerCfg();
+            listener.replay(false);
+            hideBottom();
+        } catch (JSONException e) {
+            e.printStackTrace();
+        }
+    }
+
+    @Override
     public void increaseTime(String type) {
         try {
             int step = PlayConfig.getTimeStep();
@@ -1026,6 +1047,7 @@ public class LocalVideoController extends BaseController implements PlaybackSett
         if (!simSlideStart)
             return;
         mControlWrapper.seekTo(simSeekPosition);
+        finishSeeking(true);
         if (!mControlWrapper.isPlaying())
             mControlWrapper.start();
         simSlideStart = false;
@@ -1040,6 +1062,7 @@ public class LocalVideoController extends BaseController implements PlaybackSett
             return;
         if (!simSlideStart) {
             simSlideStart = true;
+            beginSeeking();
         }
         // 每次10秒
         simSlideOffset += (10000.0f * dir);

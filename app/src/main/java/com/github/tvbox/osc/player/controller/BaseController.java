@@ -14,6 +14,7 @@ import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
 import android.widget.ProgressBar;
+import android.widget.ImageView;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
@@ -105,6 +106,19 @@ public abstract class BaseController extends BaseVideoController implements Gest
     private boolean mEverPrepared = false;
     /** 快进/快退进度浮层是否显示中;显示期间 loading/网速让位(二者不同时出现),浮层消失后按播放状态还原 */
     private boolean mSeekPanelVisible = false;
+    /** 点播/本地共用的中心播放状态；直播控制布局没有这两个视图。 */
+    private View mCenterPlaybackStatus;
+    private ImageView mCenterPlaybackIcon;
+    private boolean mWasPaused;
+    private boolean mSeeking;
+    private boolean mPausedBeforeSeeking;
+    private boolean mSuppressPlayFeedback;
+    private static final long PLAY_FEEDBACK_DURATION_MS = 2500L;
+    private final Runnable mHidePlayFeedback = () -> {
+        if (mCenterPlaybackStatus != null && mCurPlayState != VideoView.STATE_PAUSED) {
+            mCenterPlaybackStatus.setVisibility(GONE);
+        }
+    };
 
     @Override
     protected void initView() {
@@ -115,6 +129,15 @@ public abstract class BaseController extends BaseVideoController implements Gest
         mSlideInfo = findViewWithTag("vod_control_slide_info");
         mLoading = findViewWithTag("vod_control_loading");
         mNetSpeed = findViewWithTag("play_load_net_speed"); // 直播布局无此 tag → null,仅控 loading
+        mCenterPlaybackStatus = findViewById(R.id.center_playback_status);
+        mCenterPlaybackIcon = findViewById(R.id.center_playback_icon);
+        if (mCenterPlaybackStatus != null) {
+            mCenterPlaybackStatus.setOnClickListener(v -> {
+                if (mControlWrapper != null && isInPlaybackState() && !isLocked() && !mSeeking) {
+                    togglePlay();
+                }
+            });
+        }
         // 播放器加载动画跟随设置页"加载动画"选项(默认/Glowing Fish)
         LoadingAnim.apply(mLoading);
         // 直播全屏控制器根统一固定 30dp 边距:标题栏/右侧菜单/底部控制条等 doikki 组件
@@ -188,6 +211,41 @@ public abstract class BaseController extends BaseVideoController implements Gest
         mHandler.sendEmptyMessage(1001); // 子类 1001:浮层 GONE + setSeekPanelVisible(false)
     }
 
+    /** seek 开始时让中心状态按钮退场；本次 seek 恢复播放不展示“点击播放”的反馈。 */
+    protected void beginSeeking() {
+        mPausedBeforeSeeking = mCurPlayState == VideoView.STATE_PAUSED;
+        mSeeking = true;
+        mSuppressPlayFeedback = true;
+        hideCenterPlaybackStatus();
+    }
+
+    /** 拖动结束后从暂停态恢复播放，取消拖动则还原暂停提示。 */
+    protected void finishSeeking(boolean committed) {
+        mSeeking = false;
+        boolean resume = committed && mPausedBeforeSeeking;
+        mPausedBeforeSeeking = false;
+        if (resume && mControlWrapper != null) {
+            mControlWrapper.start();
+        } else {
+            mSuppressPlayFeedback = false;
+            if (mCurPlayState == VideoView.STATE_PAUSED) showCenterPlaybackStatus(false);
+        }
+    }
+
+    private void hideCenterPlaybackStatus() {
+        mHandler.removeCallbacks(mHidePlayFeedback);
+        if (mCenterPlaybackStatus != null) mCenterPlaybackStatus.setVisibility(GONE);
+    }
+
+    private void showCenterPlaybackStatus(boolean playingFeedback) {
+        if (mCenterPlaybackStatus == null || mCenterPlaybackIcon == null) return;
+        mHandler.removeCallbacks(mHidePlayFeedback);
+        mCenterPlaybackIcon.setImageResource(playingFeedback ? R.drawable.ic_play : R.drawable.ic_pause);
+        mCenterPlaybackStatus.setContentDescription(playingFeedback ? "播放中" : "继续播放");
+        mCenterPlaybackStatus.setVisibility(VISIBLE);
+        if (playingFeedback) mHandler.postDelayed(mHidePlayFeedback, PLAY_FEEDBACK_DURATION_MS);
+    }
+
     @Override
     protected void setProgress(int duration, int position) {
         super.setProgress(duration, position);
@@ -196,6 +254,40 @@ public abstract class BaseController extends BaseVideoController implements Gest
     @Override
     protected void onPlayStateChanged(int playState) {
         super.onPlayStateChanged(playState);
+        switch (playState) {
+            case VideoView.STATE_PAUSED:
+                mWasPaused = true;
+                if (mSeeking) hideCenterPlaybackStatus();
+                else showCenterPlaybackStatus(false);
+                break;
+            case VideoView.STATE_PLAYING:
+                boolean showPlayFeedback = mWasPaused && !mSeeking && !mSuppressPlayFeedback;
+                mWasPaused = false;
+                mSuppressPlayFeedback = false;
+                if (showPlayFeedback) showCenterPlaybackStatus(true);
+                else hideCenterPlaybackStatus();
+                break;
+            case VideoView.STATE_BUFFERING:
+                hideCenterPlaybackStatus();
+                break;
+            case VideoView.STATE_BUFFERED:
+                if (mWasPaused && !mSeeking) showCenterPlaybackStatus(false);
+                break;
+            case VideoView.STATE_IDLE:
+            case VideoView.STATE_PREPARING:
+            case VideoView.STATE_PREPARED:
+            case VideoView.STATE_ERROR:
+            case VideoView.STATE_PLAYBACK_COMPLETED:
+            case VideoView.STATE_START_ABORT:
+                mWasPaused = false;
+                mSeeking = false;
+                mPausedBeforeSeeking = false;
+                mSuppressPlayFeedback = false;
+                hideCenterPlaybackStatus();
+                break;
+            default:
+                break;
+        }
         switch (playState) {
             case VideoView.STATE_IDLE: // 新会话起点(切集/重播前 release)
                 mEverPrepared = false;
@@ -266,7 +358,15 @@ public abstract class BaseController extends BaseVideoController implements Gest
 
     @Override
     public boolean onTouch(View v, MotionEvent event) {
-        return mGestureDetector.onTouchEvent(event);
+        boolean handled = mGestureDetector.onTouchEvent(event);
+        int action = event.getActionMasked();
+        // GestureDetector 消费 ACTION_UP 时 View 不再进入 onTouchEvent，seek 仍须提交。
+        if (handled && (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL)
+                && (mSeeking || mSeekPosition >= 0)) {
+            stopSlide();
+            finishGestureSeek(action);
+        }
+        return handled;
     }
 
     /**
@@ -276,7 +376,7 @@ public abstract class BaseController extends BaseVideoController implements Gest
     public boolean onDown(MotionEvent e) {
         if (!isInPlaybackState() //不处于播放状态
                 || !mIsGestureEnabled //关闭了手势
-                || PlayerUtils.isEdge(getContext(), e)) //处于屏幕边沿
+                || PlayerUtils.isEdge(this, e)) //处于控制器边沿
             return true;
         mStreamVolume = mAudioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
         Activity activity = PlayerUtils.scanForActivity(getContext());
@@ -321,7 +421,7 @@ public abstract class BaseController extends BaseVideoController implements Gest
                 || !mIsGestureEnabled //关闭了手势
                 || !mCanSlide //关闭了滑动手势
                 || isLocked() //锁住了屏幕
-                || PlayerUtils.isEdge(getContext(), e1)) //处于屏幕边沿
+                || PlayerUtils.isEdge(this, e1)) //处于控制器边沿
             return true;
         float deltaX = e1.getX() - e2.getX();
         float deltaY = e1.getY() - e2.getY();
@@ -329,8 +429,8 @@ public abstract class BaseController extends BaseVideoController implements Gest
             mChangePosition = Math.abs(distanceX) >= Math.abs(distanceY);
             if (!mChangePosition) {
                 //半屏宽度
-                int halfScreen = PlayerUtils.getScreenWidth(getContext(), true) / 2;
-                if (e2.getX() > halfScreen) {
+                float halfScreen = getWidth() / 2f;
+                if (e1.getX() > halfScreen) {
                     mChangeVolume = true;
                 } else {
                     mChangeBrightness = true;
@@ -340,6 +440,7 @@ public abstract class BaseController extends BaseVideoController implements Gest
             if (mChangePosition) {
                 //根据用户设置是否可以滑动调节进度来决定最终是否可以滑动调节进度
                 mChangePosition = mCanChangePosition;
+                if (mChangePosition) beginSeeking();
             }
 
             if (mChangePosition || mChangeBrightness || mChangeVolume) {
@@ -439,25 +540,28 @@ public abstract class BaseController extends BaseVideoController implements Gest
     @Override
     public boolean onTouchEvent(MotionEvent event) {
         //滑动结束时事件处理
-        if (!mGestureDetector.onTouchEvent(event)) {
-            int action = event.getAction();
-            switch (action) {
-                case MotionEvent.ACTION_UP:
-                    stopSlide();
-                    if (mSeekPosition >= 0) {
-                        mControlWrapper.seekTo(mSeekPosition);
-                        mSeekPosition = -1;
-                        dismissSeekPanel(); // seek 结束:浮层立即消失,状态机马上接管 loading
-                    }
-                    break;
-                case MotionEvent.ACTION_CANCEL:
-                    stopSlide();
-                    mSeekPosition = -1;
-                    dismissSeekPanel();
-                    break;
+        boolean handled = mGestureDetector.onTouchEvent(event);
+        if (!handled || mSeeking || mSeekPosition >= 0) {
+            int action = event.getActionMasked();
+            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                stopSlide();
+                finishGestureSeek(action);
             }
         }
         return super.onTouchEvent(event);
+    }
+
+    private void finishGestureSeek(int action) {
+        if (action == MotionEvent.ACTION_UP && mSeekPosition >= 0) {
+            mControlWrapper.seekTo(mSeekPosition);
+            mSeekPosition = -1;
+            finishSeeking(true);
+            dismissSeekPanel(); // seek 结束:浮层立即消失,状态机马上接管 loading
+        } else if (action == MotionEvent.ACTION_CANCEL || mSeeking) {
+            mSeekPosition = -1;
+            if (mSeeking) finishSeeking(false);
+            dismissSeekPanel();
+        }
     }
 
     private void stopSlide() {

@@ -76,6 +76,22 @@ tasks.register('checkModuleDependencies') {
     description = '校验模块依赖方向 + app 验收红线(getCSP/hawk/DownloadManager.get/自建 OkHttpClient/下载内部实现)'
     doLast {
         def violations = []
+        def media3Versions = [] as Set
+        subprojects.each { module ->
+            module.configurations.each { config ->
+                config.dependencies.each { dep ->
+                    if (dep.group == 'com.google.android.exoplayer') {
+                        violations << "${module.path} 禁止重新引入旧 ExoPlayer 依赖，应使用统一版本的 Media3"
+                    }
+                    if (dep.group == 'androidx.media3' && dep.version != null) {
+                        media3Versions << dep.version
+                    }
+                }
+            }
+        }
+        if (media3Versions.size() > 1) {
+            violations << "Media3 依赖版本必须一致: ${media3Versions}"
+        }
         forbiddenModuleDeps.each { mod, forbidden ->
             def file = new File(rootDir, moduleDir[mod] + '/build.gradle')
             if (!file.exists()) return
@@ -117,6 +133,7 @@ tasks.register('checkModuleDependencies') {
         def appRedLines = [
                 'getCSP 爬虫直调'           : ~/\bgetCSP\s*\(/,
                 'Hawk 裸依赖(import)'       : ~/import\s+com\.orhanobut\.hawk\./,
+                '旧 ExoPlayer import'       : ~/import\s+(static\s+)?com\.google\.android\.exoplayer2\./,
                 'DownloadManager.get() 直调': ~/\bDownloadManager\.get\s*\(/,
                 '业务自建 OkHttpClient'      : ~/\bnew\s+OkHttpClient\.Builder\s*\(/,
                 // app 层 EventBus 已清零(改进.txt §五:新代码禁止新增 EventBus);只匹配真实 API,避开注释里的"EventBus"字样
@@ -139,7 +156,7 @@ tasks.register('checkModuleDependencies') {
         // UI 层红线(app/ui 目录:禁具体播放内核 import / 禁页面自建线程池)
         def uiSourceDirs = [new File(rootDir, 'app/src/main/java/com/github/tvbox/osc/ui')]
         def uiRedLines = [
-                'UI 层内核 import(IJK/Exo)'          : ~/import\s+(tv\.danmaku|com\.google\.android\.exoplayer2)\./,
+                'UI 层内核 import(IJK/Media3)'       : ~/import\s+(tv\.danmaku|com\.google\.android\.exoplayer2|androidx\.media3)\./,
                 'UI 层自建线程池'                     : ~/(Executors\s*\.\s*new\w+\s*\(|new\s+\w*ThreadPoolExecutor\s*\(|new\s+ForkJoinPool\s*\()/,
         ]
         uiSourceDirs.each { dir ->

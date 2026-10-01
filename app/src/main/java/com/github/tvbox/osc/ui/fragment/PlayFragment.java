@@ -461,7 +461,9 @@ public class PlayFragment extends BaseLazyFragment {
     }
 
     void errorWithRetry(String err, boolean finish) {
-        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.PLAYER, "播放失败: " + err);
+        String detail = "点播失败: 源=" + sourceKey + "，内核="
+                + (mVodPlayerCfg == null ? -1 : mVodPlayerCfg.optInt("pl", -1)) + "，原因=" + err;
+        com.github.tvbox.osc.log.LogStore.fail(com.github.tvbox.osc.log.Category.PLAYER, detail);
         if (!autoRetry() && isAdded()) {
             requireActivity().runOnUiThread(new Runnable() {
                 @Override

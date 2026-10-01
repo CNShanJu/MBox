@@ -88,7 +88,7 @@ public class AllVodSeriesBottomDialog extends SheetResizableBottomPopup {
             }
         }, 500);
 
-        // 顶部手势条/标题一带可拖、可点:默认 50%;内容少时自适应(不拉伸),内容超高可展开到 70%
+        // 顶部手势条/标题一带可拖、可点:至少保持 50%;内容超高可展开到 70%
         attachSheet(R.id.bg, R.id.list_box, R.id.rv, true);
 
         seriesAdapter.setOnItemClickListener((adapter, view, position) -> {

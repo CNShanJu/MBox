@@ -6,14 +6,12 @@ import android.view.View;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
-import androidx.core.content.ContextCompat;
 import androidx.recyclerview.widget.DiffUtil;
 
 import com.github.tvbox.osc.R;
 import com.github.tvbox.osc.databinding.DialogPlayingControlBinding;
 import com.github.tvbox.osc.player.MyVideoView;
 import com.github.tvbox.osc.player.controller.PlaybackSettingsController;
-import com.github.tvbox.osc.theme.ThemeDrawables;
 import com.github.tvbox.osc.ui.adapter.SelectDialogAdapter;
 import com.github.tvbox.osc.util.PlayerHelper;
 import com.lxj.xpopup.core.BasePopupView;
@@ -70,13 +68,14 @@ final class PlayingControlPanel {
         mBinding.playTimeEnd.setText(mController.settingsTimeSkipBtn().getText());
         mBinding.player.setText(mController.settingsPlayerBtn().getText());
         mBinding.decode.setText(mController.settingsIjkBtn().getText());
+        mBinding.renderMode.setText(PlayerHelper.getRenderName(mController.getRenderType()));
         // 播放设置弹窗常显"横竖屏",便于切回横屏
         mBinding.landscapePortrait.setVisibility(View.VISIBLE);
         updateAboutIjkVisible();
         updateSpeedUi();
         // 「点击型」小组件按钮的点击特效(按下整键透明度 80% 再恢复):倍速那几个是"选择型",
         // 靠选中态换色反馈,不套这个特效(用户口径:"一种是选择按钮一种是点击按钮")
-        for (int id : new int[]{R.id.scale, R.id.player, R.id.decode, R.id.landscape_portrait,
+        for (int id : new int[]{R.id.scale, R.id.player, R.id.decode, R.id.render_mode, R.id.landscape_portrait,
                 R.id.subtitle, R.id.voice, R.id.replay, R.id.refresh, R.id.start_end_reset}) {
             com.github.tvbox.osc.ui.kit.WidgetPressEffect.attach(mBinding.getRoot().findViewById(id));
         }
@@ -125,6 +124,7 @@ final class PlayingControlPanel {
         // 播放器:点击直接列出所有播放器选择
         mBinding.player.setOnClickListener(view -> showPlayerDialog());
         mBinding.decode.setOnClickListener(view -> changeAndUpdateText(mBinding.decode, mController.settingsIjkBtn()));
+        mBinding.renderMode.setOnClickListener(view -> showRenderDialog());
 
         // 其他
         mBinding.startEndReset.setOnClickListener(view -> resetSkipStartEnd());
@@ -202,6 +202,7 @@ final class PlayingControlPanel {
                     mController.setPlayerType(type);
                 }
                 mBinding.player.setText(PlayerHelper.getPlayerName(type));
+                updateAboutIjkVisible();
             }
 
             @Override
@@ -210,6 +211,29 @@ final class PlayingControlPanel {
                 return PlayerHelper.getPlayerName(val);
             }
         }, INT_DIFF, players, players.indexOf(cur));
+        dialog.show();
+    }
+
+    /** 渲染方式:当前视频独立选择 TextureView / SurfaceView。 */
+    private void showRenderDialog() {
+        final int cur = mController.getRenderType();
+        SelectDialog<Integer> dialog = new SelectDialog<>(mActivity);
+        dialog.setTip("选择渲染方式");
+        dialog.setAdapter(new SelectDialogAdapter.SelectDialogInterface<Integer>() {
+            @Override
+            public void click(Integer value, int pos) {
+                dialog.cancel();
+                if (value != cur) {
+                    mController.setRenderType(value);
+                }
+                mBinding.renderMode.setText(PlayerHelper.getRenderName(value));
+            }
+
+            @Override
+            public String getDisplay(Integer value) {
+                return PlayerHelper.getRenderName(value);
+            }
+        }, INT_DIFF, new ArrayList<>(Arrays.asList(0, 1)), cur);
         dialog.show();
     }
 
@@ -224,9 +248,11 @@ final class PlayingControlPanel {
         }
     }
 
-    /** 如切换/使用的是 ijk,解码和音轨按钮才显示 */
+    /** IJK 解码仅对 IJK 内核有意义，播放器切换后同步更新当前抽屉。 */
     public void updateAboutIjkVisible() {
-        mBinding.decode.setVisibility(mController.settingsIjkBtn().getVisibility());
+        mBinding.decode.setText(mController.settingsIjkBtn().getText());
+        int visibility = mController.getPlayerType() == 1 ? View.VISIBLE : View.GONE;
+        mBinding.decode.setVisibility(visibility);
     }
 
     /** 重置片头/尾,刷新文字 */

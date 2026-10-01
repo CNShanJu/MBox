@@ -1,11 +1,9 @@
 package com.github.tvbox.osc.player;
 
-import android.util.Log;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import java.util.List;
 
 import xyz.doikki.videoplayer.player.AbstractPlayer;
 
@@ -13,7 +11,7 @@ import xyz.doikki.videoplayer.player.AbstractPlayer;
  * 播放器内核能力收敛层（⑥ 适配层第一步）：
  * 调用方（PlayFragment 等）不再直接 `instanceof` 强转内核类型，
  * track/字幕相关操作统一走本类——各内核实现 {@link KernelTrackSupport} 承载差异，
- * 后续 Media3 升级 = 新增实现，适配层零改动。
+ * Media3 迁移在 EXOmPlayer 内完成，调用方仍经能力接口访问。
  */
 public final class PlayerTrackHelper {
 

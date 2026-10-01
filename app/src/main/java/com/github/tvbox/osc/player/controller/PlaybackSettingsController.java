@@ -42,6 +42,10 @@ public interface PlaybackSettingsController {
 
     void setPlayerType(int playerType);
 
+    int getRenderType();
+
+    void setRenderType(int renderType);
+
     /** 片头/片尾时间调整,type = "st" / "et" */
     void increaseTime(String type);
 

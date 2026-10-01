@@ -1,19 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- 播放设置面板(全屏=右抽屉 PlayingControlRightDialog / 非全屏=底部面板 PlayingControlDialog,同一布局)。
+
+     **上下内边距放在面板根上,不放在滚动区上**(2026-10-01,用户口径"全屏播放界面的设置抽屉的滚动贴着
+     上下两个边了,没有内边距"):滚动区带 clipToPadding=false 时,它自己的 padding 只是**初始偏移**,
+     滚动过程中内容仍会走到它的边界;而它的边界就是面板边界 —— 于是看着"贴着边"。
+     把上下内边距挪到面板根(背景 bg_playing_control 所在的这一层),滚动区就被整体内缩,
+     内容永远停在距面板上下边 6/16dp 处;滚动区只保留左右内边距,clipToPadding 照旧 false
+     (符合全站"可滚动组件保留内边距 + clipToPadding=false"的口径)。 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
+    android:paddingTop="6dp"
+    android:paddingBottom="16dp"
     android:background="@drawable/bg_playing_control">
 
     <ScrollView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:scrollbars="none"
-        android:clipToPadding="true"
-        android:paddingTop="6dp"
-        android:paddingBottom="16dp"
+        android:clipToPadding="false"
         android:paddingHorizontal="16dp">
 
         <LinearLayout
@@ -170,12 +178,13 @@
                 android:gravity="center_vertical">
 
                 <ImageView
-                    android:id="@+id/decrease_start"
-                    android:layout_width="20dp"
-                    android:layout_height="20dp"
-                    android:src="@drawable/ic_seek_left"
-                    app:tint="@color/text_foreground"
-                    />
+                        android:id="@+id/decrease_start"
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:padding="2dp"
+                        android:src="@drawable/ic_seek_left"
+                        app:tint="@color/text_foreground"
+                />
                 <TextView
                     android:id="@+id/play_time_start"
                     android:layout_width="wrap_content"
@@ -191,6 +200,7 @@
                     android:id="@+id/increase_start"
                     android:layout_width="20dp"
                     android:layout_height="20dp"
+                    android:padding="2dp"
                     android:src="@drawable/ic_seek_right"
                     app:tint="@color/text_foreground"
                     />
@@ -199,6 +209,7 @@
                     android:id="@+id/decrease_end"
                     android:layout_width="20dp"
                     android:layout_height="20dp"
+                    android:padding="2dp"
                     android:src="@drawable/ic_seek_left"
                     app:tint="@color/text_foreground"
                     android:layout_marginStart="10dp"
@@ -218,6 +229,7 @@
                     android:id="@+id/increase_end"
                     android:layout_width="20dp"
                     android:layout_height="20dp"
+                    android:padding="2dp"
                     android:src="@drawable/ic_seek_right"
                     app:tint="@color/text_foreground"
                     />
@@ -247,44 +259,74 @@
                 android:textSize="16sp"
                 android:textStyle="bold"/>
 
-            <LinearLayout
+            <HorizontalScrollView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:clipToPadding="false"
+                android:scrollbars="none">
+
+                <LinearLayout
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal">
+
+                    <!-- 图标尺寸由 app:drawableIconSize 统一指定(见 ui/kit/SizedIconTextView) -->
+                    <com.github.tvbox.osc.ui.kit.SizedIconTextView style="@style/WidgetBtn"
+                        android:id="@+id/player"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginEnd="8dp"
+                        android:gravity="center"
+                        android:singleLine="true"
+                        android:paddingVertical="4dp"
+                        android:paddingHorizontal="10dp"
+                        android:drawableRight="@drawable/ic_change_20"
+                        app:drawableTint="@color/text_foreground"
+                        app:drawableIconSize="20dp"
+                        android:drawablePadding="8dp"
+                        tools:text="Media3播放器" />
+
+                    <com.github.tvbox.osc.ui.kit.SizedIconTextView style="@style/WidgetBtn"
+                        android:id="@+id/decode"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:gravity="center"
+                        android:singleLine="true"
+                        android:paddingVertical="4dp"
+                        android:paddingHorizontal="10dp"
+                        android:drawableRight="@drawable/ic_change_20"
+                        app:drawableTint="@color/text_foreground"
+                        app:drawableIconSize="20dp"
+                        android:drawablePadding="8dp"
+                        android:visibility="gone"
+                        tools:visibility="visible"
+                        tools:text="硬解码" />
+                </LinearLayout>
+            </HorizontalScrollView>
+
+            <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal">
+                android:layout_marginTop="16dp"
+                android:layout_marginBottom="10dp"
+                android:text="渲染方式"
+                android:textColor="@color/text_foreground"
+                android:textSize="16sp"
+                android:textStyle="bold" />
 
-                <!-- 图标尺寸由 app:drawableIconSize 统一指定(见 ui/kit/SizedIconTextView) -->
-                <com.github.tvbox.osc.ui.kit.SizedIconTextView style="@style/WidgetBtn"
-                    android:id="@+id/player"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginEnd="8dp"
-                    android:gravity="center"
-                    android:singleLine="true"
-                    android:paddingVertical="4dp"
-                    android:paddingHorizontal="10dp"
-                    android:drawableRight="@drawable/ic_change_20"
-                    app:drawableTint="@color/text_foreground"
-                    app:drawableIconSize="20dp"
-                    android:drawablePadding="8dp"
-                    tools:text="EXO" />
-
-                <com.github.tvbox.osc.ui.kit.SizedIconTextView style="@style/WidgetBtn"
-                    android:id="@+id/decode"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginEnd="8dp"
-                    android:gravity="center"
-                    android:singleLine="true"
-                    android:paddingVertical="4dp"
-                    android:paddingHorizontal="10dp"
-                    android:drawableRight="@drawable/ic_change_20"
-                    app:drawableTint="@color/text_foreground"
-                    app:drawableIconSize="20dp"
-                    android:drawablePadding="8dp"
-                    tools:text="硬解" />
-
-
-            </LinearLayout>
+            <com.github.tvbox.osc.ui.kit.SizedIconTextView style="@style/WidgetBtn"
+                android:id="@+id/render_mode"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:singleLine="true"
+                android:paddingVertical="4dp"
+                android:paddingHorizontal="10dp"
+                android:drawableRight="@drawable/ic_change_20"
+                app:drawableTint="@color/text_foreground"
+                app:drawableIconSize="20dp"
+                android:drawablePadding="8dp"
+                tools:text="TextureView" />
 
             <TextView
                 android:layout_width="wrap_content"

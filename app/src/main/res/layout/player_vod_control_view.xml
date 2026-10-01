@@ -616,6 +616,27 @@
         android:tag="vod_control_loading"
         android:visibility="gone" />
 
+    <!-- 暂停常显、恢复播放短暂反馈；背景与快进快退浮层保持一致。 -->
+    <com.lihang.ShadowLayout
+        android:id="@+id/center_playback_status"
+        android:layout_width="64dp"
+        android:layout_height="64dp"
+        android:layout_gravity="center"
+        android:clickable="true"
+        android:focusable="true"
+        android:visibility="gone"
+        app:hl_layoutBackground="@color/gray_darker_press_alpha"
+        app:hl_cornerRadius="@dimen/radius_dialog">
+
+        <ImageView
+            android:id="@+id/center_playback_icon"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:padding="18dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_pause" />
+    </com.lihang.ShadowLayout>
+
     <TextView
         android:id="@+id/tv_play_load_net_speed"
         android:layout_width="wrap_content"

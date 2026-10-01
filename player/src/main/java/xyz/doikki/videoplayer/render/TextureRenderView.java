@@ -95,6 +95,8 @@ public class TextureRenderView extends TextureView implements IRenderView, Textu
         if (mSurfaceTexture != null) {
             setSurfaceTexture(mSurfaceTexture);
         } else {
+            // 纹理销毁时已解绑并清空引用(见 onSurfaceTextureDestroyed),这里拿到的是系统新建的那块:
+            // 必须用新建的 Surface 交给内核,绝不能复用已释放的 SurfaceTexture(那会崩在 native)
             mSurfaceTexture = surfaceTexture;
             mSurface = new Surface(surfaceTexture);
             if (mMediaPlayer != null) {
@@ -110,7 +112,24 @@ public class TextureRenderView extends TextureView implements IRenderView, Textu
 
     @Override
     public boolean onSurfaceTextureDestroyed(SurfaceTexture surface) {
-        return false;
+        // 画面源要消失了:先让内核与它解绑,再让系统回收这块 SurfaceTexture,并把本地引用一起清掉
+        // (下次 available 走"新建 Surface"分支,不复用旧的)。
+        //
+        // 原实现是 `return false`(留住纹理复用)且不解绑 —— 于是编解码器会继续往一块"消费端已摘掉"
+        // 的 SurfaceTexture 上输出;重回前台再 setSurfaceTexture(旧纹理)时,队列里那几帧陈旧/撕裂的
+        // 缓冲会被直接显示出来。真机表现(2026-10-01 用户反馈):**偶发整块画面花屏,强制返回退出
+        // 播放页即恢复**,系统日志无任何报错、进程也不崩 —— 正是这条路径的典型特征。
+        // surface 渲染那条路(SurfaceRenderView.surfaceDestroyed)本来就有 setDisplay(null) 解绑,
+        // 这里补上同口径处理,两条渲染路径行为一致。
+        if (mMediaPlayer != null) {
+            mMediaPlayer.detachSurface();
+        }
+        if (mSurface != null) {
+            mSurface.release();
+            mSurface = null;
+        }
+        mSurfaceTexture = null;
+        return true;
     }
 
     @Override

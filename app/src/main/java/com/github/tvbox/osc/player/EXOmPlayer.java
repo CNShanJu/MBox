@@ -1,156 +1,124 @@
 package com.github.tvbox.osc.player;
 
-import android.annotation.SuppressLint;
 import android.content.Context;
 import android.text.TextUtils;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-
-import com.github.tvbox.osc.util.StringUtils;
-import com.google.android.exoplayer2.C;
-import com.google.android.exoplayer2.Format;
-import com.google.android.exoplayer2.Player;
-import com.google.android.exoplayer2.Tracks;
-import com.google.android.exoplayer2.source.TrackGroup;
-import com.google.android.exoplayer2.source.TrackGroupArray;
-import com.google.android.exoplayer2.trackselection.DefaultTrackSelector;
-import com.google.android.exoplayer2.trackselection.DefaultTrackSelector.SelectionOverride;
-import com.google.android.exoplayer2.trackselection.MappingTrackSelector;
-import com.google.android.exoplayer2.trackselection.MappingTrackSelector.MappedTrackInfo;
-import com.google.android.exoplayer2.util.MimeTypes;
+import androidx.media3.common.C;
+import androidx.media3.common.Format;
+import androidx.media3.common.Player;
+import androidx.media3.common.TrackSelectionOverride;
+import androidx.media3.common.Tracks;
+import androidx.media3.common.text.CueGroup;
+import androidx.media3.common.util.UnstableApi;
 
 import java.util.List;
 
 import xyz.doikki.videoplayer.exo.ExoMediaPlayer;
+import xyz.doikki.videoplayer.exo.ExoTrackNameProvider;
 
+/** Media3 音轨/字幕适配器，原播放类型 2 和工厂入口保持兼容。 */
+@UnstableApi
 public class EXOmPlayer extends ExoMediaPlayer implements KernelTrackSupport {
-    private String audioId = "";
-    private String subtitleId = "";
+    private Player.Listener subtitleListener;
 
     public EXOmPlayer(Context context) {
         super(context);
     }
 
-    @SuppressLint("UnsafeOptInUsageError")
+    @Override
     public TrackInfo getTrackInfo() {
         TrackInfo data = new TrackInfo();
-        MappingTrackSelector.MappedTrackInfo trackInfo = getTrackSelector().getCurrentMappedTrackInfo();
-        if (trackInfo != null) {
-            getExoSelectedTrack();
-            for (int groupArrayIndex = 0; groupArrayIndex < trackInfo.getRendererCount(); groupArrayIndex++) {
-                TrackGroupArray groupArray = trackInfo.getTrackGroups(groupArrayIndex);
-                for (int groupIndex = 0; groupIndex < groupArray.length; groupIndex++) {
-                    TrackGroup group = groupArray.get(groupIndex);
-                    for (int formatIndex = 0; formatIndex < group.length; formatIndex++) {
-                        Format format = group.getFormat(formatIndex);
-                        if (MimeTypes.isAudio(format.sampleMimeType)) {
-                            String trackName = trackNameProvider.getTrackName(format) + "[" + (TextUtils.isEmpty(format.codecs)?format.sampleMimeType:format.codecs) + "]";
-                            TrackInfoBean t = new TrackInfoBean();
-                            t.name = trackName;
-                            t.language = "";
-                            t.trackId = formatIndex;
-                            t.selected = !StringUtils.isEmpty(audioId) && audioId.equals(format.id);
-                            t.trackGroupId = groupIndex;
-                            t.renderId = groupArrayIndex;
-                            data.addAudio(t);
-                        } else if (MimeTypes.isText(format.sampleMimeType)) {
-                            String trackName = trackNameProvider.getTrackName(format);
-                            TrackInfoBean t = new TrackInfoBean();
-                            t.name = trackName;
-                            t.language = "";
-                            t.trackId = formatIndex;
-                            t.selected = !StringUtils.isEmpty(subtitleId) && subtitleId.equals(format.id);
-                            t.trackGroupId = groupIndex;
-                            t.renderId = groupArrayIndex;
-                            data.addSubtitle(t);
-                        }
-                    }
+        if (mMediaPlayer == null) return data;
+        if (trackNameProvider == null) {
+            trackNameProvider = new ExoTrackNameProvider(mAppContext.getResources());
+        }
+        List<Tracks.Group> groups = mMediaPlayer.getCurrentTracks().getGroups();
+        for (int groupIndex = 0; groupIndex < groups.size(); groupIndex++) {
+            Tracks.Group group = groups.get(groupIndex);
+            int type = group.getType();
+            if (type != C.TRACK_TYPE_AUDIO && type != C.TRACK_TYPE_TEXT) continue;
+            for (int trackIndex = 0; trackIndex < group.length; trackIndex++) {
+                Format format = group.getTrackFormat(trackIndex);
+                TrackInfoBean track = new TrackInfoBean();
+                track.name = trackNameProvider.getTrackName(format);
+                if (type == C.TRACK_TYPE_AUDIO) {
+                    track.name += "[" + (TextUtils.isEmpty(format.codecs)
+                            ? format.sampleMimeType : format.codecs) + "]";
                 }
+                track.language = format.language == null ? "" : format.language;
+                track.trackId = trackIndex;
+                track.trackGroupId = groupIndex;
+                track.renderId = C.INDEX_UNSET;
+                // 不依赖 Format.id：无 ID 或重复 ID 的轨道也能准确显示选中状态。
+                track.selected = group.isTrackSelected(trackIndex);
+                if (type == C.TRACK_TYPE_AUDIO) data.addAudio(track);
+                else data.addSubtitle(track);
             }
         }
         return data;
     }
 
-    @SuppressLint("UnsafeOptInUsageError")
-    private void getExoSelectedTrack() {
-        audioId = "";
-        subtitleId = "";
-        for (Tracks.Group group : mMediaPlayer.getCurrentTracks().getGroups()) {
-            if (!group.isSelected()) continue;
-            for (int trackIndex = 0; trackIndex < group.length; trackIndex++) {
-                if (!group.isTrackSelected(trackIndex)) continue;
-                Format format = group.getTrackFormat(trackIndex);
-                if (MimeTypes.isAudio(format.sampleMimeType)) {
-                    audioId = format.id;
-                }
-                if (MimeTypes.isText(format.sampleMimeType)) {
-                    subtitleId = format.id;
-                }
-            }
-        }
-    }
-
-    @SuppressLint("UnsafeOptInUsageError")
-    public void selectExoTrack(@Nullable TrackInfoBean videoTrackBean) {
-        MappingTrackSelector.MappedTrackInfo trackInfo = getTrackSelector().getCurrentMappedTrackInfo();
-        if (trackInfo != null) {
-            if (videoTrackBean == null) {
-                for (int renderIndex = 0; renderIndex < trackInfo.getRendererCount(); renderIndex++) {
-                    if (trackInfo.getRendererType(renderIndex) == C.TRACK_TYPE_TEXT) {
-                        DefaultTrackSelector.Parameters.Builder parametersBuilder = getTrackSelector().getParameters().buildUpon();
-                        parametersBuilder.setRendererDisabled(renderIndex, true);
-                        getTrackSelector().setParameters(parametersBuilder);
-                        break;
-                    }
-                }
-            } else {
-                TrackGroupArray trackGroupArray = trackInfo.getTrackGroups(videoTrackBean.renderId);
-                @SuppressLint("UnsafeOptInUsageError") DefaultTrackSelector.SelectionOverride override = new DefaultTrackSelector.SelectionOverride(videoTrackBean.trackGroupId, videoTrackBean.trackId);
-                DefaultTrackSelector.Parameters.Builder parametersBuilder = getTrackSelector().buildUponParameters();
-                parametersBuilder.setRendererDisabled(videoTrackBean.renderId, false);
-                parametersBuilder.setSelectionOverride(videoTrackBean.renderId, trackGroupArray, override);
-                getTrackSelector().setParameters(parametersBuilder);
-            }
-        }
-
-    }
-
-    public void setOnTimedTextListener(Player.Listener listener) {
-        mMediaPlayer.addListener(listener);
-    }
-
-    // ── KernelTrackSupport（⑥ 适配层：PlayerTrackHelper 不再 instanceof 本类）──
-
-    @Override
-    public void selectTrack(@Nullable TrackInfoBean videoTrackBean) {
-        if (videoTrackBean == null) {
-            // 与旧 helper 一致:null bean 直接忽略(保留本内核 selectExoTrack(null)=清字幕的底层能力)
+    public void selectExoTrack(@Nullable TrackInfoBean track) {
+        if (mMediaPlayer == null) return;
+        if (track == null) {
+            mMediaPlayer.setTrackSelectionParameters(mMediaPlayer.getTrackSelectionParameters()
+                    .buildUpon().clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build());
             return;
         }
-        selectExoTrack(videoTrackBean);
+        List<Tracks.Group> groups = mMediaPlayer.getCurrentTracks().getGroups();
+        if (track.trackGroupId < 0 || track.trackGroupId >= groups.size()) return;
+        Tracks.Group group = groups.get(track.trackGroupId);
+        if (track.trackId < 0 || track.trackId >= group.length) return;
+        int type = group.getType();
+        if (type != C.TRACK_TYPE_AUDIO && type != C.TRACK_TYPE_TEXT) return;
+        mMediaPlayer.setTrackSelectionParameters(mMediaPlayer.getTrackSelectionParameters()
+                .buildUpon().setTrackTypeDisabled(type, false)
+                .setOverrideForType(new TrackSelectionOverride(group.getMediaTrackGroup(), track.trackId))
+                .build());
+    }
+
+    @Override
+    public void selectTrack(@Nullable TrackInfoBean track) {
+        if (track != null) selectExoTrack(track);
     }
 
     @Override
     public boolean requiresControllerProgressRestart() {
-        return true; // Exo 切换轨道后需 startProgress 恢复
+        return true;
     }
 
     @Override
     public void setOnSubtitleListener(PlayerTrackHelper.SubtitleListener listener) {
+        if (mMediaPlayer == null) return;
+        if (subtitleListener != null) mMediaPlayer.removeListener(subtitleListener);
+        subtitleListener = null;
         if (listener == null) return;
-        setOnTimedTextListener(new Player.Listener() {
+        subtitleListener = new Player.Listener() {
             @Override
-            public void onCues(@androidx.annotation.NonNull List<com.google.android.exoplayer2.text.Cue> cues) {
+            public void onCues(@NonNull CueGroup cueGroup) {
                 try {
-                    if (cues.size() > 0 && cues.get(0).text != null) {
-                        listener.onSubtitle(cues.get(0).text.toString());
+                    if (!cueGroup.cues.isEmpty() && cueGroup.cues.get(0).text != null) {
+                        listener.onSubtitle(cueGroup.cues.get(0).text.toString());
                     } else {
                         listener.onSubtitle(null);
                     }
                 } catch (Throwable th) {
-                    android.util.Log.w("PlayerTrackHelper", "Exo cue 回调异常: " + th.getMessage());
+                    android.util.Log.w("PlayerTrackHelper", "Media3 cue 回调异常: " + th.getMessage());
                 }
             }
-        });
+        };
+        mMediaPlayer.addListener(subtitleListener);
+    }
+
+    @Override
+    public void release() {
+        if (mMediaPlayer != null && subtitleListener != null) {
+            mMediaPlayer.removeListener(subtitleListener);
+        }
+        subtitleListener = null;
+        super.release();
     }
 }

@@ -57,6 +57,8 @@ public class LocalPlayActivity extends BaseVbActivity<ActivityLocalPlayBinding> 
     private com.github.tvbox.osc.state.SystemStateMonitor.Listener mBatteryListener;
     private BasePopupView mAllSeriesRightDialog;
     private PipHelper pipHelper;
+    private int automaticErrorRetries;
+    private boolean retryingAfterError;
     @Override
     protected void init() {
         mVideoView = mBinding.player;
@@ -107,6 +109,8 @@ public class LocalPlayActivity extends BaseVbActivity<ActivityLocalPlayBinding> 
      * 跳转到上/下一集,需重新播放
      */
     private void play(boolean fromSkip) {
+        if (!retryingAfterError) automaticErrorRetries = 0;
+        retryingAfterError = false;
         VideoInfo videoInfo = mVideoList.get(mPosition);
 
         String path = videoInfo.getPath();
@@ -149,6 +153,8 @@ public class LocalPlayActivity extends BaseVbActivity<ActivityLocalPlayBinding> 
 
         if (fromSkip){
             mVideoView.replay(true);
+        } else if (mVideoView.getCurrentPlayState() == VideoView.STATE_ERROR) {
+            mVideoView.replay(false);
         }else {
             mVideoView.start(); //开始播放，不调用则不自动播放
         }
@@ -243,8 +249,30 @@ public class LocalPlayActivity extends BaseVbActivity<ActivityLocalPlayBinding> 
 
             @Override
             public void errReplay() {
-                // 播放出错时由控制器请求重试:直接按保存进度重新装载当前文件
-                play(false);
+                if (automaticErrorRetries >= 2) return;
+                VideoInfo current = mVideoList.get(mPosition);
+                String detail = "本地播放错误: " + current.getDisplayName() + "，内核="
+                        + (mVodPlayerCfg == null ? -1 : mVodPlayerCfg.optInt("pl", -1));
+                com.github.tvbox.osc.log.LogStore.fail(com.github.tvbox.osc.log.Category.PLAYER, detail);
+                android.util.Log.e("MBoxPlayer", detail);
+                if (automaticErrorRetries >= 1) {
+                    automaticErrorRetries = 2;
+                    AppBubble.toast("播放失败，请检查文件或切换播放器");
+                    return;
+                }
+                automaticErrorRetries++;
+                retryingAfterError = true;
+                int failedPosition = mPosition;
+                // 等当前内核的错误回调退出，再重置播放器，避免在回调栈内重入同一个内核。
+                mVideoView.post(() -> {
+                    if (isFinishing() || isDestroyed() || mVideoView == null
+                            || mPosition != failedPosition
+                            || mVideoView.getCurrentPlayState() != VideoView.STATE_ERROR) {
+                        retryingAfterError = false;
+                        return;
+                    }
+                    play(false);
+                });
             }
 
             @Override

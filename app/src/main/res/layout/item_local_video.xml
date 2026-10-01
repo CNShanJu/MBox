@@ -16,6 +16,7 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:clickable="false"
+        android:button="@drawable/button_checkbox_square"
         android:visibility="gone"
         tools:visibility="visible"
         app:layout_constraintBottom_toBottomOf="@id/item"
@@ -34,7 +35,7 @@
         android:layout_gravity="center_horizontal"
         android:baselineAlignBottom="true"
         app:clickable="false"
-        app:hl_cornerRadius="@dimen/common_corners"
+        app:hl_cornerRadius="@dimen/radius_thumb"
         app:hl_layoutBackground="@android:color/transparent"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintStart_toEndOf="@+id/cb"
@@ -44,11 +45,14 @@
             android:layout_width="match_parent"
             android:layout_height="match_parent">
 
+            <!-- 缩略图圆角走**独立档** radius_thumb(不再跟卡片档 radius_card):
+                 卡片档一调大,这种 156×88dp 的小图圆角就吃掉大半个边(用户口径"小图片的圆角太大了")。
+                 底与 ShadowLayout 的 hl_cornerRadius 用同一档,裁剪轮廓与阴影轮廓才一致 -->
             <ImageView
                 android:id="@+id/iv"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
-                android:background="@drawable/bg_small_round_gray"
+                android:background="@drawable/bg_thumb_round"
                 android:clipToOutline="true"
                 android:scaleType="centerCrop" />
 
