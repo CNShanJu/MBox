@@ -1,16 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 搜索词 chip(历史搜索 / 热门搜索共用;联想弹窗也用这个 item,同一套底):
-     底与字都走 style/WidgetBtn(selector_widget_btn + widget_btn_text,圆角 radius_widget_btn);
-     这个键是"点击型"(点一下就搜),按下时整键做一次透明度 80% 的点击特效(WidgetPressEffect)。
-     原来用 bg_large_round_float —— 那是"大面板"的底,圆角 radius_background = 18dp,
-     放在 ~28dp 高的 chip 上圆角比半高还大,整个底变成胶囊/半圆(用户口径:"这两处的半圆是个什么鬼,
-     出现很多次了"),颜色也跟"大面板底"走,看着像另一套组件。 -->
+<!-- 搜索词 chip(历史搜索 / 相关搜索共用;联想弹窗也用这个 item,同一套底):
+     底 = bg_search_word_chip(无填充、只有一条描边,描边色 = 文字色 text_main_half),
+     文字 = **文字主色 50% 透明**、字号 = @dimen/search_word_text_size ——
+     与「最近热搜」标题下的词条**同字号同颜色**(用户口径:两个区块正文统一)。
+     这个键是"点击型"(点一下就搜),按下时整键做一次透明度 80% 的点击特效(WidgetPressEffect);
+     **不要挂 selector_widget_btn**(它带"选中 = 实心填充"状态,点过的词会变成一块选中色)。
+     圆角只走 radius_widget_btn,与全站小组件键同档。 -->
 <TextView style="@style/WidgetBtn" xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/tvSearchWord"
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
     android:layout_gravity="center_horizontal"
+    android:background="@drawable/bg_search_word_chip"
     android:ellipsize="marquee"
     android:focusable="true"
     android:marqueeRepeatLimit="marquee_forever"
@@ -18,5 +20,7 @@
     android:paddingHorizontal="10dp"
     android:singleLine="true"
     android:textAlignment="center"
+    android:textColor="@color/text_main_half"
+    android:textSize="@dimen/search_word_text_size"
     android:layout_margin="4dp"
     tools:text="釜山行"/>

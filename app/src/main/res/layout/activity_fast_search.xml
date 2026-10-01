@@ -84,6 +84,15 @@
         />
 
     </LinearLayout>
+    <!-- 横屏时榜单和历史搜索仍可完整滚动；两块内容按同一宽度居中。 -->
+    <ScrollView
+        android:id="@+id/scroll_search_suggest"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:clipToPadding="false"
+        android:fillViewport="false"
+        android:scrollbars="none">
     <LinearLayout
         android:id="@+id/llSearchSuggest"
         android:layout_width="match_parent"
@@ -94,13 +103,73 @@
         android:clipToPadding="false"
         >
 
+        <!-- 相关搜索:输入即出(爱奇艺联想接口 suggest.video.iqiyi.com/?if=mobile&key=),
+             参考 NewBox 的做法 —— **内联 chip 两列**,不再弹浮层(XPopup 那条已下线)。
+             没输入时整块收起,页面回到"最近热搜 + 搜索历史"。
+             小标题统一口径(用户口径):**文字主色、不带透明度、加粗**。 -->
+        <TextView
+            android:id="@+id/tv_suggest_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="相关搜索"
+            android:textColor="@color/text_foreground"
+            android:textSize="15sp"
+            android:textStyle="bold"
+            android:visibility="gone"
+            tools:visibility="visible" />
+
+        <com.github.tvbox.osc.ui.kit.FlowTagLayout
+            android:id="@+id/fl_suggest"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:visibility="gone"
+            tools:visibility="visible" />
+
+        <!-- 最近热搜始终两列；与历史搜索共用宽度并居中，每列自上而下连续排名。 -->
+        <LinearLayout
+            android:id="@+id/ll_hot_rank"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:orientation="vertical"
+            android:clipToPadding="false"
+            android:visibility="gone"
+            tools:visibility="visible">
+
+            <TextView
+                android:id="@+id/tv_hot_title"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="最近热搜"
+                android:textColor="@color/text_foreground"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/rv_hot_rank"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:background="@drawable/bg_large_round_float"
+                android:clipToPadding="false"
+                android:nestedScrollingEnabled="false"
+                android:paddingVertical="6dp"
+                app:layoutManager="androidx.recyclerview.widget.GridLayoutManager"
+                app:spanCount="2" />
+        </LinearLayout>
+
+        <!-- 历史搜索:与热搜块同宽居中,并与上方热搜卡留出间距(原来贴着卡片,用户口径"距离太近了");
+             清除键挪到标题行**最右**(标题左、图标右,中间 Space 撑开) -->
         <LinearLayout
             android:id="@+id/ll_history"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
             android:orientation="vertical"
             android:visibility="gone"
             tools:visibility="visible"
+            android:layout_marginTop="16dp"
             android:layout_marginBottom="30dp"
             android:clipChildren="false"
             android:clipToPadding="false"
@@ -116,9 +185,16 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="历史搜索"
-                    android:textColor="@color/text_sub"
+                    android:textColor="@color/text_foreground"
                     android:textSize="15sp"
+                    android:textStyle="bold"
                     />
+
+                <!-- 撑开:清空键一律贴标题行最右(原来紧跟标题文字,看着像标题的一部分) -->
+                <Space
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:layout_weight="1" />
 
                 <ImageView
                     android:id="@+id/iv_clear_history"
@@ -133,34 +209,19 @@
 
             <!-- 自研流式容器(ui/kit/FlowTagLayout):原来用第三方 flowlayout-lib,它的行高漏算子视图
                  的上下外边距,最后一行会把标签下半截(含圆角)裁掉。自研版把行高算全,不再需要
-                 clipChildren=false 这类补丁。标签间距 = item_search_word_hot 自己的 layout_margin。 -->
+                 clipChildren=false 这类补丁。标签间距 = item_search_word_hot 自己的 layout_margin。
+                 **不要写 app:max_select**:那些标签是"点一下就搜"的点击件,不是可选件 ——
+                 原来写了 1,点一下就被置 selected,chip 的底 selector_widget_btn 恰好有
+                 "选中=实心填充"状态,于是点过的历史词变成一块选中色(用户口径"点击之后会给选中色背景")。 -->
             <com.github.tvbox.osc.ui.kit.FlowTagLayout
                 android:id="@+id/fl_history"
-                app:max_select="1"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="10dp" />
         </LinearLayout>
 
-        <!-- 标题与「历史搜索」一样左对齐(原来写 textAlignment=center,同一屏两个小标题一个左一个中) -->
-        <TextView
-            android:id="@+id/tv_hot_title"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="热门搜索"
-            android:visibility="gone"
-            tools:visibility="visible"
-            android:textColor="@color/text_sub"
-            android:textSize="15sp" />
-
-        <com.github.tvbox.osc.ui.kit.FlowTagLayout
-            android:id="@+id/fl_hot"
-            app:max_select="1"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="10dp" />
-
     </LinearLayout>
+    </ScrollView>
 
     <!-- 搜索结果区:结果列表(满屏宽)为底层,来源列表(固定 140dp)同容器收纳在屏左外;
          内容区向右横滑把来源列表覆盖式滑出、左滑收回,松手自动吸附 -->

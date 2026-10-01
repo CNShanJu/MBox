@@ -149,6 +149,8 @@ public class FlowTagLayout extends ViewGroup {
                 if (tagClickListener != null) tagClickListener.onTagClick(v, position, FlowTagLayout.this);
             });
             addView(child);
+            // 动态加入的 View 不再被全树按像素猜色;创建/绑定点显式重放已登记主题令牌。
+            com.github.tvbox.osc.theme.ThemeSweep.apply(child);
         }
         requestLayout();
     }

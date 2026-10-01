@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/cl_root"
+    android:layout_width="320dp"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_dialog"
+    android:focusable="true"
+    android:focusableInTouchMode="true">
+
+    <TextView
+        android:id="@+id/title"
+        android:layout_width="0dp"
+        android:layout_height="56dp"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="8dp"
+        android:ellipsize="end"
+        android:gravity="center_vertical"
+        android:maxLines="1"
+        android:text="@string/home_source_title"
+        android:textColor="@color/text_foreground"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toStartOf="@id/btn_switch_subscription"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <androidx.appcompat.widget.AppCompatTextView
+        android:id="@+id/btn_switch_subscription"
+        android:layout_width="wrap_content"
+        android:layout_height="36dp"
+        android:layout_marginEnd="8dp"
+        android:background="@drawable/bg_small_round_gray"
+        android:drawableStart="@drawable/ic_change_20"
+        android:drawablePadding="4dp"
+        android:focusable="true"
+        android:gravity="center"
+        android:paddingHorizontal="8dp"
+        android:text="@string/home_source_switch_subscription"
+        android:textColor="@color/text_foreground"
+        android:textSize="12sp"
+        app:drawableTint="@color/text_foreground"
+        app:layout_constraintEnd_toStartOf="@id/iv_close"
+        app:layout_constraintTop_toTopOf="@id/title"
+        app:layout_constraintBottom_toBottomOf="@id/title" />
+
+    <ImageView
+        android:id="@+id/iv_close"
+        style="@style/DialogCloseButton"
+        android:layout_marginEnd="12dp"
+        android:contentDescription="@string/home_source_close"
+        app:tint="@color/text_foreground"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="@id/title"
+        app:layout_constraintBottom_toBottomOf="@id/title" />
+
+    <LinearLayout
+        android:id="@+id/source_search_box"
+        android:layout_width="0dp"
+        android:layout_height="44dp"
+        android:layout_marginHorizontal="16dp"
+        android:background="@drawable/bg_small_round_gray"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingHorizontal="12dp"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/title">
+
+        <ImageView
+            android:layout_width="18dp"
+            android:layout_height="18dp"
+            android:layout_marginEnd="8dp"
+            android:importantForAccessibility="no"
+            android:src="@drawable/ic_search"
+            app:tint="@color/text_foreground" />
+
+        <EditText
+            android:id="@+id/et_source_filter"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:background="@null"
+            android:hint="@string/home_source_filter_hint"
+            android:imeOptions="actionDone"
+            android:importantForAutofill="no"
+            android:inputType="text"
+            android:maxLines="1"
+            android:singleLine="true"
+            android:textColor="@color/text_foreground"
+            android:textColorHint="@color/text_sub_foreground"
+            android:textSize="14sp" />
+    </LinearLayout>
+
+    <com.owen.tvrecyclerview.widget.TvRecyclerView
+        android:id="@+id/list"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:clipToPadding="false"
+        android:orientation="vertical"
+        android:paddingHorizontal="10dp"
+        android:paddingBottom="10dp"
+        app:layout_constrainedHeight="true"
+        app:layout_constraintHeight_max="@dimen/dp_410"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/source_search_box"
+        app:tv_layoutManager="V7LinearLayoutManager"
+        app:tv_horizontalSpacingWithMargins="@dimen/dp_10"
+        app:tv_verticalSpacingWithMargins="@dimen/dp_10" />
+
+    <TextView
+        android:id="@+id/tv_source_empty"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginHorizontal="20dp"
+        android:gravity="center"
+        android:paddingVertical="24dp"
+        android:text="@string/home_source_no_match"
+        android:textColor="@color/text_sub_foreground"
+        android:textSize="14sp"
+        android:visibility="gone"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="@id/list" />
+
+    <View
+        android:id="@+id/scroll_thumb"
+        android:layout_width="3dp"
+        android:layout_height="0dp"
+        android:background="@drawable/bg_scroll_thumb"
+        android:visibility="gone"
+        app:layout_constraintEnd_toEndOf="@id/list"
+        app:layout_constraintTop_toTopOf="@id/list" />
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="30dp"
+        app:layout_constraintTop_toBottomOf="@id/list" />
+</androidx.constraintlayout.widget.ConstraintLayout>

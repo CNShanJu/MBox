@@ -79,6 +79,14 @@
 
     <!-- 公共空态(view_empty)默认文案:LoadSir 的空态视图全 App 复用,代码侧要能把它设回默认值 -->
     <string name="empty_default_tip">暂无数据</string>
+    <string name="home_source_unconfigured">未设置订阅</string>
+    <string name="home_no_subscription">暂无订阅源</string>
+    <string name="home_add_subscription">添加订阅源</string>
+
+    <!-- 拿不到内容时的原因说明:能说清原因就说原因,说不清才退回 empty_default_tip(口径同 DetailActivity) -->
+    <string name="empty_reason_source_timeout">数据源无响应（请求超时）\n可切换数据源,或长按首页标题刷新重试</string>
+    <string name="empty_reason_source_empty">该数据源没有返回内容（可能暂时不可用）\n可切换数据源,或长按首页标题刷新重试</string>
+    <string name="empty_reason_offline">网络连接不可用\n请检查 Wi-Fi 或移动数据后重试</string>
 
     <string name="setting_ignore_ssl_tip">
         只为个别自签名 / 证书异常的站点准备：开启后不再校验证书链与主机名。
@@ -100,4 +108,10 @@
     <string name="no_network_reason">原因：%1$s</string>
     <string name="no_network_back">返回</string>
     <string name="no_network_got_it">我知道了</string>
+    <string name="home_source_title">请选择首页数据源</string>
+    <string name="home_source_switch_subscription">切换订阅</string>
+    <string name="home_source_close">关闭数据源选择</string>
+    <string name="home_source_filter_hint">输入数据源名称筛选</string>
+    <string name="home_source_no_match">未找到匹配的数据源</string>
+    <string name="home_source_none">暂无可用数据源，可切换订阅</string>
 </resources>

@@ -1,16 +1,17 @@
 package com.github.tvbox.osc.ui.fragment
 
+import android.app.ActivityOptions
 import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
 import android.text.TextUtils
 import android.view.Gravity
+import android.view.View
 import android.widget.TextView
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentStatePagerAdapter
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
-import androidx.recyclerview.widget.DiffUtil
 import com.angcyo.tablayout.delegate.ViewPager1Delegate.Companion.install
 import com.blankj.utilcode.util.ConvertUtils
 import com.blankj.utilcode.util.ScreenUtils
@@ -19,6 +20,7 @@ import com.github.tvbox.osc.log.LogStore
 import com.github.tvbox.osc.util.AppBubble
 import com.github.tvbox.osc.R
 import com.github.tvbox.osc.spiderapi.SourceConfigProviders
+import com.github.tvbox.osc.spiderapi.SpiderFaultProviders
 import com.github.tvbox.osc.spiderapi.SourceLoaderApi
 import com.github.tvbox.osc.spiderapi.SourceLoaderProviders
 import com.github.tvbox.osc.base.App
@@ -27,7 +29,6 @@ import com.github.tvbox.osc.base.BaseVbFragment
 import com.github.tvbox.osc.state.SystemStateMonitor
 import com.github.tvbox.osc.bean.AbsSortXml
 import com.github.tvbox.osc.bean.MovieSort.SortData
-import com.github.tvbox.osc.bean.SourceBean
 import com.github.tvbox.osc.bean.VodInfo
 import com.github.tvbox.osc.constant.IntentKey
 import com.github.tvbox.osc.databinding.FragmentHomeBinding
@@ -37,16 +38,15 @@ import com.github.tvbox.osc.ui.activity.FastSearchActivity
 import com.github.tvbox.osc.ui.activity.HistoryActivity
 import com.github.tvbox.osc.ui.activity.MainActivity
 import com.github.tvbox.osc.ui.activity.SubscriptionActivity
-import com.github.tvbox.osc.ui.adapter.SelectDialogAdapter.SelectDialogInterface
 import com.github.tvbox.osc.ui.dialog.LastViewedDialog
-import com.github.tvbox.osc.ui.dialog.SelectDialog
+import com.github.tvbox.osc.ui.dialog.HomeSourceChoices
+import com.github.tvbox.osc.ui.dialog.HomeSourceDialog
 import com.github.tvbox.osc.ui.dialog.TipDialog
 import com.github.tvbox.osc.util.DefaultConfig
 import com.github.tvbox.osc.util.SubscriptionConfig
 import com.github.tvbox.osc.config.SystemConfig
 import com.github.tvbox.osc.viewmodel.SourceViewModel
 import com.lxj.xpopup.XPopup
-import com.owen.tvrecyclerview.widget.V7GridLayoutManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -98,11 +98,16 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
     private var loadInFlight = false
     /** 是否成功拿到过首页数据(拿到过就不再自动补,免得和用户操作打架) */
     private var loadedOnce = false
+    /** 本轮首屏是不是被看门狗判成"请求无结果"收尾的(用于空态文案:超时 vs 本来就没数据) */
+    private var loadTimedOut = false
     /** 网络状态是否已订阅 */
     private var netBound = false
 
     /** "上次看到"气泡预计消失的时间点(uptimeMillis);无气泡时保持 0,自动检查按默认延时走 */
     private var bubbleUntil = 0L
+    private var lastViewedBubble: LastViewedDialog? = null
+    /** 历史查询可能晚于更新检查返回，届时不能再把气泡盖到更新弹窗上。 */
+    private var autoCheckStarted = false
 
     /** 排队的自动检查任务(重复排队时先撤掉,只保留最后一次) */
     private val pendingAutoCheck = Runnable { runAutoUpdateCheck() }
@@ -123,7 +128,21 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
 
     override fun init() {
         ControlManager.get().startServer()
+        // 搜索框是 Fragment 内的自定义视图；显式应用主题令牌，避免 inflater 未覆盖时停在包内配色。
+        com.github.tvbox.osc.theme.ThemeDrawables.applyBackground(
+            mBinding.search, R.drawable.bg_search_round_float
+        )
+        com.github.tvbox.osc.theme.ThemeRuntime.colorPalette()?.let { colors ->
+            mBinding.search.setTextColor(colors.get("text_main"))
+            mBinding.search.setHintTextColor(colors.get("text_hint"))
+            mBinding.search.compoundDrawableTintList =
+                android.content.res.ColorStateList.valueOf(colors.get("text_sub"))
+        }
         mBinding.nameContainer.setOnClickListener {
+            if (!hasSubscription()) {
+                jumpActivity(SubscriptionActivity::class.java)
+                return@setOnClickListener
+            }
             if (dataInitOk && jarInitOk) {
                 showSiteSwitch()
             } else {
@@ -136,12 +155,20 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
             refreshHomeSources()
             true
         }
+        mBinding.addSubscriptionButton.setOnClickListener {
+            jumpActivity(SubscriptionActivity::class.java)
+        }
         mBinding.search.setOnClickListener {
             if (!hasSubscription()) {
                 AppBubble.toast("请先设置订阅")
                 return@setOnClickListener
             }
-            jumpActivity(FastSearchActivity::class.java)
+            val intent = Intent(requireContext(), FastSearchActivity::class.java)
+                .putExtra(FastSearchActivity.EXTRA_HOME_SEARCH_TRANSITION, true)
+            val options = ActivityOptions.makeSceneTransitionAnimation(
+                requireActivity(), mBinding.search, FastSearchActivity.HOME_SEARCH_TRANSITION_NAME
+            )
+            startActivity(intent, options.toBundle())
         }
         mBinding.ivHistory.setOnClickListener {
             jumpActivity(HistoryActivity::class.java)
@@ -157,11 +184,20 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
     private fun initViewModel() {
         sourceViewModel = ViewModelProvider(this).get(SourceViewModel::class.java)
         sourceViewModel?.sortResult?.observe(this) { absXml: AbsSortXml? ->
+            if (!hasSubscription()) {
+                showNoSubscriptionState()
+                return@observe
+            }
             // 收到任何结果(数据/空/null)都算本轮结束:作废看门狗、清"在途"标记(同 GridFragment)
             loadEpoch++
             loadInFlight = false
-            if (absXml != null) loadedOnce = true
-            showSuccess()
+            if (absXml != null) {
+                loadedOnce = true
+                showSuccess()
+            } else {
+                // 分类都拿不到:别只切"成功态"留下一个连 tab 都没有的空壳 —— 走收尾,让空态带上原因
+                settleFirstScreen()
+            }
             mSortDataList =
                 if (absXml?.classes != null && absXml.classes.sortList != null) {
                     DefaultConfig.adjustSort(
@@ -180,17 +216,27 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
         val mainActivity = mActivity as MainActivity
         onlyConfigChanged = mainActivity.useCacheConfig
 
-        val home = SourceConfigProviders.get().homeSourceBean
-        if (home != null && !home.name.isNullOrEmpty()) {
-            mBinding.tvName.text = home.name
-            mBinding.tvName.postDelayed({ mBinding.tvName.isSelected = true }, 2000)
+        val hasSubscription = hasSubscription()
+        if (hasSubscription) mBinding.noSubscriptionView.visibility = View.GONE
+        val home = if (hasSubscription) SourceConfigProviders.get().homeSourceBean else null
+        mBinding.tvName.text = when {
+            !hasSubscription -> getString(R.string.home_source_unconfigured)
+            !home?.name.isNullOrEmpty() -> home?.name.orEmpty()
+            else -> getString(R.string.app_name)
         }
+        mBinding.tvName.postDelayed({ mBinding.tvName.isSelected = true }, 2000)
 
         // 启动自动检查更新:挂在首页数据初始化上(而不是"有上次播放记录"那支),
         // 否则无痕浏览/本机无历史时"上次看到"气泡不弹,自动检查就永远不跑。
         // 内部按"气泡展示时长"延时并做进程级去重(见 scheduleAutoUpdateCheck)。
         scheduleAutoUpdateCheck()
 
+        if (!hasSubscription) {
+            showNoSubscriptionState()
+            // 让加载器同步清理已删除订阅留下的源列表与首页源；不启动首屏看门狗。
+            loadConfig()
+            return
+        }
         showLoading()
         startLoadWatchdog()
         when{
@@ -228,7 +274,7 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
                     mHandler.post {
                         if (!hasSubscription()) {
                             // 未设置订阅:首屏不加载,提示用户先去订阅管理设置
-                            showNoSubscriptionTip()
+                            if (loadInFlight) showNoSubscriptionState()
                             return@post
                         }
                         dataInitOk = true
@@ -236,6 +282,10 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
                         initData()
                     }
                 } else {
+                    if (!hasSubscription()) {
+                        showNoSubscriptionState()
+                        return
+                    }
                     // 拉取/解析失败:先收尾首屏(loading 视图会盖住内容、挡住长按刷新),再把原因告知用户
                     settleFirstScreen()
                     showTipDialog(msg)
@@ -322,33 +372,22 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
     /**
      * 未设置订阅时的提示:首屏不加载,引导去订阅管理设置
      */
-    private fun showNoSubscriptionTip() {
-        showEmpty()
-        if (errorTipDialog == null) {
-            // 复用同一条错误提示弹窗:文案不同,清掉记录以免后续 showTipDialog 误复用本弹窗
-            errorTipMsg = null
-            errorTipDialog =
-                TipDialog(requireActivity(), "尚未设置订阅,请先在订阅管理中设置订阅地址", "去设置", "取消", object : TipDialog.OnListener {
-                    override fun left() {
-                        errorTipDialog?.hide()
-                        jumpActivity(SubscriptionActivity::class.java)
-                    }
-
-                    override fun right() {
-                        errorTipDialog?.hide()
-                    }
-
-                    override fun cancel() {
-                        errorTipDialog?.hide()
-                    }
-
-                    override fun onTitleClick() {
-                        errorTipDialog?.hide()
-                        jumpActivity(SubscriptionActivity::class.java)
-                    }
-                })
-        }
-        if (!errorTipDialog!!.isShowing) errorTipDialog!!.show()
+    private fun showNoSubscriptionState() {
+        loadEpoch++
+        loadInFlight = false
+        loadTimedOut = false
+        loadedOnce = false
+        dataInitOk = false
+        jarInitOk = false
+        mBinding.tvName.text = getString(R.string.home_source_unconfigured)
+        mSortDataList = emptyList()
+        mBinding.mViewPager.adapter = null
+        mBinding.tabLayout.removeAllViews()
+        fragments.clear()
+        errorTipDialog?.hide()
+        errorTipDialog = null
+        errorTipMsg = null
+        mBinding.noSubscriptionView.visibility = View.VISIBLE
     }
 
     private fun getTabTextView(text: String): TextView {
@@ -443,6 +482,9 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
 
     override fun onPause() {
         unbindNetworkState()
+        lastViewedBubble?.dismiss()
+        lastViewedBubble = null
+        bubbleUntil = 0L
         super.onPause()
         mHandler.removeCallbacksAndMessages(null)
     }
@@ -455,6 +497,7 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
 
     /** 订阅系统网络状态(幂等;只在可见期间订阅),并处理"事件在页面不可见期间发生"的时序 */
     private fun bindNetworkState() {
+        if (!hasSubscription()) return
         if (isOffline()) {
             settleFirstScreen()
         } else if (!loadedOnce && !loadInFlight) {
@@ -480,6 +523,7 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
 
     private val netListener = SystemStateMonitor.Listener { e ->
         if (e == null || e.type != SystemStateMonitor.TYPE_NETWORK) return@Listener
+        if (!hasSubscription()) return@Listener
         if (SystemStateMonitor.VAL_NONE == e.value) {
             // 断网:在途请求已被网络层快速失败,不会再有回调 → 立即收尾
             settleFirstScreen()
@@ -500,9 +544,12 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
     private fun startLoadWatchdog() {
         val epoch = ++loadEpoch
         loadInFlight = true
+        loadTimedOut = false
         mHandler.postDelayed({
             if (epoch != loadEpoch) return@postDelayed   // 已收尾/已换轮:这条作废
             LogStore.log(Category.SYSTEM, "首页: 加载看门狗触发(请求无结果),收尾显示空态")
+            // 标记成"超时":空态文案要说清是"没响应",而不是让用户以为这个源本来就没内容
+            loadTimedOut = true
             settleFirstScreen()
         }, LOAD_WATCHDOG_MS)
     }
@@ -517,40 +564,59 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
      * 已经加载成功过就只收尾、不动已有内容(别把用户的列表刷掉)。
      */
     private fun settleFirstScreen() {
+        if (!hasSubscription()) {
+            showNoSubscriptionState()
+            return
+        }
         loadEpoch++
         loadInFlight = false
-        if (!loadedOnce) showEmpty()
+        if (!loadedOnce) {
+            val reason = emptyReason()
+            // 留痕:下次现场只看日志就能知道空态是"插件故障 / 断网 / 超时 / 源没返回内容"哪一档
+            LogStore.log(Category.SYSTEM, "首页: 收尾显示空态,原因=" + (if (reason.isNullOrEmpty()) "默认(暂无数据)" else reason.replace('\n', ' ')))
+            showEmpty(reason)
+        }
+    }
+
+    /**
+     * 首页拿不到内容时,给一句能说清原因的空态文案(口径同 DetailActivity 的"能说清原因就说原因,
+     * 说不清才退回暂无数据")。
+     * <p>
+     * 优先级:源插件故障({@code SpiderFaults},如插件会让 App 闪退 / 缺少站点声明的类)> 断网 >
+     * 请求超时(看门狗判定的"无结果")> 源返回了空内容 > 默认「暂无数据」。
+     * 为什么需要:看门狗只知道"没人回结果",页面原来只显示「暂无数据」—— 用户分不清是源坏了、
+     * 插件坏了还是 App 坏了(真机现象:首页一直 loading,最后只留一个"暂无数据")。
+     */
+    private fun emptyReason(): String? {
+        val key = try {
+            SourceConfigProviders.get().homeSourceBean?.key
+        } catch (th: Throwable) {
+            null
+        }
+        val fault = if (key.isNullOrEmpty()) null else SpiderFaultProviders.unavailableReason(key)
+        if (!fault.isNullOrEmpty()) return fault
+        if (isOffline()) return getString(R.string.empty_reason_offline)
+        if (loadTimedOut) return getString(R.string.empty_reason_source_timeout)
+        // 请求回来了但没内容(源自己返回空/分类为空):也要说清,别只留"暂无数据"
+        return getString(R.string.empty_reason_source_empty)
     }
 
     private fun showSiteSwitch() {
         val sites = SourceConfigProviders.get().sourceBeanList
-        if (sites.size > 0) {
-            val dialog = SelectDialog<SourceBean>(requireActivity())
-            dialog.setListLayoutManager(V7GridLayoutManager(dialog.context, 2))
-            dialog.setDynamicHeightByScreen(true) // 源列表按屏高分档动态撑高:大屏60%/小屏铺满/区间50%
-            dialog.setTip("请选择首页数据源")
-            dialog.setAdapter(object : SelectDialogInterface<SourceBean?> {
-                override fun click(value: SourceBean?, pos: Int) {
-                    SourceConfigProviders.get().setSourceBean(value)
+        HomeSourceDialog(requireActivity(),
+            sites.map { HomeSourceChoices.Row(it.key, it.name) },
+            SourceConfigProviders.get().homeSourceBean?.key,
+            { key ->
+                val source = SourceConfigProviders.get().getSource(key)
+                if (source != null) {
+                    SourceConfigProviders.get().setSourceBean(source)
                     refreshHomeSources()
+                } else {
+                    AppBubble.toast("数据源已失效，请重新选择")
                 }
-
-                override fun getDisplay(source: SourceBean?): String {
-                    return if (source == null) "" else source.name
-                }
-            }, object : DiffUtil.ItemCallback<SourceBean>() {
-                override fun areItemsTheSame(oldItem: SourceBean, newItem: SourceBean): Boolean {
-                    return oldItem === newItem
-                }
-
-                override fun areContentsTheSame(oldItem: SourceBean, newItem: SourceBean): Boolean {
-                    return oldItem.key.contentEquals(newItem.key)
-                }
-            }, sites, sites.indexOf(SourceConfigProviders.get().homeSourceBean))
-            dialog.show()
-        } else {
-            AppBubble.toastLong("暂无可用数据源")
-        }
+            },
+            { jumpActivity(SubscriptionActivity::class.java) }
+        ).show()
     }
 
     private fun refreshHomeSources() {
@@ -588,19 +654,27 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
             }
 
             // 查询完成后更新UI
-            if (vodInfoList.isNotEmpty() && vodInfoList[0] != null) {
+            val host = activity
+            if (vodInfoList.isNotEmpty() && vodInfoList[0] != null && isAdded
+                && host != null && !host.isFinishing && !host.isDestroyed && !autoCheckStarted) {
+                if (lastViewedBubble?.isShow == true) return@launch
                 val shownAt = android.os.SystemClock.uptimeMillis()
                 bubbleUntil = shownAt + BUBBLE_SHOW_MS
-                XPopup.Builder(context)
+                val bubble = LastViewedDialog(host, vodInfoList[0])
+                lastViewedBubble = bubble
+                XPopup.Builder(host)
                     .hasShadowBg(false)
                     .isDestroyOnDismiss(true)
                     .isCenterHorizontal(true)
                     .isTouchThrough(true)
                     // 距屏幕底部约155dp(转px),不同密度设备位置一致;配合 maxLines=1 气泡高度固定不截断
                     .offsetY(ScreenUtils.getAppScreenHeight() - ConvertUtils.dp2px(155f + 44f))
-                    .asCustom(LastViewedDialog(requireContext(), vodInfoList[0]))
+                    .asCustom(bubble)
                     .show()
                     .delayDismiss(BUBBLE_SHOW_MS)
+                mHandler.postDelayed({
+                    if (lastViewedBubble === bubble) lastViewedBubble = null
+                }, CHECK_AFTER_BUBBLE_MS + 1000L)
                 // 气泡真的出现了:把自动检查往后排到它消失之后(可能已由 initData 排过一次)
                 rescheduleAutoUpdateCheckAfterBubble()
             }
@@ -634,7 +708,20 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
     private fun runAutoUpdateCheck() {
         val act = activity ?: return
         if (isAdded && !act.isFinishing && !act.isDestroyed) {
-            com.github.tvbox.osc.update.UpdateCheck.autoCheckOnce(act, null)
+            autoCheckStarted = true
+            val bubble = lastViewedBubble
+            lastViewedBubble = null
+            bubbleUntil = 0L
+            if (bubble?.isShow == true) {
+                // 先等独立窗口的气泡退场，再允许更新弹窗入场，避免窗口层级倒置。
+                bubble.dismissWith {
+                    if (!act.isFinishing && !act.isDestroyed) {
+                        com.github.tvbox.osc.update.UpdateCheck.autoCheckOnce(act, null)
+                    }
+                }
+            } else {
+                com.github.tvbox.osc.update.UpdateCheck.autoCheckOnce(act, null)
+            }
         }
     }
 }

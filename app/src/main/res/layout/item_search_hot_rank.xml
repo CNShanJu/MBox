@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 「最近热搜」条目:一个序号 + 词条名(固定两列,序号底由适配器按名次染色)。
+     每列自上而下连续排名,折算见 SearchApiParsers.columnMajorIndex。
+     文字口径(用户口径):排名后面的词条名比序号小一号,颜色 = **文字主色 50% 透明**,
+     与「历史搜索」标题下的 chip 文字**同字号同颜色**(搜索页两个区块的正文统一)。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingHorizontal="16dp"
+    android:paddingVertical="8dp">
+
+    <TextView
+        android:id="@+id/tv_rank"
+        android:layout_width="22dp"
+        android:layout_height="22dp"
+        android:background="@drawable/bg_search_rank_badge"
+        android:gravity="center"
+        android:textColor="@color/white"
+        android:textSize="12sp"
+        tools:text="1" />
+
+    <TextView
+        android:id="@+id/tv_word"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="@dimen/dp_8"
+        android:layout_marginLeft="@dimen/dp_8"
+        android:layout_weight="1"
+        android:ellipsize="end"
+        android:singleLine="true"
+        android:textColor="@color/text_main_half"
+        android:textSize="@dimen/search_word_text_size"
+        tools:text="兰香如故" />
+
+</LinearLayout>

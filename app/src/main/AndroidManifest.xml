@@ -70,6 +70,7 @@
             android:screenOrientation="landscape" />
         <activity
             android:name=".ui.activity.MainActivity"
+            android:theme="@style/AppTheme.SearchTransition"
             android:configChanges="orientation|screenSize|keyboardHidden|uiMode"
             android:exported="false"/>
         <activity
@@ -85,6 +86,7 @@
             android:exported="false"/>
         <activity
             android:name=".ui.activity.FastSearchActivity"
+            android:theme="@style/AppTheme.SearchTransition"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:exported="false"
             />

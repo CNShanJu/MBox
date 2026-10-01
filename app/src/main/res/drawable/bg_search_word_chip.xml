@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 搜索页词条 chip 的底(历史搜索 / 相关搜索共用):**无填充,只有一条描边**。
+     描边色 = 它自己的文字色 `text_main_half`(文字主色 50%)—— 遵守"空心件边框线必须与文字同色"口径;
+     点击型组件,**不挂 state_selected**(见 AGENTS §七"点击型组件不得带选中外观"),
+     按下反馈由代码里的 WidgetPressEffect 做透明度动画,不靠选择器。
+     历史:这里以前走 style/WidgetBtn 的 selector_widget_btn(带"选中 = 实心填充"状态),
+     于是点过的历史词会变成一块选中色;而且文字用的是全不透明的主色,与「最近热搜」正文不一致。 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+
+    <solid android:color="@android:color/transparent" />
+
+    <stroke
+        android:width="@dimen/stroke_widget_btn"
+        android:color="@color/text_main_half" />
+
+    <corners android:radius="@dimen/radius_widget_btn" />
+
+</shape>

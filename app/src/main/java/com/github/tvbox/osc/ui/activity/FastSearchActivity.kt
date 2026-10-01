@@ -3,6 +3,13 @@ package com.github.tvbox.osc.ui.activity
 import android.content.res.Configuration
 import android.os.Bundle
 import android.os.SystemClock
+import android.transition.ChangeBounds
+import android.transition.ChangeClipBounds
+import android.transition.ChangeTransform
+import android.transition.Fade
+import android.transition.Transition
+import android.transition.TransitionManager
+import android.transition.TransitionSet
 import android.text.Editable
 import android.text.TextUtils
 import android.text.TextWatcher
@@ -10,7 +17,10 @@ import android.view.Gravity
 import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.View
+import android.view.ViewGroup
+import android.view.animation.DecelerateInterpolator
 import android.view.inputmethod.EditorInfo
+import android.widget.FrameLayout
 import android.widget.TextView
 import androidx.lifecycle.ViewModelProvider
 import androidx.recyclerview.widget.GridLayoutManager
@@ -41,9 +51,9 @@ import com.github.tvbox.osc.ui.adapter.SelectDialogAdapter
 import com.github.tvbox.osc.ui.adapter.SelectDialogAdapter.SelectDialogInterface
 import com.github.tvbox.osc.ui.kit.ListEndTipController
 import com.github.tvbox.osc.ui.dialog.AttachActionDialog
+import com.github.tvbox.osc.ui.dialog.ConfirmDialog
 import com.github.tvbox.osc.ui.dialog.DoubanSuggestDialog
 import com.github.tvbox.osc.ui.dialog.SearchCheckboxDialog
-import com.github.tvbox.osc.ui.dialog.SearchSuggestionsDialog
 import com.github.tvbox.osc.ui.dialog.SelectDialog
 import com.github.tvbox.osc.util.FastClickCheckUtil
 import com.github.tvbox.osc.util.SearchPagingState
@@ -71,6 +81,10 @@ import java.util.concurrent.atomic.AtomicInteger
 class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatcher {
 
     companion object {
+        const val EXTRA_HOME_SEARCH_TRANSITION = "home_search_transition"
+        const val HOME_SEARCH_TRANSITION_NAME = "home_search_expand"
+        private const val HOME_SEARCH_TRANSITION_MS = 360L
+
         private var mCheckSources: HashMap<String, String>? = null
         fun setCheckedSourcesForSearch(checkedSources: HashMap<String, String>?) {
             mCheckSources = checkedSources
@@ -90,6 +104,60 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
     }
 
     private lateinit var sourceViewModel : SourceViewModel
+    private var fromHomeSearch = false
+    private var homeSearchOverlay: View? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        fromHomeSearch = savedInstanceState == null &&
+            intent.getBooleanExtra(EXTRA_HOME_SEARCH_TRANSITION, false)
+        if (fromHomeSearch) {
+            window.sharedElementEnterTransition = homeSearchTransition()
+            window.sharedElementReturnTransition = homeSearchTransition()
+            postponeEnterTransition()
+        }
+        super.onCreate(savedInstanceState)
+        if (fromHomeSearch) prepareHomeSearchTransition()
+    }
+
+    private fun homeSearchTransition(): Transition = TransitionSet().apply {
+        addTransition(ChangeBounds())
+        addTransition(ChangeClipBounds())
+        addTransition(ChangeTransform())
+        duration = HOME_SEARCH_TRANSITION_MS
+        interpolator = DecelerateInterpolator()
+    }
+
+    private fun prepareHomeSearchTransition() {
+        // 单独的共享元素盖住搜索页内容：从首页胶囊扩展为整页，返回时再收回原位置。
+        val content = findViewById<FrameLayout>(android.R.id.content)
+        val overlay = View(this).apply {
+            transitionName = HOME_SEARCH_TRANSITION_NAME
+            background = ThemeDrawables.themedDrawable(R.drawable.bg_search_round_float, resources)
+        }
+        content.addView(overlay, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+        ))
+        homeSearchOverlay = overlay
+        mBinding.root.alpha = 0f
+        window.sharedElementEnterTransition.addListener(object : Transition.TransitionListener {
+            override fun onTransitionStart(transition: Transition) = Unit
+            override fun onTransitionEnd(transition: Transition) = revealSearchContent()
+            override fun onTransitionCancel(transition: Transition) = revealSearchContent()
+            override fun onTransitionPause(transition: Transition) = Unit
+            override fun onTransitionResume(transition: Transition) = Unit
+        })
+        overlay.post { if (!isFinishing && !isDestroyed) startPostponedEnterTransition() }
+    }
+
+    private fun revealSearchContent() {
+        val overlay = homeSearchOverlay ?: return
+        if (isFinishing || isDestroyed) return
+        mBinding.root.animate().alpha(1f).setDuration(160L).start()
+        overlay.animate().alpha(0f).setDuration(160L).withEndAction {
+            overlay.visibility = View.GONE
+        }.start()
+    }
+
     private var searchAdapter = FastSearchAdapter()
     private var searchAdapterFilter = FastSearchAdapter()
     private var searchTitle: String? = ""
@@ -97,7 +165,9 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
     private var isFilterMode = false
     private var searchFilterKey: String? = "" // 过滤的key
     private var resultVods = HashMap<String, MutableList<Movie.Video>>()
-    private var mSearchSuggestionsDialog: SearchSuggestionsDialog? = null
+
+    /** 「最近热搜」固定两列，宽屏只调整榜单宽度。 */
+    private val mHotRankAdapter = com.github.tvbox.osc.ui.adapter.HotRankAdapter()
 
     /** 搜索是否已全部完成(全部来源返回后置真;"到底了"仅完成态显示) */
     private var searchFinished = false
@@ -148,8 +218,8 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
         initData()
         //历史搜索
         initHistorySearch()
-        // 热门搜索
-        hotWords
+        // 最近热搜(360 影视排行;与 360kan 排行页同源,NewBox 搜索页同款)
+        initHotRank()
     }
 
     override fun onResume() {
@@ -157,11 +227,14 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
         resumeSearches()
     }
 
-    /** 屏幕旋转(orientation/screenSize):重算宫格/通栏的并排列数(单卡最大宽不变,列数随新屏宽变) */
+    /** 屏幕旋转或窗口尺寸变化时，重算结果卡片列数与搜索区宽度。 */
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         // 仅宫格/通栏是自适应列数;单列列表列数为 1,重算无影响,统一走 applyResultLayout 即可
         applyResultLayout(SystemConfig.getSearchResultLayout())
+        mBinding.scrollSearchSuggest.post {
+            updateSearchSectionWidths(mBinding.scrollSearchSuggest.width)
+        }
     }
 
     private fun initView() {
@@ -174,7 +247,10 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
         }
         mBinding.etSearch.addTextChangedListener(this)
         mBinding.ivFilter.setOnClickListener { filterSearchSource() }
-        mBinding.ivBack.setOnClickListener { finish() }
+        mBinding.ivBack.setOnClickListener {
+            // 与系统返回同一条链:结果页先回搜索页,搜索页再按返回才退出(见 onBackPressed)
+            onBackPressed()
+        }
         mBinding.ivSearch.setOnClickListener {
             search(mBinding.etSearch.text.toString())
         }
@@ -351,9 +427,48 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
         }
     }
 
-    /** 遥控适配:左方向键翻到来源列表;来源页展开时右方向键/返回键翻回结果 */
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+    /**
+     * 返回链:来源抽屉(展开时先收起)→ **结果页回到搜索页** → 搜索页再按返回才退出本页。
+     * <p>
+     * 用户口径:"搜索结果页返回为啥直接跳到首页了" —— 以前 ivBack/返回键一律 finish(),
+     * 而本页是从首页拉起来的,finish 就等于"跳回首页",把刚搜的东西丢了。
+     */
+    override fun onBackPressed() {
         if (mBinding.llSearchResult.visibility == View.VISIBLE) {
+            if (mBinding.llSearchResult.isLeftShown) {
+                closeSourceDrawer()   // 来源列表还展着:先收回结果页(与遥控返回键同一条链)
+                return
+            }
+            backToSearchPage()
+            return
+        }
+        if (fromHomeSearch) {
+            KeyboardUtils.hideSoftInput(this)
+            mBinding.root.animate().cancel()
+            homeSearchOverlay?.animate()?.cancel()
+            homeSearchOverlay?.apply {
+                alpha = 1f
+                visibility = View.VISIBLE
+            }
+            mBinding.root.alpha = 0f
+            finishAfterTransition()
+        } else {
+            super.onBackPressed()
+        }
+    }
+
+    /**
+     * 从结果页回到搜索页:停掉在跑的搜索 + 清空输入框 —— 清空会走 [afterTextChanged] 切回建议态
+     * (露出「最近热搜 + 搜索历史」,相关搜索收起);用户的**搜索历史**不受影响(只有输入框内容被清掉)。
+     */
+    private fun backToSearchPage() {
+        cancel()
+        KeyboardUtils.hideSoftInput(this)
+        mBinding.etSearch.setText("")
+    }
+
+    /** 遥控适配:左方向键翻到来源列表;来源页展开时右方向键/返回键翻回结果 */
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {        if (mBinding.llSearchResult.visibility == View.VISIBLE) {
             when (keyCode) {
                 KeyEvent.KEYCODE_DPAD_LEFT -> if (!mBinding.llSearchResult.isLeftShown) {
                     openSourceDrawer()
@@ -534,10 +649,10 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
 
     private fun hideHotAndHistorySearch(isHide: Boolean) {
         if (isHide) {
-            mBinding.llSearchSuggest.visibility = View.GONE
+            mBinding.scrollSearchSuggest.visibility = View.GONE
             mBinding.llSearchResult.visibility = View.VISIBLE
         } else {
-            mBinding.llSearchSuggest.visibility = View.VISIBLE
+            mBinding.scrollSearchSuggest.visibility = View.VISIBLE
             mBinding.llSearchResult.visibility = View.GONE
         }
     }
@@ -561,127 +676,154 @@ tv.text = s
             search(mSearchHistory[position])
             true
         }
-        findViewById<View>(R.id.iv_clear_history).setOnClickListener { view: View ->
-            SubscriptionConfig.clearSearchHistory()
-            // 自研 FlowTagLayout 同样没有"清空数据"的 API(adapter 是外部数据的视图),
-            // 简单粗暴重置:重新 setAdapter 一次(旧的 TagFlowLayout 也是这么干的)
-            view.postDelayed({ initHistorySearch() }, 300)
+        findViewById<View>(R.id.iv_clear_history).setOnClickListener {
+            ConfirmDialog.showDanger(this, "清空搜索历史", "确定清空全部搜索历史吗？", "清空") {
+                SubscriptionConfig.clearSearchHistory()
+                initHistorySearch()
+            }
         }
     }
 
     /**
-     * 热门搜索
+     * 最近热搜:360 影视排行(NewBox 搜索页同款接口 {@code rank?cat=3}),固定两列。
+     * 解析与上限在 [com.github.tvbox.osc.util.SearchApiParsers] 里(纯逻辑,有 JVM 单测)。
+     * 拿不到/为空时标题与整块一起收起,不留空标题。
      */
-    private val hotWords: Unit
-        get() {
-            // 加载热词
-            val params = HashMap<String, String>()
-            params["channdlId"] = "0"
-            params["_"] = System.currentTimeMillis().toString()
-            HttpClient.get("https://node.video.qq.com/x/api/hot_search", params, null, null, object : HCallBack {
-                    override fun onSuccess(response: String) {
-                        try {
-                            val hots = ArrayList<String>()
-                            // 服务端偶发返回非 JSON(HTML/错误页),用 lenient 容错解析
-                            val reader = com.google.gson.stream.JsonReader(java.io.StringReader(response)).apply { isLenient = true }
-                            val itemList =
-                                com.google.gson.JsonParser.parseReader(reader).asJsonObject["data"].asJsonObject["mapResult"].asJsonObject["0"].asJsonObject["listInfo"].asJsonArray
-                            //                            JsonArray itemList = JsonParser.parseString(response).getAsJsonObject().get("data").getAsJsonArray();
-                            for (ele: JsonElement in itemList) {
-                                val obj = ele as JsonObject
-                                hots.add(obj["title"].asString.trim { it <= ' ' }
-                                    .replace("<|>|《|》|-".toRegex(), "").split(" ".toRegex())
-                                    .dropLastWhile { it.isEmpty() }
-                                    .toTypedArray()[0])
-                            }
-                            // 热词为空/拿不到时,标题一起收起来 —— 否则页面上会留一个「热门搜索」空标题、
-                            // 下面什么都没有(用户截图实测)。布局里默认就是 gone,这里只在有词时显示。
-                            mBinding.tvHotTitle.visibility = if (hots.isEmpty()) View.GONE else View.VISIBLE
-                            mBinding.flHot.adapter = object : FlowTagLayout.TagAdapter<String?>(hots as List<String?>?) {
-                                override fun getView(
-                                    parent: FlowTagLayout,
-                                    position: Int,
-                                    s: String?
-                                ): View {
-                                    val tv: TextView =
-                                        LayoutInflater.from(this@FastSearchActivity).inflate(
-                                            R.layout.item_search_word_hot,
-                                            mBinding.flHot, false
-                                        ) as TextView
-                                    // 点击型小组件按钮:按下整键透明度 80% 再恢复(用户口径)
-                                    com.github.tvbox.osc.ui.kit.WidgetPressEffect.attach(tv)
-tv.text = s
-                                    return tv
-                                }
-                            }
-                            mBinding.flHot.setOnTagClickListener { _, position, _ ->
-                                search(hots.get(position))
-                                true
-                            }
-                        } catch (th: Throwable) {
-                            // 热词接口返回异常内容时静默忽略(不刷屏、不影响页面;热词为空即可)
-                            mBinding.tvHotTitle.visibility = View.GONE
-                            LogUtils.d("热词解析失败: " + th.message)
-                        }
-                    }
+    private fun initHotRank() {
+        // 标题与卡片按主题令牌绑定；RecyclerView 的背景不能只依赖 XML inflate 时的注入。
+        com.github.tvbox.osc.theme.ThemeSweep.applyTextColor(mBinding.tvHotTitle, R.color.text_foreground)
+        ThemeDrawables.applyBackground(mBinding.rvHotRank, R.drawable.bg_large_round_float)
+        mBinding.rvHotRank.adapter = mHotRankAdapter
+        mBinding.scrollSearchSuggest.addOnLayoutChangeListener { _, left, _, right, _, oldLeft, _, oldRight, _ ->
+            if (right - left != oldRight - oldLeft) {
+                mBinding.scrollSearchSuggest.post {
+                    updateSearchSectionWidths(mBinding.scrollSearchSuggest.width)
+                }
+            }
+        }
+        mHotRankAdapter.setOnItemClickListener { _, _, position ->
+            mHotRankAdapter.wordAt(position)?.let { search(it) }
+        }
+        HttpClient.get(com.github.tvbox.osc.util.SearchApiParsers.HOT_RANK_URL, null, null, null, object : HCallBack {
+            override fun onSuccess(response: String) {
+                val hots = com.github.tvbox.osc.util.SearchApiParsers.parseHotRank(response)
+                mHotRankAdapter.setNewData(hots)
+                updateHotRankVisibility(hots.isNotEmpty() && !isTyping())
+            }
 
-                    override fun onError(e: Throwable) {
-                    }
+            override fun onError(e: Throwable) {
+                // 拿不到热搜不打扰用户:整块收起(搜索本身不受影响)
+                mHotRankAdapter.setNewData(emptyList())
+                updateHotRankVisibility(false)
+            }
+        })
+    }
+
+    /** 热搜与历史搜索使用相同的最大宽度，标题、卡片和清除键左右对齐。 */
+    private fun updateSearchSectionWidths(viewportWidth: Int) {
+        if (viewportWidth <= 0) return
+        // AutoSize 会改 Activity 的 displayMetrics.density；用配置宽度反推真实屏宽比例。
+        val screenWidthDp = resources.configuration.screenWidthDp
+        if (screenWidthDp <= 0) return
+        val pixelsPerDp = viewportWidth.toFloat() / screenWidthDp
+        val maxWidth = (520f * pixelsPerDp + 0.5f).toInt()
+        val availableWidth = viewportWidth - mBinding.llSearchSuggest.paddingLeft -
+            mBinding.llSearchSuggest.paddingRight
+        if (availableWidth <= 0) return
+        val contentWidth = minOf(availableWidth, maxWidth)
+        for (section in arrayOf(mBinding.llHotRank, mBinding.llHistory)) {
+            val params = section.layoutParams
+            if (params.width != contentWidth) {
+                params.width = contentWidth
+                section.layoutParams = params
+            }
+        }
+    }
+
+    /** 热搜仅在隐藏→显示时淡入；布局变化一起过渡，避免历史搜索突然下跳。 */
+    private fun updateHotRankVisibility(show: Boolean) {
+        val block = mBinding.llHotRank
+        val target = if (show) View.VISIBLE else View.GONE
+        if (block.visibility == target) return
+        if (show && mBinding.llSearchSuggest.isShown && mBinding.llSearchSuggest.isLaidOut) {
+            TransitionManager.beginDelayedTransition(mBinding.llSearchSuggest,
+                TransitionSet().apply {
+                    ordering = TransitionSet.ORDERING_TOGETHER
+                    addTransition(ChangeBounds())
+                    addTransition(Fade(Fade.IN))
+                    duration = 220L
+                    interpolator = DecelerateInterpolator()
                 })
         }
+        block.visibility = target
+    }
+
+    /** 输入框里有没有内容(有 = 页面处于"输入态",只显示相关搜索) */
+    private fun isTyping(): Boolean =
+        !TextUtils.isEmpty(mBinding.etSearch.text.toString().trim())
 
     /**
-     * 联想搜索
+     * 输入态只留「相关搜索」,清空态露出「最近热搜 + 搜索历史」(与 NewBox 搜索页一致):
+     * 输入时被替换掉的两块不会同时挂在页面上,免得同屏两个热搜/联想列表打架。
+     */
+    private fun applySuggestionSections() {
+        val typing = isTyping()
+        val hasHot = mHotRankAdapter.data.isNotEmpty()
+        updateHotRankVisibility(!typing && hasHot)
+        val hasHistory = SubscriptionConfig.getSearchHistory().isNotEmpty()
+        mBinding.llHistory.visibility = if (!typing && hasHistory) View.VISIBLE else View.GONE
+    }
+
+    /** 相关搜索 chip(爱奇艺联想结果):内联展示,点一下直接搜 */
+    private fun updateSuggestChips(list: List<String>) {
+        mBinding.flSuggest.adapter = object : FlowTagLayout.TagAdapter<String?>(list as List<String?>?) {
+            override fun getView(parent: FlowTagLayout, position: Int, s: String?): View {
+                val tv: TextView = LayoutInflater.from(this@FastSearchActivity).inflate(
+                    R.layout.item_search_word_hot,
+                    mBinding.flSuggest, false
+                ) as TextView
+                com.github.tvbox.osc.ui.kit.WidgetPressEffect.attach(tv)
+                tv.text = s
+                return tv
+            }
+        }
+        mBinding.flSuggest.setOnTagClickListener { _, position, _ ->
+            list.getOrNull(position)?.let { search(it) }
+            true
+        }
+        val show = list.isNotEmpty()
+        mBinding.tvSuggestTitle.visibility = if (show) View.VISIBLE else View.GONE
+        mBinding.flSuggest.visibility = if (show) View.VISIBLE else View.GONE
+    }
+
+    private fun clearSuggestChips() {
+        mBinding.tvSuggestTitle.visibility = View.GONE
+        mBinding.flSuggest.visibility = View.GONE
+    }
+
+    /**
+     * 相关搜索(输入联想):爱奇艺联想接口(NewBox 搜索页同款 {@code suggest.video.iqiyi.com/?if=mobile&key=}),
+     * 吃拼音出中文。解析在 [com.github.tvbox.osc.util.SearchApiParsers](纯逻辑,有 JVM 单测)。
+     * 结果**内联**成 chip(不再弹浮层),拿不到就收起这一块。
      */
     private fun getSuggest(text: String) {
-        // 加载热词
-        HttpClient.get("https://suggest.video.iqiyi.com/?if=mobile&key=$text", null, object : HCallBack {
-                override fun onSuccess(response: String) {
-                    val titles: MutableList<String> = ArrayList()
-                    try {
-                        val json = JsonParser.parseString(response).asJsonObject
-                        val datas = json["data"].asJsonArray
-                        for (data: JsonElement in datas) {
-                            val item = data as JsonObject
-                            titles.add(item["name"].asString.trim { it <= ' ' })
-                        }
-                    } catch (th: Throwable) {
-                        LogUtils.d(th.toString())
-                    }
-                    if (titles.isNotEmpty()) {
-                        showSuggestDialog(titles)
-                    }
-                }
-
-                override fun onError(e: Throwable) {
-                }
-            })
-    }
-
-    private fun showSuggestDialog(list: List<String>) {
-        if (mSearchSuggestionsDialog == null) {
-            mSearchSuggestionsDialog =
-                SearchSuggestionsDialog(this@FastSearchActivity, list
-                ) { _, text ->
-                    LogUtils.d("搜索:$text")
-                    mSearchSuggestionsDialog!!.dismissWith { search(text) }
-                }
-            XPopup.Builder(this@FastSearchActivity)
-                .atView(mBinding.etSearch)
-                .notDismissWhenTouchInView(mBinding.etSearch)
-                .isViewMode(true) //开启View实现
-                .isRequestFocus(false) //不强制焦点
-                .setPopupCallback(object : SimpleCallback() {
-                    override fun onDismiss(popupView: BasePopupView) { // 弹窗关闭了就置空对象,下次重新new
-                        super.onDismiss(popupView)
-                        mSearchSuggestionsDialog = null
-                    }
-                })
-                .asCustom(mSearchSuggestionsDialog)
-                .show()
-        } else { // 不为空说明弹窗为打开状态(关闭就置空了).直接刷新数据
-            mSearchSuggestionsDialog!!.updateSuggestions(list)
+        if (text.isBlank()) {
+            clearSuggestChips()
+            return
         }
+        val url = com.github.tvbox.osc.util.SearchApiParsers.suggestUrl(text)
+        HttpClient.get(url, null, object : HCallBack {
+            override fun onSuccess(response: String) {
+                val titles = com.github.tvbox.osc.util.SearchApiParsers.parseSuggest(response)
+                // 期间用户又改了输入:结果作废(按当前输入再取一次,避免旧词覆盖新词)
+                if (mBinding.etSearch.text.toString().trim() != text.trim()) return
+                if (titles.isEmpty()) clearSuggestChips() else updateSuggestChips(titles)
+            }
+
+            override fun onError(e: Throwable) {
+                clearSuggestChips()
+            }
+        })
     }
 
     private fun saveSearchHistory(searchWord: String?) {
@@ -711,18 +853,16 @@ tv.text = s
             return
         }
 
-        //先移除监听,避免重新设置要搜索的文字触发搜索建议并弹窗
+        //先移除监听,避免重新设置要搜索的文字触发搜索建议(内联相关搜索)
         mBinding.etSearch.removeTextChangedListener(this)
         mBinding.etSearch.setText(title)
         mBinding.etSearch.setSelection(title.length)
         mBinding.etSearch.addTextChangedListener(this)
-        if (mSearchSuggestionsDialog != null && mSearchSuggestionsDialog!!.isShow) {
-            mSearchSuggestionsDialog!!.dismiss()
-        }
         if (!SystemConfig.isPrivateBrowsing()) { //无痕浏览不存搜索历史
             saveSearchHistory(title)
         }
         hideHotAndHistorySearch(true)
+        clearSuggestChips()
         closeSourceDrawer() // 新一次搜索:来源抽屉默认收起
         KeyboardUtils.hideSoftInput(this)
         cancel()
@@ -1162,12 +1302,16 @@ tv.text = s
     override fun onTextChanged(charSequence: CharSequence, i: Int, i1: Int, i2: Int) {}
     override fun afterTextChanged(editable: Editable) {
         val text = editable.toString()
+        // 输入/清空都要回到"建议页"(结果页只在真正发起搜索时显示,见 search() 的 hideHotAndHistorySearch(true)):
+        // 有输入 → 只显示内联「相关搜索」;清空 → 回到「最近热搜 + 搜索历史」。
+        // 原来清空时是靠 hideHotAndHistorySearch(false) 切回来的,这次改造一度漏了这一步(清空后仍停在结果页)。
+        hideHotAndHistorySearch(false)
+        applySuggestionSections()
         if (TextUtils.isEmpty(text)) {
-            mSearchSuggestionsDialog?.dismiss()
-            hideHotAndHistorySearch(false)
-        } else {
-            getSuggest(text)
+            clearSuggestChips()
+            return
         }
+        getSuggest(text)
     }
 
     /** 长按弹评分弹窗(复用 DoubanSuggestDialog 组件);name 为空则忽略 */

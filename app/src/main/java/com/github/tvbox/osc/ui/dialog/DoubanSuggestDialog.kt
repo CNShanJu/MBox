@@ -14,9 +14,8 @@ import com.google.gson.JsonParser
 import com.google.gson.reflect.TypeToken
 import com.lxj.xpopup.XPopup
 import com.lxj.xpopup.core.BottomPopupView
-import com.lxj.xpopup.core.CenterPopupView
 
-class DoubanSuggestDialog(context: Context, var list: List<DoubanSuggestBean>) : CenterPopupView(context) {
+class DoubanSuggestDialog(context: Context, var list: List<DoubanSuggestBean>) : AppCenterPopupView(context) {
 
     override fun getImplLayoutId(): Int {
         return R.layout.dialog_douban_suggest

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 序号底(最近热搜的 1..10 徽标):只是个圆角方块,**填充色由代码按名次 tint**
+     (1=text_danger 红 / 2=orange 橙 / 3=text_highlight 蓝 / 其余 text_sub 灰),
+     所以这里写白色当"待染色"的底;徽标上的数字固定白字(压在这些语义色上,亮暗主题都清楚)。 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+
+    <solid android:color="@color/white" />
+
+    <corners android:radius="@dimen/common_corners" />
+
+</shape>
