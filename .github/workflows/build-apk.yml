@@ -184,21 +184,45 @@ jobs:
             exit 0
           fi
 
-          # 同名附件已在(上一次跑过这步)就不重传 40MB
-          if curl -sS --max-time 60 -G "$API/releases/$RID/attach_files" \
+          # 同名附件已在(上一次跑过这步)就不重传 40MB。
+          # 这个 GET 也要护住:实测它在 Azure runner 上会 Connection timed out(等了 60s),
+          # 读不到列表就当作"没有同名附件"继续上传,不能让它拖慢/干扰主流程。
+          if curl -sS --max-time 30 --connect-timeout 15 -G "$API/releases/$RID/attach_files" \
                 --data-urlencode "access_token=$GITEE_TOKEN" --data-urlencode "per_page=100" \
-              | jq -e --arg n "$NAME" '[.[]? | select(.name == $n)] | length > 0' >/dev/null; then
+              | jq -e --arg n "$NAME" '[.[]? | select(.name == $n)] | length > 0' >/dev/null 2>&1; then
             echo "Gitee 已有同名附件,跳过上传: $NAME"
             exit 0
           fi
 
-          RES=$(curl -sS --max-time 900 --retry 3 --retry-delay 5 \
-                  -F "access_token=$GITEE_TOKEN" \
-                  -F "file=@$APK;filename=$NAME;type=application/vnd.android.package-archive" \
-                  "$API/releases/$RID/attach_files" || true)
-          URL=$(printf '%s' "$RES" | jq -r '.browser_download_url // empty' || true)
-          if [ -n "$URL" ]; then
+          # 上传附件。要点(2026-10-02 v3.6.3 实测踩过):
+          #   - 原来的 `RES=$(curl ... || true)` 把 curl 的错误和 HTTP 状态全丢了,失败时只剩
+          #     "响应: (空)",完全无法定位;这里显式取 http_code 与 curl 自身退出码。
+          #   - 不再用 --retry(它对 multipart 上传的重试语义不明确),改为失败后重试 1 次并强制重连。
+          UPLOAD_OK=0
+          for ATTEMPT in 1 2; do
+            RESFILE=$(mktemp)
+            CODE=$(curl -sS --max-time 900 --connect-timeout 30 \
+                     -H "Expect:" -H "Connection: close" \
+                     -o "$RESFILE" -w '%{http_code}' \
+                     -F "access_token=$GITEE_TOKEN" \
+                     -F "file=@$APK;filename=$NAME;type=application/vnd.android.package-archive" \
+                     "$API/releases/$RID/attach_files" 2>upload_err.txt)
+            CURL_RC=$?
+            RES=$(cat "$RESFILE" 2>/dev/null || true)
+            if [ "$CODE" = "201" ] || [ "$CODE" = "200" ]; then
+              UPLOAD_OK=1
+              rm -f "$RESFILE"
+              break
+            fi
+            echo "::warning title=Gitee 附件上传第 ${ATTEMPT} 次未成功::HTTP=${CODE:-无} curl退出码=${CURL_RC} 响应=$(printf '%s' "$RES" | head -c 300)$(printf '%s' "$(cat upload_err.txt 2>/dev/null)" | head -c 300)"
+            rm -f "$RESFILE"
+            sleep 10
+          done
+          URL=$(printf '%s' "$RES" | jq -r '.browser_download_url // empty' 2>/dev/null || true)
+          if [ "$UPLOAD_OK" = "1" ] && [ -n "$URL" ]; then
             echo "Gitee 附件已上传: $URL"
+          elif [ "$UPLOAD_OK" = "1" ]; then
+            echo "Gitee 附件已上传(接口未回下载地址,按 HTTP ${CODE} 判定成功)"
           else
-            echo "::warning title=Gitee 镜像未同步::附件上传失败(响应: $(printf '%s' "$RES" | head -c 200))"
+            echo "::warning title=Gitee 镜像未同步::附件上传失败(HTTP=${CODE:-无} curl退出码=${CURL_RC:-无} 响应=$(printf '%s' "$RES" | head -c 200))"
           fi
