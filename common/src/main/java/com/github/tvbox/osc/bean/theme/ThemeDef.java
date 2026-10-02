@@ -33,10 +33,10 @@ public final class ThemeDef {
     /**
      * 格式版本:加字段/改键名时靠它做兼容(导入方不认识的更高版本会被拒绝)。
      *
-     * <p>v2(2026-09):底色/状态/危险色那批键改过名；v3 增加 radii/strokes。
-     * schema 1/2 读入时自动迁移并继承同类型内置形状，不必让用户重建主题。
+     * <p>v2(2026-09):底色/状态/危险色那批键改过名；v3 增加 radii/strokes；
+     * v4 恢复独立的实心按钮背景色。旧格式读入时迁移，保存后统一写新格式。
      */
-    public static final int SCHEMA = 3;
+    public static final int SCHEMA = 4;
 
     private int schema = SCHEMA;
     private String kind = KIND;
@@ -56,7 +56,7 @@ public final class ThemeDef {
     /** 背景图引用(相对应用私有目录;见类注释) */
     public static final class Background {
 
-        /** 跟随该类型内置主题的默认背景(内置主题默认是纯色,即"看起来就是页面底色") */
+        /** 跟随该类型内置主题的默认背景(默认亮/暗为纯色,部分预设可带图) */
         public static final String MODE_DEFAULT = "default";
         /** 显式纯色(不挂图,页面直接是主题的 {@code bg_body}) */
         public static final String MODE_SOLID = "solid";

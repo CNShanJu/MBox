@@ -15,7 +15,7 @@ import java.util.Map;
  * <pre>
  * {
  *   "kind": "mbox-theme",          // 认这个字段才知道"这是 MBox 主题"
- *   "schema": 3,                   // 格式版本
+ *   "schema": 4,                   // 格式版本
  *   "id": "t1738...",              // 本地主键(导入时会换新的)
  *   "name": "暗夜紫",
  *   "type": "dark",                // bright | dark(与内置主题文件同词)
@@ -88,7 +88,7 @@ public final class ThemeJson {
 
     /**
      * 已取消的配置项:读到它们时给一句专门提示(比"不认识的项"好懂),值不参与派生、也不进识别计数。
-     * {@code text_accent} 与 {@code btn_confirm_bg} 单独静默忽略，覆盖安装后读取旧主题不弹出无须处理的提示。
+     * {@code text_accent} 单独静默忽略，覆盖安装后读取旧主题不弹出无须处理的提示。
      *
      * <p>{@code text_main}(正文文字)= 与主题主色 {@code brand} <b>合并</b>:两者永远同一个值,
      * 所以不再单独配(用户口径:"正文颜色和主题主色共用,移除正文颜色的key")。
@@ -225,13 +225,14 @@ public final class ThemeJson {
         if (kind != null && !kind.isEmpty() && !ThemeDef.KIND.equalsIgnoreCase(kind)) {
             return new Result(null, "这不是 MBox 主题文件(kind=" + kind + ")", null);
         }
-        int schema = num(o, "schema", o.has("colors") ? ThemeDef.SCHEMA : 1);
+        // 未写 schema 的分组格式由旧版导出过，按 v3 处理，避免漏掉 v4 的按钮底色迁移。
+        int schema = num(o, "schema", o.has("colors") ? 3 : 1);
         if (schema > ThemeDef.SCHEMA) {
             return new Result(null, "主题文件版本过高(需要更新 App 后再导入)", null);
         }
 
         ThemeDef def = new ThemeDef();
-        // 解析成功即完成迁移;下次保存统一写 schema 3。
+        // 解析成功即完成迁移;下次保存统一写当前 schema。
         def.setSchema(ThemeDef.SCHEMA);
         def.setKind(ThemeDef.KIND);
         def.setId(orEmpty(str(o, "id")));
@@ -284,10 +285,16 @@ public final class ThemeJson {
                     warnings.add("「" + def0.label + "」的值看不懂,已按内置主题补齐");
                     continue;
                 }
+                if ("btn_confirm_bg".equals(target) && !isOpaqueButtonColor(raw)) {
+                    // v3 及更早版本允许透明旧值；迁移时沿用本主题 brand，不打扰用户。
+                    // v4 的实心色只接受不透明值，无效项由调用方按同类型内置主题补齐。
+                    if (schema >= 4) warnings.add("「实心按钮背景色」必须是不透明颜色,已按内置主题补齐");
+                    continue;
+                }
                 def.setColor(target, raw);
                 recognized++;
-            } else if ("text_accent".equals(key) || "btn_confirm_bg".equals(key)) {
-                // 旧主题的独立强调色和主按钮底色已由 brand 派生，静默忽略。
+            } else if ("text_accent".equals(key)) {
+                // 旧主题的独立强调色已由 brand 派生，静默忽略。
             } else if (REMOVED_KEYS.contains(key)) {
                 warnings.add("「" + key + "」已与「文字主色」合并,调文字主色即可(这一项已忽略)");
             } else if (!nestedColors && !isMeta(key)) {
@@ -300,10 +307,22 @@ public final class ThemeJson {
             return new Result(null, "主题文件里没有任何可识别的颜色项", null);
         }
 
+        // v1–v3 的可移除迁移窗口：旧版曾把主按钮底色并入 brand。缺键或透明旧值
+        // 沿用该主题自己的 brand，保住升级前的外观；保存后会写成带独立键的 v4。
+        // 这里只升级内存：本地旧文件尚未写回，分享/备份的旧包也会再次导入。
+        // 未来先完成存量文件的后台原子迁移，并决定旧包导入策略，才能移除这一段与上面的兼容分支。
+        if (schema <= 3 && def.color("btn_confirm_bg").isEmpty()) {
+            String oldBrand = def.color("brand").trim();
+            if (oldBrand.matches("(?i)#?(?:[0-9a-f]{6}|[0-9a-f]{8})")) {
+                int opaqueBrand = ThemePalette.withAlpha(ThemePalette.parseColor(oldBrand, 0xFF1F2937), 100);
+                def.setColor("btn_confirm_bg", ThemePalette.toHex(opaqueBrand));
+            }
+        }
+
         readShapes(o, "radii", ThemeSpec.ShapeKey.Kind.RADIUS, def, warnings);
         readShapes(o, "strokes", ThemeSpec.ShapeKey.Kind.STROKE, def, warnings);
 
-        // schema 3 顶层只允许元信息与三个分组;未知项忽略并记录。
+        // 分组格式的顶层只允许元信息与三个分组;未知项忽略并记录。
         if (nestedColors) {
             for (String key : o.keySet()) {
                 if (!isMeta(key)) warnings.add("不认识的项「" + key + "」已忽略");
@@ -340,6 +359,11 @@ public final class ThemeJson {
         }
 
         return new Result(def, null, warnings);
+    }
+
+    private static boolean isOpaqueButtonColor(String value) {
+        return value != null
+                && value.trim().matches("(?i)#?(?:[0-9a-f]{6}|FF[0-9a-f]{6})");
     }
 
     private static void readShapes(JsonObject root, String field, ThemeSpec.ShapeKey.Kind kind,

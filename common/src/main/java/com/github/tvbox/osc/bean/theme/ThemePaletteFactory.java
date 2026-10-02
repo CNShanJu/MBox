@@ -22,7 +22,7 @@ import java.util.Map;
  *   <li>同值别名(不占配置):{@code color_highlight} / {@code select_fill} /
  *       {@code btn_plain_text} / {@code text_accent}
  *       = {@code brand}(文字主色,<b>强制纯色</b>);{@code btn_select_bg}/{@code btn_select_stroke}
- *       = {@code brand};{@code btn_select_text} = 主按钮文字;
+ *       = {@code btn_confirm_bg}(独立的实心按钮底色);{@code btn_select_text} = 主按钮文字;
  *       {@code text_sub} = {@code text_disable} = {@code brand} <b>@60%</b>(次要 / 禁用两级由主色算出来);
  *       {@code switch_track_on} = {@code download_done} = {@code success}(正向状态色);</li>
  *   <li>{@code btn_stroke} = {@code btn_cancel_bg}(无文字容器与输入框的边框色;历史资源名,值同源);</li>
@@ -65,11 +65,14 @@ public final class ThemePaletteFactory {
         // 与 text_sub(60%)分开是因为用户对链接明确要求 50%。
         int textMainHalf = ThemePalette.withAlpha(brand, 50);
         // 按钮两族的口径:
-        //   ① 纯色按钮:底与描边同取不透明的 brand;
+        //   ① 纯色按钮:底与描边同取不透明的 btn_confirm_bg;
         //   ② 空心按钮:无填充、只有 1dp 描边,描边与文字同取主色 brand;
         //      btn_cancel_bg 仅供无文字容器与输入框使用;
         //   ③ 小组件按钮:未选中 = 只有主色描边 + 主色文字;
-        //      选中 = 主色填充与描边 + 主按钮文字。
+        //      选中 = 实心按钮底色填充与描边 + 主按钮文字。
+        int confirmBg = color(in, "btn_confirm_bg", builtin.get("btn_confirm_bg"));
+        if ((confirmBg >>> 24) != 0xFF) confirmBg = builtin.get("btn_confirm_bg");
+        confirmBg = ThemePalette.withAlpha(confirmBg, 100);
         int confirmText = color(in, "btn_confirm_text", builtin.get("btn_confirm_text"));
         int highlightText = color(in, "text_highlight", builtin.get("text_highlight"));
         int containerStroke = color(in, "btn_cancel_bg", builtin.get("btn_stroke"));
@@ -117,13 +120,14 @@ public final class ThemePaletteFactory {
         out.put("color_highlight", brand);
         out.put("select_fill", brand);
         out.put("press_overlay", ThemePalette.withAlpha(brand, 24));
+        out.put("btn_confirm_bg", confirmBg);
         out.put("btn_confirm_text", confirmText);
         // 无文字容器与输入框的描边色;空心按钮的描边和文字都走文字主色
         out.put("btn_cancel_bg", containerStroke);
         out.put("btn_plain_text", brand);
-        out.put("btn_select_bg", brand);
+        out.put("btn_select_bg", confirmBg);
         out.put("btn_select_text", confirmText);
-        out.put("btn_select_stroke", brand);
+        out.put("btn_select_stroke", confirmBg);
         // btn_stroke 是无文字描边的历史资源名,与 btn_cancel_bg 同值
         out.put("btn_stroke", containerStroke);
 
@@ -154,6 +158,7 @@ public final class ThemePaletteFactory {
         d.put("text_disable", 0xFFB3B3B3);
         d.put("text_highlight", 0xFF1890FF);
         d.put("color_highlight", 0xFF1F2937);
+        d.put("btn_confirm_bg", 0xFF1F2937);
         d.put("btn_confirm_text", 0xFFFFFFFF);
         d.put("btn_select_text", 0xFFFFFFFF);
         d.put("download_done", 0xFF08CA2C);

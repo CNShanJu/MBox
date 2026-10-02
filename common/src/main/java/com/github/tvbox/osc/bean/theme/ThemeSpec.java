@@ -96,11 +96,11 @@ public final class ThemeSpec {
 
         // ② 文字分级
         // **文字主色(brand)排在最前**:用户口径 —— "主题主色改成文字主色,并把文字主色调整到次要文字前面"。
-        // 它同时是"正文默认色"与"填充/高亮色"(与 text_main 是同一个值,见 ThemePaletteFactory)。
+        // 它同时是"正文默认色"与空心件的文字/描边色(与 text_main 是同一个值,见 ThemePaletteFactory)。
         // **不允许带透明度**(opaqueOnly):它是正文、空心按钮文字、勾选框填充,还是次要/禁用两级的计算来源,
         // 一带透明度整片发虚 —— 派生时 alpha 强制归 100,编辑页也不给透明度滑杆。
         list.add(new ThemeKey("brand", ThemeKey.Group.TEXT, ThemeKey.Kind.COLOR, "文字主色",
-                "正文/列表文字的默认色;空心与纯文字按钮的文字、chip 选中填充、进度条、勾选框与描边也取它。"
+                "正文/列表文字的默认色;空心与纯文字按钮的文字和描边、进度条、勾选框也取它。"
                         + "只能纯色(不允许设透明度)", true));
         // **正文颜色(text_main)的键已移除**:它与文字主色共用同一个值(用户口径:
         // "正文颜色和主题主色共用,移除正文颜色的key")—— 资源名 text_main 仍然存在,由 brand 派生,
@@ -119,18 +119,20 @@ public final class ThemeSpec {
         // 危险文字(text_danger)与危险红底(swipe_red / swipe_red_text)已**固定成字面量**,
         // 不再进主题文件(用户口径:"删除,对应组件固定就是这个颜色")—— 见 res/values/colors.xml。
 
-        // ③ 按钮:主按钮与选中项的实心底、描边都由文字主色 brand 派生;
-        //    主按钮文字保持可配置,让填充与文字有足够对比。
+        // ③ 按钮:实心按钮与选中项的底、描边由 btn_confirm_bg 独立控制;
+        //    上面的文字由 btn_confirm_text 独立配置,让填充与文字有足够对比。
         //      · 空心按钮与未选中小组件的描边跟文字主色同源;
         //        btn_cancel_bg 仅用于无文字容器与输入框(原键名保留兼容);
         //      · 「次按钮文字」已删除:空心按钮的文字走**文字主色**;
-        //      · 「主色上的文字」(brand_text)已删除:btn_select_text 从主按钮文字派生。
-        list.add(new ThemeKey("btn_confirm_text", ThemeKey.Group.BRAND, ThemeKey.Kind.COLOR, "主按钮文字",
-                "纯色按钮上的字;有填充的选中态也用它"));
+        //      · 「主色上的文字」(brand_text)已删除:btn_select_text 从实心按钮文字派生。
+        list.add(new ThemeKey("btn_confirm_bg", ThemeKey.Group.BRAND, ThemeKey.Kind.COLOR, "实心按钮背景色",
+                "主按钮和实心选中项的填充与描边;可与文字主色分别设置,只允许不透明色", true));
+        list.add(new ThemeKey("btn_confirm_text", ThemeKey.Group.BRAND, ThemeKey.Kind.COLOR, "实心按钮文字",
+                "主按钮和实心选中项上的文字;可与文字主色分别设置"));
         list.add(new ThemeKey("btn_cancel_bg", ThemeKey.Group.BRAND, ThemeKey.Kind.COLOR, "无字容器边框颜色",
                 "**已从主题编辑器移除**(2026-10-01,用户口径):空心按钮的描边一律跟自己的文字色走,"
-                        + "这个键只剩内部用途 —— 输入框底/无文字描边容器(btn_stroke 同值);"
-                        + "改它请编辑 assets/theme/theme_colors*.json"));
+                        + "这个键只剩内部用途 —— 输入框边线/无文字描边容器(btn_stroke 同值);"
+                        + "改它请编辑 assets/theme/themes/ 下的主题 JSON"));
 
         // ④ 状态与开关
         // 「开关-开」与「下载完成」原来是两个键、值也一直是同一个绿(#08CA2C),合并成一个
@@ -146,7 +148,7 @@ public final class ThemeSpec {
                 "开关上的圆点"));
         // 直播页"选中/聚焦那一条频道"的底原来是写死的蓝 accent_on_dark(唯一还在用那支蓝的地方),
         // 已按用户口径**移除**:直播页那两张列表的选中态现在走全站同一套主题色 ——
-        // 底与描边取主色 brand,文字取 btn_confirm_text,
+        // 底与描边取实心按钮背景色 btn_confirm_bg,文字取 btn_confirm_text,
         // 见 btn_select_bg / btn_select_text / btn_select_stroke 与 res/color/live_channel_text.xml。
         // 所以主题文件里不再有 accent_on_dark 这个键。
         list.add(new ThemeKey("download_active", ThemeKey.Group.STATE, ThemeKey.Kind.COLOR, "下载中",

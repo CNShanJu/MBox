@@ -104,13 +104,13 @@
         <item name="android:windowBackground">@android:color/transparent</item>
     </style>
     <!-- ================= 主题按钮(全局统一,只有三型) =================
-         ① 纯色按钮 BtnPrimary   —— 填充与描边由 brand 派生:确定/保存/开始下载等主要动作
+         ① 纯色按钮 BtnPrimary   —— 填充与描边由 btn_confirm_bg 派生:确定/保存/开始下载等主要动作
          ② 空心按钮 BtnSecondary —— 无底色 + 1dp 描边:取消/重置/下载管理等次要动作;
                                       按下仍为空心,描边与文字同色
          ③ 纯文字按钮 BtnGhost   —— 无底色、无描边,只有文字(btn_plain_text):复制/展开/选集下载这类
          三型**圆角只走 radius_btn**(theme_radii.json),不再有 *Large 变体。
          "小组件按钮"(日志分类 / 背景图调整键 / 搜索历史·热词·联想 / 播放器设置键)是另一条线:
-         底走 selector_widget_btn(未选中只有边框线、选中=主色填充)、字走 widget_btn_text,圆角只走 **radius_widget_btn**。
+         底走 selector_widget_btn(未选中只有边框线、选中=实心按钮背景色填充)、字走 widget_btn_text,圆角只走 **radius_widget_btn**。
          颜色一律来自主题调色板,布局里不写死色值。 -->
 
     <!-- ① 纯色按钮:确定/保存/开始下载等主要动作 -->

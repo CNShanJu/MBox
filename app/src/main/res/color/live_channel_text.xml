@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- 直播页频道名颜色(按条目状态取色):
        未选中 = text_foreground(主题正文色,坐在 bg_large_round_float 那个面板上,亮/暗都看得清);
-       选中/按下/聚焦 = btn_select_text：主色实心底上的文字色。
+       选中/按下/聚焦 = btn_select_text：实心按钮底色上的文字色。
      为什么需要它:直播页选中态的底已从写死的蓝 accent_on_dark 改成主题色(用户口径"移除,走主题"),
      默认亮色下是深底白字，默认暗色下是无底蓝字蓝边，单靠一个写死的文字色必然有一边看不清。
      条目根 LinearLayout 才带 selected/pressed/focused,所以 item_live_channel_new 的 TextView

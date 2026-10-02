@@ -46,6 +46,18 @@ const hex = (c) => '#' + c.toString(16).toUpperCase().padStart(8, '0');
 
 const c = theme.colors || theme;
 const brand = withAlpha(parseColor(c.brand, 0xff1f2937), 1);
+const sourceSchema = Number.isFinite(Number(theme.schema))
+  ? Number(theme.schema) : (theme.colors ? 3 : 1);
+const type = theme.type === 'dark' ? 'dark' : 'bright';
+const builtinDir = path.join(ROOT, 'app', 'src', 'main', 'assets', 'theme', 'themes', type);
+const builtinTheme = fs.readdirSync(builtinDir)
+  .filter((name) => name.endsWith('.json'))
+  .map((name) => JSON.parse(fs.readFileSync(path.join(builtinDir, name), 'utf8')))
+  .find((candidate) => candidate.default === true);
+const builtinConfirmBg = withAlpha(parseColor(builtinTheme?.btn_confirm_bg, brand), 1);
+const confirmFallback = sourceSchema <= 3 ? brand : builtinConfirmBg;
+const configuredConfirmBg = parseColor(c.btn_confirm_bg, confirmFallback);
+const confirmBg = (configuredConfirmBg >>> 24) === 0xff ? configuredConfirmBg : confirmFallback;
 const surfaceColor = parseColor(c.bg_surface, 0xffececf4);
 const cardAlpha = (typeof c.bg_card_alpha === 'number' ? c.bg_card_alpha : 100) / 100;
 const floatAlpha = (typeof c.bg_float_alpha === 'number' ? c.bg_float_alpha : 100) / 100;
@@ -70,12 +82,13 @@ const palette = {
   color_highlight: brand,
   select_fill: brand,
   press_overlay: withAlpha(brand, 0.24),
+  btn_confirm_bg: confirmBg,
   btn_confirm_text: confirmText,
   btn_cancel_bg: parseColor(c.btn_cancel_bg, 0x661f2937),
   btn_plain_text: brand,
-  btn_select_bg: brand,
+  btn_select_bg: confirmBg,
   btn_select_text: confirmText,
-  btn_select_stroke: brand,
+  btn_select_stroke: confirmBg,
   btn_stroke: parseColor(c.btn_cancel_bg, 0x661f2937),
   switch_track_on: success,
   switch_track_off: parseColor(c.switch_track_off, brand),
@@ -183,7 +196,7 @@ for (const f of fs.readdirSync(layoutDir)) {
   }
 }
 
-console.log(`主题:${theme.name} (${theme.type})  bg_surface=${hex(surfaceColor)} cardα=${cardAlpha * 100}% floatα=${floatAlpha * 100}% brand=${hex(brand)}`);
+console.log(`主题:${theme.name} (${theme.type})  bg_surface=${hex(surfaceColor)} cardα=${cardAlpha * 100}% floatα=${floatAlpha * 100}% brand=${hex(brand)} btn_confirm_bg=${hex(confirmBg)}`);
 console.log(`扫描布局引用: 正常 ${ok.length} 处,可疑 ${problems.length} 处`);
 if (problems.length) {
   console.log('\n=== 可疑(会显示内置色 / 不跟随) ===');

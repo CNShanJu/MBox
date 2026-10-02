@@ -143,7 +143,7 @@ public final class ThemeArchive {
 
     /** 导入结果 */
     public static final class ImportResult {
-        /** 解析出的主题(schema 已校验、25 个键已按类型补齐);失败为 null */
+        /** 解析出的主题(schema 已校验、颜色键已按类型补齐);失败为 null */
         public final ThemeDef def;
         /** 失败原因(可直接提示用户) */
         public final String error;

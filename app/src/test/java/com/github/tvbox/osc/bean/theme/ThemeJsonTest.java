@@ -46,6 +46,7 @@ public class ThemeJsonTest {
         def.setName("暗夜紫");
         def.setColor("bg_body", "#101018");
         def.setColor("brand", "#7C4DFF");
+        def.setColor("btn_confirm_bg", "#2468AC");
         def.getBackground().setMode(ThemeDef.Background.MODE_IMAGE);
         def.getBackground().setRef("theme_bg/0123456789abcdef0123456789abcdef.webp");
         return def;
@@ -63,6 +64,7 @@ public class ThemeJsonTest {
         assertEquals(src.getName(), back.getName());
         assertEquals(src.getType(), back.getType());
         assertEquals(src.backgroundRef(), back.backgroundRef());
+        assertEquals("独立实心按钮底色导入导出后必须保留", "#2468AC", back.color("btn_confirm_bg"));
         for (ThemeKey k : ThemeSpec.all()) {
             assertEquals("键 " + k.key + " 往返后变了", src.color(k.key), back.color(k.key));
         }
@@ -84,10 +86,11 @@ public class ThemeJsonTest {
         assertEquals("type 必须与内置主题文件同词(bright/dark),否则两边不能互用",
                 "dark", o.get("type").getAsString());
         JsonObject colors = o.getAsJsonObject("colors");
-        assertTrue("颜色必须收在 schema 3 的 colors 对象里",
+        assertTrue("颜色必须收在 schema 4 的 colors 对象里",
                 colors.has("bg_body") && colors.has("success"));
         assertFalse("强调文字已由文字主色派生,导出时不应重复写", colors.has("text_accent"));
-        assertFalse("主按钮底色已由文字主色派生,导出时不应重复写", colors.has("btn_confirm_bg"));
+        assertEquals("实心按钮底色必须作为独立配置导出", "#2468AC",
+                colors.get("btn_confirm_bg").getAsString());
         assertTrue("透明度写数字,便于手改",
                 colors.get("bg_float_alpha").getAsJsonPrimitive().isNumber());
         assertTrue("圆角与描边必须分组输出", o.has("radii") && o.has("strokes"));
@@ -111,13 +114,79 @@ public class ThemeJsonTest {
     }
 
     @Test
-    public void oldTransparentPrimaryColorIsSilentlyIgnored() {
-        ThemeJson.Result r = ThemeJson.parse("{\"kind\":\"mbox-theme\",\"colors\":{"
+    public void oldTransparentPrimaryColorFallsBackToOwnBrandSilently() {
+        ThemeJson.Result r = ThemeJson.parse("{\"kind\":\"mbox-theme\",\"schema\":3,\"colors\":{"
                 + "\"brand\":\"#3366FF\",\"btn_confirm_bg\":\"#00FFFFFF\"}}");
         assertNull(r.error);
-        assertTrue("旧主按钮底色不应触发无须处理的提示", r.warnings.isEmpty());
-        assertEquals("", r.def.color("btn_confirm_bg"));
+        assertTrue("旧透明底色回退不应触发无须处理的提示", r.warnings.isEmpty());
+        assertEquals("#3366FF", r.def.color("btn_confirm_bg"));
         assertEquals(0xFF3366FF, ThemePaletteFactory.derive(r.def.colors(), null).get("btn_select_bg"));
+        JsonObject saved = JsonParser.parseString(ThemeJson.toJson(r.def)).getAsJsonObject();
+        assertEquals("迁移后按新格式保存，以便将来移除旧格式分支", 4, saved.get("schema").getAsInt());
+        assertEquals("#3366FF", saved.getAsJsonObject("colors").get("btn_confirm_bg").getAsString());
+    }
+
+    @Test
+    public void oldOpaquePrimaryColorRemainsIndependent() {
+        ThemeJson.Result r = ThemeJson.parse("{\"kind\":\"mbox-theme\",\"schema\":3,\"colors\":{"
+                + "\"brand\":\"#3366FF\",\"btn_confirm_bg\":\"#A45C38\"}}");
+        assertNull(r.error);
+        assertTrue(r.warnings.toString(), r.warnings.isEmpty());
+        assertEquals("#A45C38", r.def.color("btn_confirm_bg"));
+        assertEquals(0xFFA45C38, ThemePaletteFactory.derive(r.def.colors(), null).get("btn_select_bg"));
+    }
+
+    @Test
+    public void handEditedColorsWithWhitespaceKeepTheirButtonColor() {
+        ThemeJson.Result old = ThemeJson.parse("{\"kind\":\"mbox-theme\",\"schema\":3,\"colors\":{"
+                + "\"brand\":\" #3366FF \"}}");
+        assertNull(old.error);
+        assertEquals("旧主题带空格的文字主色仍用于迁移按钮底色", "#3366FF", old.def.color("btn_confirm_bg"));
+
+        ThemeJson.Result current = ThemeJson.parse("{\"kind\":\"mbox-theme\",\"schema\":4,\"colors\":{"
+                + "\"brand\":\"#3366FF\",\"btn_confirm_bg\":\" #A45C38 \"}}");
+        assertNull(current.error);
+        assertTrue(current.warnings.toString(), current.warnings.isEmpty());
+        assertEquals(0xFFA45C38, ThemePaletteFactory.derive(current.def.colors(), null).get("btn_select_bg"));
+    }
+
+    @Test
+    public void oldThemeMissingPrimaryColorUsesItsOwnBrand() throws Exception {
+        ThemeJson.Result r = ThemeJson.parse("{\"kind\":\"mbox-theme\",\"schema\":3,\"type\":\"dark\",\"colors\":{"
+                + "\"brand\":\"#3366FF\"}}");
+        assertNull(r.error);
+        assertTrue("旧主题缺底色的迁移应静默", r.warnings.isEmpty());
+        assertEquals("旧主题解析时迁移缺失的实心底色", "#3366FF", r.def.color("btn_confirm_bg"));
+        r.def.materialize(builtinInput("dark/default.json"));
+        assertEquals("缺键时应沿用该主题的文字主色，而不是内置主题的按钮底色",
+                "#3366FF", r.def.color("btn_confirm_bg"));
+        assertEquals(0xFF3366FF, ThemePaletteFactory.derive(r.def.colors(), null).get("btn_select_bg"));
+        ThemeJson.Result reopened = ThemeJson.parse(ThemeJson.toJson(r.def));
+        assertNull(reopened.error);
+        assertEquals("旧主题再次保存后已拥有独立配置项", "#3366FF", reopened.def.color("btn_confirm_bg"));
+    }
+
+    @Test
+    public void currentSchemaMissingOrTransparentPrimaryColorUsesBuiltin() throws Exception {
+        Map<String, String> builtin = builtinInput("dark/default.json");
+        String builtinButtonColor = builtin.get("btn_confirm_bg");
+        assertNotNull(builtinButtonColor);
+
+        ThemeJson.Result missing = ThemeJson.parse("{\"kind\":\"mbox-theme\",\"schema\":4,\"type\":\"dark\",\"colors\":{"
+                + "\"brand\":\"#3366FF\"}}");
+        assertNull(missing.error);
+        assertEquals("", missing.def.color("btn_confirm_bg"));
+        missing.def.materialize(builtin);
+        assertEquals("schema 4 缺键按同类型内置主题补齐", builtinButtonColor,
+                missing.def.color("btn_confirm_bg"));
+
+        ThemeJson.Result transparent = ThemeJson.parse("{\"kind\":\"mbox-theme\",\"schema\":4,\"type\":\"dark\",\"colors\":{"
+                + "\"brand\":\"#3366FF\",\"btn_confirm_bg\":\"#00FFFFFF\"}}");
+        assertNull(transparent.error);
+        assertEquals("显式透明值不应写入新主题", "", transparent.def.color("btn_confirm_bg"));
+        assertFalse("无效值应提示", transparent.warnings.isEmpty());
+        transparent.def.materialize(builtin);
+        assertEquals(builtinButtonColor, transparent.def.color("btn_confirm_bg"));
     }
 
     @Test

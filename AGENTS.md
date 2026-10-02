@@ -177,8 +177,14 @@ app / feature
   "文字跟了主题、边框没跟"(用户口径"小组件的边框线还是写死的")。`btn_cancel_bg` 此后只服务
   **没有自带文字**的纯描边容器与输入框(`bg_theme_field`/`bg_theme_input_underline` 未聚焦态/
   `bg_r_*_stroke_primary` 之外的描边容器)。
-  主按钮与实心选中态的填充、描边同取不透明的 `brand`(派生为 `btn_select_bg` / `btn_select_stroke`),
-  底上的文字取 `btn_confirm_text`(派生为 `btn_select_text`);`btn_confirm_bg` 已移出主题配置,
+  主按钮与实心选中态的填充、描边同取独立配置且不透明的 `btn_confirm_bg`(派生为 `btn_select_bg` / `btn_select_stroke`),
+  底上的文字取 `btn_confirm_text`(派生为 `btn_select_text`);文字主色 `brand` 仍控制正文与空心按钮的文字/描边。
+  兼容迁移仅针对 schema ≤ 3 的旧主题:缺 `btn_confirm_bg` 或该值带透明度时静默沿用该主题的 `brand`,
+  旧不透明值保留;用户保存时按 schema 4 落盘。当前读取只迁移内存,存量文件不会自动改写;
+  后续移除旧格式分支前,必须先在后台原子升级尚未保存的旧主题文件并验证重读结果,迁移失败的文件继续兼容;
+  分享/备份中的旧主题包也仍会经过导入解析,须继续迁移或明确提示该旧格式不再支持,不能只凭本机文件已升级就删分支。
+  schema 4 缺键按同类型内置主题补齐,
+  显式透明值视为无效并按同类型内置主题补齐;
   真正的空心操作统一用 `BtnSecondary`,描边与文字同色。日志筛选、背景预设与直播选中条共用实心选中规则;输入框底线的聚焦态仍换 `text_foreground`
   做反馈(未聚焦用 `btn_cancel_bg`,故意与文字区分)。
 - **空心按钮按下仍为空心**(强制;2026-10-01 定):`BtnSecondary`、`BtnDangerGhost` 与未选中的 `WidgetBtn` 在

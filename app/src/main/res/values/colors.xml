@@ -5,10 +5,10 @@
     <!-- 应用强调色随文字主色 brand；text_accent 是派生资源，不单独配置。 -->
     <color name="colorPrimary">@color/text_accent</color>
     <!--CheckBox,RadioButton,SwitchCompat等一般控件的选中效果默认采用该颜色-->
-    <!--    默认window窗口(activity)背景颜色(由 theme/theme_colors.json 的 bg_body 控制)-->
+    <!--    默认window窗口(activity)背景颜色(由内置主题的 bg_body 控制)-->
     <color name="windowBackground">@color/bg_body</color>
 
-    <!-- ============ Material 3 色板(浅色,中性灰白系;主体色由 theme/theme_colors.json 控制) ============ -->
+    <!-- ============ Material 3 色板(浅色,中性灰白系;主体色由内置主题配置控制) ============ -->
     <color name="md_primary">@color/text_accent</color>
     <color name="md_on_primary">@color/btn_select_text</color>
     <color name="md_primary_container">@color/bg_card</color>
@@ -64,7 +64,7 @@
 
     <color name="disable_text">@color/text_disable</color>
 
-    <!-- bg_float(弹层/抽屉背景, 现为半透明可调) 已上移到 assets/theme/theme_colors.json 统一维护, 此处不再重复定义 -->
+    <!-- bg_float(弹层/抽屉背景, 现为半透明可调) 由默认浅色主题统一维护, 此处不再重复定义 -->
 
     <!--    制定颜色-->
     <!--    页面背景色,activity.fragment等-->
@@ -79,11 +79,10 @@
     <color name="search_rank_top1">#F44747</color>
     <color name="search_rank_top2">#FF5C00</color>
     <color name="search_rank_top3">#FFB800</color>
-    <!-- color_highlight(全局高亮/选中色)已上移到 assets/theme/theme_colors.json 统一维护,
-         此处不再重复定义(重复会编译不过)。它与主按钮同色:亮色主题=页面主黑 #1F2937、
-         暗色主题=#E5E7EB,开关/chip 选中/选中文字/进度条等都跟着走。
+    <!-- color_highlight 由文字主色 brand 派生,服务文字高亮、勾选框与进度条等;
+         实心按钮和实心选中项的填充另由 btn_confirm_bg 控制,两者可独立设置。
          直播页"选中/聚焦那一条频道"的底**也走主题了**:原来是写死的蓝 accent_on_dark(该键已移除),
-         现在是 btn_select_bg(= 纯色按钮的底色,连透明度一起)+ 其上文字 btn_select_text(见 drawable/button_detail_quick_search 与
+         现在是 btn_select_bg(= 不透明的实心按钮背景色)+ 其上文字 btn_select_text(见 drawable/button_detail_quick_search 与
          res/color/live_channel_text.xml)—— 所以单靠写死色会被明暗主题拉成"白底白字"的那类问题不再有。
          左侧"分组"列那条橙 title_fouse_n(#ffce7900)本次也收掉了(改走主题 btn_select_bg,
          见 drawable/item_right_bg.xml)—— 直播页至此没有写死的聚焦色。 -->
@@ -99,11 +98,11 @@
          否则暗色主题下浅底白字和亮色主题观感不一致）;别改成 btn_select_* 那对会随主题翻转的色 -->
 <color name="poster_badge_bg">#1F2937</color>
 
-    <!-- 开关轨道(switch_track_on/off)与圆点(switch_thumb)已上移到 assets/theme/theme_colors.json:
+    <!-- 开关轨道(switch_track_on/off)与圆点(switch_thumb)由默认浅色主题派生:
          开启=绿(#08CA2C,两主题一致)、关闭=亮色 #ccccd4 / 暗色 #3C3C46、圆点固定白色。
          (旧的说明写的是"开启=蓝色 #1890FF",与主题文件里的实际值对不上,已按文件订正。) -->
 
-    <!-- bg_surface(底部导航栏磨砂遮罩)与 bg_float(悬浮钮磨砂遮罩)已上移到 assets/theme/theme_colors.json
+    <!-- bg_surface(底部导航栏磨砂遮罩)与 bg_float(悬浮钮磨砂遮罩)由默认浅色主题
          统一维护(颜色+透明度), 生成到 theme_colors.xml, 此处不再重复定义。
          两者是"同一个悬浮面"：底部导航栏/上次观看气泡用 bg_surface，直播钮/筛选钮/更新悬浮圈用 bg_float，
          改色改透明度时必须同步(含各自的 _alpha)，否则同屏会看出深浅不一。

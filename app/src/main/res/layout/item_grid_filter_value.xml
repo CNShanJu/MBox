@@ -9,7 +9,7 @@
     app:hl_bindTextView="@+id/filterValue"
     app:hl_cornerRadius="@dimen/common_corners"
     app:hl_layoutBackground="@android:color/transparent"
-    app:hl_layoutBackground_true="@color/color_highlight"
+    app:hl_layoutBackground_true="@color/btn_select_bg"
     app:hl_shapeMode="selected">
 
     <TextView

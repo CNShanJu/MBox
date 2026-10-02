@@ -120,22 +120,27 @@ public class ThemePaletteTest {
         assertNotEquals("浮层不该跟页面层同透明度(曾经接反过)", p.get("bg_surface"), p.get("bg_float"));
     }
 
-    /** 主按钮始终实心；空心按钮的文字和描边同取文字主色。 */
+    /** 主按钮底色可与文字主色分开配置，空心按钮的文字和描边仍同取文字主色。 */
     @Test
     public void buttonColorsFollowTheThreeTypeRule() {
+        ThemeKey solidBackground = ThemeSpec.byKey("btn_confirm_bg");
+        assertTrue("实心按钮底色应在主题配置中可见", solidBackground != null
+                && !ThemeSpec.isHidden(solidBackground.key));
+        assertTrue("实心按钮底色只允许不透明颜色", solidBackground.opaqueOnly);
+
         java.util.Map<String, String> in = new java.util.LinkedHashMap<>();
         in.put("brand", "#3366FF");
-        in.put("btn_confirm_bg", "#00000000"); // 旧主题键不得再改变按钮形态
+        in.put("btn_confirm_bg", "#A45C38");
         in.put("btn_confirm_text", "#FFEEDD");
         in.put("text_highlight", "#1188EE");
         in.put("btn_cancel_bg", "#66123456");
         ThemePalette p = ThemePaletteFactory.derive(in, null);
 
-        // ① 实心底与描边都派生自 brand，旧配置不能再制造透明主按钮。
-        assertFalse(p.has("btn_confirm_bg"));
+        // ① 实心底与描边都取独立底色，文字主色不再覆盖它。
         assertFalse(p.has("btn_confirm_stroke"));
-        assertEquals(0xFF3366FF, p.get("btn_select_bg"));
-        assertEquals(0xFF3366FF, p.get("btn_select_stroke"));
+        assertEquals(0xFFA45C38, p.get("btn_confirm_bg"));
+        assertEquals(0xFFA45C38, p.get("btn_select_bg"));
+        assertEquals(0xFFA45C38, p.get("btn_select_stroke"));
 
         // ② 空心按钮:描边与文字同取文字主色;无字容器描边仍由 btn_cancel_bg/btn_stroke 提供
         assertEquals(0x66123456, p.get("btn_cancel_bg"));
@@ -146,13 +151,34 @@ public class ThemePaletteTest {
                 ThemePaletteFactory.derive(in, null).get("text_accent"));
         assertEquals("btn_stroke 与无字容器描边色同值", p.get("btn_cancel_bg"), p.get("btn_stroke"));
 
-        // ③ 选中项与主按钮共享主色填充，文字仍独立可配置。
-        assertEquals(p.get("btn_plain_text"), p.get("btn_select_bg"));
+        // ③ 选中项与主按钮共享独立底色，文字仍独立可配置。
+        assertNotEquals(p.get("btn_plain_text"), p.get("btn_select_bg"));
         assertEquals(p.get("btn_confirm_text"), p.get("btn_select_text"));
         assertEquals(p.get("btn_select_bg"), p.get("btn_select_stroke"));
 
         // 两个键已删除,不该再派生出来
         assertFalse("「次按钮文字」键应当已移除", p.has("btn_cancel_text"));
         assertFalse("「主色上的文字」键应当已移除", p.has("brand_text"));
+    }
+
+    @Test
+    public void missingOrTransparentPrimaryColorUsesBuiltinFallback() {
+        java.util.Map<String, String> in = new java.util.LinkedHashMap<>();
+        in.put("brand", "#3366FF");
+        java.util.Map<String, String> builtinInput = new java.util.LinkedHashMap<>();
+        builtinInput.put("brand", "#111111");
+        builtinInput.put("btn_confirm_bg", "#A45C38");
+        ThemePalette builtin = ThemePaletteFactory.derive(builtinInput, null);
+
+        ThemePalette missing = ThemePaletteFactory.derive(in, builtin);
+        assertEquals(0xFFA45C38, missing.get("btn_confirm_bg"));
+        assertEquals("直接派生时缺键沿用同类型内置底色", 0xFFA45C38, missing.get("btn_select_bg"));
+        assertEquals(missing.get("btn_select_bg"), missing.get("btn_select_stroke"));
+
+        in.put("btn_confirm_bg", "#00123456");
+        ThemePalette transparent = ThemePaletteFactory.derive(in, builtin);
+        assertEquals(0xFFA45C38, transparent.get("btn_confirm_bg"));
+        assertEquals("直接派生遇透明值应沿用同类型内置底色", 0xFFA45C38, transparent.get("btn_select_bg"));
+        assertEquals(transparent.get("btn_select_bg"), transparent.get("btn_select_stroke"));
     }
 }

@@ -55,6 +55,7 @@ public final class ThemeColorAliases {
             put(map, R.color.color_highlight, "color_highlight");
             put(map, R.color.select_fill, "select_fill");
             put(map, R.color.press_overlay, "press_overlay");
+            put(map, R.color.btn_confirm_bg, "btn_confirm_bg");
             put(map, R.color.btn_confirm_text, "btn_confirm_text");
             put(map, R.color.btn_cancel_bg, "btn_cancel_bg");
             put(map, R.color.btn_plain_text, "btn_plain_text");

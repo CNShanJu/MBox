@@ -38,7 +38,7 @@ function paletteNames() {
     'bg_body', 'bg_surface', 'bg_card', 'bg_float',
     'text_main', 'text_sub', 'text_hint', 'text_main_half', 'text_disable', 'text_accent', 'text_highlight',
     'color_highlight', 'select_fill', 'press_overlay',
-    'btn_confirm_text', 'btn_cancel_bg',
+    'btn_confirm_bg', 'btn_confirm_text', 'btn_cancel_bg',
     'btn_plain_text', 'btn_select_bg', 'btn_select_text', 'btn_select_stroke', 'btn_stroke',
     'switch_track_on', 'switch_track_off', 'switch_thumb',
     'download_active', 'download_done',

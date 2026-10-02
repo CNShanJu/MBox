@@ -391,6 +391,7 @@ def defaultLightColors = [
         bg_surface: '#ECECF4', bg_float_alpha: 92, bg_card_alpha: 60,
         text_highlight: '#1890FF',
         brand: '#1F2937',
+        btn_confirm_bg: '#1F2937',
         btn_confirm_text: '#FFFFFF',
         btn_cancel_bg: '#661F2937',
         success: '#08CA2C', switch_thumb: '#FFFFFF',
@@ -401,6 +402,7 @@ def defaultNightColors = [
         bg_surface: '#211D28', bg_float_alpha: 10, bg_card_alpha: 100,
         text_highlight: '#1890FF',
         brand: '#E5E7EB',
+        btn_confirm_bg: '#E5E7EB',
         btn_confirm_text: '#141218',
         btn_cancel_bg: '#66E5E7EB',
         success: '#08CA2C', switch_thumb: '#FFFFFF',
@@ -425,12 +427,13 @@ static def readTheme(def file, def defaults) {
                 colors[k] = uv
             }
         }
-        // 非颜色键(type=主题元信息、desc=说明)不参与派生,也不该被"不认识的键"告警误伤
-        def unknown = json.keySet().findAll { !(it in ['type', 'name', 'default', 'desc']) && !defaults.containsKey(it) }
+        // 元信息与背景配置不参与颜色派生,也不该被"不认识的键"告警误伤
+        def unknown = json.keySet().findAll { !(it in ['type', 'name', 'default', 'background', 'desc']) && !defaults.containsKey(it) }
         if (unknown) println "WARN: ${file.name} 里有不认识的键(已忽略): ${unknown.join(', ')}"
         def d = json['desc']
         if (d instanceof Map) d.each { k, v -> if (v instanceof String) desc[k] = v }
-        def staleDesc = desc.keySet().findAll { !defaults.containsKey(it) }
+        def staleDesc = desc.keySet().findAll { !defaults.containsKey(it)
+                && !(it == 'background' && json['background'] instanceof Map) }
         if (staleDesc) println "WARN: ${file.name} 的 desc 里有不存在的键: ${staleDesc.join(', ')}"
         def noDesc = defaults.keySet().findAll { !desc.containsKey(it) }
         if (noDesc) println "WARN: ${file.name} 的 desc 缺少这些键的说明: ${noDesc.join(', ')}"
@@ -505,14 +508,14 @@ static int withAlpha(def colorRaw, def alphaRaw) {
 //   一句话:页面上的东西(含卡片里的 item)跟 bg_card_alpha;浮起来的那一层跟 bg_float_alpha。
 // 同值别名(不占配置):
 //   color_highlight / select_fill / btn_plain_text / text_accent = brand(文字主色)
-//   btn_select_bg / btn_select_stroke = brand(实心按钮与选中项共用)
+//   btn_select_bg / btn_select_stroke = btn_confirm_bg(实心按钮与选中项共用)
 //   btn_select_text = btn_confirm_text
 //   btn_stroke      = btn_cancel_bg(无文字描边容器与输入框用;历史资源名,值同源)
 //   switch_track_on = download_done = success(正向状态色:开关打开 / 下载完成 —— 原本是两个键,值一直相同)
 // 按钮取色口径(用户口径):
-//   ① 纯色按钮:底与描边 = 不透明的 brand
+//   ① 纯色按钮:底与描边 = 独立配置且不透明的 btn_confirm_bg
 //   ② 空心按钮:无填充,1dp 描边与文字同取 brand;按下仍不填充
-//   ③ 小组件按钮:未选中描边与文字同取 brand,按下仍不填充;选中态用 brand 实心填充
+//   ③ 小组件按钮:未选中描边与文字同取 brand,按下仍不填充;选中态用 btn_confirm_bg 实心填充
 // 不派生的固定色:text_danger / swipe_red / swipe_red_text 已写死在 res/values/colors.xml(不随主题)
 static def derivePalette(def c) {
     // 文字主色**强制纯色**(alpha 归 100):用户口径"文字主色不允许设置透明度,只能纯色" ——
@@ -527,7 +530,9 @@ static def derivePalette(def c) {
     // 「文字主色 50%」:给"链接/地址"这类要压一档、又要跟主色同系的文字(如订阅管理里的订阅地址)。
     // 与 text_sub(60%)分开是因为用户对链接明确要求 50%,别再各自写透明度。
     int textMainHalf = withAlpha(brand, 0.5f)
-    // 纯色按钮与选中项的填充、描边同取不透明的文字主色。
+    // 纯色按钮与选中项的填充、描边同取独立且不透明的实心按钮底色。
+    int confirmBg = parseColor(c.btn_confirm_bg, brand)
+    if ((confirmBg >>> 24) != 0xFF) confirmBg = brand
     int confirmText = parseColor(c.btn_confirm_text, 0xFFFFFFFF)
     int highlightText = parseColor(c.text_highlight, 0xFF1890FF)
     int hollowStroke = parseColor(c.btn_cancel_bg, 0xFF661F2937)
@@ -554,12 +559,13 @@ static def derivePalette(def c) {
             color_highlight  : toHex(brand),
             select_fill      : toHex(brand),
             press_overlay    : toHex(withAlpha(brand, 0.24f)),
+            btn_confirm_bg   : toHex(confirmBg),
             btn_confirm_text : toHex(confirmText),
             btn_cancel_bg    : toHex(hollowStroke),
             btn_plain_text   : toHex(brand),
-            btn_select_bg    : toHex(brand),
+            btn_select_bg    : toHex(confirmBg),
             btn_select_text  : toHex(confirmText),
-            btn_select_stroke: toHex(brand),
+            btn_select_stroke: toHex(confirmBg),
             btn_stroke       : toHex(hollowStroke),
             switch_track_on  : toHex(success),
             // 「开关-关」不再单独配(2026-10-01,用户口径"开关关闭颜色不自定义,改成开关开启色 透明度30%,
@@ -669,6 +675,14 @@ static def writeThemeShapes(def source, def resDir, def assetsDir) {
     if (!(recipes instanceof Map)) throw new GradleException('theme_shapes.json 顶层必须是对象')
     def drawableDir = new File(resDir, 'drawable')
     drawableDir.mkdirs()
+    // 配方改名或移除后清掉旧产物，否则旧 XML 还会参与资源合并并与手写 drawable 重名。
+    drawableDir.listFiles()?.each { File generated ->
+        if (generated.isFile() && generated.name.endsWith('.xml')
+                && !recipes.containsKey(generated.name.substring(0, generated.name.length() - 4))
+                && !generated.delete()) {
+            throw new GradleException("无法清理过期主题形状资源:${generated}")
+        }
+    }
 
     def colorRef = { value ->
         if (value == null || value == 'transparent') return '@android:color/transparent'
@@ -771,9 +785,9 @@ task generateThemeColors {
             text_disable   : '派生自文字主色 @60%(禁用文字;与次要文字同值)',
             text_accent    : '同 brand 文字主色(标题与普通选中文字)',
             btn_plain_text : '派生自 brand 文字主色(空心按钮/纯文字按钮的文字)',
-            btn_select_bg  : '同 brand(主按钮、小组件、直播选中项的实心填充)',
+            btn_select_bg  : '同 btn_confirm_bg(主按钮、小组件、直播选中项的实心填充)',
             btn_select_text: '同 btn_confirm_text(实心填充上的文字)',
-            btn_select_stroke: '同 brand(实心填充的描边)',
+            btn_select_stroke: '同 btn_confirm_bg(实心填充的描边)',
             btn_stroke     : '同 btn_cancel_bg(无文字描边容器与输入框用;历史资源名)'
     ]
     doLast {
