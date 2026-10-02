@@ -128,3 +128,71 @@ jobs:
           name: MBox ${{ github.ref_name }}
           body_path: RELEASE_NOTES.md
           files: app/build/outputs/apk/release/*.apk
+
+      # 把正式包同步到国内镜像(Gitee 发行版附件)——App 更新下载的首选候选地址
+      # (见 UpdaterConfig.getGiteeDownloadBase 与 GithubReleaseUpdater.mirrorDownloadUrl)。
+      # 与正式签名一样依赖 Secrets(GITEE_TOKEN,可选 GITEE_OWNER/GITEE_REPO):
+      # 未配置、或镜像侧任何一步失败,都只记告警不阻断本次发版——GitHub Release 才是权威产物,
+      # App 端下载候选会在镜像拿不到正确体积的包时自动回落到加速代理与直连。
+      - name: Sync release APK to Gitee mirror
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          GITEE_OWNER: ${{ secrets.GITEE_OWNER }}
+          GITEE_REPO: ${{ secrets.GITEE_REPO }}
+        run: |
+          OWNER="${GITEE_OWNER:-CnAyo}"
+          REPO="${GITEE_REPO:-MBox}"
+          if [ -z "$GITEE_TOKEN" ]; then
+            echo "::notice title=Gitee 镜像未同步::仓库未配置 GITEE_TOKEN,跳过同步;App 下载走加速代理"
+            exit 0
+          fi
+          API="https://gitee.com/api/v5/repos/$OWNER/$REPO"
+          TAG="$GITHUB_REF_NAME"
+          APK=$(ls app/build/outputs/apk/release/*.apk 2>/dev/null | head -1)
+          if [ -z "$APK" ]; then
+            echo "::warning title=Gitee 镜像未同步::没有 release APK 产物"
+            exit 0
+          fi
+          NAME=$(basename "$APK")
+
+          # 发行版先按 tag 找(重跑流水线时不重复建),没有再建
+          RID=$(curl -sS --max-time 60 -G "$API/releases/tags/$TAG" \
+                  --data-urlencode "access_token=$GITEE_TOKEN" \
+                | jq -r '.id // empty' || true)
+          if [ -z "$RID" ]; then
+            # 镜像正文只给用户可读说明:RELEASE_NOTES.md 带 <!-- dev --> 围栏,
+            # GitHub 渲染会隐藏 HTML 注释,Gitee 不保证,照抄会把围栏字样露在镜像页上。
+            NOTES="doc/release-notes-$TAG.md"
+            if [ ! -f "$NOTES" ]; then
+              printf '本发行版与 GitHub Release 同步,更新说明见 https://github.com/CNShanJu/MBox/releases/tag/%s\n' "$TAG" > GITEE_NOTES.md
+              NOTES=GITEE_NOTES.md
+            fi
+            RID=$(curl -sS --max-time 60 -X POST "$API/releases" \
+                    -d "access_token=$GITEE_TOKEN" -d "tag_name=$TAG" -d "name=MBox $TAG" \
+                    -d "target_commitish=$GITHUB_SHA" --data-urlencode "body@$NOTES" \
+                  | jq -r '.id // empty' || true)
+          fi
+          if [ -z "$RID" ]; then
+            echo "::warning title=Gitee 镜像未同步::查找/创建发行版失败(确认镜像仓库已同步 tag $TAG、令牌有 projects 权限)"
+            exit 0
+          fi
+
+          # 同名附件已在(上一次跑过这步)就不重传 40MB
+          if curl -sS --max-time 60 -G "$API/releases/$RID/attach_files" \
+                --data-urlencode "access_token=$GITEE_TOKEN" --data-urlencode "per_page=100" \
+              | jq -e --arg n "$NAME" '[.[]? | select(.name == $n)] | length > 0' >/dev/null; then
+            echo "Gitee 已有同名附件,跳过上传: $NAME"
+            exit 0
+          fi
+
+          RES=$(curl -sS --max-time 900 --retry 3 --retry-delay 5 \
+                  -F "access_token=$GITEE_TOKEN" \
+                  -F "file=@$APK;filename=$NAME;type=application/vnd.android.package-archive" \
+                  "$API/releases/$RID/attach_files" || true)
+          URL=$(printf '%s' "$RES" | jq -r '.browser_download_url // empty' || true)
+          if [ -n "$URL" ]; then
+            echo "Gitee 附件已上传: $URL"
+          else
+            echo "::warning title=Gitee 镜像未同步::附件上传失败(响应: $(printf '%s' "$RES" | head -c 200))"
+          fi
