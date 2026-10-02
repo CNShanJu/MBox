@@ -90,6 +90,8 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
     private var mSortDataList: List<SortData> = ArrayList()
     private var dataInitOk = false
     private var jarInitOk = false
+    /** 配置或爬虫包已就绪，但页面尚未恢复到可继续初始化的状态。 */
+    private var pendingInit = false
 
     // ---- 首屏"必然收尾 + 自愈"(离线冷启动 / 从无网络页返回的场景) ----
     /** 首屏加载轮次:看门狗按它作废在途的那一轮(同 GridFragment 的做法) */
@@ -258,7 +260,7 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
         SourceLoaderProviders.get().loadConfig(onlyConfigChanged, object : SourceLoaderApi.Callback {
 
             override fun retry() {
-                mHandler.post { initData() }
+                continueInit()
             }
 
             override fun success() {
@@ -266,7 +268,7 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
                 if (SourceLoaderProviders.get().spider.isEmpty()) {
                     jarInitOk = true
                 }
-                mHandler.postDelayed({ initData() }, 50)
+                continueInit()
             }
 
             override fun error(msg: String) {
@@ -302,12 +304,8 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
                 object : SourceLoaderApi.Callback {
                     override fun success() {
                         jarInitOk = true
-                        mHandler.postDelayed({
-                            if (!onlyConfigChanged) {
-                                queryHistory()
-                            }
-                            initData()
-                        }, 50)
+                        continueInit()
+                        if (!onlyConfigChanged && isAdded) queryHistory()
                     }
 
                     override fun retry() {}
@@ -474,6 +472,7 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
 
     override fun onResume() {
         super.onResume()
+        if (pendingInit) continueInit()
         // "断网/恢复网络"的事件常常发生在页面不可见期间(被无网络页盖住、切到别的页),那时监听是注销的,
         // 回来时已经错过 → 这里按当前网络状态补一次收尾或补一次加载。真机反馈:断网冷启动进无网络页、
         // 点"返回"回首页,lading 一直转、恢复网络也不动 —— 就是这条时序没接上。
@@ -491,8 +490,20 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
 
     override fun onDestroyView() {
         unbindNetworkState()
+        pendingInit = false
         mHandler.removeCallbacksAndMessages(null)
         super.onDestroyView()
+    }
+
+    /** 阶段回调可能早于 onResume 或晚于 onPause，恢复时继续，不依赖会被清掉的延迟任务。 */
+    private fun continueInit() {
+        if (!isAdded || view == null) return
+        if (!isResumed) {
+            pendingInit = true
+            return
+        }
+        pendingInit = false
+        initData()
     }
 
     /** 订阅系统网络状态(幂等;只在可见期间订阅),并处理"事件在页面不可见期间发生"的时序 */

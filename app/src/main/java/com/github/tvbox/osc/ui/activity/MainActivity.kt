@@ -23,6 +23,9 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>() {
     var useCacheConfig = false
     private var exitTime = 0L
 
+    /** 首页展示联网内容；“我的”页可能正在查看本地内容，不主动弹无网页。 */
+    fun isOnlineContentVisible(): Boolean = mBinding.vp.currentItem == 0
+
     override fun init() {
 
         useCacheConfig = intent.extras?.getBoolean(IntentKey.CACHE_CONFIG_CHANGED, false)?:false

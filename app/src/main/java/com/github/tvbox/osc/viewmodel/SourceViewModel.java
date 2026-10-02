@@ -14,6 +14,8 @@ import com.github.tvbox.osc.bean.AbsXml;
 import com.github.tvbox.osc.bean.Movie;
 import com.github.tvbox.osc.bean.MovieSort;
 import com.github.tvbox.osc.bean.SourceBean;
+import com.github.tvbox.osc.log.Category;
+import com.github.tvbox.osc.log.LogStore;
 import com.github.tvbox.osc.util.DefaultConfig;
 import com.github.tvbox.osc.util.HCallBack;
 import com.github.tvbox.osc.util.HttpClient;
@@ -255,25 +257,21 @@ public class SourceViewModel extends ViewModel {
                 @Override
                 public void run() {
                     try {
-                        // 强类型试点:解析下沉 :spider;失败回退字符串通道
+                        // type3 的强类型实现和旧字符串通道最终都调用同一个爬虫、同一个解析器。
+                        // 失败后再次回退只会重复请求该源（尤其会让异常的分类接口再抛一次）。
                         com.github.tvbox.osc.bean.AbsXml typed =
                                 com.github.tvbox.osc.spiderapi.SpiderHomeProviders.get().category(
                                         homeSourceBean.getKey(), sortData.id, page + "", true, sortData.filterSelect);
                         if (typed != null && typed.movie != null) {
                             absXml(typed, homeSourceBean.getKey());
                             listResult.postValue(typed);
-                            return;
+                        } else {
+                            listResult.postValue(null);
                         }
-                        android.util.Log.i("SpiderBridge", "category(typed) 不可用,回退字符串通道: key="
-                                + homeSourceBean.getKey() + " tid=" + sortData.id + " pg=" + page);
-                        json(listResult, com.github.tvbox.osc.spiderapi.SpiderContentProviders.get()
-                                        .categoryContent(homeSourceBean.getKey(), sortData.id, page + "", true, sortData.filterSelect),
-                                homeSourceBean.getKey());
                     } catch (Throwable th) {
-                        // 每条路径都必须让调用方收到"本轮结束":原来只 printStackTrace,
-                        // 首页既拿不到数据也等不到收尾 → loading 一直转、列表被 loading 视图盖住连下拉都点不动
-                        // (离线冷启动、源自己抛异常时必现)
-                        th.printStackTrace();
+                        // 异常也必须收尾，避免分类页的加载动画一直盖住列表。
+                        LogStore.fail(Category.SUBSCRIPTION, "分类加载异常: " + homeSourceBean.getName()
+                                + " 第" + page + "页, " + th);
                         listResult.postValue(null);
                     }
                 }

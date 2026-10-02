@@ -11,14 +11,14 @@ import com.github.tvbox.osc.log.Category;
 import com.github.tvbox.osc.log.LogStore;
 import com.github.tvbox.osc.state.SystemState;
 import com.github.tvbox.osc.state.SystemStateMonitor;
+import com.github.tvbox.osc.ui.activity.MainActivity;
 import com.github.tvbox.osc.ui.activity.NoNetworkActivity;
 
 /**
- * "网络不可用"页的路由：网络层报告"断网 + 真实请求失败"时把页面拉起来。
+ * "网络不可用"页的路由：联网请求确认断网，或首页可见时默认网络断开，才拉起页面。
  * <p>
- * 为什么触发点在网络层而不是这里监听系统状态：用户要的是"<b>断网且发起了网络请求</b>才跳页" ——
- * 只是断网、但用户正在看本地视频/本地文件时不该被弹一屏。系统网络状态单点
- * （{@link SystemStateMonitor}，下载侧已在用）在页面侧负责"有网自动返回"，这里只做"该不该弹"。
+ * 首页本就展示联网内容，断网事件可直接提示；其它页面仍等用户实际发起联网请求。
+ * 本地视频/文件与播放会话不应被断网整屏页打断。系统状态由 {@link SystemStateMonitor} 单点提供。
  * <p>
  * 抑制与节流：① 网络层已有 3s 节流（整屏内容失败会有几十个请求同时抛）；② 这里再过一道最小间隔；
  * ③ 用户点过"我知道了"后，一段时间内（或到下次网络恢复为止）不再自动弹；④ 后台不弹；⑤ <b>当前确实有可用链路时不弹</b>
@@ -56,7 +56,7 @@ public final class NetworkIssueRouter {
     private NetworkIssueRouter() {
     }
 
-    /** app 启动时调用一次（组合根）：接上网络层通知 + 订阅"网络恢复"解除抑制 */
+    /** app 启动时调用一次（组合根）：接上网络层通知，并处理首页断网/网络恢复事件。 */
     public static void install() {
         if (installed) return;
         installed = true;
@@ -67,12 +67,22 @@ public final class NetworkIssueRouter {
         }
         try {
             SystemStateMonitor.registerSafe(e -> {
-                if (e != null && SystemStateMonitor.TYPE_NETWORK.equals(e.type)
-                        && !SystemStateMonitor.VAL_NONE.equals(e.value)) {
+                if (e == null || !SystemStateMonitor.TYPE_NETWORK.equals(e.type)) return;
+                if (!SystemStateMonitor.VAL_NONE.equals(e.value)
+                        && !SystemStateMonitor.isOfflineNow()) {
                     // 恢复联网：解除"我知道了"的抑制与"白弹"抑制，下次断网照常提示
                     dismissedUntil = 0L;
                     suppressedUntilNetworkChange = false;
                     quickDismissStreak = 0;
+                } else if (SystemStateMonitor.VAL_NONE.equals(e.value)
+                        && SystemStateMonitor.isOfflineNow()) {
+                    // 首页正在展示联网内容时，关闭 Wi-Fi/流量无需再点击一次请求就能看到提示。
+                    Activity activity = AppManager.getInstance().isActivity()
+                            ? AppManager.getInstance().currentActivity() : null;
+                    if (activity instanceof MainActivity
+                            && ((MainActivity) activity).isOnlineContentVisible()) {
+                        show("网络连接已断开");
+                    }
                 }
             }, SystemStateMonitor.TYPE_NETWORK);
         } catch (Throwable th) {
@@ -176,16 +186,14 @@ public final class NetworkIssueRouter {
     }
 
     /**
-     * 当前是否有可用链路（判定与页面侧"有网自动返回"同一口径：{@link SystemStateMonitor}）。
-     * 单点未就绪时退回网络层的宽松判定；都读不到时按"有链路"处理（不弹比误弹安全）。
+     * 弹页前读取即时默认网络，避免网络事件尚在去抖时被旧状态挡住。
+     * 单点未就绪时退回网络层；都读不到时按"有链路"处理（不弹比误弹安全）。
      */
     private static boolean hasUsableLink() {
         try {
             SystemStateMonitor monitor = SystemStateMonitor.get();
             if (monitor == null) return OkGoHelper.hasNetwork();
-            SystemState state = monitor.getCurrentState();
-            if (state == null) return OkGoHelper.hasNetwork();
-            return !SystemStateMonitor.VAL_NONE.equals(state.network);
+            return SystemStateMonitor.hasUsableNetwork();
         } catch (Throwable th) {
             return true;
         }

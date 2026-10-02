@@ -105,6 +105,8 @@ public final class SystemStateMonitor {
 
     private int startedActivityCount = 0;
     private String pendingNetwork = null;
+    /** 默认网络回调当前跟踪的网络；切网时忽略旧网络迟到的 onLost。 */
+    private Network observedDefaultNetwork;
     /** 存储权限状态(前后台切换时检查,变化即广播) */
     private boolean permissionGranted = true;
 
@@ -225,19 +227,37 @@ public final class SystemStateMonitor {
             ConnectivityManager.NetworkCallback cb = new ConnectivityManager.NetworkCallback() {
                 @Override
                 public void onAvailable(Network network) {
-                    updateNetwork();
+                    if (android.os.Build.VERSION.SDK_INT >= 24) {
+                        // 能力信息由紧接着的 onCapabilitiesChanged 给出，别在回调里同步查询。
+                        observedDefaultNetwork = network;
+                        if (android.os.Build.VERSION.SDK_INT < 26) mainHandler.post(SystemStateMonitor.this::updateNetwork);
+                    } else {
+                        mainHandler.post(SystemStateMonitor.this::updateNetwork);
+                    }
                 }
 
                 @Override
                 public void onLost(Network network) {
-                    updateNetwork();
+                    if (android.os.Build.VERSION.SDK_INT >= 24) {
+                        if (!network.equals(observedDefaultNetwork)) return;
+                        observedDefaultNetwork = null;
+                        updateNetwork(VAL_NONE);
+                    } else {
+                        mainHandler.post(SystemStateMonitor.this::updateNetwork);
+                    }
                 }
 
                 @Override
                 public void onCapabilitiesChanged(Network network, NetworkCapabilities networkCapabilities) {
-                    updateNetwork();
+                    if (android.os.Build.VERSION.SDK_INT >= 24) {
+                        if (network.equals(observedDefaultNetwork)) updateNetwork(transportOf(networkCapabilities));
+                    } else {
+                        mainHandler.post(SystemStateMonitor.this::updateNetwork);
+                    }
                 }
             };
+            // 先排入初始快照，后续回调的状态更新才能按顺序覆盖它。
+            updateNetwork();
             if (android.os.Build.VERSION.SDK_INT >= 24) {
                 cm.registerDefaultNetworkCallback(cb);
             } else {
@@ -246,7 +266,6 @@ public final class SystemStateMonitor {
                         .build();
                 cm.registerNetworkCallback(request, cb);
             }
-            updateNetwork();
         } catch (Throwable th) {
             Log.e("SystemState", "网络监听注册失败", th);
         }
@@ -254,42 +273,49 @@ public final class SystemStateMonitor {
 
     private void updateNetwork() {
         try {
-            final String value = currentTransport();
-            if (value.equals(state.network)) return; // 无变化
-            state.network = value;
-            mainHandler.removeCallbacks(networkDebounce);
-            pendingNetwork = value;
-            mainHandler.postDelayed(networkDebounce, NETWORK_DEBOUNCE_MS);
+            updateNetwork(currentTransport());
         } catch (Throwable th) {
             Log.e("SystemState", "网络状态读取失败", th);
         }
     }
 
+    private void updateNetwork(String value) {
+        mainHandler.post(() -> {
+            if (value.equals(state.network)) return; // 无变化
+            state.network = value;
+            mainHandler.removeCallbacks(networkDebounce);
+            pendingNetwork = value;
+            mainHandler.postDelayed(networkDebounce, NETWORK_DEBOUNCE_MS);
+        });
+    }
+
     /**
      * 当前网络传输方式（"有没有可用网络"的事实源，不是"哪种传输"）。
      * <p>
-     * WiFi/蜂窝照旧细分；VPN / 以太网 / 蓝牙共享等其它 transport 只要带 INTERNET 能力就算
-     * {@link #VAL_CONNECTED}；没有活动网络但仍有带 INTERNET 能力的网络时同样算有网（与网络层
-     * 快速失败守卫 {@code OkGoHelper.hasNetwork()} 同一宽松口径，两处结论必须一致）。
+     * WiFi/蜂窝照旧细分；VPN / 以太网 / 蓝牙共享等其它默认网络带 INTERNET 能力时算
+     * {@link #VAL_CONNECTED}。非默认网络不能承载普通请求，不参与有网判定。
      */
     private String currentTransport() {
         ConnectivityManager cm = (ConnectivityManager) appContext.getSystemService(Context.CONNECTIVITY_SERVICE);
         if (cm != null) {
             Network active = cm.getActiveNetwork();
-            if (active != null) {
-                NetworkCapabilities nc = cm.getNetworkCapabilities(active);
-                if (nc != null && nc.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
-                    if (nc.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return VAL_WIFI;
-                    if (nc.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) return VAL_CELLULAR;
-                    return VAL_CONNECTED;
-                }
-            }
+            if (active == null) return VAL_NONE;
+            NetworkCapabilities nc = cm.getNetworkCapabilities(active);
+            return transportOf(nc);
         }
         return hasUsableNetwork() ? VAL_CONNECTED : VAL_NONE;
     }
 
+    private static String transportOf(NetworkCapabilities caps) {
+        if (caps == null) return VAL_CONNECTED; // 切网瞬间快照未知，等待能力变化回调
+        if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) return VAL_NONE;
+        if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return VAL_WIFI;
+        if (caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) return VAL_CELLULAR;
+        return VAL_CONNECTED;
+    }
+
     /**
-     * 是否有任何带 {@code NET_CAPABILITY_INTERNET} 的网络（宽松口径的<b>唯一</b>实现）。
+     * App 默认网络是否具备 {@code NET_CAPABILITY_INTERNET}（与网络层快速失败守卫同一口径）。
      * <p>
      * 不要求"已验证可联网"：受限网络/切换瞬间仍可能请求成功，宁可漏判离线也不误杀。
      * 读不到（未 init / 权限 / 系统差异）一律返回 true —— 判定只是优化，不能因为自己读不到就把用户判成离线。
@@ -302,16 +328,10 @@ public final class SystemStateMonitor {
         try {
             ConnectivityManager cm = (ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE);
             if (cm == null) return true;
-            if (cm.getActiveNetwork() != null) return true;
-            Network[] all = cm.getAllNetworks();
-            if (all == null) return true;
-            for (Network n : all) {
-                NetworkCapabilities caps = cm.getNetworkCapabilities(n);
-                if (caps != null && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
-                    return true;
-                }
-            }
-            return false;
+            Network active = cm.getActiveNetwork();
+            if (active == null) return false;
+            NetworkCapabilities caps = cm.getNetworkCapabilities(active);
+            return caps == null || caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
         } catch (Throwable th) {
             return true;
         }
@@ -323,10 +343,7 @@ public final class SystemStateMonitor {
      * （内容被藏起来、且没有"恢复"事件来救）。
      */
     public static boolean isOfflineNow() {
-        SystemStateMonitor m = instance;
-        if (m == null) return false;
-        SystemState s = m.state;
-        return s != null && VAL_NONE.equals(s.network);
+        return !hasUsableNetwork();
     }
 
     /** 订阅（未 init 时静默跳过，免调用方裸链式 NPE） */

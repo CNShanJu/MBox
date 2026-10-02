@@ -349,8 +349,8 @@ public class OkGoHelper {
     /**
      * 当前是否有可用网络（供 {@link NetworkGuardInterceptor} 做"无网络快速失败"）。
      * <p>
-     * 判定口径<b>故意宽松</b>：有任何带 {@code NET_CAPABILITY_INTERNET} 的网络就算有网，
-     * <b>不要求</b>"已验证可联网"——网络受限/切换瞬间仍可能请求成功，宁可漏拦也不误杀。
+     * 只看 App 的默认网络：其它网络（例如蓝牙或局域网链路）不能承载普通请求。
+     * 默认网络需带 {@code NET_CAPABILITY_INTERNET}；不要求 VALIDATED，避免系统探测尚未完成时拦掉可用请求。
      * 读不到（context 未注入、权限异常、系统实现差异）一律返回 true：守卫只是优化，
      * 绝不能因为它自己出问题就把请求拦死。
      * <p>
@@ -366,16 +366,11 @@ public class OkGoHelper {
             android.net.ConnectivityManager cm = (android.net.ConnectivityManager)
                     ctx.getSystemService(Context.CONNECTIVITY_SERVICE);
             if (cm == null) return true;
-            if (cm.getActiveNetwork() != null) return true;
-            android.net.Network[] all = cm.getAllNetworks();
-            if (all == null) return true;
-            for (android.net.Network n : all) {
-                android.net.NetworkCapabilities caps = cm.getNetworkCapabilities(n);
-                if (caps != null && caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
-                    return true;
-                }
-            }
-            return false;
+            android.net.Network active = cm.getActiveNetwork();
+            if (active == null) return false;
+            android.net.NetworkCapabilities caps = cm.getNetworkCapabilities(active);
+            // 切网瞬间能力快照可能暂时读不到；此时让实际请求判断，避免误拦。
+            return caps == null || caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET);
         } catch (Throwable th) {
             return true;
         }

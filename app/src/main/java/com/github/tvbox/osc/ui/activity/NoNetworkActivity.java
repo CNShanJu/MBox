@@ -14,7 +14,7 @@ import com.github.tvbox.osc.util.NetworkIssueRouter;
 /**
  * 网络不可用页（独立页面）。
  * <p>
- * 来往：由 {@link NetworkIssueRouter} 在"断网 + 真实请求失败"时拉起（含请求发到一半断网）；
+ * 来往：由 {@link NetworkIssueRouter} 在首页断网或联网请求因断网失败时拉起；
  * 页面自己订阅系统网络状态单点 {@link SystemStateMonitor}，<b>一有网就自动 finish 回到原页面</b>。
  * <p>
  * 两个按钮：{@code 返回} = 直接回原页面；{@code 我知道了} = 回原页面并在一段时间内不再自动弹出
@@ -66,7 +66,8 @@ public class NoNetworkActivity extends BaseActivity {
         // 有网 → 自动返回原页面（用户不用手动点按钮）
         mNetListener = e -> {
             if (e != null && SystemStateMonitor.TYPE_NETWORK.equals(e.type)
-                    && !SystemStateMonitor.VAL_NONE.equals(e.value)) {
+                    && !SystemStateMonitor.VAL_NONE.equals(e.value)
+                    && !SystemStateMonitor.isOfflineNow()) {
                 autoFinish("网络已恢复");
             }
         };
