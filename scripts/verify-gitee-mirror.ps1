@@ -123,10 +123,15 @@ Write-Step "验收镜像 $GiteeOwner/$GiteeRepo  共 $($Tag.Count) 个 tag"
 if ($NoDownload) { Write-Host '    (已加 -NoDownload,体积与下载项将标为未测)' -ForegroundColor DarkGray }
 
 # 发行版列表整体取一次(/releases/tags/<tag> 在本仓库返回空壳对象,不可用),再按 tag_name 匹配
+#
+# 坑:这里**不能写 `$releases = @(Invoke-RestMethod ...)`** —— 本仓库该接口返回的是 JSON 数组,
+# Invoke-RestMethod 已经把它变成 Object[];再套一层 @() 会得到一个"只有一个元素(那个数组)"的数组,
+# 于是 .tag_name / .id 全变成数组,滤出来的"发行版"其实是整个列表,附件也会拿成别的版本的
+# (实测踩过:报出 id=[1179883 1180270]、附件显示成 v3.6.1 的包)。直接赋值即可。
 $releases = @()
 try {
-  $releases = @(Invoke-RestMethod -Uri "$api/releases?per_page=100" -TimeoutSec 60 -ErrorAction Stop)
-  Write-Host "    Gitee 现有发行版 $($releases.Count) 个: $(($releases | ForEach-Object { $_.tag_name }) -join ', ')" -ForegroundColor DarkGray
+  $releases = Invoke-RestMethod -Uri "$api/releases?per_page=100" -TimeoutSec 60 -ErrorAction Stop
+  Write-Host "    Gitee 现有发行版 $(@($releases).Count) 个: $((@($releases) | ForEach-Object { $_.tag_name }) -join ', ')" -ForegroundColor DarkGray
 } catch {
   Write-Host " 取 Gitee 发行版列表失败:$($_.Exception.Message)" -ForegroundColor Red
   exit 1
@@ -139,7 +144,11 @@ foreach ($t in $Tag) {
   Write-Host "--- $t ---" -ForegroundColor White
 
   # 1. 发行版是否存在
-  $rel = @($releases | Where-Object { $_.tag_name -eq $t }) | Select-Object -First 1
+  # 注意别写成 @(...) | Select-Object -First 1:那样在某些情况下会把匹配到的多个发行版
+  # 合并成一个对象(字段被拼成 "v3.6.1 v3.6.3" 这种),于是拿错附件、还会误报"与 GitHub 不一致"。
+  # 这里显式取第一个匹配的元素。
+  $matched = @($releases | Where-Object { $_.tag_name -eq $t })
+  $rel = if ($matched.Count -gt 0) { $matched[0] } else { $null }
   if (-not $rel) {
     Write-Bad "Gitee 上没有 $t 的发行版"
     Write-Host "        页面: https://gitee.com/$GiteeOwner/$GiteeRepo/releases/tag/$t" -ForegroundColor DarkGray

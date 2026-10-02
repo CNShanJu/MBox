@@ -173,8 +173,11 @@ $relApi = "$api/repos/$GiteeOwner/$GiteeRepo"
 Write-Step "查找 $Tag 的发行版"
 $rel = @()
 try {
-  $all = @(Invoke-RestMethod -Uri "$relApi/releases?access_token=$token&per_page=100" -TimeoutSec 60 -ErrorAction Stop)
-  $rel = @($all | Where-Object { $_.tag_name -eq $Tag })
+  # 注意:不要写成 @(Invoke-RestMethod ...) —— 该接口已返回 JSON 数组,再套 @() 会变成
+  # "只含一个元素(那个数组)"的数组,.id 会取成数组,导致拿错发行版。
+  $all = Invoke-RestMethod -Uri "$relApi/releases?access_token=$token&per_page=100" -TimeoutSec 60 -ErrorAction Stop
+  $matched = @($all | Where-Object { $_.tag_name -eq $Tag })
+  if ($matched.Count -gt 0) { $rel = @($matched[0]) }
 } catch {
   Write-Bad " 读发行版列表失败(HTTP $($_.Exception.Response.StatusCode.value__))"
   exit 1
