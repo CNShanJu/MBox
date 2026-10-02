@@ -216,9 +216,14 @@ app / feature
 ### 代码托管与镜像同步(强制)
 
 1. **GitHub 是唯一权威,Gitee 只是镜像**:`origin` = `https://github.com/CNShanJu/MBox.git`(权威:CI、Release 都在这边);
-   `gitee` = `https://gitee.com/CnAyo/MBox.git`(国内镜像:代码 + 发行版附件)。
+   `gitee` = `https://gitee.com/CnAyo/MBox.git`(国内镜像:**代码** + 发行版附件)。
    另一远端 `legacy` 指向更名前的旧仓库 `CNShanJu/TVBoxOS-Mobile`,只作历史留档,**不要往它推新提交**。
-2. **一次 push 必须同时覆盖两端**,统一走脚本,别只推 `origin` 就算完事:
+2. **代码同步优先交给 Gitee 的 Pull 镜像(2026-10-02 定)**:在 Gitee 仓库「管理 → 仓库镜像管理」添加
+   **Pull 方向**镜像(源 = `CNShanJu/MBox`),让 **Gitee 自己从 GitHub 拉**分支/tag/提交 ——
+   Gitee 对"拉 GitHub"有专门优化,比本地/CI 主动往 Gitee 推更快更稳。
+   依据:[Gitee 帮助中心 · 仓库镜像管理](https://help.gitee.com/repository/settings/sync-between-gitee-github)。
+   注意该文档同时写明镜像**只同步 分支/标签/提交,不含 Releases 与附件** —— 所以附件必须另走第 5 条。
+   配好后本地只需正常 `git push origin`;脚本降为**兜底**(镜像未配或临时失效时用):
 
    ```powershell
    powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sync-release.ps1 -DryRun   # 先看会推什么
@@ -232,45 +237,40 @@ app / feature
    确需全量对齐历史才加 `-AllTags`。
    `scripts/sync-release.ps1` **必须存为 UTF-8 with BOM**(PS 5.1 按系统代码页读无 BOM 的 .ps1,中文会全乱并报语法错);
    `scripts/verify-gitee-mirror.ps1` 同理。
-3. **顺序有硬依赖:代码与 tag 必须先到 Gitee,再等 CI 建 Gitee 发行版**。
-   `.github/workflows/build-apk.yml` 的 `Sync release APK to Gitee mirror` 步要先按 tag 在镜像仓库找到发行版,
-   镜像没有该 tag 时它只告警跳过 —— APK 附件就同步不过去。发版后到 Actions 确认该步没有 `::warning` 跳过。
+3. **Gitee 发行版附件的创建顺序**:`.github/workflows/build-apk.yml` 的 `Sync release APK to Gitee mirror` 步要先按 tag
+   在镜像仓库找到发行版,镜像没有该 tag 时它只告警跳过。**代码与 tag 先进 Gitee,这一步才有意义**。
    **改了 workflow 后重跑旧 tag 是无效的**(2026-10-02 实测):`Re-run all jobs` 用的是**该次运行所属提交里**的
    工作流文件,不是 `main` 上的最新版 —— 日志里会看到它仍在回显旧脚本(如旧的 `::notice`、旧变量名)。
-   所以"改工作流 → 重跑旧 tag"这条路走不通:要么**发一个新 tag**(新提交 → 新工作流),
-   要么用 `scripts/sync-gitee-release.ps1` 本地把附件补上去。
-4. **镜像掉队要能发现**:任一端的 `main` 或 `v*` tag 明显落后时用 `-GiteeOnly` 补推,不要长期放任手工推。
-5. **CI 同步 APK 到 Gitee 依赖 Secrets,缺令牌会静默跳过**(强制检查):
+   要验证工作流改动,只能**发新 tag**(新提交 → 新工作流)。
+4. **镜像掉队要能发现**:任一端的 `main` 或 `v*` tag 明显落后时用 `-GiteeOnly` 补推。
+5. **APK 附件:CI 那条路上传不可靠,以"本机补传"为准(2026-10-02 实测定论)**
    令牌 Secret 名固定 **`GITEE_MBOX_TOKEN`**(工作流里映射成环境变量 `GITEE_TOKEN` 供 shell 使用;
    **不要再引入第二个名字或回退分支**);可选 `GITEE_OWNER`/`GITEE_REPO` 覆盖默认坐标 `CnAyo/MBox`。
    - 取值:登录 https://gitee.com → 头像「设置」→「私人令牌」→ 新建,勾选 **projects**(仓库读写)权限;
      私人令牌**会过期**,到期后镜像会再次静默停摆,记下到期日;
    - 写入:https://github.com/CNShanJu/MBox/settings/secrets/actions → New repository secret,名 `GITEE_MBOX_TOKEN`;
-   - **未配置时的表现(历史上就是这样长期漏掉的)**:该步会打印 `::error` 但**仍以 success 结束**,镜像页一直
-     没有该版本的附件,App 国内下载只能回落到加速代理或直连。v3.6.1 的 Gitee 发行版是**手工上传**的
-     (带 Gitee 自动生成的 `v3.6.1.zip`/`v3.6.1.tar.gz` 源码包;API 上传的发行版不会有这两项 —— 可据此判断
-     某版本到底是 CI 同步的还是手工传的)。
-   - **每次发版后的验收动作(强制,一条命令)**:不要只看 GitHub Actions 是绿的 —— 缺令牌时那步照样 success。
-     用脚本直接问 Gitee 要答案:
+   - **实测结论(不要再花力气修 CI 上传)**:GitHub 的 Azure runner 直连 Gitee **建发行版能成,传 40MB 附件必失败**,
+     表现为 `curl: (35) Connection reset by peer` 或 `curl: (52) Empty reply from server`(服务端连响应都不给)。
+     已试过 `Expect:` 头、`Connection: close`、`--connect-timeout`、失败重试两次,全部无效 —— 是链路层,不是脚本。
+     因此该步只做**尽力而为**:**任何失败都只告警,绝不 `exit` 非零**(`curl` 的错误码冒泡会把整条发版流程拖成
+     failure,2026-10-02 踩过),步骤末尾显式 `exit 0`。
+   - **正式流程:发版后在本机补传**(国内链路秒级稳定),用 `scripts/sync-gitee-release.ps1`:
+     `-VerifyOnly` 只验令牌与作用域(不写任何东西),或 `-Tag vX.Y.Z -ApkPath <apk>` 建发行版 + 传附件,
+     脚本末尾自动调验收脚本复核。**令牌不要写在命令行参数里**(会进 PowerShell 历史),用 `-TokenFile` 或交互式输入,用完删掉。
+   - **每次发版后的验收动作(强制,一条命令)**:不要只看 GitHub Actions 是绿的 —— 缺令牌/上传失败时那步照样 success。
 
      ```powershell
      powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-gitee-mirror.ps1
      ```
 
      它逐条验「发行版在不在 → 有没有 .apk 附件 → 体积对不对(取 Content-Length)→ 与 GitHub 正式包是否同体积 →
-     匿名能不能下(顺带实测 Gitee 是否忽略 Range)」,任一不过即非零退出,可接进发版流程。批量排查用
-     `-Last 5`(本地最近 5 个 tag,直接看出哪几个版本漏了);只想快速核对附件在不在、不想发下载请求就加 `-NoDownload`
-     (此时体积与对账会标"未测")。脚本只读,不写仓库、不改远端。
-     **注意两个 Gitee 接口坑(脚本里已规避,别再踩)**:`/releases/tags/<tag>` 返回空壳对象(HTTP 200 但字段全空),
-     必须用 `/releases` 列表再按 `tag_name` 过滤;附件对象没有 `size` 字段,体积只能从 HTTP `Content-Length` 拿。
-   - 补同步(按需求选一条):
-     - **CI 路径**:令牌配好后**发一个新 tag**(新提交 → 新工作流)即自动同步;若某历史版本要补,
-       只能靠下面第 2 条,重跑旧 tag 无效(见本节第 3 条)。
-     - **本地路径(不等 CI)**:用 `scripts/sync-gitee-release.ps1` ——
-       `-VerifyOnly` 只验令牌与作用域(不写任何东西),或 `-Tag vX.Y.Z -ApkPath <apk>` 直接把附件补传到
-       Gitee 发行版(该脚本自己建发行版、传附件,末尾自动调验收脚本复核)。
-     **令牌不要写在命令行参数里**(会进 PowerShell 历史),用 `-TokenFile` 或交互式输入,用完删掉;
-     CI 侧一律走 GitHub Secrets。
+     匿名能不能下(顺带实测 Gitee 是否忽略 Range)」,任一不过即非零退出。批量排查用 `-Last 5`;
+     不想发下载请求就加 `-NoDownload`(体积与对账会标"未测")。脚本只读,不写仓库、不改远端。
+     **两个 Gitee 接口坑(脚本里已规避,别再踩)**:`/releases/tags/<tag>` 返回空壳对象(HTTP 200 但字段全空),
+     必须用 `/releases` 列表再按 `tag_name` 过滤;附件对象没有 `size` 字段,体积只能从 HTTP `Content-Length` 拿;
+     另外 `Invoke-RestMethod` 取该列表时**不能**再套一层 `@(...)`(会变成"只含该数组的数组",字段全变数组、拿错版本)。
+   - **如何判断某版本是 CI 传的还是手工传的**:Gitee 给每个发行版自动生成 `vX.Y.Z.zip`/`vX.Y.Z.tar.gz` 源码包。
+     只带这两个 = 附件没传成功(或没传);另有 `MBox_vX.Y.Z_release_<日期>.apk` 才算真同步到位。
 
 ### 构建内存纪律(强制)
 

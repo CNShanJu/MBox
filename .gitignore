@@ -112,3 +112,6 @@ app/src/main/assets/config/default_subscriptions.json
 
 # DLNA 备份目录(桩化停用,不入库)
 /doc/backup/
+
+# 镜像补传临时目录(不入库)
+/.tmp-gitee-upload/
