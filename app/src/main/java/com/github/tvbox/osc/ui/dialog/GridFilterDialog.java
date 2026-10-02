@@ -104,7 +104,6 @@ public class GridFilterDialog extends AppBottomPopupView {
         for (MovieSort.SortFilter filter : sortData.filters) {
             View line = LayoutInflater.from(getContext()).inflate(R.layout.item_grid_filter, null);
             RecyclerView gridView = line.findViewById(R.id.mFilterKv);
-            gridView.setHasFixedSize(true);
             gridView.setLayoutManager(new V7LinearLayoutManager(getContext(), 0, false));
             GridFilterKVAdapter filterKVAdapter = new GridFilterKVAdapter();
             gridView.setAdapter(filterKVAdapter);

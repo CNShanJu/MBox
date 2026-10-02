@@ -652,7 +652,8 @@ public final class ThemeDrawables {
             if (sizeW != null || sizeH != null) {
                 d.setSize(sizeW == null ? -1 : sizeW, sizeH == null ? -1 : sizeH);
             }
-            if (padL >= 0 || padT >= 0 || padR >= 0 || padB >= 0) {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q
+                    && (padL >= 0 || padT >= 0 || padR >= 0 || padB >= 0)) {
                 d.setPadding(Math.max(0, padL), Math.max(0, padT), Math.max(0, padR), Math.max(0, padB));
             }
             if (gradientColors != null) {

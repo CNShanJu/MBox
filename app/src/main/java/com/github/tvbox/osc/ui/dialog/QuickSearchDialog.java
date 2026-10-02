@@ -121,7 +121,6 @@ public class QuickSearchDialog extends AppBottomPopupView {
     private void initViews() {
         mGridView = findViewById(R.id.mGridView);
         searchAdapter = new QuickSearchAdapter();
-        mGridView.setHasFixedSize(true);
         // lite
         mGridView.setLayoutManager(new V7LinearLayoutManager(getContext(), 1, false));
         // with preview

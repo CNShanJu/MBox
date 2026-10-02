@@ -264,7 +264,6 @@ public class GridFragment extends BaseLazyFragment {
     private void initView() {
         if (mGridView != null) return; // 唯一视图/适配器只需初始化一次(initView 会被多次调用)
         mGridView = findViewById(R.id.mGridView);
-        mGridView.setHasFixedSize(true);
         // 列数自适应:单卡宽度不超过 GRID_CARD_MAX_WIDTH_DP,屏幕越宽列数越多
         mGridView.setLayoutManager(new V7GridLayoutManager(this.mContext, Utils.getAdaptiveGridSpan(Utils.GRID_CARD_MAX_WIDTH_DP)));
         gridAdapter = new GridAdapter(); // 单适配器:所有层级复用,层级数据通过 setNewData 进出

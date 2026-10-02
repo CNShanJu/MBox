@@ -36,13 +36,15 @@ public final class DownloadArchive {
         try {
             List<ArchiveItem> saved = readArchiveFile();
             if (saved != null) {
-                items.addAll(saved);
+                for (ArchiveItem item : saved) {
+                    if (item != null) items.add(item);
+                }
             }
             // 对账：文件已丢失的档案视为失效,清理
             boolean changed = false;
             for (int i = items.size() - 1; i >= 0; i--) {
                 ArchiveItem it = items.get(i);
-                if (it.savePath != null && !new File(it.savePath).exists()) {
+                if (it.savePath == null || !new File(it.savePath).exists()) {
                     items.remove(i);
                     changed = true;
                 }

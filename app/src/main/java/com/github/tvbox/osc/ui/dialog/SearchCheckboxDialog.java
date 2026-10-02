@@ -102,7 +102,6 @@ public class SearchCheckboxDialog extends AppBottomPopupView {
                 return oldItem.getName().equals(newItem.getName());
             }
         });
-        mGridView.setHasFixedSize(true);
 
         mGridView.setLayoutManager(new V7GridLayoutManager(getContext(), 2));
         View root = findViewById(R.id.root);

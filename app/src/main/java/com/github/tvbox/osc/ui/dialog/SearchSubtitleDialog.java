@@ -100,7 +100,6 @@ public class SearchSubtitleDialog extends AppCenterPopupView {
             search(wd);
         });
         searchAdapter = new SearchSubtitleAdapter();
-        mGridView.setHasFixedSize(true);
         mGridView.setLayoutManager(new V7LinearLayoutManager(getContext(), 1, false));
         mGridView.setAdapter(searchAdapter);
         searchAdapter.setOnItemClickListener(new BaseQuickAdapter.OnItemClickListener() {

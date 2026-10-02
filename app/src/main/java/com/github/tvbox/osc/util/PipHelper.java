@@ -288,7 +288,7 @@ public class PipHelper {
 
     /** 刷新小窗操作按钮(播放/暂停图标跟随播放状态) */
     private void refreshActions() {
-        if (!isInPip(activity))
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || !isInPip(activity))
             return;
         try {
             activity.setPictureInPictureParams(new PictureInPictureParams.Builder()

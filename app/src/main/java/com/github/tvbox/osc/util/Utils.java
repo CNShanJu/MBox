@@ -120,8 +120,9 @@ public class Utils {
                 null,
                 null
         );
-        if (cursor != null && cursor.moveToFirst()) {
-            do {
+        if (cursor != null) {
+            try {
+                if (cursor.moveToFirst()) do {
                 VideoInfo videoInfo = new VideoInfo();
                 videoInfo.setId(cursor.getInt(cursor.getColumnIndexOrThrow(MediaStore.Video.Media._ID)));
                 String dataPath = cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Video.Media.DATA));
@@ -145,8 +146,10 @@ public class Utils {
                 videoInfo.setBucketDisplayName(cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Video.Media.BUCKET_DISPLAY_NAME)));
                 videoInfo.setBookmark(cursor.getString(cursor.getColumnIndexOrThrow(MediaStore.Video.Media.BOOKMARK)));
                 videoList.add(videoInfo);
-            } while (cursor.moveToNext());
-            cursor.close();
+                } while (cursor.moveToNext());
+            } finally {
+                cursor.close();
+            }
         }
         return videoList;
     }
