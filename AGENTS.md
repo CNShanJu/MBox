@@ -137,16 +137,38 @@ app / feature
   新增海报卡布局时按上述形态摆覆盖条即可被自动识别,无需改绘制代码。
   不要再把失败文字贴底绘制,否则通栏/宫格等带信息条的形态会被整条盖住。
 - 多语言资源按需裁剪(`resConfigs`),禁止无界塞入语言包。
+- **主题文字色只配主色与高亮色**:`brand` 管正文、标题与普通选中文字;
+  `text_accent` 保留为同值派生资源,不再是主题文件/编辑器的独立配置项。
+  `text_highlight` 单独控制链接与搜索来源;
+  旧主题文件里的 `text_accent` 值读取与导入时静默忽略,旧版对调过的高亮值仍需正确迁移;
+  自动升级键名本身不提示,确实丢失其他配置时仍需提示。
+- **内置亮/暗主题也必须由运行时调色板供色,禁止让 `-night` 决定界面颜色**(强制;2026-10-02 定):
+  编译期颜色资源带 `-night` 限定符,系统/OEM 可以把进程 `uiMode` 翻成夜间(魅族 Flyme 会强翻)。
+  取色/取底通道的门槛必须是"运行时调色板装配好没有"(`ThemeRuntime.runtimePalette()`),
+  **不能是"是不是自定义主题"**(`ThemeRuntime.active()` / `palette()` 只留给兼容扫描与诊断):
+  - `ThemeResources`(代码取色/状态色/图标着色)、`ThemeContextWrapper`(换肤 Context/Resources 包装,
+    Activity 侧与 **Application 侧都要包**:气泡/Toast/通知/应用上下文 inflate 的弹窗走应用上下文)、
+    `ThemeDrawables`(旧资源兼容重建、状态色 selector、图标 tint)三处都不得再用 `active()` 当门槛;
+  - `ThemeResources(base, normalizeNight)`:Activity/弹窗一侧 `true`(把包装内 `uiMode` 归一到我们自己的
+    明暗类型,连 native 解析的 `@color`/`?attr` 都不被强翻),**Application 一侧必须 `false`** ——
+    "跟随系统"是读应用级 `Configuration.uiMode` 判系统明暗的(`ThemeStore.systemNight()` /
+    `BaseActivity.systemNightNow()`),归一了它会自锁,再也翻不动;
+  - 内置主题也走重建后,**圆角一律以编译期那份 drawable 为准**(`ThemeDrawables#keepCompiledCorners`),
+    这条从"自定义主题的修补"升级为内置主题的保命线,别删;
+  - 排障:启动/系统明暗变化/主题生效各留一行 `明暗(...)` 日志(系统配置 + 系统偏好 + 生效主题 +
+    运行时供色 + 跟随系统),被强翻的机型先看这一行。
+  - 反例(2026-10-02 用户口径):内置浅色主题 + Flyme 深色模式 → **"只有弹窗/浮层/气泡/通知这类新窗口变深,
+    页面主体还是浅色"**,就是这条通道只在自定义主题下被接管造成的。
 - **播放器画面上的样式不随主题**(强制;2026-10-01 定):播放器底恒为黑,压在**视频画面**上的元素
   (控制条/OSD、暂停与滑动进度浮层、字幕与 seek 进度图标、播放器菜单浮层)一律用**固定配色**
-  (白 / 半透明黑 / 固定字面量),**禁止**把 `text_foreground`/`text_sub`/`btn_select_*`/`bg_float` 等主题色接进去 ——
+  (白 / 半透明黑 / 固定字面量;进度与暂停提示底固定为 15% 白色半透明),**禁止**把 `text_foreground`/`text_sub`/`btn_select_*`/`bg_float` 等主题色接进去 ——
   浅色主题下主题色压黑画面必然看不清。涉及 `player_vod_control_view.xml`、`dkplayer_layout_live_side.xml`、
   `dkplayer_layout_live_normal.xml`、`player_live_control_view.xml`、`dkplayer_layout_menu_view.xml` 等。
   反之,**带主题面板底的浮层与页面元素照旧走主题**:直播页 EPG 信息条(`bg_large_round_float`)与频道/分组卡片、
   直播设置与线路抽屉(`bg_float`)、播放设置面板里的小组件按钮(`selector_widget_btn`/`WidgetBtn`)等。
   判断口径一句话:**它画在黑画面/视频上 → 固定配色;它有自己的(主题)面板底 → 跟主题。**
   新增播放器控件时按此写死配色,不要"顺手接主题";也不要把这条当成"整页不跟主题"的理由 —— 页面卡片照旧走主题。
-- **空心组件的边框线 = 它自己的文字颜色**(强制;2026-10-01 定):凡"无填充、只有描边"的组件
+- **空心组件的边框线 = 它自己的文字颜色**(强制;2026-10-02 更新):凡"无填充、只有描边"的组件
   —— 空心按钮 `BtnSecondary`、小组件键 `WidgetBtn`/`PageBgChip`(搜索页历史/热词/联想、日志分类、背景预设、
   播放器设置键)、危险入口红字键 `BtnDangerGhost`、`bg_r_*_stroke_primary` 描边小件 ——
   描边色必须与该组件**自己的文字色同源**:普通键 = 文字主色(`btn_plain_text` / `text_foreground`),
@@ -155,7 +177,9 @@ app / feature
   "文字跟了主题、边框没跟"(用户口径"小组件的边框线还是写死的")。`btn_cancel_bg` 此后只服务
   **没有自带文字**的纯描边容器与输入框(`bg_theme_field`/`bg_theme_input_underline` 未聚焦态/
   `bg_r_*_stroke_primary` 之外的描边容器)。
-  实心/选中态不受此条约束(描边仍按填充的不透明版 `btn_confirm_stroke`);输入框底线的聚焦态仍换 `text_foreground`
+  主按钮与实心选中态的填充、描边同取不透明的 `brand`(派生为 `btn_select_bg` / `btn_select_stroke`),
+  底上的文字取 `btn_confirm_text`(派生为 `btn_select_text`);`btn_confirm_bg` 已移出主题配置,
+  真正的空心操作统一用 `BtnSecondary`,描边与文字同色。日志筛选、背景预设与直播选中条共用实心选中规则;输入框底线的聚焦态仍换 `text_foreground`
   做反馈(未聚焦用 `btn_cancel_bg`,故意与文字区分)。
 - **空心按钮按下仍为空心**(强制;2026-10-01 定):`BtnSecondary`、`BtnDangerGhost` 与未选中的 `WidgetBtn` 在
   `state_pressed` 下保持透明填充,描边与文字继续同色;点击反馈不能把空心键临时刷成实心。
@@ -261,6 +285,7 @@ app / feature
 4. **push 前自动升版本(用户未另行说明时)**:
    - 每次 push 若用户没有指定版本,先按 **大版本号·中版本号·小版本号** 提升**小版本号**一次
      (改 `app/app_config.properties` 的 `versionName` 末段 +1,并同步 `versionCode` 单调递增),再提交代码。
+   - 同时把 `debugVersionName` 设为**上一版实际发布的版本号**;不能由新版末段减 1 推算,因为发布版本可能跳号。
    - 用户让**打 tag** 时:一律基于**最新的 versionName** 打(如 `v3.4.5`)。
    - 用户让**发布 app(出正式包)**时:一律基于**最新 tag 对应的版本**构建。
    - 用户有主动说明(指定版本号/tag/发布方式)时,以用户说明为准。

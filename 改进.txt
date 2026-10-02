@@ -10,8 +10,9 @@
 - :ui-common → :app（主题 JSON 在 app/src/main/assets/theme/，generateThemeColors 任务在 app/build.gradle）
 契约与实现合到同一模块后，边界不再靠拆 Gradle 模块保证，而是靠 **checkModuleDependencies 源码层门禁**：app/UI 禁止直连 :spider 的 ApiConfig/JsLoader/PlayUrlResolver，禁止 getCSP()/Hawk/EventBus/DownloadManager.get()/自建线程池与 OkHttpClient。
 播放器现状（2026-10-01，与 AGENTS.md §二/§七 同步）：旧 ExoPlayer 已迁至 Media3 1.4.1（匹配 compileSdk 34），类型 2 沿用旧配置；EXOmPlayer/xyz.doikki.videoplayer.exo 为兼容类名，实现只用 androidx.media3。禁止重新引入 com.google.android.exoplayer 依赖或旧包 import；Media3 各组件必须同版本，UI 不得 import androidx.media3。取流复用组合根注入的客户端，每个媒体源独立持有请求头快照；音轨/字幕选择用 Tracks/TrackSelectionOverride，字幕回调用 CueGroup。真机行为待用户人工回归。下文 Exo→Media3 的建议视为代码已完成，历史说明保留。
-播放器区样式不随主题（2026-10-01，与 AGENTS.md §七 同步）：播放器底恒为黑，压在**视频画面**上的元素（控制条/OSD、暂停与滑动进度浮层、字幕与 seek 进度图标、播放器菜单浮层）一律用**固定配色**（白/半透明黑/固定字面量），禁止接 `text_foreground`/`text_sub`/`btn_select_*`/`bg_float` 等主题色；反之，**带主题面板底**的浮层与页面元素照旧走主题（直播页 EPG 信息条与频道/分组卡片、直播设置与线路抽屉、播放设置面板里的小组件按钮）。判断口径：**画在黑画面/视频上 → 固定配色；有自己的（主题）面板底 → 跟主题。**
-空心组件边框线 = 它自己的文字颜色（2026-10-01，与 AGENTS.md §七 同步）：凡“无填充、只有描边”的组件（空心按钮 `BtnSecondary`、小组件键 `WidgetBtn`/`PageBgChip`、危险入口红字键 `BtnDangerGhost`、`bg_r_*_stroke_primary` 描边小件），描边色必须与该组件自己的文字色同源——普通键 = 文字主色（`btn_plain_text`/`text_foreground`）、危险入口 = 危险红 `#E5484D`、禁用态 = `text_disable`；**禁止**再挂“空心按钮边框线颜色”`btn_cancel_bg`（该键此后只服务没有自带文字的纯描边容器与输入框）。实心/选中态不受此条约束（描边按填充的不透明版 `btn_confirm_stroke`）。
+主题文字色只配主色与高亮色（2026-10-02，与 AGENTS.md §七 同步）：`brand` 管正文、标题与普通选中文字；`text_accent` 保留为同值派生资源，不再是主题文件/编辑器的独立配置项。`text_highlight` 单独控制链接与搜索来源；旧主题文件里的 `text_accent` 值读取与导入时静默忽略，旧版对调过的高亮值仍需正确迁移；自动升级键名本身不提示，确实丢失其他配置时仍需提示。
+播放器区样式不随主题（2026-10-02 更新，与 AGENTS.md §七 同步）：播放器底恒为黑，压在**视频画面**上的元素（控制条/OSD、暂停与滑动进度浮层、字幕与 seek 进度图标、播放器菜单浮层）一律用**固定配色**（白/半透明黑/固定字面量；进度与暂停提示底固定为 15% 白色半透明），禁止接 `text_foreground`/`text_sub`/`btn_select_*`/`bg_float` 等主题色；反之，**带主题面板底**的浮层与页面元素照旧走主题（直播页 EPG 信息条与频道/分组卡片、直播设置与线路抽屉、播放设置面板里的小组件按钮）。判断口径：**画在黑画面/视频上 → 固定配色；有自己的（主题）面板底 → 跟主题。**
+空心组件边框线 = 它自己的文字颜色（2026-10-02，与 AGENTS.md §七 同步）：凡“无填充、只有描边”的组件（空心按钮 `BtnSecondary`、小组件键 `WidgetBtn`/`PageBgChip`、危险入口红字键 `BtnDangerGhost`、`bg_r_*_stroke_primary` 描边小件），描边色必须与该组件自己的文字色同源——普通键 = 文字主色（`btn_plain_text`/`text_foreground`）、危险入口 = 危险红 `#E5484D`、禁用态 = `text_disable`；**禁止**再挂“空心按钮边框线颜色”`btn_cancel_bg`（该键此后只服务没有自带文字的纯描边容器与输入框）。主按钮与实心选中态的填充、描边同取不透明的 `brand`（派生为 `btn_select_bg` / `btn_select_stroke`），底上的文字取 `btn_confirm_text`（派生为 `btn_select_text`）；`btn_confirm_bg` 已移出主题配置，真正的空心操作统一用 `BtnSecondary`。日志筛选、背景预设与直播选中条共用实心选中规则。
 空心按钮按下仍为空心（2026-10-01，与 AGENTS.md §七 同步）：`BtnSecondary`、`BtnDangerGhost` 与未选中的 `WidgetBtn` 在 `state_pressed` 下保持透明填充，描边与文字继续同色；点击反馈不能把空心键临时刷成实心。`BtnPrimary` 按下/短时禁用时保留原来的填充与文字对比，不得切到浅色半透明底导致白字难辨；只有真正的选中件才允许持续显示实心选中态。
 点击型组件不得带“选中外观”（2026-10-01，与 AGENTS.md §七 同步）：`FlowTagLayout` 的 `app:max_select` 只给真·可选件；只做“点一下就触发动作”的 chip（搜索页历史/热词/相关搜索）一律不写 `max_select` —— 写了以后点击会 `setSelected(true)`，而 chip 的底 `selector_widget_btn` 带“选中 = 实心填充”状态，点过的词会变成一块选中色。新增点击型 chip 用无状态底（只有描边/无底），别挂带 `state_selected` 的选择器。
 搜索页数据源（2026-10-01，adb 抓本地 NewBox `com.github.tvbox.osd` 对齐）：最近热搜 = `https://api.web.360kan.com/v1/rank?cat=3`（取 `data[].title` 前 10 条，两列带序号网格展示）；相关搜索（输入联想）= `https://suggest.video.iqiyi.com/?if=mobile&key=<关键词>`（取 `data[].name`，内联 chip）。解析与 URL 编码收在 `util/SearchApiParsers`（纯逻辑带 JVM 单测）；原腾讯热词接口与浮层联想组件 `SearchSuggestionsDialog` 已下线。
@@ -412,6 +413,7 @@ UI 只依赖门面和接口。
    依赖、模块、重构、门禁、单测、Gradle、versionCode、commit 短号等字样；命中就挪进围栏或直接删掉。
 
 5. 每次 push 若用户没有指定版本，先提升一次小版本号（versionName 末段 +1 并同步 versionCode）；
+   同时把 debugVersionName 设为上一版实际发布的版本号，不能按新版末段减 1 推算（版本可能跳号）；
    打 tag 基于最新 versionName；出正式包基于最新 tag 对应版本；用户有明确说明时以用户说明为准。
 
 6. debug 构建产物严禁提交（除非用户明确要求并二次确认）。
