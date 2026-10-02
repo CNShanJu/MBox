@@ -207,6 +207,29 @@ app / feature
 - 文件级提交:按范围 `git add`,不混入无关改动;本规则文件(AGENTS.md)与各 doc/ 状态文档随对应批次同步更新并提交。
 - 改进.txt(已纳入版本库跟踪)与 AGENTS.md 保持一致,改动同步更新;release-notes-v3.0.1.md 不入库,其要求以上方章节为准。
 
+### 代码托管与镜像同步(强制)
+
+1. **GitHub 是唯一权威,Gitee 只是镜像**:`origin` = `https://github.com/CNShanJu/MBox.git`(权威:CI、Release 都在这边);
+   `gitee` = `https://gitee.com/CnAyo/MBox.git`(国内镜像:代码 + 发行版附件)。
+   另一远端 `legacy` 指向更名前的旧仓库 `CNShanJu/TVBoxOS-Mobile`,只作历史留档,**不要往它推新提交**。
+2. **一次 push 必须同时覆盖两端**,统一走脚本,别只推 `origin` 就算完事:
+
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sync-release.ps1 -DryRun   # 先看会推什么
+   powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sync-release.ps1            # 推 main + 当前版本 tag
+   ```
+
+   脚本职责与边界:推分支与 tag 到两端;**不代为升版本**(版本提升在调用前完成,脚本只在推 tag 时校验
+   「要推的 tag == `app/app_config.properties` 的 versionName」);**GitHub 失败即整体失败,Gitee 失败只告警**
+   (镜像掉队不该阻断发版),掉队后补推用 `-GiteeOnly`。
+   脚本默认**只推当前版本 tag**:Gitee 缺的历史 tag 推上去补不出旧发行版,反而会让 CI 对每个 `v*` tag 各跑一次构建;
+   确需全量对齐历史才加 `-AllTags`。
+   `scripts/sync-release.ps1` **必须存为 UTF-8 with BOM**(PS 5.1 按系统代码页读无 BOM 的 .ps1,中文会全乱并报语法错)。
+3. **顺序有硬依赖:代码与 tag 必须先到 Gitee,再等 CI 建 Gitee 发行版**。
+   `.github/workflows/build-apk.yml` 的 `Sync release APK to Gitee mirror` 步要先按 tag 在镜像仓库找到发行版,
+   镜像没有该 tag 时它只告警跳过 —— APK 附件就同步不过去。发版后到 Actions 确认该步没有 `::warning` 跳过。
+4. **镜像掉队要能发现**:任一端的 `main` 或 `v*` tag 明显落后时用 `-GiteeOnly` 补推,不要长期放任手工推。
+
 ### 构建内存纪律(强制)
 
 1. **Gradle 堆固定,不因单次构建临时改动**:`gradle.properties` 的 `org.gradle.jvmargs` 固定为
