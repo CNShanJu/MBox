@@ -222,7 +222,9 @@ app / feature
    **Pull 方向**镜像(源 = `CNShanJu/MBox`),让 **Gitee 自己从 GitHub 拉**分支/tag/提交 ——
    Gitee 对"拉 GitHub"有专门优化,比本地/CI 主动往 Gitee 推更快更稳。
    依据:[Gitee 帮助中心 · 仓库镜像管理](https://help.gitee.com/repository/settings/sync-between-gitee-github)。
-   注意该文档同时写明镜像**只同步 分支/标签/提交,不含 Releases 与附件** —— 所以附件必须另走第 5 条。
+   **该配置只能手工在网页做,没有开放 API**(2026-10-02 实测:同令牌下 `POST /releases` 返回 400 说明接口可用,
+   而 `GET/POST /repos/{o}/{r}/remote_mirrors` 恒为 404/405);`scripts/setup-gitee-mirror.ps1` 只做身份确认
+   并打印配置步骤,不能代配。另外该文档写明镜像**只同步 分支/标签/提交,不含 Releases 与附件** —— 附件另走第 5 条。
    配好后本地只需正常 `git push origin`;脚本降为**兜底**(镜像未配或临时失效时用):
 
    ```powershell
