@@ -290,7 +290,7 @@ public final class SystemConfig {
      *   自定义主题生效:主题自带背景(全局设置休眠)
      *   内置主题生效:用户显式设置(图或"显式纯色")  >  主题默认背景  >  纯色
      * </pre>
-     * 纯色取主题窗底色 {@code bg_body}:亮色主题是近白({@code #faf8ff})、暗色主题是近黑({@code #141218}),
+     * 纯色取主题窗底色 {@code bg_body}:默认亮色是近白({@code #faf8ff})、默认暗色是近黑({@code #141218}),
      * 因此自定义主题若没定义默认背景图,天然就是"亮色主题纯白 / 暗色主题纯黑"。
      * <p>
      * 图源字符串支持两种:应用内文件绝对路径;打包素材 {@code file:///android_asset/...}
@@ -303,7 +303,7 @@ public final class SystemConfig {
 
     /**
      * 当前主题的默认背景图源(空=纯色)。由<b>主题系统</b>维护,背景设置页只读:
-     * 内置浅色/深色主题都是纯色(没有默认图);后续新增内置主题时切主题写各自的素材,
+     * 内置默认浅色/深色主题是纯色;「莲花」等内置预设可以带打包素材,
      * 自定义主题则由用户为该主题定义默认背景图(见 {@link #setThemeDefaultBackground(String)})。
      */
     public static String getThemeDefaultBackground() {
@@ -319,7 +319,6 @@ public final class SystemConfig {
         String v = source == null ? "" : source;
         if (v.equals(getThemeDefaultBackground())) return;
         PrefsDataStore.put(KEY_THEME_BG, v);
-        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM, "系统设置: 主题默认背景=" + v);
         fireChanged();
     }
 
@@ -341,8 +340,6 @@ public final class SystemConfig {
             restorePageBackgroundTransform();
         }
         PrefsDataStore.put(KEY_ACTIVE_THEME_CUSTOM, custom);
-        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM,
-                "系统设置: 全局背景休眠=" + custom);
         fireChanged();
     }
 
@@ -379,7 +376,6 @@ public final class SystemConfig {
     public static void clearPageBackgroundUserSet() {
         if (!isPageBackgroundUserSet()) return;
         PrefsDataStore.delete(KEY_PAGE_BG);
-        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM, "系统设置: 背景图跟随主题");
         fireChanged();
     }
 
@@ -455,7 +451,6 @@ public final class SystemConfig {
         int v = Math.max(0, Math.min(2, tag));
         if (getTheme() == v) return;
         PrefsDataStore.put(KEY_THEME, v);
-        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM, "系统设置: 主题=" + v);
         fireChanged();
     }
 
@@ -468,7 +463,6 @@ public final class SystemConfig {
         } else {
             PrefsDataStore.put(KEY_THEME_ID, v);
         }
-        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM, "系统设置: 自定义主题=" + v);
         fireChanged();
     }
 
@@ -482,8 +476,6 @@ public final class SystemConfig {
         } else {
             PrefsDataStore.put(key, v);
         }
-        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM,
-                "系统设置: " + (dark ? "暗色" : "亮色") + "默认主题=" + v);
         fireChanged();
     }
 
@@ -491,7 +483,6 @@ public final class SystemConfig {
         String v = name == null ? "" : name;
         if (v.equals(getLoadingAnim())) return;
         PrefsDataStore.put(KEY_LOADING_ANIM, v);
-        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM, "系统设置: 加载动画=" + v);
         fireChanged();
     }
 
@@ -499,7 +490,6 @@ public final class SystemConfig {
         int v = Math.max(0, Math.min(2, type));
         if (getHomeRec() == v) return;
         PrefsDataStore.put(KEY_HOME_REC, v);
-        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM, "系统设置: 首页内容=" + v);
         fireChanged();
     }
 
@@ -507,7 +497,6 @@ public final class SystemConfig {
         int v = Math.max(0, num);
         if (getHistoryNum() == v) return;
         PrefsDataStore.put(KEY_HISTORY_NUM, v);
-        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM, "系统设置: 历史记录数=" + v);
         fireChanged();
     }
 
@@ -516,7 +505,6 @@ public final class SystemConfig {
         int v = Math.max(0, Math.min(2, mode));
         if (getSearchResultLayout() == v) return;
         PrefsDataStore.put(KEY_SEARCH_RESULT_LAYOUT, v);
-        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM, "搜索设置: 结果布局=" + v);
         fireChanged();
     }
 
@@ -524,14 +512,12 @@ public final class SystemConfig {
         String v = url == null ? "" : url;
         if (v.equals(getLiveUrl())) return;
         PrefsDataStore.put(KEY_LIVE_URL, v);
-        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM, "系统设置: 直播源=" + v);
         fireChanged();
     }
 
     public static void setPrivateBrowsing(boolean on) {
         if (isPrivateBrowsing() == on) return;
         PrefsDataStore.put(KEY_PRIVATE_BROWSING, on);
-        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM, "系统设置: 无痕浏览=" + on);
         fireChanged();
     }
 
@@ -576,7 +562,6 @@ public final class SystemConfig {
     public static void setAutoCheckUpdate(boolean on) {
         if (isAutoCheckUpdate() == on) return;
         PrefsDataStore.put(KEY_AUTO_CHECK_UPDATE, on);
-        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM, "系统设置: 启动自动检查更新=" + on);
         fireChanged();
     }
 
@@ -585,7 +570,6 @@ public final class SystemConfig {
         String v = path == null ? "" : path;
         if (isPageBackgroundUserSet() && v.equals(getPageBackgroundUserPath())) return;
         PrefsDataStore.put(KEY_PAGE_BG, v);
-        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM, "系统设置: 页面背景图=" + v);
         fireChanged();
     }
 
@@ -593,7 +577,6 @@ public final class SystemConfig {
     public static void setPageBackgroundScrimEnabled(boolean on) {
         if (isPageBackgroundScrimEnabled() == on) return;
         PrefsDataStore.put(KEY_PAGE_BG_SCRIM, on);
-        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM, "系统设置: 背景遮罩=" + (on ? "开" : "关"));
         fireChanged();
     }
 
@@ -654,7 +637,6 @@ public final class SystemConfig {
         PrefsDataStore.delete(KEY_PAGE_BG_OFF_Y);
         PrefsDataStore.put(KEY_PAGE_BG_ALPHA, PAGE_BG_ALPHA_DEFAULT);
         PrefsDataStore.put(KEY_PAGE_BG_SCRIM, true);
-        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM, "系统设置: 背景图恢复默认(跟随主题)");
         fireChanged();
     }
 

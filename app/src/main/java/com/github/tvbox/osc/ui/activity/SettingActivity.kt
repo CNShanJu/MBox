@@ -73,11 +73,6 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
         private var themeProbeShown = false
     }
 
-    /** 设置操作业务日志:写结构化业务日志(SYSTEM) */
-    private fun biz(msg: String) {
-        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM, "设置: " + msg)
-    }
-
     override fun init() {
 
         // 返回键与系统返回同一口径(统一头部的返回行为在这里接管)
@@ -105,7 +100,6 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             val newConfig = !SystemConfig.isPrivateBrowsing()
             mBinding.switchPrivateBrowsing.setChecked(newConfig)
             SystemConfig.setPrivateBrowsing(newConfig)
-            biz(if (newConfig) "开启无痕浏览" else "关闭无痕浏览")
         }
 
         // 局域网服务开关(默认关闭):关闭时 HTTP 服务仅监听 127.0.0.1(订阅/本地播放/代理不受影响);
@@ -126,12 +120,6 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             mBinding.switchLanServer.setChecked(newVal)
             SystemConfig.setLanServerEnabled(newVal)
             val lanState = ControlManager.get().lanState()
-            biz(when (lanState) {
-                ControlManager.LAN_PENDING_RESTART -> "开启局域网服务(重启后生效)"
-                ControlManager.LAN_PENDING_CLOSE -> "关闭局域网服务(重启后仅本机)"
-                ControlManager.LAN_ACTIVE -> "局域网服务已开启"
-                else -> "局域网服务已关闭(仅本机)"
-            })
             if (newVal) {
                 openLanServicePage()
             } else {
@@ -153,7 +141,6 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             val newVal = !SystemConfig.isIgnoreSslError()
             mBinding.switchIgnoreSsl.setChecked(newVal)
             SystemConfig.setIgnoreSslError(newVal)
-            biz(if (newVal) "开启忽略证书错误(重启网络重建后对 OkHttp 生效)" else "关闭忽略证书错误")
             AppBubble.toast(
                 if (newVal) "已开启证书忽略，仅用于自签名站点" else "已恢复证书校验"
             )
@@ -194,7 +181,6 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             dialog.setAdapter(object : SelectDialogInterface<String?> {
                 override fun click(value: String?, pos: Int) {
                     PlayConfig.setVideoSpeed(value?.toFloat() ?: 2.0f)
-                    biz("播放倍速: " + (value ?: "2.0"))
                     mBinding.tvSpeed.text = value
                 }
 
@@ -245,7 +231,6 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
                 override fun click(value: String?, pos: Int) {
                     mBinding.tvDns.text = OkGoHelper.dnsHttpsList[pos]
                     SystemConfig.setDohUrl(pos)
-                    biz("安全DNS: " + OkGoHelper.dnsHttpsList[pos] + "(即时生效)")
                     // 幂等:门面变更订阅里已复核并重建过一次,这里再调一次只为"设置页自身也直接触发"
                     // (值未变时 OkGoHelper 内部早退,不会重建连接池)
                     OkGoHelper.refreshDnsOverHttps()
@@ -279,7 +264,6 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
                     // 真正落库:内核取值走 PlayConfig.getIjkCodec()(IJKCode.selected() 只改内存字段),
                     // 原来只 selected() 不写配置 → 弹窗选了、标题变了,起播仍用旧解码,重进设置页又回旧值
                     value?.name?.let { PlayConfig.setIjkCodec(it) }
-                    biz("IJK解码: " + (value?.name ?: "未知"))
                     mBinding.tvMediaCodec.text = value?.name
                 }
 
@@ -313,7 +297,6 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             dialog.setAdapter(object : SelectDialogInterface<Int?> {
                 override fun click(value: Int?, pos: Int) {
                     PlayConfig.setScaleType(value ?: 0)
-                    biz("画面缩放: " + PlayerHelper.getScaleName(value ?: 0))
                     mBinding.tvScaleType.text = value?.let { PlayerHelper.getScaleName(it) }
                 }
 
@@ -350,7 +333,6 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
                 override fun click(value: Int?, pos: Int) {
                     val thisPlayerType = players[pos]
                     PlayConfig.setPlayType(thisPlayerType)
-                    biz("默认播放器: " + PlayerHelper.getPlayerName(thisPlayerType))
                     mBinding.tvPlay.text = PlayerHelper.getPlayerName(thisPlayerType)
                     PlayerHelper.init()
                 }
@@ -381,7 +363,6 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             dialog.setAdapter(object : SelectDialogInterface<Int?> {
                 override fun click(value: Int?, pos: Int) {
                     PlayConfig.setRenderType(value ?: 0)
-                    biz("渲染方式: " + PlayerHelper.getRenderName(value ?: 0))
                     mBinding.tvRenderType.text = PlayerHelper.getRenderName(value?:0)
                     PlayerHelper.init()
                 }
@@ -412,7 +393,6 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             dialog.setAdapter(object : SelectDialogInterface<Int?> {
                 override fun click(value: Int?, pos: Int) {
                     SystemConfig.setHomeRec(value ?: 0)
-                    biz("主页内容: " + getHomeRecName(value ?: 0))
                     mBinding.tvHomeRec.text = getHomeRecName(value?:0)
                 }
 
@@ -443,7 +423,6 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             dialog.setAdapter(object : SelectDialogInterface<Int?> {
                 override fun click(value: Int?, pos: Int) {
                     SystemConfig.setHistoryNum(value ?: 0)
-                    biz("保留历史数量: " + HistoryHelper.getHistoryNumName(value ?: 0))
                     mBinding.tvHistoryNum.text = HistoryHelper.getHistoryNumName(value?:0)
                 }
 
@@ -473,7 +452,6 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             val newVal = !SystemConfig.isAutoCheckUpdate()
             SystemConfig.setAutoCheckUpdate(newVal)
             mBinding.switchAutoCheckUpdate.setChecked(newVal)
-            biz("启动自动检查更新: " + if (newVal) "开" else "关")
         }
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             mBinding.llTheme.visibility = View.GONE
@@ -504,7 +482,6 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             val newConfig = !PlayConfig.isVideoPurify()
             mBinding.switchVideoPurify.setChecked(newConfig)
             PlayConfig.setVideoPurify(newConfig)
-            biz(if (newConfig) "开启净化视频(免广告)" else "关闭净化视频")
         }
         mBinding.switchIjkCachePlay.setChecked(PlayConfig.isIjkCachePlay())
         mBinding.llIjkCachePlay.setOnClickListener { v: View? ->
@@ -512,7 +489,6 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             val newConfig = !PlayConfig.isIjkCachePlay()
             mBinding.switchIjkCachePlay.setChecked(newConfig)
             PlayConfig.setIjkCachePlay(newConfig)
-            biz(if (newConfig) "开启IJK边缓存边播" else "关闭IJK缓存播放")
         }
         // 业务日志开关(默认关闭):走 LogConfig 配置门面(查询+发通知+订阅)。
         // 只控 Room 结构化业务日志;错误日志(logcat)常驻记录,不随此开关。
@@ -539,7 +515,6 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             val newVal = !DownloadFacade.get().isWifiOnly()
             DownloadFacade.get().setWifiOnly(newVal)
             mBinding.switchDlWifiOnly.setChecked(newVal)
-            biz("下载仅WiFi: " + if (newVal) "开启" else "关闭")
             AppBubble.toast("仅 Wi-Fi 下载已" + if (newVal) "开启" else "关闭")
         }
         // 同时下载任务数(**1-3**;2026-10-01 上限由 5 收到 3,与下载页齿轮弹窗同一事实源)
@@ -557,7 +532,6 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             dialog.setAdapter(object : SelectDialogInterface<String?> {
                 override fun click(value: String?, pos: Int) {
                     DownloadFacade.get().setMaxConcurrent(pos + 1)
-                    biz("同时下载任务数: " + (pos + 1))
                     refreshConcurrent()
                 }
 
@@ -584,7 +558,6 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
                 override fun click(value: String?, pos: Int) {
                     val bps = ThrottlePolicy.PRESET_BYTES_PER_SEC[pos]
                     DownloadFacade.get().setSpeedLimitBytesPerSec(bps)
-                    biz("下载限速: " + ThrottlePolicy.label(bps))
                     refreshSpeed()
                 }
 
@@ -699,7 +672,6 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             if (changed || themeEditedWhileOpen) {
                 themeEditedWhileOpen = false
                 updateThemeValue()
-                biz("主题: " + ThemeStore.activeDisplayName())
                 applyThemeAndRestart()
             }
         }
