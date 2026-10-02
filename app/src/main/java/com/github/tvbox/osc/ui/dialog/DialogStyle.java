@@ -5,7 +5,7 @@ package com.github.tvbox.osc.ui.dialog;
  * 调整弹窗基本样式只改本类 + 公共 drawable(app/src/main/res/drawable),全部弹窗一处生效。
  *
  * <p><b>这里只放"尺寸"常量,绝不放圆角</b>:圆角唯一来源是主题圆角文件
- * ({@code assets/theme/theme_radii.json} → 生成的 {@code @dimen/radius_*})。
+ * ({@code assets/theme/radius/theme_radii.json} → 生成的 {@code @dimen/radius_*})。
  * 本类曾有一个 {@code CORNER_RADIUS_DP = 25}(注释还写着"与 theme_radii 的 radius_background 保持一致",
  * 而那时主题里其实已经是 12/18dp)—— 这种"组件自带一份默认圆角"的常量正是
  * "我改配置它不动、抽屉圆角看着特别大"的来源,已删除。

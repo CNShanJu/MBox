@@ -2,6 +2,7 @@ package com.github.tvbox.osc.ui.kit;
 
 import android.app.Activity;
 import android.content.Context;
+import android.content.res.ColorStateList;
 import android.content.res.TypedArray;
 import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
@@ -303,6 +304,14 @@ public class AppTitleBar extends FrameLayout {
         if (rightBox.getChildCount() > 0) lp.leftMargin = dp(RIGHT_GAP_DP);
         rightBox.addView(iv, lp);
         return iv;
+    }
+
+    /** 清空、删除等危险动作沿用右侧图标的触区，只把图标着成固定危险色。 */
+    public ImageView setRightDangerIcon(int resId, float sizeDp, View.OnClickListener listener) {
+        ImageView icon = setRightIcon(resId, sizeDp, listener);
+        icon.setImageTintList(ColorStateList.valueOf(
+                ContextCompat.getColor(getContext(), R.color.text_danger)));
+        return icon;
     }
 
     /** 当前右侧动作容器(需要更复杂的排布时用;一般不需要) */

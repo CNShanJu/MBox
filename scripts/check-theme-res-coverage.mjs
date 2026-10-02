@@ -25,7 +25,7 @@ const RES = path.join(ROOT, 'app', 'src', 'main', 'res');
 const ALIAS_JAVA = path.join(ROOT, 'app', 'src', 'main', 'java', 'com', 'github', 'tvbox', 'osc', 'theme', 'ThemeColorAliases.java');
 const FACTORY_JAVA = path.join(ROOT, 'app', 'src', 'main', 'java', 'com', 'github', 'tvbox', 'osc', 'theme', 'ThemeInflaterFactory.java');
 const DRAWABLE_FACTORY_JAVA = path.join(ROOT, 'app', 'src', 'main', 'java', 'com', 'github', 'tvbox', 'osc', 'theme', 'ThemeDrawableFactory.java');
-const SHAPES_JSON = path.join(ROOT, 'app', 'src', 'main', 'assets', 'theme', 'theme_shapes.json');
+const SHAPES_JSON = path.join(ROOT, 'app', 'src', 'main', 'assets', 'theme', 'radius', 'theme_shapes.json');
 const GEN_COLORS = path.join(ROOT, 'app', 'build', 'generated', 'theme_colors', 'values', 'theme_colors.xml');
 
 /** 派生出来的主题资源名(= 调色板里的概念名)。没有生成文件时退到硬编码清单(与 build.gradle 的派生表一致) */
@@ -38,8 +38,8 @@ function paletteNames() {
     'bg_body', 'bg_surface', 'bg_card', 'bg_float',
     'text_main', 'text_sub', 'text_hint', 'text_main_half', 'text_disable', 'text_accent', 'text_highlight',
     'color_highlight', 'select_fill', 'press_overlay',
-    'btn_confirm_bg', 'btn_confirm_text', 'btn_confirm_stroke', 'btn_cancel_bg',
-    'btn_plain_text', 'btn_select_bg', 'btn_select_text', 'btn_stroke',
+    'btn_confirm_text', 'btn_cancel_bg',
+    'btn_plain_text', 'btn_select_bg', 'btn_select_text', 'btn_select_stroke', 'btn_stroke',
     'switch_track_on', 'switch_track_off', 'switch_thumb',
     'download_active', 'download_done',
     // text_danger / swipe_red / swipe_red_text 已固定成 res 里的字面量,不再是主题概念
@@ -186,7 +186,7 @@ for (const [attr, files] of attrUse) {
 const recipeErrors = [];
 const recipes = JSON.parse(fs.readFileSync(SHAPES_JSON, 'utf8'));
 const drawableFactory = fs.readFileSync(DRAWABLE_FACTORY_JAVA, 'utf8');
-const radiiJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'app', 'src', 'main', 'assets', 'theme', 'theme_radii.json'), 'utf8'));
+const radiiJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'app', 'src', 'main', 'assets', 'theme', 'radius', 'theme_radii.json'), 'utf8'));
 const shapeTokens = new Set(Object.keys(radiiJson).filter((k) => k !== 'desc' && k !== 'type'));
 function checkRecipeValue(id, key, value) {
   if (typeof value !== 'string') return;

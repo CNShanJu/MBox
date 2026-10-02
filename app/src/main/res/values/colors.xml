@@ -2,7 +2,7 @@
 <resources>
 
 
-    <!--应用的主要色调,actionBar默认使用该颜色,Toolbar导航栏的底色(由 theme/theme_colors.json 的 text_accent 控制)-->
+    <!-- 应用强调色随文字主色 brand；text_accent 是派生资源，不单独配置。 -->
     <color name="colorPrimary">@color/text_accent</color>
     <!--CheckBox,RadioButton,SwitchCompat等一般控件的选中效果默认采用该颜色-->
     <!--    默认window窗口(activity)背景颜色(由 theme/theme_colors.json 的 bg_body 控制)-->
@@ -36,13 +36,15 @@
     <color name="gray_darker">@color/text_sub</color>
     <!--    深灰点击透明度-->
     <color name="gray_darker_press_alpha">#3C808080</color>
+    <!-- 视频画面上的进度、暂停与直播提示浮层固定为 15% 白色半透明底。 -->
+    <color name="player_overlay_bg">#26FFFFFF</color>
 
     <!--    通用颜色-->
     <color name="white">#FFFFFF</color>
     <color name="black">#000000</color>
     <color name="text_foreground">@color/text_main</color>
-    <!-- 文字分级(全部由主题文件驱动,不再写死):正常=text_main / 次要灰=text_sub / 未选中·占位=text_hint /
-         禁用=text_disable / 强调·选中=text_accent / 高亮(蓝)=text_highlight -->
+    <!-- 文字分级:正常/普通强调=text_main，次要=text_sub，占位=text_hint，禁用=text_disable；
+         链接与空心选中高亮=text_highlight。 -->
     <color name="text_sub_foreground">@color/text_sub</color>
     <color name="light_gray_color">#e6e6e6</color>
     <!--    警示黄色-->

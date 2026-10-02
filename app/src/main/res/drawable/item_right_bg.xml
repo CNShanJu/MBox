@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- 直播页左侧"分组"列的选中/聚焦底(经 item_bg_selector_left 提供)。
      填充走主题的"已选中实心"色 btn_select_bg —— 与中间频道列(button_detail_quick_search)、
-     以及与两个列表在代码里上的 bg_r_common_solid_select 完全同源(亮色=主按钮深底、暗色=无色),
+     以及与两个列表在代码里上的 bg_r_common_solid_select 同源(两种主题都使用主色实心底),
      不再用写死的橙 #ffce7900(colors.xml 里那条"唯一还写死的直播页聚焦色"本次一并收掉)。 -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android">
     <solid android:color="@color/btn_select_bg"/>
     <!-- 圆角走主题维度:原来写死 10dp,与旁边的 20dp 版本凑成"一行一个圆角" -->
     <corners android:radius="@dimen/radius_card"/>
-    <stroke android:width="0dp"
-        android:color="@color/btn_select_bg"/>
+    <stroke android:width="@dimen/stroke_widget_btn"
+        android:color="@color/btn_select_stroke"/>
 </shape>

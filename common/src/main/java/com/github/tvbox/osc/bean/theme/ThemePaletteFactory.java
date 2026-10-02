@@ -4,7 +4,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * 主题文件(17 个可配置键)→ {@link ThemePalette}(27 个资源名)的派生。
+ * 主题文件的可配置键 → {@link ThemePalette} 的派生。
  *
  * <p><b>这份规则必须与 {@code app/build.gradle} 的 {@code derivePalette} 完全一致</b>:
  * 内置主题在构建期被 Gradle 派生进 {@code res/values/theme_colors.xml}(首帧就是对的),
@@ -19,10 +19,10 @@ import java.util.Map;
  *       {@code bg_card}(海报占位、筛选块,**以及卡片里面的行**)取 {@code bg_surface} 的颜色 + {@code bg_card_alpha};
  *       {@code bg_float}(弹窗·抽屉·气泡·悬浮钮)取同一个颜色 + {@code bg_float_alpha} ——
  *       颜色相同才不会同屏深浅不一,透明度分两层(**页面层 / 浮层**);</li>
- *   <li>同值别名(不占配置):{@code color_highlight} / {@code select_fill} / {@code btn_plain_text}
- *       = {@code brand}(文字主色,<b>强制纯色</b>);{@code btn_confirm_stroke} = {@code btn_confirm_bg}
- *       <b>的不透明版</b>;{@code btn_select_bg} = {@code btn_confirm_bg}(<b>保留透明度</b>);
- *       {@code btn_select_text} = {@code btn_confirm_text};
+ *   <li>同值别名(不占配置):{@code color_highlight} / {@code select_fill} /
+ *       {@code btn_plain_text} / {@code text_accent}
+ *       = {@code brand}(文字主色,<b>强制纯色</b>);{@code btn_select_bg}/{@code btn_select_stroke}
+ *       = {@code brand};{@code btn_select_text} = 主按钮文字;
  *       {@code text_sub} = {@code text_disable} = {@code brand} <b>@60%</b>(次要 / 禁用两级由主色算出来);
  *       {@code switch_track_on} = {@code download_done} = {@code success}(正向状态色);</li>
  *   <li>{@code btn_stroke} = {@code btn_cancel_bg}(无文字容器与输入框的边框色;历史资源名,值同源);</li>
@@ -64,18 +64,14 @@ public final class ThemePaletteFactory {
         // 「文字主色 50%」:链接/地址这类要压一档又要与主色同系的文字(订阅管理里的订阅地址用它)。
         // 与 text_sub(60%)分开是因为用户对链接明确要求 50%。
         int textMainHalf = ThemePalette.withAlpha(brand, 50);
-        // 按钮两族的口径(用户口径,一次说清):
-        //   ① 纯色按钮:底 = btn_confirm_bg(可以带透明度);**描边 = 底色的不透明版**
-        //      ——"纯色按钮也要给边框线,颜色就是主按钮背景的颜色;把它设成透明度百分百时边框线要不透明";
+        // 按钮两族的口径:
+        //   ① 纯色按钮:底与描边同取不透明的 brand;
         //   ② 空心按钮:无填充、只有 1dp 描边,描边与文字同取主色 brand;
         //      btn_cancel_bg 仅供无文字容器与输入框使用;
         //   ③ 小组件按钮:未选中 = 只有主色描边 + 主色文字;
-        //      选中 = 填充**纯色按钮的底色本身**(btn_select_bg,<b>连透明度一起</b>)+ 文字 btn_confirm_text
-        //      —— 口径(2026-09-27 用户明确):"选中态是背景透明无色啊,文字白色" ——
-        //      所以主按钮底设成无色时,选中态也跟着无色,只剩描边与文字(不再强制"忽略透明度")。
-        int confirmBg = color(in, "btn_confirm_bg", brand);
-        int confirmSolid = ThemePalette.withAlpha(confirmBg, 100);
+        //      选中 = 主色填充与描边 + 主按钮文字。
         int confirmText = color(in, "btn_confirm_text", builtin.get("btn_confirm_text"));
+        int highlightText = color(in, "text_highlight", builtin.get("text_highlight"));
         int containerStroke = color(in, "btn_cancel_bg", builtin.get("btn_stroke"));
         int bodyFallback = builtin.get("bg_body");
         // 面:**颜色只有一个**(bg_surface),页面层与浮层共用;**透明度是两档,分层不同**
@@ -114,23 +110,20 @@ public final class ThemePaletteFactory {
         out.put("text_hint", textHint);
         out.put("text_main_half", textMainHalf);
         out.put("text_disable", textSub);
-        // 强调/选中文字没写就跟主色走(与 Gradle 侧一致)
-        out.put("text_accent", color(in, "text_accent", brand));
-        out.put("text_highlight", color(in, "text_highlight", builtin.get("text_highlight")));
+        // 标题与普通选中文字始终随文字主色；高亮文字仍独立可配。
+        out.put("text_accent", brand);
+        out.put("text_highlight", highlightText);
 
         out.put("color_highlight", brand);
         out.put("select_fill", brand);
         out.put("press_overlay", ThemePalette.withAlpha(brand, 24));
-        out.put("btn_confirm_bg", confirmBg);
         out.put("btn_confirm_text", confirmText);
-        // 纯色按钮的描边:主按钮背景的不透明版(底色透明时边框线仍要实心)
-        out.put("btn_confirm_stroke", confirmSolid);
         // 无文字容器与输入框的描边色;空心按钮的描边和文字都走文字主色
         out.put("btn_cancel_bg", containerStroke);
         out.put("btn_plain_text", brand);
-        // 选中态填充 = 纯色按钮的底色本身(透明就一起透明):暗色主题下主按钮无色,选中态也就无色
-        out.put("btn_select_bg", confirmBg);
+        out.put("btn_select_bg", brand);
         out.put("btn_select_text", confirmText);
+        out.put("btn_select_stroke", brand);
         // btn_stroke 是无文字描边的历史资源名,与 btn_cancel_bg 同值
         out.put("btn_stroke", containerStroke);
 
@@ -161,6 +154,7 @@ public final class ThemePaletteFactory {
         d.put("text_disable", 0xFFB3B3B3);
         d.put("text_highlight", 0xFF1890FF);
         d.put("color_highlight", 0xFF1F2937);
+        d.put("btn_confirm_text", 0xFFFFFFFF);
         d.put("btn_select_text", 0xFFFFFFFF);
         d.put("download_done", 0xFF08CA2C);
         d.put("switch_thumb", 0xFFFFFFFF);

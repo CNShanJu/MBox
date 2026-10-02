@@ -29,19 +29,19 @@ public class ThemeJsonTest {
     }
 
     private static Map<String, String> builtinInput(String assetName) throws Exception {
-        File f = repoFile("src/main/assets/theme/" + assetName);
+        File f = repoFile("src/main/assets/theme/themes/" + assetName);
         JsonObject o = JsonParser.parseString(
                 new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8)).getAsJsonObject();
         Map<String, String> out = new LinkedHashMap<>();
         for (String key : o.keySet()) {
-            if ("type".equals(key) || "desc".equals(key)) continue;
+            if ("type".equals(key) || "name".equals(key) || "default".equals(key) || "desc".equals(key)) continue;
             out.put(key, o.get(key).getAsString());
         }
         return out;
     }
 
     private static ThemeDef sample() throws Exception {
-        ThemeDef def = ThemeDef.blank(ThemeType.DARK, builtinInput("theme_colors_night.json"));
+        ThemeDef def = ThemeDef.blank(ThemeType.DARK, builtinInput("dark/default.json"));
         def.setId("t_abc");
         def.setName("暗夜紫");
         def.setColor("bg_body", "#101018");
@@ -86,6 +86,8 @@ public class ThemeJsonTest {
         JsonObject colors = o.getAsJsonObject("colors");
         assertTrue("颜色必须收在 schema 3 的 colors 对象里",
                 colors.has("bg_body") && colors.has("success"));
+        assertFalse("强调文字已由文字主色派生,导出时不应重复写", colors.has("text_accent"));
+        assertFalse("主按钮底色已由文字主色派生,导出时不应重复写", colors.has("btn_confirm_bg"));
         assertTrue("透明度写数字,便于手改",
                 colors.get("bg_float_alpha").getAsJsonPrimitive().isNumber());
         assertTrue("圆角与描边必须分组输出", o.has("radii") && o.has("strokes"));
@@ -98,7 +100,7 @@ public class ThemeJsonTest {
         // 用户拿内置主题文件当模板改,是最可能的使用方式:desc 是"给内置文件看的说明",
         // 导入时应静默忽略(不该弹一堆"不认识的项"),其余照常读进来
         String raw = new String(Files.readAllBytes(
-                repoFile("src/main/assets/theme/theme_colors.json").toPath()), StandardCharsets.UTF_8);
+                repoFile("src/main/assets/theme/themes/bright/default.json").toPath()), StandardCharsets.UTF_8);
         ThemeJson.Result r = ThemeJson.parse(raw);
         assertNull("内置主题文件必须能被导入: " + r.error, r.error);
         assertEquals(ThemeType.BRIGHT, r.def.getType());
@@ -106,6 +108,16 @@ public class ThemeJsonTest {
         assertTrue("desc 应静默忽略,不该报警告: " + r.warnings, r.warnings.isEmpty());
         assertEquals("内置主题文件里的每个键都要被读进来",
                 "#faf8ff".toUpperCase(), r.def.color("bg_body").toUpperCase());
+    }
+
+    @Test
+    public void oldTransparentPrimaryColorIsSilentlyIgnored() {
+        ThemeJson.Result r = ThemeJson.parse("{\"kind\":\"mbox-theme\",\"colors\":{"
+                + "\"brand\":\"#3366FF\",\"btn_confirm_bg\":\"#00FFFFFF\"}}");
+        assertNull(r.error);
+        assertTrue("旧主按钮底色不应触发无须处理的提示", r.warnings.isEmpty());
+        assertEquals("", r.def.color("btn_confirm_bg"));
+        assertEquals(0xFF3366FF, ThemePaletteFactory.derive(r.def.colors(), null).get("btn_select_bg"));
     }
 
     @Test
@@ -133,7 +145,7 @@ public class ThemeJsonTest {
         assertEquals("#123456", r.def.color("bg_body"));
         assertEquals("", r.def.color("brand"));
         assertTrue("补齐后必须是完整主题",
-                r.def.materialize(builtinInput("theme_colors_night.json")).size() == ThemeSpec.size() - 1);
+                r.def.materialize(builtinInput("dark/default.json")).size() == ThemeSpec.size() - 1);
 
         // 不认识的键:只警告
         ThemeJson.Result r2 = ThemeJson.parse(
@@ -237,13 +249,15 @@ public class ThemeJsonTest {
         assertEquals("80", d.color("bg_float_alpha"));
         assertEquals("30", d.color("bg_card_alpha"));
         assertEquals("#00FF00", d.color("success"));
-        // 老的两个键语义与新版本正好对调:老 highlight(强调) → 新 accent,老 accent(高亮) → 新 highlight
-        assertEquals("#AAAAAA", d.color("text_accent"));
+        // 老 accent(高亮) → 新 highlight；老 highlight(强调) 已并入文字主色
+        assertEquals("", d.color("text_accent"));
         assertEquals("#0000FF", d.color("text_highlight"));
+        assertFalse("旧强调色被合并时不应提示: " + r.warnings,
+                r.warnings.toString().contains("强调文字"));
         // 已废弃的键:忽略并给出提示,不写进 def
         assertEquals("", d.color("bg_component"));
         assertTrue("废弃项要说清楚: " + r.warnings, r.warnings.toString().contains("bg_component"));
-        assertTrue("旧文件升级要给一条提示: " + r.warnings, r.warnings.toString().contains("旧版本"));
+        assertFalse("自动升级键名不应单独提示: " + r.warnings, r.warnings.toString().contains("旧版本"));
     }
 
     /** download_done 也是老键名之一(并与 switch_track_on 合并成 success) */
@@ -253,9 +267,10 @@ public class ThemeJsonTest {
                 + "\"bg_body\":\"#101010\",\"download_done\":\"#00EE00\"}");
         assertNull(r.error);
         assertEquals("#00EE00", r.def.color("success"));
+        assertTrue("无损升级旧键名不应提示: " + r.warnings, r.warnings.isEmpty());
     }
 
-    /** 新文件(没有老键名)不能被当成老文件:那两个名字要按新语义原样读 */
+    /** 新文件(没有老键名)按新语义读取高亮色，旧强调色静默忽略。 */
     @Test
     public void currentSchemaKeysAreNotSwapped() {
         ThemeJson.Result r = ThemeJson.parse("{\"kind\":\"mbox-theme\",\"schema\":2,"
@@ -263,8 +278,31 @@ public class ThemeJsonTest {
                 + "\"text_highlight\":\"#0000FF\",\"text_accent\":\"#AAAAAA\"}");
         assertNull(r.error);
         assertEquals("新语义:highlight=高亮(蓝)", "#0000FF", r.def.color("text_highlight"));
-        assertEquals("新语义:accent=强调", "#AAAAAA", r.def.color("text_accent"));
-        assertTrue("新文件不该有升级提示: " + r.warnings, r.warnings.isEmpty());
+        assertEquals("强调文字已由文字主色派生", "", r.def.color("text_accent"));
+        assertTrue("忽略旧强调色不应提示: " + r.warnings, r.warnings.isEmpty());
+    }
+
+    @Test
+    public void savedThemeWithOldAccentSurvivesUpgradeWithoutWarning() throws Exception {
+        String saved = "{\"kind\":\"mbox-theme\",\"schema\":3,\"id\":\"saved\","
+                + "\"name\":\"已保存主题\",\"type\":\"dark\",\"colors\":{"
+                + "\"brand\":\"#E5E7EB\",\"text_highlight\":\"#1890FF\","
+                + "\"text_accent\":\"#FF00FF\"}}";
+        ThemeJson.Result loaded = ThemeJson.parse(saved);
+        assertNull(loaded.error);
+        assertTrue("覆盖安装读取旧配置不应弹提示: " + loaded.warnings, loaded.warnings.isEmpty());
+        loaded.def.materialize(builtinInput("dark/default.json"));
+        ThemePalette palette = ThemePaletteFactory.derive(loaded.def.colors(), null);
+        assertEquals("标题跟文字主色", 0xFFE5E7EB, palette.get("text_accent"));
+        assertEquals("蓝色高亮保留", 0xFF1890FF, palette.get("text_highlight"));
+
+        String rewritten = ThemeJson.toJson(loaded.def);
+        assertFalse("再次保存应清掉旧独立项", rewritten.contains("\"text_accent\""));
+        ThemeJson.Result reopened = ThemeJson.parse(rewritten);
+        assertNull(reopened.error);
+        assertTrue(reopened.warnings.toString(), reopened.warnings.isEmpty());
+        assertEquals("#E5E7EB", reopened.def.color("brand"));
+        assertEquals("#1890FF", reopened.def.color("text_highlight"));
     }
 
     @Test
@@ -303,6 +341,6 @@ public class ThemeJsonTest {
         assertNull(r.error);
         assertEquals("中间态 bg_panel_alpha 要落到 bg_float_alpha", "66", r.def.color("bg_float_alpha"));
         assertEquals("#0000FF", r.def.color("text_highlight"));
-        assertEquals("#AAAAAA", r.def.color("text_accent"));
+        assertEquals("", r.def.color("text_accent"));
     }
 }

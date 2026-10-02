@@ -965,7 +965,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="清空缓存"
-                        android:textColor="@color/text_foreground"
+                        android:textColor="@color/text_danger"
                         android:textSize="16sp"
                         />
 
@@ -980,7 +980,7 @@
                         android:layout_gravity="center"
                         android:alpha="0.75"
                         android:src="@drawable/ic_seek_right"
-                        app:tint="@color/text_foreground"/>
+                        app:tint="@color/text_danger"/>
                 </LinearLayout>
 
                 <!-- 启动时自动检查更新(默认开):首页"上次看到"气泡消失后检查一次,有新版本弹更新说明弹窗 -->

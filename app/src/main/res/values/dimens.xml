@@ -6,7 +6,7 @@
     <dimen name="search_word_text_size">14sp</dimen>
 
     <!-- common_corners(空心/实心小按钮、抽屉里的小块统一圆角)已挪进主题圆角文件:
-         见 app/src/main/assets/theme/theme_radii.json 的 common_corners,由 :app:generateThemeColors
+         见 app/src/main/assets/theme/radius/theme_radii.json 的 common_corners,由 :app:generateThemeColors
          生成到 build/generated/theme_colors/values/theme_radii.xml。
          **不要再在这里写一份** —— 同一模块里重名 dimen 会直接编译失败;更要紧的是,
          写死在 dimens.xml 就等于绕开主题文件:用户把面板档调大后这些小件仍是 8dp,

@@ -64,6 +64,7 @@ public class ThemePickerDialog extends SelectDialog<ThemePickerDialog.Row> {
         static final int KIND_LIGHT = 1;
         static final int KIND_DARK = 2;
         static final int KIND_USER = 3;
+        static final int KIND_PRESET = 4;
 
         final int kind;
         /** 用户主题的 id(kind=USER 时有效) */
@@ -127,6 +128,9 @@ public class ThemePickerDialog extends SelectDialog<ThemePickerDialog.Row> {
             if (value.kind == Row.KIND_USER) {
                 showItemBubble(itemView, value);
                 return true;
+            }
+            if (value.kind == Row.KIND_PRESET) {
+                return showPresetBubble(itemView, value);
             }
             if (value.kind == Row.KIND_LIGHT || value.kind == Row.KIND_DARK) {
                 return showBuiltinBubble(itemView, value);
@@ -250,7 +254,7 @@ public class ThemePickerDialog extends SelectDialog<ThemePickerDialog.Row> {
     private void rebuildRows() {
         rows.clear();
         boolean customValid = !draft.customId.isEmpty()
-                && ThemeStore.find(draft.customId) != null
+                && ThemeStore.findSelectable(draft.customId) != null
                 && !pendingDeletes.contains(draft.customId);
 
         // 草稿里待删除的主题不能算"默认"(落盘还没删,但列表上它已经没了)
@@ -268,10 +272,21 @@ public class ThemePickerDialog extends SelectDialog<ThemePickerDialog.Row> {
                 joinMarkers(false, false, !activeIsCustom && mode == 0)));
         // 内置浅色/深色与用户主题同一套标记口径:
         // 「…默认」= 该类型(亮/暗)的默认主题还是它;「使用中」= 它就是当前生效的那个
-        rows.add(new Row(Row.KIND_LIGHT, "", ThemeStore.NAME_BRIGHT, ThemeType.BRIGHT,
+        rows.add(new Row(Row.KIND_LIGHT, "", ThemeStore.defaultPresetName(ThemeType.BRIGHT), ThemeType.BRIGHT,
                 joinMarkers(brightDefault.isEmpty(), false, !activeIsCustom && mode == 1)));
-        rows.add(new Row(Row.KIND_DARK, "", ThemeStore.NAME_DARK, ThemeType.DARK,
+        rows.add(new Row(Row.KIND_DARK, "", ThemeStore.defaultPresetName(ThemeType.DARK), ThemeType.DARK,
                 joinMarkers(darkDefault.isEmpty(), true, !activeIsCustom && mode == 2)));
+
+        for (ThemeType type : new ThemeType[]{ThemeType.BRIGHT, ThemeType.DARK}) {
+            String defaultId = ThemeStore.defaultPresetId(type);
+            for (ThemeDef def : ThemeStore.builtinPresets(type)) {
+                if (defaultId.equals(def.getId())) continue;
+                boolean dark = type.isDark();
+                boolean isDefault = def.getId().equals(dark ? darkDefault : brightDefault);
+                rows.add(new Row(Row.KIND_PRESET, def.getId(), def.getName(), type,
+                        joinMarkers(isDefault, dark, def.getId().equals(activeId))));
+            }
+        }
 
         for (ThemeDef def : ThemeStore.userThemes()) {
             if (pendingDeletes.contains(def.getId())) continue; // 草稿里已删:列表立刻消失,落盘等到关闭弹窗
@@ -284,7 +299,7 @@ public class ThemePickerDialog extends SelectDialog<ThemePickerDialog.Row> {
 
         // 勾选位置:选了自定义主题就是它;否则按模式(跟随系统/浅色/深色)
         if (customValid) {
-            selectedRow = indexOfUserTheme(draft.customId);
+            selectedRow = indexOfSelectedTheme(draft.customId);
         } else {
             selectedRow = draft.mode == 2 ? 2 : (draft.mode == 1 ? 1 : 0);
         }
@@ -305,10 +320,11 @@ public class ThemePickerDialog extends SelectDialog<ThemePickerDialog.Row> {
         return sb.toString();
     }
 
-    private int indexOfUserTheme(String themeId) {
+    private int indexOfSelectedTheme(String themeId) {
         for (int i = 0; i < rows.size(); i++) {
             Row r = rows.get(i);
-            if (r.kind == Row.KIND_USER && r.themeId.equals(themeId)) return i;
+            if ((r.kind == Row.KIND_USER || r.kind == Row.KIND_PRESET)
+                    && r.themeId.equals(themeId)) return i;
         }
         return -1;
     }
@@ -403,7 +419,7 @@ public class ThemePickerDialog extends SelectDialog<ThemePickerDialog.Row> {
      */
     private boolean showBuiltinBubble(View anchor, Row row) {
         boolean dark = row.kind == Row.KIND_DARK;
-        String name = dark ? ThemeStore.NAME_DARK : ThemeStore.NAME_BRIGHT;
+        String name = ThemeStore.defaultPresetName(dark ? ThemeType.DARK : ThemeType.BRIGHT);
         if ((dark ? draft.defaultDarkId : draft.defaultBrightId).isEmpty()) {
             AppBubble.toast(name + "已经是该类型的默认");
             return true;
@@ -418,6 +434,19 @@ public class ThemePickerDialog extends SelectDialog<ThemePickerDialog.Row> {
                     }
                     reload();
                 });
+        return true;
+    }
+
+    /** 目录里的非默认预设可设为该明暗类型的跟随系统默认值，始终只读。 */
+    private boolean showPresetBubble(View anchor, Row row) {
+        ThemeDef def = ThemeStore.findSelectable(row.themeId);
+        if (def == null) return false;
+        boolean dark = def.getType().isDark();
+        boolean alreadyDefault = def.getId().equals(dark ? draft.defaultDarkId : draft.defaultBrightId);
+        AttachActionDialog.show(anchor,
+                new String[]{alreadyDefault ? "取消默认" : "设为默认"},
+                new int[]{AttachActionDialog.NORMAL},
+                position -> setDefaultFor(def, !alreadyDefault));
         return true;
     }
 

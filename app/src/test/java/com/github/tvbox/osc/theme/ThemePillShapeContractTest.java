@@ -254,7 +254,7 @@ public class ThemePillShapeContractTest {
     public void defaultRadiiMatchesThemeFile() throws Exception {
         Map<String, String> fromFile = new HashMap<>();
         Matcher j = Pattern.compile("\"(\\w+)\"\\s*:\\s*([0-9.]+)")
-                .matcher(read(new File(repoRoot(), "app/src/main/assets/theme/theme_radii.json")));
+                .matcher(read(new File(repoRoot(), "app/src/main/assets/theme/radius/theme_radii.json")));
         while (j.find()) fromFile.put(j.group(1), j.group(2));
 
         String gradle = read(new File(repoRoot(), "app/build.gradle"));

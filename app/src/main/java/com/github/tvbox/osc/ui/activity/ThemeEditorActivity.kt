@@ -48,10 +48,10 @@ import java.util.LinkedHashMap
  *   <li><b>主题类型</b>:亮色 / 暗色。它决定这个主题按哪种明暗渲染(夜间模式、弹窗气泡、状态栏),
  *       也是"每个色值恢复默认"的取值来源。改了类型而颜色还没动过时会顺手按新类型的内置主题重新填充
  *       (否则会得到一个"说是暗色、其实是浅色"的主题);已经调过的颜色一律保持不动。</li>
- *   <li><b>颜色项</b>:按 {@link ThemeSpec} 的类目列出全部 25 项;每项都能<b>直接改十六进制文本</b>,
+ *   <li><b>颜色项</b>:按 {@link ThemeSpec} 的类目列出可配置项;每项都能<b>直接改十六进制文本</b>,
  *       也能点色块开取色板。透明度项给数字(0-100),没有色板。</li>
  *   <li><b>圆角项不在本页**(用户口径"主题配置里不给圆角配置选项"):圆角只在
- *       {@code assets/theme/theme_radii.json}(或自定义主题 JSON 的 radii)里改 ——
+ *       {@code assets/theme/radius/theme_radii.json}(或自定义主题 JSON 的 radii)里改 ——
  *       页面里只剩一个"边框线粗细"({@code stroke_widget_btn})的形状项。
  *       主题文件里的圆角值照旧解析、校验、随主题保存与套用(见本页 draft/ThemeSpec 路径)。</li>
  *   <li><b>背景</b>:图片(走既有背景图导入:体积上限 / 纠 EXIF 方向 / 转 WebP,并按内容 hash 去重)
@@ -140,7 +140,7 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
         val inflater = LayoutInflater.from(this)
         for (key in ThemeSpec.shapeKeys()) {
             // **圆角项不进界面**(用户口径"主题配置里不给圆角配置选项"):圆角只在
-            // assets/theme/theme_radii.json(或自定义主题 JSON)里改,编辑器只留颜色与"边框线粗细";
+            // assets/theme/radius/theme_radii.json(或自定义主题 JSON)里改,编辑器只留颜色与"边框线粗细";
             // 实测也印证了这个取舍 —— 圆角项做成输入框既容易被调成胶囊(小件圆角超过半高),
             // 又和颜色项混在一屏里,改一档要来回比。ThemeSpec 的圆角键仍在(主题文件解析/校验照旧)。
             if (key.kind == ThemeSpec.ShapeKey.Kind.RADIUS) continue

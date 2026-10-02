@@ -74,7 +74,7 @@ public class ThemeDrawableFactoryRadiusTest {
 
     private static JsonObject runtimeRecipes() throws Exception {
         return JsonParser.parseString(read(new File(repoRoot(),
-                "app/build/generated/theme_assets/theme/theme_shapes_runtime.json"))).getAsJsonObject();
+                "app/build/generated/theme_assets/theme/radius/theme_shapes_runtime.json"))).getAsJsonObject();
     }
 
     /**

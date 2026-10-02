@@ -55,6 +55,42 @@ public class App extends MultiDexApplication {
 
     public boolean isNormalStart;
 
+    /** 换肤后的应用级 Resources(见下面的 getResources 覆写);快照未装配时为 null */
+    private android.content.res.Resources mThemedResources;
+
+    /**
+     * 运行时换肤:应用上下文也包一层(与 {@code BaseActivity} 同一条链路)。
+     *
+     * <p><b>为什么应用上下文也要包</b>(2026-10-02,魅族 Flyme 强制深色):气泡、Toast、通知、
+     * 用 {@code LayoutInflater.from(appContext)} inflate 的弹窗都拿应用上下文的 Resources 取色 ——
+     * 这些正是"新窗口"。它们以前只在自定义主题下被接管,内置亮/暗主题时落到编译期的
+     * {@code values/values-night} 上,系统(OEM)把进程 {@code uiMode} 翻成夜间就跟着变深,
+     * 而页面主体走的是运行时调色板(不变)→ 用户口径"只有弹窗/浮层/气泡/通知这类新窗口变深"。
+     *
+     * <p>注意这里<b>不归一明暗位</b>({@code normalizeNight=false}):"跟随系统"是读应用级
+     * {@code Configuration.uiMode} 判系统明暗的,归一了它会自锁(见
+     * {@link com.github.tvbox.osc.theme.ThemeResources#ThemeResources(android.content.res.Resources, boolean)})。
+     * 应用级只需要"{@code getColor/getColorStateList/getDrawable} 走运行时调色板"这一半能力。
+     */
+    @Override
+    protected void attachBaseContext(android.content.Context base) {
+        super.attachBaseContext(com.github.tvbox.osc.theme.ThemeContextWrapper.wrap(base, false));
+    }
+
+    /** 代码取色通道(应用上下文):与 {@code BaseActivity.getResources()} 同一套包装,幂等 + 缓存 */
+    @Override
+    public android.content.res.Resources getResources() {
+        android.content.res.Resources base = super.getResources();
+        if (base == null) return null;
+        android.content.res.Resources themed = mThemedResources;
+        if (themed instanceof com.github.tvbox.osc.theme.ThemeResources) {
+            ((com.github.tvbox.osc.theme.ThemeResources) themed).syncFrom(base);
+            return themed;
+        }
+        mThemedResources = com.github.tvbox.osc.theme.ThemeContextWrapper.wrapResources(base, false);
+        return mThemedResources;
+    }
+
     @Override
     public void onCreate() {
         super.onCreate();
@@ -173,6 +209,8 @@ public class App extends MultiDexApplication {
                     || !previous.fingerprint.equals(current.fingerprint)) {
                 com.github.tvbox.osc.storage.theme.ThemeStore.applyActiveBackground();
             }
+            // 系统(OEM)翻明暗后的现场:一行写清"翻了吗、我们跟没跟"(被强翻的机型靠这行定位)
+            com.github.tvbox.osc.util.Utils.logNightModeState("系统明暗变化");
         } catch (Throwable ignored) {
         }
     }
@@ -229,10 +267,13 @@ public class App extends MultiDexApplication {
         com.github.tvbox.osc.config.PrefsDataStore.init(this);
         com.github.tvbox.osc.config.PrefsDataStore.put(HawkConfig.DEBUG_OPEN, false);
 
-        // 主题系统:注入存储上下文 + 解析"这次启动用哪套配色"(自定义主题才有运行时换肤,
-        // 内置亮/暗直接走编译期资源,不受影响)。必须在任何 Activity 创建前完成。
+        // 主题系统:注入存储上下文 + 解析"这次启动用哪套配色"。必须在任何 Activity 创建前完成。
+        // 快照里**内置亮/暗主题也带调色板**(builtinPalette),界面颜色一律由它说了算 ——
+        // 编译期那份带 -night 限定符的资源只作"快照未装配"时的兜底(原因见 ThemeRuntime.runtimePalette)。
         com.github.tvbox.osc.storage.theme.ThemeStore.init(this);
         com.github.tvbox.osc.theme.ThemeRuntime.install();
+        // 排障一行:系统翻了夜间 / 我们生效哪套 / 供色通道是否运行时(魅族等会强翻 uiMode 的机型看这行)
+        com.github.tvbox.osc.util.Utils.logNightModeState("启动");
         // 当前主题的默认背景同步给全局背景系统(用户显式设过底图时仍以他的为准,见 SystemConfig 的解析链)
         try {
             com.github.tvbox.osc.storage.theme.ThemeStore.applyActiveBackground();

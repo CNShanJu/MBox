@@ -16,6 +16,7 @@ import java.io.File;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
@@ -31,8 +32,8 @@ import java.util.TreeMap;
  *
  * <h3>三层主题</h3>
  * <ol>
- *   <li><b>内置亮色 / 暗色</b>:打包在 {@code assets/theme/theme_colors.json} 与
- *       {@code theme_colors_night.json},构建期被 Gradle 派生成 {@code res/values} 与
+ *   <li><b>内置预设</b>:打包在 {@code assets/theme/themes/bright/} 与
+ *       {@code assets/theme/themes/dark/},各目录的 {@code default=true} 预设在构建期派生成 {@code res/values} 与
  *       {@code res/values-night} 下的 {@code theme_colors.xml}
  *       (首帧就是对的)。<b>不可编辑、不可删除</b> —— 它们是"恢复出厂"的落点,
  *       也是每个色值"恢复默认"的取值来源;</li>
@@ -91,6 +92,10 @@ public final class ThemeStore {
         synchronized (LOCK) {
             cache = null;
         }
+        synchronized (BUILTIN_INPUT_CACHE) { BUILTIN_INPUT_CACHE.clear(); }
+        synchronized (BUILTIN_PALETTE_CACHE) { BUILTIN_PALETTE_CACHE.clear(); }
+        synchronized (BUILTIN_SHAPE_CACHE) { BUILTIN_SHAPE_CACHE.clear(); }
+        synchronized (PRESET_CACHE) { PRESET_CACHE.clear(); }
     }
 
     /** 是否有可用的存储上下文(没注入时设置页只显示内置主题,不会崩) */
@@ -121,8 +126,93 @@ public final class ThemeStore {
     private static final Map<ThemeType, Map<String, String>> BUILTIN_INPUT_CACHE = new java.util.EnumMap<>(ThemeType.class);
     private static final Map<ThemeType, ThemePalette> BUILTIN_PALETTE_CACHE = new java.util.EnumMap<>(ThemeType.class);
     private static final Map<ThemeType, ThemeShapePalette> BUILTIN_SHAPE_CACHE = new java.util.EnumMap<>(ThemeType.class);
+    private static final Map<ThemeType, List<Preset>> PRESET_CACHE = new java.util.EnumMap<>(ThemeType.class);
+    private static final String PRESET_ROOT = "theme/themes/";
+    private static final String PRESET_PREFIX = "preset:";
 
-    /** 内置主题的 <b>25 个可配置键</b>(直接读 assets 里那份人可读的主题文件) */
+    private static final class Preset {
+        final ThemeDef def;
+        final boolean isDefault;
+
+        Preset(ThemeDef def, boolean isDefault) {
+            this.def = def;
+            this.isDefault = isDefault;
+        }
+    }
+
+    /** 按目录扫描内置预设；新增 JSON 不需要在代码里登记文件名。 */
+    private static List<Preset> presets(ThemeType type) {
+        ThemeType t = type == null ? ThemeType.BRIGHT : type;
+        synchronized (PRESET_CACHE) {
+            List<Preset> cached = PRESET_CACHE.get(t);
+            if (cached != null) return cached;
+            List<Preset> loaded = new ArrayList<>();
+            Context ctx = appContext;
+            if (ctx != null) {
+                String dir = PRESET_ROOT + t.jsonValue;
+                try {
+                    String[] names = ctx.getAssets().list(dir);
+                    if (names != null) {
+                        Arrays.sort(names);
+                        for (String filename : names) {
+                            if (!filename.endsWith(".json")) continue;
+                            try (InputStream in = ctx.getAssets().open(dir + "/" + filename)) {
+                                java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
+                                byte[] bytes = new byte[8 * 1024];
+                                int n;
+                                while ((n = in.read(bytes)) > 0) bos.write(bytes, 0, n);
+                                String json = new String(bos.toByteArray(), StandardCharsets.UTF_8);
+                                com.google.gson.JsonObject meta = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+                                if (!meta.has("default") || !meta.get("default").isJsonPrimitive()
+                                        || !meta.get("default").getAsJsonPrimitive().isBoolean()) continue;
+                                ThemeJson.Result parsed = ThemeJson.parse(json);
+                                if (parsed.def == null || parsed.def.getType() != t
+                                        || parsed.def.getName().trim().isEmpty()) continue;
+                                ThemeDef def = parsed.def;
+                                def.setId(PRESET_PREFIX + t.jsonValue + "/"
+                                        + filename.substring(0, filename.length() - 5));
+                                loaded.add(new Preset(def, meta.get("default").getAsBoolean()));
+                            } catch (Throwable ignored) {
+                            }
+                        }
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+            List<Preset> result = Collections.unmodifiableList(loaded);
+            PRESET_CACHE.put(t, result);
+            return result;
+        }
+    }
+
+    /** 可供设置页展示的内置预设，包含默认项；返回副本以免页面改动缓存。 */
+    public static List<ThemeDef> builtinPresets(ThemeType type) {
+        List<ThemeDef> out = new ArrayList<>();
+        for (Preset preset : presets(type)) out.add(preset.def.copy());
+        return Collections.unmodifiableList(out);
+    }
+
+    public static String defaultPresetId(ThemeType type) {
+        for (Preset preset : presets(type)) if (preset.isDefault) return preset.def.getId();
+        return "";
+    }
+
+    public static String defaultPresetName(ThemeType type) {
+        for (Preset preset : presets(type)) if (preset.isDefault) return preset.def.getName();
+        return type == ThemeType.DARK ? NAME_DARK : NAME_BRIGHT;
+    }
+
+    private static ThemeDef findPreset(String id) {
+        if (id == null || !id.startsWith(PRESET_PREFIX)) return null;
+        for (ThemeType type : ThemeType.values()) {
+            for (Preset preset : presets(type)) {
+                if (id.equals(preset.def.getId())) return preset.def.copy();
+            }
+        }
+        return null;
+    }
+
+    /** 内置主题的可配置键(直接读 assets 里那份人可读的主题文件) */
     public static Map<String, String> builtinInput(ThemeType type) {
         ThemeType t = type == null ? ThemeType.BRIGHT : type;
         synchronized (BUILTIN_INPUT_CACHE) {
@@ -135,25 +225,14 @@ public final class ThemeStore {
     }
 
     private static Map<String, String> parseBuiltinInput(ThemeType type) {
-        Context ctx = appContext;
-        String asset = (type == ThemeType.DARK) ? "theme/theme_colors_night.json" : "theme/theme_colors.json";
-        if (ctx == null) return new LinkedHashMap<>();
-        try (InputStream in = ctx.getAssets().open(asset)) {
-            java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
-            byte[] buf = new byte[8 * 1024];
-            int n;
-            while ((n = in.read(buf)) > 0) bos.write(buf, 0, n);
-            ThemeJson.Result r = ThemeJson.parse(new String(bos.toByteArray(), StandardCharsets.UTF_8));
-            return r.def == null
-                    ? new LinkedHashMap<String, String>()
-                    : java.util.Collections.unmodifiableMap(new LinkedHashMap<>(r.def.colors()));
-        } catch (Throwable th) {
-            return new LinkedHashMap<>();
+        for (Preset preset : presets(type)) {
+            if (preset.isDefault) return Collections.unmodifiableMap(new LinkedHashMap<>(preset.def.colors()));
         }
+        return new LinkedHashMap<>();
     }
 
     /**
-     * 内置主题的完整调色板:读构建期生成的 {@code assets/theme/theme_derived_*.json}
+     * 内置默认主题的完整调色板:读构建期生成的 {@code assets/theme/generated/theme_derived_*.json}
      * (Gradle 的 {@code derivePalette} 产物)。它是"编译期资源里那套颜色"的运行时镜像,
      * 也是自定义主题派生时的兜底来源。
      */
@@ -172,7 +251,7 @@ public final class ThemeStore {
         Context ctx = appContext;
         Map<String, Integer> values = new LinkedHashMap<>();
         if (ctx != null) {
-            String asset = (type == ThemeType.DARK) ? "theme/theme_derived_dark.json" : "theme/theme_derived_bright.json";
+            String asset = (type == ThemeType.DARK) ? "theme/generated/theme_derived_dark.json" : "theme/generated/theme_derived_bright.json";
             try (InputStream in = ctx.getAssets().open(asset)) {
                 java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
                 byte[] buf = new byte[8 * 1024];
@@ -214,7 +293,7 @@ public final class ThemeStore {
     private static ThemeShapePalette parseBuiltinShapes() {
         Context ctx = appContext;
         if (ctx == null) return ThemeShapePalette.defaults();
-        try (InputStream in = ctx.getAssets().open("theme/theme_radii.json")) {
+        try (InputStream in = ctx.getAssets().open("theme/radius/theme_radii.json")) {
             java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
             byte[] buffer = new byte[4 * 1024];
             int count;
@@ -299,6 +378,12 @@ public final class ThemeStore {
         return null;
     }
 
+    /** 用户主题或只读预设；选择状态中的 id 可以指向两者。 */
+    public static ThemeDef findSelectable(String id) {
+        ThemeDef user = find(id);
+        return user != null ? user : findPreset(id);
+    }
+
     /** 该 id 是不是"用户主题"(内置/空 id 都返回 false) */
     public static boolean isUserTheme(String id) {
         return find(id) != null;
@@ -307,7 +392,8 @@ public final class ThemeStore {
     /** 是否是内置主题 id(空 = 内置;{@link ThemeSpec#BUILTIN_BRIGHT}/{@code _DARK} 也认,便于导入的包引用内置) */
     public static boolean isBuiltinId(String id) {
         return id == null || id.isEmpty()
-                || ThemeSpec.BUILTIN_BRIGHT.equals(id) || ThemeSpec.BUILTIN_DARK.equals(id);
+                || ThemeSpec.BUILTIN_BRIGHT.equals(id) || ThemeSpec.BUILTIN_DARK.equals(id)
+                || id.startsWith(PRESET_PREFIX);
     }
 
     /** 重新从磁盘加载(外部改过主题目录后用;正常流程不需要) */
@@ -482,6 +568,11 @@ public final class ThemeStore {
         for (String reserved : RESERVED_NAMES) {
             if (reserved.equalsIgnoreCase(n)) return "「" + reserved + "」是固定选项名,请换一个";
         }
+        for (ThemeType type : ThemeType.values()) {
+            for (Preset preset : presets(type)) {
+                if (n.equalsIgnoreCase(preset.def.getName().trim())) return "已有同名内置预设,请换一个名称";
+            }
+        }
         if (isNameTaken(n, exceptId)) return "已有同名主题,请换一个名称";
         return null;
     }
@@ -569,21 +660,21 @@ public final class ThemeStore {
     public static ThemeDef resolveActive() {
         Selection s = selection();
         if (!s.customId.isEmpty()) {
-            ThemeDef d = find(s.customId);
+            ThemeDef d = findSelectable(s.customId);
             if (d != null) return d;
         }
         // 「默认主题」只服务「跟随系统」:用户显式选了浅色/深色,要的就是内置那套,
         // 不能被该类型的默认主题劫持(否则设过默认之后再选浅色/深色,生效的还是自定义主题)
         if (s.mode != Selection.MODE_FOLLOW_SYSTEM) return null;
         String defId = defaultIdOf(s, resolveModeType(s));
-        return defId.isEmpty() ? null : find(defId);
+        return defId.isEmpty() ? null : findSelectable(defId);
     }
 
     /** 当前生效的亮暗类型(决定夜间模式、弹窗深浅、状态栏图标) */
     public static ThemeType activeType() {
         Selection s = selection();
         if (!s.customId.isEmpty()) {
-            ThemeDef d = find(s.customId);
+            ThemeDef d = findSelectable(s.customId);
             if (d != null) return d.getType();
         }
         return resolveModeType(s);
@@ -599,7 +690,7 @@ public final class ThemeStore {
     public static String activeDisplayName() {
         ThemeDef def = resolveActive();
         if (def != null) return def.getName();
-        return activeType() == ThemeType.DARK ? NAME_DARK : NAME_BRIGHT;
+        return defaultPresetName(activeType());
     }
 
     /**
@@ -620,13 +711,14 @@ public final class ThemeStore {
         Context ctx = appContext;
         ThemeDef def = resolveActive();
         String path = "";
-        if (def != null && def.hasBackgroundImage() && ctx != null) {
+        boolean userTheme = def != null && isUserTheme(def.getId());
+        if (userTheme && def.hasBackgroundImage() && ctx != null) {
             path = ThemeBackgroundLibrary.resolvePath(ctx, def.getBackground().getRef());
         }
         SystemConfig.setThemeDefaultBackground(path);
         // 自定义主题生效 = 它自带的背景(含摆放)优先,全局背景设置整体休眠(设置页入口也隐藏);
-        // 切回内置主题时 SystemConfig 会把休眠前用户的全局摆放原样恢复
-        SystemConfig.setActiveThemeCustom(def != null);
+        // 切回内置主题(含目录预设)时 SystemConfig 会把休眠前用户的全局摆放原样恢复
+        SystemConfig.setActiveThemeCustom(userTheme);
 
         // 摆放跟"真正生效的背景"走:走到这里 path 非空只可能是自定义主题的图在生效(全局设置已休眠),
         // 所以无条件写主题摆放;内置主题没有默认图,path 恒为空,自然不碰全局摆放

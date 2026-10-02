@@ -90,7 +90,7 @@ class LogActivity : BaseVbActivity<ActivityLogBinding>() {
     private fun switchTab(tab: Int) {
         currentTab = tab
         // Tab 是"选择型"小组件按钮:只切 isSelected —— 底与文字色由 style/WidgetBtn 的
-        // selector_widget_btn + widget_btn_text 一对选择器给(选中 = 纯色按钮那一档)
+        // selector_widget_btn + widget_btn_text 一对选择器给(空心选中时文字与描边同取高亮色)
         mBinding.tvTabBiz.isSelected = tab == 0
         mBinding.tvTabAll.isSelected = tab == 1
         val isBiz = tab == 0

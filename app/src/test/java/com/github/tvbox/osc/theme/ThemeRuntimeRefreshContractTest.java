@@ -107,6 +107,6 @@ public class ThemeRuntimeRefreshContractTest {
                 "../app/src/main/java/com/github/tvbox/osc/theme/ThemeDrawables.java");
         String rebuild = methodBody(drawables, "public static Drawable rebuild(");
         assertTrue(rebuild.indexOf("ThemeDrawableFactory.create")
-                < rebuild.indexOf("ThemeRuntime.palette() == null"));
+                < rebuild.indexOf("ThemeRuntime.runtimePalette() == null"));
     }
 }

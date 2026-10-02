@@ -22,8 +22,8 @@ public final class AppCompositionRoot {
     /** App.onCreate 网络/下载组件初始化后调用 */
     public static void init() {
         android.util.Log.i("AppCompositionRoot", "init: 注入 UrlResolver/ManualCheck/Content/NetworkProvider");
-        // "网络不可用"页路由:网络层报告"断网 + 真实请求失败"时拉起独立页面(有网自动返回)。
-        // 触发条件是"真的发过请求",所以只是断网、用户在看本地内容时不会被打扰。
+        // "网络不可用"页路由:首页断网或联网请求因断网失败时拉起独立页面(有网自动返回)。
+        // 本地内容与播放会话不因单纯断网而被弹页打扰。
         com.github.tvbox.osc.util.NetworkIssueRouter.install();
         // Media3 取流客户端提供方:ExoMediaSourceHelper 的 client 会被"安全 DNS 变更"作废(dropOkClient),
         // 有了提供方就在下次取用时自取(懒建 + 变更后重建都在 App.playbackHttpClient 里)。
@@ -82,6 +82,12 @@ public final class AppCompositionRoot {
             @Override
             public String getLoadedSubscriptionUrl() {
                 return com.github.tvbox.osc.api.ApiConfig.get().getLoadedSubscriptionUrl();
+            }
+
+            @Override
+            public void previewSubscribeLiveSources(String subscriptionUrl,
+                    com.github.tvbox.osc.spiderapi.LiveChannelConfigApi.PreviewCallback callback) {
+                com.github.tvbox.osc.api.ApiConfig.get().previewSubscribeLiveSources(subscriptionUrl, callback);
             }
 
             @Override

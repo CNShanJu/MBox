@@ -242,7 +242,7 @@ final class PlayingControlPanel {
             TextView tv = (TextView) mBinding.containerSpeed.getChildAt(i);
             boolean selected = String.valueOf(mPlayer.getSpeed()).equals(tv.getText().toString().replace("x", ""));
             // 倍速是"选择型"小组件按钮:只切选中态 —— 底与文字色都由 style/WidgetBtn 的
-            // selector_widget_btn + widget_btn_text 一对选择器给(选中 = 纯色按钮那一档),
+            // selector_widget_btn + widget_btn_text 一对选择器给(空心选中时高亮字与同色描边),
             // 代码不再手动换底/换字色(用户口径:"选择按钮点击选中背景色和文字颜色都切换成纯色按钮")
             tv.setSelected(selected);
         }

@@ -33,16 +33,16 @@ public class ThemeShapeRecipeParityTest {
     @Test
     public void generatedRuntimeTableEqualsAuthoredRecipes() throws Exception {
         File root = root();
-        JsonObject source = object(new File(root, "app/src/main/assets/theme/theme_shapes.json"));
+        JsonObject source = object(new File(root, "app/src/main/assets/theme/radius/theme_shapes.json"));
         JsonObject runtime = object(new File(root,
-                "app/build/generated/theme_assets/theme/theme_shapes_runtime.json"));
+                "app/build/generated/theme_assets/theme/radius/theme_shapes_runtime.json"));
         assertEquals("运行时配方与唯一源漂移", source, runtime);
     }
 
     @Test
     public void everyRecipeHasGeneratedXmlWithMatchingTokens() throws Exception {
         File root = root();
-        JsonObject source = object(new File(root, "app/src/main/assets/theme/theme_shapes.json"));
+        JsonObject source = object(new File(root, "app/src/main/assets/theme/radius/theme_shapes.json"));
         File generated = new File(root, "app/build/generated/theme_shapes/drawable");
         for (Map.Entry<String, JsonElement> entry : source.entrySet()) {
             File xmlFile = new File(generated, entry.getKey() + ".xml");
@@ -55,7 +55,7 @@ public class ThemeShapeRecipeParityTest {
 
     @Test
     public void interactiveRecipesCoverNormalPressedSelectedAndDisabledStates() throws Exception {
-        JsonObject source = object(new File(root(), "app/src/main/assets/theme/theme_shapes.json"));
+        JsonObject source = object(new File(root(), "app/src/main/assets/theme/radius/theme_shapes.json"));
         JsonObject widget = source.getAsJsonObject("selector_widget_btn").getAsJsonObject("states");
         assertTrue(widget.has("default"));
         assertTrue(widget.has("pressed"));

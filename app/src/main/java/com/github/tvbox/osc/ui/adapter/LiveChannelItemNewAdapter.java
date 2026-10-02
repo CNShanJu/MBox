@@ -41,8 +41,7 @@ public class LiveChannelItemNewAdapter extends BaseQuickAdapter<LiveChannelItem,
         // 字已经换成主题的对比色(btn_select_text)" —— 白字压浅底,用户口径就是
         // "直播页中间那栏频道名的文字没走文字主色"(其实字走对了,是底没跟着走)。
         if (channelIndex == selectedChannelIndex && channelIndex != focusedChannelIndex) {
-            // 选中态与全局"已选中"实心样式一致(背景图设置页那几个预设 chip 同款):
-            // 底 = btn_select_bg(主题主色),字 = btn_select_text(主色上的文字)—— 不再用各页面自配色
+            // 选中态与预设 chip 同源：深色默认底透明时用高亮字与同色描边。
             tvChannel.setTextColor(mContext.getResources().getColor(R.color.btn_select_text));
             com.github.tvbox.osc.theme.ThemeDrawables.applyBackground(root, R.drawable.bg_r_common_solid_select);
         } else {

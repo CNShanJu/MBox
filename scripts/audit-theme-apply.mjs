@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 离线审计:给定一份"自定义主题"导出 JSON,把布局里用到的 drawable **按换肤层的真实规则**解析一遍,
+ * 离线审计:给定一份主题 JSON(自定义导出或内置预设),把布局里用到的 drawable **按换肤层的真实规则**解析一遍,
  * 报出"换了这套主题之后仍然会显示内置色"的组件(即"卡片颜色不对"的候选)。
  *
  * 用法:node scripts/audit-theme-apply.mjs <主题.json> [--verbose]
@@ -17,7 +17,7 @@ import path from 'node:path';
 
 const ROOT = process.cwd();
 const RES = path.join(ROOT, 'app', 'src', 'main', 'res');
-const SHAPES = path.join(ROOT, 'app', 'src', 'main', 'assets', 'theme', 'theme_shapes.json');
+const SHAPES = path.join(ROOT, 'app', 'src', 'main', 'assets', 'theme', 'radius', 'theme_shapes.json');
 const COLORS_XML = path.join(ROOT, 'app', 'build', 'generated', 'theme_colors', 'values', 'theme_colors.xml');
 
 const themeFile = process.argv[2];
@@ -44,14 +44,15 @@ const withAlpha = (color, ratio) => {
 };
 const hex = (c) => '#' + c.toString(16).toUpperCase().padStart(8, '0');
 
-const c = theme.colors || {};
+const c = theme.colors || theme;
 const brand = withAlpha(parseColor(c.brand, 0xff1f2937), 1);
 const surfaceColor = parseColor(c.bg_surface, 0xffececf4);
 const cardAlpha = (typeof c.bg_card_alpha === 'number' ? c.bg_card_alpha : 100) / 100;
 const floatAlpha = (typeof c.bg_float_alpha === 'number' ? c.bg_float_alpha : 100) / 100;
 const cardBg = withAlpha(surfaceColor, cardAlpha);
 const floatBg = withAlpha(surfaceColor, floatAlpha);
-const confirmBg = parseColor(c.btn_confirm_bg, brand);
+const confirmText = parseColor(c.btn_confirm_text, 0xffffffff);
+const highlightText = parseColor(c.text_highlight, 0xff1890ff);
 const success = parseColor(c.success, 0xff08ca2c);
 
 const palette = {
@@ -64,18 +65,17 @@ const palette = {
   text_hint: withAlpha(brand, 0.4),
   text_main_half: withAlpha(brand, 0.5),
   text_disable: withAlpha(brand, 0.6),
-  text_accent: parseColor(c.text_accent, brand),
-  text_highlight: parseColor(c.text_highlight, 0xff1890ff),
+  text_accent: brand,
+  text_highlight: highlightText,
   color_highlight: brand,
   select_fill: brand,
   press_overlay: withAlpha(brand, 0.24),
-  btn_confirm_bg: confirmBg,
-  btn_confirm_text: parseColor(c.btn_confirm_text, 0xffffffff),
-  btn_confirm_stroke: withAlpha(confirmBg, 1),
+  btn_confirm_text: confirmText,
   btn_cancel_bg: parseColor(c.btn_cancel_bg, 0x661f2937),
   btn_plain_text: brand,
-  btn_select_bg: confirmBg,
-  btn_select_text: parseColor(c.btn_confirm_text, 0xffffffff),
+  btn_select_bg: brand,
+  btn_select_text: confirmText,
+  btn_select_stroke: brand,
   btn_stroke: parseColor(c.btn_cancel_bg, 0x661f2937),
   switch_track_on: success,
   switch_track_off: parseColor(c.switch_track_off, brand),

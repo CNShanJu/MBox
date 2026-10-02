@@ -791,12 +791,13 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
     }
 
     /**
-     * 背景图入口只对内置主题显示:自定义主题自带背景(在主题编辑页设),生效时盖过全局背景图,
-     * 全局入口留着只会和主题自己的背景打架;切回内置浅色/深色(含跟随系统解析到内置)才放出来。
+     * 背景图入口只对内置主题(含目录预设)显示:用户主题自带背景(在主题编辑页设),
+     * 生效时盖过全局背景图,全局入口留着只会和主题自己的背景打架。
      */
     private fun updatePageBackgroundVisibility() {
+        val active = ThemeStore.resolveActive()
         mBinding.llPageBackground.visibility =
-            if (ThemeStore.resolveActive() == null) View.VISIBLE else View.GONE
+            if (active != null && ThemeStore.isUserTheme(active.id)) View.GONE else View.VISIBLE
     }
 
     private fun onClickClearCache(v: View) {

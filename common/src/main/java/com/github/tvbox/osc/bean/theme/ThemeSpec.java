@@ -11,14 +11,14 @@ import java.util.Map;
  * 主题可配置项的<b>唯一清单</b>(纯数据):编辑页列出哪些项、怎么分类、每项叫什么、说明是什么,
  * 全从这份表派生;导出导入的字段校验、离线校验脚本也认它。
  *
- * <p>键名与 {@code app/src/main/assets/theme/theme_colors.json}(及 {@code _night})一一对应 ——
+ * <p>键名与 {@code app/src/main/assets/theme/themes/{bright,dark}/*.json} 一一对应 ——
  * 内置主题是"照这份表写出来的",自定义主题是"照这份表填出来的",两者格式完全一致,
  * 所以内置主题文件可以直接当模板发给别人改。
  *
  * <p><b>类目</b>(编辑页按此分组,顺序即展示顺序):
  * <ol>
  *   <li>{@link ThemeKey.Group#SURFACE} 底色与面:页面底、组件/卡片底、悬浮面 + 各自的透明度;</li>
- *   <li>{@link ThemeKey.Group#TEXT} 文字分级:正常/次要/占位/禁用/强调/高亮/危险;</li>
+ *   <li>{@link ThemeKey.Group#TEXT} 文字分级:文字主色与高亮色;次要/占位/禁用等由主色派生;</li>
  *   <li>{@link ThemeKey.Group#BRAND} 主色与按钮:主色、主色上的字、主/次按钮底色与文字;</li>
  *   <li>{@link ThemeKey.Group#STATE} 状态与开关:开关轨道与圆点、固定深色面强调色、下载状态、
  *       危险操作红底三件套之一(红底与红底上的字)。</li>
@@ -112,29 +112,21 @@ public final class ThemeSpec {
         //   text_hint                = 文字主色 @40%。
         // 资源名三个都照旧生成(@color/text_hint / text_sub_foreground / disable_text 等别名也在),
         // 布局与代码里那 100 多处引用一行都不用改,只是不再单独配。
-        list.add(new ThemeKey("text_accent", ThemeKey.Group.TEXT, ThemeKey.Kind.COLOR, "强调文字",
-                "选中项、标题、tab 选中"));
+        // 强调文字 text_accent 也不单独配：标题与普通选中文字跟 brand，
+        // 链接与搜索来源仍由 text_highlight 单独控制。
         list.add(new ThemeKey("text_highlight", ThemeKey.Group.TEXT, ThemeKey.Kind.COLOR, "高亮文字",
                 "链接、搜索结果来源、展开/复制"));
         // 危险文字(text_danger)与危险红底(swipe_red / swipe_red_text)已**固定成字面量**,
         // 不再进主题文件(用户口径:"删除,对应组件固定就是这个颜色")—— 见 res/values/colors.xml。
 
-        // ③ 按钮(主色 brand 已挪到上面的"文字分级"里,见那处说明;按钮只有这三个可配置键)
-        //    取色口径(用户口径):
-        //      · 主按钮背景 = 纯色按钮的底;主按钮文字 = 纯色按钮的字
-        //        (纯色按钮的**描边**由"主按钮背景的不透明版"派生,不单独配;
-        //         小组件按钮/chip/直播选中条的**选中态填充与文字**也取这两个键 ——
-        //         填充 = 主按钮背景**本身(含透明度)**:主按钮设成无色时,选中态也是无色);
+        // ③ 按钮:主按钮与选中项的实心底、描边都由文字主色 brand 派生;
+        //    主按钮文字保持可配置,让填充与文字有足够对比。
         //      · 空心按钮与未选中小组件的描边跟文字主色同源;
         //        btn_cancel_bg 仅用于无文字容器与输入框(原键名保留兼容);
         //      · 「次按钮文字」已删除:空心按钮的文字走**文字主色**;
-        //      · 「主色上的文字」(brand_text)已删除:它唯一的用途是派生 btn_select_text,
-        //        而后者现在直接取主按钮文字。
-        list.add(new ThemeKey("btn_confirm_bg", ThemeKey.Group.BRAND, ThemeKey.Kind.COLOR, "主按钮背景",
-                "纯色按钮(确定 / 开始下载 / 重置)的底色;描边按它的不透明版画,带透明也看得见边框;"
-                        + "选中态(小组件按钮/chip/直播选中条)的填充就是它本身,设成无色则选中态也无色"));
+        //      · 「主色上的文字」(brand_text)已删除:btn_select_text 从主按钮文字派生。
         list.add(new ThemeKey("btn_confirm_text", ThemeKey.Group.BRAND, ThemeKey.Kind.COLOR, "主按钮文字",
-                "纯色按钮上的字(选中态的文字也用它)"));
+                "纯色按钮上的字;有填充的选中态也用它"));
         list.add(new ThemeKey("btn_cancel_bg", ThemeKey.Group.BRAND, ThemeKey.Kind.COLOR, "无字容器边框颜色",
                 "**已从主题编辑器移除**(2026-10-01,用户口径):空心按钮的描边一律跟自己的文字色走,"
                         + "这个键只剩内部用途 —— 输入框底/无文字描边容器(btn_stroke 同值);"
@@ -154,8 +146,8 @@ public final class ThemeSpec {
                 "开关上的圆点"));
         // 直播页"选中/聚焦那一条频道"的底原来是写死的蓝 accent_on_dark(唯一还在用那支蓝的地方),
         // 已按用户口径**移除**:直播页那两张列表的选中态现在走全站同一套主题色 ——
-        // 底 = btn_select_bg(= 纯色按钮的底色,含透明度:暗色主题下主按钮无色,选中态也无色)、
-        // 底上的字 = btn_select_text(见 drawable/item_bg_selector_right 那条链与 res/color/live_channel_text.xml)。
+        // 底与描边取主色 brand,文字取 btn_confirm_text,
+        // 见 btn_select_bg / btn_select_text / btn_select_stroke 与 res/color/live_channel_text.xml。
         // 所以主题文件里不再有 accent_on_dark 这个键。
         list.add(new ThemeKey("download_active", ThemeKey.Group.STATE, ThemeKey.Kind.COLOR, "下载中",
                 "下载中的状态色"));

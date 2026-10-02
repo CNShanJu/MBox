@@ -6,6 +6,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.res.ColorStateList;
 import android.content.res.Configuration;
 import android.os.Bundle;
 
@@ -19,8 +20,10 @@ import android.widget.FrameLayout;
 import android.widget.Toast;
 
 import androidx.core.graphics.Insets;
+import androidx.core.content.ContextCompat;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
+import androidx.core.widget.TextViewCompat;
 import androidx.lifecycle.Observer;
 import androidx.lifecycle.ViewModelProvider;
 
@@ -367,7 +370,7 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
                     com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM,
                             "收藏: " + (vodInfo.name == null ? "?" : vodInfo.name));
                     AppBubble.toast("已加入收藏夹");
-                    mBinding.tvCollect.setText("取消收藏");
+                    updateCollectAction(true);
                 } else {
                     com.github.tvbox.osc.ui.dialog.ConfirmDialog.showDanger(
                             DetailActivity.this, "取消收藏",
@@ -378,7 +381,7 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
                                 com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM,
                                         "取消收藏: " + (vodInfo.name == null ? "?" : vodInfo.name));
                                 AppBubble.toast("已移除收藏夹");
-                                mBinding.tvCollect.setText("加入收藏");
+                                updateCollectAction(false);
                             });
                 }
             }
@@ -820,11 +823,21 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
             sourceViewModel.getDetail(sourceKey, vodId);
             boolean isVodCollect = com.github.tvbox.osc.repo.HistoryRepositories.collect().isSaved(sourceKey, vodId);
             if (isVodCollect) {
-                mBinding.tvCollect.setText("取消收藏");
+                updateCollectAction(true);
             } else {
-                mBinding.tvCollect.setText("加入收藏");
+                updateCollectAction(false);
             }
         }
+    }
+
+    /** 收藏是普通动作，取消收藏是移除动作；文字与图标保持同一颜色。 */
+    private void updateCollectAction(boolean collected) {
+        mBinding.tvCollect.setText(collected ? "取消收藏" : "加入收藏");
+        int color = ContextCompat.getColor(this,
+                collected ? R.color.text_danger : R.color.text_foreground);
+        mBinding.tvCollect.setTextColor(color);
+        TextViewCompat.setCompoundDrawableTintList(
+                mBinding.tvCollect, ColorStateList.valueOf(color));
     }
 
     /** PlaySyncHost:选集切换同步(预览播放器→详情选集高亮/历史) */

@@ -5,7 +5,7 @@
          日志分类键 / 背景图"调整组件位置"键 / 搜索页历史·热词·联想键 / 播放器设置面板里的键 / JSON 导入的「粘贴」键,
          全部套这一条:
            · 底 = selector_widget_btn(未选中只有边框线、选中=纯色按钮的填充,圆角只走 radius_widget_btn);
-           · 字 = widget_btn_text(未选中=文字主色、选中=主按钮文字);
+           · 字 = widget_btn_text(未选中=文字主色、实心选中=主按钮文字、空心选中=高亮文字);
            · **高度与半径要配套**:minHeight 为 34dp,radius_widget_btn 默认 12dp;
              0～15dp 是普通圆角,16dp 接近胶囊,17dp 是标准胶囊,不得用布局裁剪造成不对称圆角。
          两种交互形态(用户口径,逐页归属也在这里定死,别在页面里各写一套):
@@ -101,15 +101,14 @@
         <item name="android:windowBackground">@android:color/transparent</item>
     </style>
     <!-- ================= 主题按钮(全局统一,只有三型) =================
-         ① 纯色按钮 BtnPrimary   —— 有底色的(btn_confirm_*):确定/保存/开始下载等主要动作
+         ① 纯色按钮 BtnPrimary   —— 填充与描边由 brand 派生:确定/保存/开始下载等主要动作
          ② 空心按钮 BtnSecondary —— 无底色 + 1dp 描边:取消/重置/下载管理等次要动作;
                                       按下仍为空心,描边与文字同色
          ③ 纯文字按钮 BtnGhost   —— 无底色、无描边,只有文字(btn_plain_text):复制/展开/选集下载这类
          三型**圆角只走 radius_btn**(theme_radii.json),不再有 *Large 变体。
          "小组件按钮"(日志分类 / 背景图调整键 / 搜索历史·热词·联想 / 播放器设置键)是另一条线:
-         底走 selector_widget_btn(未选中只有边框线、选中=纯色按钮的填充)、字走 widget_btn_text,圆角只走 **radius_widget_btn**。
-         颜色一律来自 assets/theme/theme_colors.json 的 btn_* 键,布局里不写死色值。
-         选中态(btn_select_*)单独一套:暗色下必须给浅色填充,否则选中看不出来。 -->
+         底走 selector_widget_btn(未选中只有边框线、选中=主色填充)、字走 widget_btn_text,圆角只走 **radius_widget_btn**。
+         颜色一律来自主题调色板,布局里不写死色值。 -->
 
     <!-- ① 纯色按钮:确定/保存/开始下载等主要动作 -->
     <style name="BtnPrimary" parent="@style/Widget.Material3.Button">

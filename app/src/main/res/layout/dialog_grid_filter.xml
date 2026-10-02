@@ -32,7 +32,7 @@
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btn_reset"
-            style="@style/BtnPrimary"
+            style="@style/BtnSecondary"
             android:layout_width="0dp"
             android:layout_weight="1"
             android:layout_height="36dp"

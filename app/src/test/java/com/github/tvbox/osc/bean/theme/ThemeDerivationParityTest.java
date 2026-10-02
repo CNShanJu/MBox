@@ -41,13 +41,13 @@ public class ThemeDerivationParityTest {
         return new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8);
     }
 
-    /** 读主题文件里的 25 个可配置键(跳过 type/desc) */
+    /** 读主题文件里的可配置键(跳过元信息) */
     private static Map<String, String> readInput(String assetName) throws Exception {
-        File f = repoFile("src/main/assets/theme/" + assetName);
+        File f = repoFile("src/main/assets/theme/themes/" + assetName);
         JsonObject o = JsonParser.parseString(read(f)).getAsJsonObject();
         Map<String, String> out = new LinkedHashMap<>();
         for (String key : o.keySet()) {
-            if ("type".equals(key) || "desc".equals(key)) continue;
+            if ("type".equals(key) || "name".equals(key) || "default".equals(key) || "desc".equals(key)) continue;
             out.put(key, o.get(key).getAsString());
         }
         return out;
@@ -55,7 +55,7 @@ public class ThemeDerivationParityTest {
 
     /** 读 Gradle 生成的派生结果(构建期产物,由 :app:generateThemeColors 写出) */
     private static Map<String, Integer> readDerived(String generatedName) throws Exception {
-        File f = repoFile("build/generated/theme_assets/theme/" + generatedName);
+        File f = repoFile("build/generated/theme_assets/theme/generated/" + generatedName);
         assertTrue("缺少构建期生成的派生结果: " + f.getAbsolutePath()
                 + "(请先跑 ./gradlew :app:generateThemeColors;它由 preBuild 自动触发)", f.exists());
         JsonObject o = JsonParser.parseString(read(f)).getAsJsonObject();
@@ -81,14 +81,29 @@ public class ThemeDerivationParityTest {
         }
     }
 
+    private static String defaultAsset(ThemeType type) throws Exception {
+        File dir = repoFile("src/main/assets/theme/themes/" + type.jsonValue);
+        File[] files = dir.listFiles((d, name) -> name.endsWith(".json"));
+        assertNotNull("主题目录不存在: " + dir, files);
+        String selected = null;
+        for (File file : files) {
+            JsonObject json = JsonParser.parseString(read(file)).getAsJsonObject();
+            if (!json.get("default").getAsBoolean()) continue;
+            assertTrue(type + " 有多份默认预设", selected == null);
+            selected = type.jsonValue + "/" + file.getName();
+        }
+        assertNotNull(type + " 没有默认预设", selected);
+        return selected;
+    }
+
     @Test
     public void brightThemeDerivationMatchesBuildScript() throws Exception {
-        assertParity("theme_colors.json", "theme_derived_bright.json");
+        assertParity(defaultAsset(ThemeType.BRIGHT), "theme_derived_bright.json");
     }
 
     @Test
     public void darkThemeDerivationMatchesBuildScript() throws Exception {
-        assertParity("theme_colors_night.json", "theme_derived_dark.json");
+        assertParity(defaultAsset(ThemeType.DARK), "theme_derived_dark.json");
     }
 
     @Test
@@ -108,29 +123,45 @@ public class ThemeDerivationParityTest {
                 expected.size(), ThemePalette.RESOURCE_NAMES.length);
     }
 
-    /** 两个内置主题文件必须一个不少地覆盖 ThemeSpec 的全部可配置项(加了键别忘了改主题文件) */
+    /** 每个内置预设都应能独立使用，且每个明暗目录恰好有一个默认预设。 */
     @Test
     public void builtinThemeFilesCoverEveryConfigurableKey() throws Exception {
-        for (String asset : new String[]{"theme_colors.json", "theme_colors_night.json"}) {
-            Map<String, String> input = readInput(asset);
-            for (ThemeKey k : ThemeSpec.all()) {
-                assertTrue(asset + " 缺少可配置项: " + k.key, input.containsKey(k.key));
+        for (ThemeType type : ThemeType.values()) {
+            File dir = repoFile("src/main/assets/theme/themes/" + type.jsonValue);
+            File[] files = dir.listFiles((d, name) -> name.endsWith(".json"));
+            assertNotNull("主题目录不存在: " + dir, files);
+            assertTrue("主题目录为空: " + dir, files.length > 0);
+            int defaults = 0;
+            for (File file : files) {
+                String asset = type.jsonValue + "/" + file.getName();
+                JsonObject json = JsonParser.parseString(read(file)).getAsJsonObject();
+                assertEquals(type.jsonValue, json.get("type").getAsString());
+                assertTrue(asset + " 缺少显示名称", json.has("name")
+                        && !json.get("name").getAsString().trim().isEmpty());
+                assertTrue(asset + " 缺少布尔 default", json.has("default")
+                        && json.get("default").getAsJsonPrimitive().isBoolean());
+                if (json.get("default").getAsBoolean()) defaults++;
+                Map<String, String> input = readInput(asset);
+                for (ThemeKey k : ThemeSpec.all()) {
+                    assertTrue(asset + " 缺少可配置项: " + k.key, input.containsKey(k.key));
+                }
+                for (String key : input.keySet()) {
+                    assertNotNull(asset + " 里有 ThemeSpec 不认识的键: " + key,
+                            ThemeSpec.byKey(key));
+                }
             }
-            for (String key : input.keySet()) {
-                assertNotNull(asset + " 里有 ThemeSpec 不认识的键(是漏了登记,还是该删?): " + key,
-                        ThemeSpec.byKey(key));
-            }
+            assertEquals(type + " 只能有一份默认预设", 1, defaults);
         }
     }
 
-    /** 内置主题的 type 字段必须与文件名语义一致(bright/dark),它决定"跟随系统"取哪一份 */
+    /** 默认预设的 type 字段必须与所在目录一致,它决定"跟随系统"取哪一份 */
     @Test
     public void builtinThemeTypesAreCorrect() throws Exception {
         assertEquals(ThemeType.BRIGHT, ThemeType.fromJson(
-                JsonParser.parseString(read(repoFile("src/main/assets/theme/theme_colors.json")))
+                JsonParser.parseString(read(repoFile("src/main/assets/theme/themes/" + defaultAsset(ThemeType.BRIGHT))))
                         .getAsJsonObject().get("type").getAsString()));
         assertEquals(ThemeType.DARK, ThemeType.fromJson(
-                JsonParser.parseString(read(repoFile("src/main/assets/theme/theme_colors_night.json")))
+                JsonParser.parseString(read(repoFile("src/main/assets/theme/themes/" + defaultAsset(ThemeType.DARK))))
                         .getAsJsonObject().get("type").getAsString()));
     }
 }

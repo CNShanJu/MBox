@@ -119,7 +119,7 @@ public class ThemeColorAliasesCoverageTest {
     /** 表里登记的概念名必须都能在调色板里取到(否则运行时会拿到兜底色,等于没换) */
     @Test
     public void everyRegisteredNameExistsInTheDerivedPalette() throws Exception {
-        File asset = repoFile("src/main/assets/theme/theme_colors.json");
+        File asset = repoFile("src/main/assets/theme/themes/bright/default.json");
         JsonObject o = JsonParser.parseString(
                 new String(Files.readAllBytes(asset.toPath()), StandardCharsets.UTF_8)).getAsJsonObject();
         Map<String, String> input = new HashMap<>();

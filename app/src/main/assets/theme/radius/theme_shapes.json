@@ -4,7 +4,7 @@
     "strokeWidth": "stroke_widget_btn",
     "states": {
       "disabled": { "fill": "transparent", "stroke": "text_disable" },
-      "selected": { "fill": "btn_select_bg", "stroke": "btn_confirm_stroke" },
+      "selected": { "fill": "btn_select_bg", "stroke": "btn_select_stroke" },
       "pressed": { "fill": "transparent", "stroke": "btn_plain_text" },
       "default": { "fill": "transparent", "stroke": "btn_plain_text" }
     }
@@ -13,9 +13,9 @@
     "radius": "radius_btn",
     "strokeWidthDp": 1,
     "states": {
-      "disabled": { "fill": "btn_confirm_bg", "stroke": "btn_confirm_stroke" },
-      "pressed": { "fill": "btn_confirm_bg", "stroke": "btn_confirm_stroke" },
-      "default": { "fill": "btn_confirm_bg", "stroke": "btn_confirm_stroke" }
+      "disabled": { "fill": "btn_select_bg", "stroke": "btn_select_stroke" },
+      "pressed": { "fill": "btn_select_bg", "stroke": "btn_select_stroke" },
+      "default": { "fill": "btn_select_bg", "stroke": "btn_select_stroke" }
     }
   },
   "theme_btn_secondary": {
@@ -106,7 +106,8 @@
   },
   "bg_r_common_solid_select": {
     "radius": "common_corners",
-    "states": { "default": { "fill": "btn_select_bg" } }
+    "strokeWidth": "stroke_widget_btn",
+    "states": { "default": { "fill": "btn_select_bg", "stroke": "btn_select_stroke" } }
   },
   "bg_small_round_float": {
     "radius": "radius_card",
@@ -121,7 +122,7 @@
     "radius": "radius_widget_btn",
     "strokeWidth": "stroke_widget_btn",
     "states": {
-      "focused": { "fill": "btn_select_bg", "stroke": "btn_select_text" },
+      "focused": { "fill": "btn_select_bg", "stroke": "btn_select_stroke" },
       "default": { "fill": "btn_select_bg" }
     }
   },

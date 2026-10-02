@@ -11,6 +11,7 @@ import android.graphics.drawable.InsetDrawable;
 import android.graphics.drawable.LayerDrawable;
 import android.graphics.drawable.RippleDrawable;
 import android.graphics.drawable.StateListDrawable;
+import android.util.TypedValue;
 
 import com.github.tvbox.osc.bean.theme.ThemePalette;
 
@@ -83,7 +84,7 @@ public final class ThemeDrawables {
         if (resId == 0 || res == null) return null;
         String recipeId = ThemeDrawableFactory.recipeIdFor(resId);
         if (!recipeId.isEmpty()) return ThemeDrawableFactory.create(recipeId, res);
-        if (ThemeRuntime.palette() == null) return null;
+        if (ThemeRuntime.runtimePalette() == null) return null;
         Scan scan = scan(resId, res);
         if (scan.state == null) return null;
         try {
@@ -99,10 +100,14 @@ public final class ThemeDrawables {
      * **圆角一律以"编译期那份 drawable"为准**。
      *
      * <p>为什么(2026-09-27,用户口径:"搜索页历史搜索那块 chip,系统内置主题四角正常,一切到自定义主题就不正常"):
-     * 内置主题直接用资源里那份 drawable —— 圆角由框架 native 解析;自定义主题走本类的重建,
-     * 圆角是我们在 Java 侧**把 {@code <corners android:radius="@dimen/…">} 再解析一遍**拼出来的
+     * 编译期那份 drawable 的圆角由框架 native 解析;重建是我们在 Java 侧**把
+     * {@code <corners android:radius="@dimen/…">} 再解析一遍**拼出来的
      * ({@code res.getDimensionPixelSize} + {@link GradientDrawable#setCornerRadii})。两条路只要有一点偏差,
      * 就是"同一个 chip 换个主题圆角就变样"。
+     *
+     * <p>2026-10-02 起<b>内置主题也走重建</b>(见 {@link ThemeRuntime#runtimePalette()}:为了不被系统/OEM 的
+     * {@code -night} 翻色),这条"照抄编译期圆角"就不再只是自定义主题的修补,而是<b>内置主题的保命线</b>:
+     * 颜色走运行时调色板,圆角仍以编译期那份为唯一事实源。
      *
      * <p>既然"内置那份画出来是对的",就把它当唯一事实源:重建完成后把**每个状态的圆角**照抄过来
      * (只抄圆角;颜色/描边/渐变仍走主题)。结构对不上(子项数量不同)时一个字都不改,宁可保持重建结果。
@@ -188,7 +193,7 @@ public final class ThemeDrawables {
      * @return 重建好的色值选择器;{@code null} = 不随主题走
      */
     public static ColorStateList rebuildColorStateList(int resId, Resources res) {
-        if (resId == 0 || res == null || ThemeRuntime.palette() == null) return null;
+        if (resId == 0 || res == null || ThemeRuntime.runtimePalette() == null) return null;
         Scan scan = scan(resId, res);
         return scan.colorList;
     }
@@ -200,7 +205,7 @@ public final class ThemeDrawables {
      * @return 概念名;{@code null} = 不是"单色 + 主题色"的图标(多色图标、写死颜色的一律不动)
      */
     public static String iconTintKey(int resId, Resources res) {
-        if (resId == 0 || res == null || ThemeRuntime.palette() == null) return null;
+        if (resId == 0 || res == null || ThemeRuntime.runtimePalette() == null) return null;
         return scan(resId, res).tintKey;
     }
 
@@ -213,7 +218,7 @@ public final class ThemeDrawables {
      * 弹窗/抽屉/卡片那些底全是这么设的,所以"布局改色生效、弹窗卡片却纹丝不动"
      * (用户口径:"透明度和卡片背景还是没生效")。
      *
-     * @return 按主题重建过的那份;没在用自定义主题或该 drawable 与主题无关时返回系统那份
+     * @return 按主题重建过的那份;快照还没装配(极早期调用)或该 drawable 与主题无关时返回系统那份
      */
     public static Drawable themedDrawable(int resId, Resources res) {
         if (resId == 0 || res == null) return null;
@@ -231,7 +236,7 @@ public final class ThemeDrawables {
             // 一直是 #1F2937(编译期 text_main),而运行时主题主色是 #00AB2E。
             String tintKey = iconTintKey(resId, res);
             if (tintKey != null) {
-                ThemePalette p = ThemeRuntime.palette();
+                ThemePalette p = ThemeRuntime.runtimePalette();
                 if (p != null) {
                     Drawable tinted = fallback.mutate();
                     androidx.core.graphics.drawable.DrawableCompat.setTint(tinted, p.get(tintKey));
@@ -364,7 +369,23 @@ public final class ThemeDrawables {
         return built;
     }
 
+    private static boolean looksLikeXmlResource(int resId, Resources res) {
+        try {
+            TypedValue value = new TypedValue();
+            res.getValue(resId, value, true);
+            return value.type == TypedValue.TYPE_STRING && value.string != null
+                    && value.string.toString().endsWith(".xml");
+        } catch (Resources.NotFoundException ignored) {
+            return false;
+        }
+    }
+
     private static Scan build(int resId, Resources res) {
+        // 位图(webp/png)也常走到这里,而 Resources.getXml 对非 XML 资源会先在**框架层**打一条
+        // `ResourceType: Bad XML block: header size … is larger than data size …` 再抛异常 ——
+        // 异常我们自己吞得掉,那条日志吞不掉。内置主题也走重建之后这类位图每次首扫都会刷一条
+        // (用户抓日志看到的就是它),所以先在 TypedValue 上认一次是不是 .xml,再决定开不开解析器。
+        if (!looksLikeXmlResource(resId, res)) return Scan.NONE;
         Set<Integer> building = BUILDING.get();
         if (building == null) {
             building = new HashSet<>();
@@ -906,7 +927,7 @@ public final class ThemeDrawables {
             if (resId != 0) {
                 String key = ThemeColorAliases.paletteNameOf(resId);
                 if (key != null) {
-                    ThemePalette palette = ThemeRuntime.palette();
+                    ThemePalette palette = ThemeRuntime.runtimePalette();
                     if (palette != null) {
                         usedThemed = true;
                         return palette.get(key);

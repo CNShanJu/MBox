@@ -8,7 +8,7 @@
     <color name="text_foreground">@color/text_main</color>
     <color name="text_sub_foreground">@color/text_sub</color>
 
-    <!--应用的主要色调(Material 3 暗色,中性灰白系)-->
+    <!-- 应用强调色随文字主色 brand；text_accent 是派生资源，不单独配置。 -->
     <color name="colorPrimary">@color/text_accent</color>
     <color name="windowBackground">@color/bg_body</color>
 

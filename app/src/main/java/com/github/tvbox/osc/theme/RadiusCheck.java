@@ -29,7 +29,7 @@ import java.util.Map;
  * "圆角怎么改都不生效 / 自己写的组件圆角也不对"。
  *
  * <p>这一行把两边并排打出来:左边 = 设备上这份包里**编译进去**的 dp(实际生效的那个数),
- * 右边 = {@code assets/theme/theme_radii.json} 里你现在写的值。
+ * 右边 = {@code assets/theme/radius/theme_radii.json} 里你现在写的值。
  * <b>两者不一致 = 设备上的资源是旧的,必须完整安装</b>({@code gradlew :app:installDebug},
  * 或卸载后重装完整 APK);一致才说明"改的东西确实上机了"。
  *
@@ -47,7 +47,7 @@ public final class RadiusCheck {
             "radius_widget_btn", "radius_search", "common_corners", "radius_thumb", "stroke_widget_btn"
     };
 
-    private static final String RADII_ASSET = "theme/theme_radii.json";
+    private static final String RADII_ASSET = "theme/radius/theme_radii.json";
 
     private RadiusCheck() {
     }
@@ -744,7 +744,7 @@ public final class RadiusCheck {
         return out;
     }
 
-    /** assets/theme/theme_radii.json 里现在写的值(跟着部署走的那个文件) */
+    /** assets/theme/radius/theme_radii.json 里现在写的值(跟着部署走的那个文件) */
     private static Map<String, String> fileRadii(Context ctx) {
         Map<String, String> out = new LinkedHashMap<>();
         try (InputStream is = ctx.getAssets().open(RADII_ASSET);

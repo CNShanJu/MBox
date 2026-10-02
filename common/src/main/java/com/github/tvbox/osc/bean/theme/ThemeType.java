@@ -15,16 +15,16 @@ package com.github.tvbox.osc.bean.theme;
  *       (见 {@code ThemeSpec#defaultsFor})。</li>
  * </ol>
  *
- * <p>取值与主题文件里的 {@code "type"} 字段一致({@code theme_colors.json} 是 {@code "bright"},
- * {@code theme_colors_night.json} 是 {@code "dark"}),这样内置主题文件、自定义主题 JSON、
+ * <p>取值与主题文件里的 {@code "type"} 字段一致(目录 {@code bright/} 为亮色,
+ * {@code dark/} 为暗色),这样内置主题文件、自定义主题 JSON、
  * 导出的主题包三者可以互认。
  */
 public enum ThemeType {
 
-    /** 亮色(对应 {@code theme_colors.json} 的 {@code "bright"}) */
+    /** 亮色(对应 {@code themes/bright/}) */
     BRIGHT("bright", "亮色"),
 
-    /** 暗色(对应 {@code theme_colors_night.json} 的 {@code "dark"}) */
+    /** 暗色(对应 {@code themes/dark/}) */
     DARK("dark", "暗色");
 
     /** 主题文件里的取值(小写,写进 JSON 的就是它) */

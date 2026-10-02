@@ -155,6 +155,29 @@ public final class ThemeRuntime {
                 ? (ThemePalette) current.colors : new ThemePalette(current.colors.asMap());
     }
 
+    /**
+     * <b>供色通道</b>用的调色板:<b>内置亮/暗主题也非空</b>(快照里本来就带着 {@code builtinPalette})。
+     *
+     * <p>与 {@link #palette()} 的分工:那个回答"要不要多做一层兼容扫描"(仅自定义主题),
+     * 这个回答"界面颜色由谁说了算"。{@link ThemeResources} / {@link ThemeDrawables} /
+     * {@link ThemeContextWrapper} 这类取色/取底通道必须用这一个。
+     *
+     * <p><b>为什么内置主题也必须走它</b>(2026-10-02,魅族 Flyme 强制深色):
+     * 编译期那份颜色资源带 {@code -night} 限定符,而系统/OEM 可以把进程的 {@code uiMode} 翻成夜间
+     * (Flyme 的深色模式会这么干)。布局属性走 {@link ThemeInflaterFactory} + 配方 drawable,
+     * 一直是按运行时调色板画的,所以页面主体不受影响;而<b>代码取色</b>
+     * ({@code ContextCompat.getColor} / {@code getColorStateList} / {@code getDrawable})以及
+     * 用 <b>Application 上下文</b>造的窗口(气泡、Toast、通知、用应用上下文 inflate 的弹窗)
+     * 原来只在自定义主题下被接管 —— 内置主题时它们落到编译期资源上,于是被翻成夜间:
+     * 用户口径就是"<b>只有弹窗/浮层/气泡/通知这类新窗口变深,页面主体还是浅色</b>"。
+     */
+    public static ThemePalette runtimePalette() {
+        ThemeSnapshot current = snapshot;
+        if (current == null || current.colors == null) return null;
+        return current.colors instanceof ThemePalette
+                ? (ThemePalette) current.colors : new ThemePalette(current.colors.asMap());
+    }
+
     /** 完整颜色快照;内置与自定义主题都非空(尚未 install 时除外)。 */
     public static ThemeColorPalette colorPalette() {
         ThemeSnapshot current = snapshot;

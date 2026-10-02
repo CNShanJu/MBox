@@ -10,27 +10,67 @@ import com.github.tvbox.osc.bean.theme.ThemePalette;
 
 /**
  * 运行时换肤的<b>代码取色通道</b>:包一层 {@link Resources},把"随主题走"的颜色按当前调色板返回。
+ * <p>
+ * <b>内置亮/暗主题与自定义主题都走它</b>(2026-10-02 起,原先只服务自定义主题):
+ * 编译期颜色资源带 {@code -night} 限定符,系统/OEM 把进程 {@code uiMode} 翻成夜间时,
+ * 没有这一层的取色(以及用 Application 上下文建的窗口)就会跟着变深,而走运行时调色板的布局却不变
+ * —— 现象是"只有弹窗/气泡/通知这类新窗口变深"。见 {@link ThemeRuntime#runtimePalette()}。
  *
  * <p>为什么需要它:布局里的 {@code @color/xxx} 由系统在 native 侧解析(改不了),但<b>代码里</b>
  * 那些 {@code ContextCompat.getColor(ctx, R.color.text_foreground)} / {@code getColorStateList(...)} /
  * {@code getDrawable(...)} 都会走到 {@link Resources} 的 Java 方法上 —— 在这里替换即可让
- * AppSwitch / AppTitleBar / 占位图 / 悬浮进度圈 / 各适配器 等"自己读色"的组件一起跟着自定义主题走。
+ * AppSwitch / AppTitleBar / 占位图 / 悬浮进度圈 / 各适配器 / 气泡 / 通知 等"自己读色"的组件一起跟着主题走。
  *
  * <p>只覆盖三类方法,其它一律委托父类(父类持有的 AssetManager/资源表就是安装包里那份,
  * 也就是"编译期默认值"),所以<b>未覆盖到的地方最差也只是保持内置配色,不会变成乱色</b>。
  *
  * <p>配置同步:{@link #syncFrom(Resources)} 在每次取用时对齐 Configuration/DisplayMetrics,
- * 避免本实例持有一份过期配置(字体缩放、屏幕尺寸、日夜切换后尺寸算错)。
+ * 避免本实例持有一份过期配置(字体缩放、屏幕尺寸、日夜切换后尺寸算错);是否顺带把明暗位
+ * 归一到我们自己的类型见 {@link #ThemeResources(Resources, boolean)}。
  */
 public class ThemeResources extends Resources {
 
     private final Configuration syncedConfiguration;
     private final DisplayMetrics syncedMetrics = new DisplayMetrics();
+    /** 是否把本包装内的 {@code uiMode} 归一到"我们自己的明暗类型"(见 {@link #normalizeConfig}) */
+    private final boolean normalizeNight;
 
     public ThemeResources(Resources base) {
-        super(base.getAssets(), base.getDisplayMetrics(), base.getConfiguration());
-        syncedConfiguration = new Configuration(base.getConfiguration());
+        this(base, true);
+    }
+
+    /**
+     * @param normalizeNight 是否把包装内的 {@code uiMode} 归一到当前主题的明暗。
+     *                       <p><b>Activity / 弹窗一侧用 true</b>:系统(OEM)把进程翻成夜间时,
+     *                       本包装内连 native 解析的 {@code @color} 与 {@code ?attr} 都按我们的主题走。
+     *                       <p><b>Application 一侧必须用 false</b>:"跟随系统"是读
+     *                       {@code appContext.getResources().getConfiguration().uiMode} 来判系统明暗的
+     *                       (见 {@code ThemeStore.systemNight()} / {@code BaseActivity.systemNightNow()}),
+     *                       把应用级那份也归一了,就等于用我们自己的类型去回答"系统现在是亮还是暗" ——
+     *                       跟随系统会自锁,再也翻不动。应用级那份只需要覆盖取色方法(见 {@link #getColor})。
+     */
+    public ThemeResources(Resources base, boolean normalizeNight) {
+        super(base.getAssets(), base.getDisplayMetrics(),
+                normalizeNight ? normalizeConfig(base.getConfiguration()) : base.getConfiguration());
+        this.normalizeNight = normalizeNight;
+        syncedConfiguration = new Configuration(
+                normalizeNight ? normalizeConfig(base.getConfiguration()) : base.getConfiguration());
         syncedMetrics.setTo(base.getDisplayMetrics());
+    }
+
+    /**
+     * 把配置的明暗位换成"我们自己选的类型"。
+     *
+     * <p>做这件事的意义:包装内所有资源解析(含 {@code Resources} 原生解析的 {@code @color}
+     * 与主题属性)都以这份配置为准,于是系统/OEM 把进程 {@code uiMode} 翻成夜晚也改不动我们界面
+     * —— 只改本实例的配置,不动 {@code base}(系统给的那份),所以"跟随系统"仍读得到真实系统状态。
+     */
+    private static Configuration normalizeConfig(Configuration src) {
+        Configuration cfg = src == null ? new Configuration() : new Configuration(src);
+        int night = ThemeRuntime.type().isDark()
+                ? Configuration.UI_MODE_NIGHT_YES : Configuration.UI_MODE_NIGHT_NO;
+        cfg.uiMode = (cfg.uiMode & ~Configuration.UI_MODE_NIGHT_MASK) | night;
+        return cfg;
     }
 
     /** 与最新配置对齐(变了才调 updateConfiguration,避免每次取色都做一次 native 调用) */
@@ -38,7 +78,8 @@ public class ThemeResources extends Resources {
         // Resources 会原地更新配置；同一个实例也可能已从竖屏切到横屏。
         if (latest == null || latest == this) return;
         try {
-            Configuration now = latest.getConfiguration();
+            Configuration now = normalizeNight
+                    ? normalizeConfig(latest.getConfiguration()) : latest.getConfiguration();
             DisplayMetrics m = latest.getDisplayMetrics();
             if (now == null || m == null) return;
             // 比较上次基础资源的内容快照，既识别原地更新，也保留 AutoSize 对包装资源的密度适配。
@@ -53,9 +94,12 @@ public class ThemeResources extends Resources {
         }
     }
 
-    /** 当前生效的调色板;没有自定义主题时返回 null(此时全部走父类的编译期默认值) */
+    /**
+     * 当前生效的调色板:{@link ThemeRuntime#runtimePalette()}(内置亮/暗主题也非空)。
+     * 只有"快照还没装配"时才为 null,那时代码取色退回父类的编译期默认值。
+     */
     private ThemePalette palette() {
-        return ThemeRuntime.palette();
+        return ThemeRuntime.runtimePalette();
     }
 
     private Integer overrideColor(int id) {

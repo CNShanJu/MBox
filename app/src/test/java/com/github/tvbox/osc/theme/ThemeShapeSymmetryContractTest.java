@@ -144,7 +144,7 @@ public class ThemeShapeSymmetryContractTest {
     public void runtimeCornerMathMatchesGeneratedXmlForEveryRecipe() throws Exception {
         File root = repoRoot();
         JsonObject recipes = JsonParser.parseString(
-                read(new File(root, "app/src/main/assets/theme/theme_shapes.json"))).getAsJsonObject();
+                read(new File(root, "app/src/main/assets/theme/radius/theme_shapes.json"))).getAsJsonObject();
         File generatedDir = new File(root, "app/build/generated/theme_shapes/drawable");
         Map<String, Float> radii = dimenTable();
 
@@ -172,7 +172,7 @@ public class ThemeShapeSymmetryContractTest {
     public void onlyTheDrawerFamilyMayHaveAsymmetricCorners() throws Exception {
         File root = repoRoot();
         JsonObject recipes = JsonParser.parseString(
-                read(new File(root, "app/src/main/assets/theme/theme_shapes.json"))).getAsJsonObject();
+                read(new File(root, "app/src/main/assets/theme/radius/theme_shapes.json"))).getAsJsonObject();
         Map<String, Float> radii = dimenTable();
 
         List<String> bad = new ArrayList<>();

@@ -34,7 +34,7 @@ public final class ThemeJson {
 
     /** 已知的非颜色顶层字段(解析时不算"不认识的键") */
     private static final String[] META_FIELDS = {
-            "kind", "schema", "id", "name", "type", "createdAt", "desc", "background",
+            "kind", "schema", "id", "name", "type", "default", "createdAt", "desc", "background",
             "colors", "radii", "strokes"};
 
     /**
@@ -79,19 +79,22 @@ public final class ThemeJson {
             }};
 
     /**
-     * v1 里这两个键的<b>语义与现在正好对调</b>(v1: highlight=强调、accent=高亮;v2 按英文词义摆正:
-     * accent=强调、highlight=高亮),所以读到老文件时要把两者的值互相换位。
+     * v1 中 accent 是高亮、highlight 是普通强调；读取老文件时仍须对调，
+     * 才能把旧 accent 的值保留到当前可配置的 text_highlight。
+     * 旧 highlight 对应的 text_accent 已并入文字主色。
      */
     private static final String SWAP_A = "text_highlight";
     private static final String SWAP_B = "text_accent";
 
-    /** 这份 JSON 是不是旧键名的老文件(出现任意一个旧键名即认为是) */
     /**
      * 已取消的配置项:读到它们时给一句专门提示(比"不认识的项"好懂),值不参与派生、也不进识别计数。
+     * {@code text_accent} 与 {@code btn_confirm_bg} 单独静默忽略，覆盖安装后读取旧主题不弹出无须处理的提示。
      *
      * <p>{@code text_main}(正文文字)= 与主题主色 {@code brand} <b>合并</b>:两者永远同一个值,
      * 所以不再单独配(用户口径:"正文颜色和主题主色共用,移除正文颜色的key")。
      * 资源名 {@code text_main} 仍然存在,由 {@code brand} 派生 —— 布局与代码一行都不用改。
+     * {@code text_accent}(标题/普通选中文字)也由 {@code brand} 派生；
+     * 链接等高亮仍使用可配置的 {@code text_highlight}。
      *
      * <p>{@code brand_text}(主色上的文字)= 唯一用途是派生 {@code btn_select_text},
      * 现在 {@code btn_select_text} 直接取 {@code btn_confirm_text}(用户口径:"选中/小组件选中态的文字
@@ -142,7 +145,7 @@ public final class ThemeJson {
     // 写
     // ------------------------------------------------------------------
 
-    /** 主题 → JSON 文本(键顺序固定:元信息 → 25 个可配置项 → 背景),带缩进便于阅读/手改 */
+    /** 主题 → JSON 文本(键顺序固定:元信息 → 可配置项 → 背景),带缩进便于阅读/手改 */
     public static String toJson(ThemeDef def) {
         JsonObject o = new JsonObject();
         o.addProperty("kind", ThemeDef.KIND);
@@ -243,10 +246,9 @@ public final class ThemeJson {
         boolean nestedColors = colorObject != o;
         boolean legacy = !nestedColors && isLegacyFile(o);
 
-        // ① 老文件先整份搬到新键名(含 text_highlight ⇄ text_accent 对调)——
+        // ① 老文件先按旧语义搬值:旧 accent → 当前 highlight；旧 highlight 已随文字主色。
         //    这一步必须在按新键名读之前做,否则老值会被当成"不认识的项"丢掉、再被内置主题补齐
         if (legacy) {
-            warnings.add("这是旧版本的主题文件,已自动升级键名");
             for (Map.Entry<String, JsonElement> e : colorObject.entrySet()) {
                 String old = e.getKey();
                 String target = LEGACY_RENAMES.containsKey(old)
@@ -284,8 +286,10 @@ public final class ThemeJson {
                 }
                 def.setColor(target, raw);
                 recognized++;
+            } else if ("text_accent".equals(key) || "btn_confirm_bg".equals(key)) {
+                // 旧主题的独立强调色和主按钮底色已由 brand 派生，静默忽略。
             } else if (REMOVED_KEYS.contains(key)) {
-                warnings.add("「" + key + "」已与「主题主色」合并,调主色即可(这一项已忽略)");
+                warnings.add("「" + key + "」已与「文字主色」合并,调文字主色即可(这一项已忽略)");
             } else if (!nestedColors && !isMeta(key)) {
                 warnings.add("不认识的项「" + key + "」已忽略");
             } else if (nestedColors) {

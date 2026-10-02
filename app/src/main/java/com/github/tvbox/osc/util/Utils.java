@@ -255,5 +255,40 @@ public class Utils {
                                 : AppCompatDelegate.MODE_NIGHT_NO);
                 break;
         }
+        logNightModeState("主题生效");
+    }
+
+    /**
+     * 排障用一行:"明暗到底谁说了算"。
+     *
+     * <p>四项一起写:①系统设置里的夜间模式 + 应用自己声明的夜间模式(Android 12+);
+     * ②<b>应用级</b> {@code Configuration} 的明暗位(系统/OEM 有没有把进程翻成夜间 —— 魅族 Flyme 会翻);
+     * ③我们生效的主题类型;④供色通道是不是运行时调色板(是的话②翻了界面颜色也不会跟着翻)。
+     *
+     * <p>用途:遇到"被系统深色模式强制覆盖"的机型先看这一行 ——
+     * ②是夜间而③是亮色、④为 true,就是"系统翻了、我们没跟",属于预期(界面由我们自己的主题说了算);
+     * 若④为 false,说明快照没装配好,那条通道仍会按 {@code -night} 资源画(该修的是装配时机)。
+     */
+    public static void logNightModeState(String when) {
+        try {
+            int appUiMode = App.getInstance().getResources().getConfiguration().uiMode
+                    & Configuration.UI_MODE_NIGHT_MASK;
+            String setting = "-";
+            try {
+                android.app.UiModeManager um = (android.app.UiModeManager)
+                        App.getInstance().getSystemService(android.content.Context.UI_MODE_SERVICE);
+                // getNightMode() = 系统设置里选的夜间模式偏好(0=自动,1=关,2=开,3=自定义时间)
+                if (um != null) setting = String.valueOf(um.getNightMode());
+            } catch (Throwable ignored) {
+            }
+            com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM,
+                    "明暗(" + when + "): 系统配置=" + (appUiMode == Configuration.UI_MODE_NIGHT_YES ? "夜间" : "白天")
+                            + ", 系统偏好=" + setting
+                            + ", 生效主题=" + com.github.tvbox.osc.theme.ThemeRuntime.type()
+                            + ", 运行时供色=" + (com.github.tvbox.osc.theme.ThemeRuntime.runtimePalette() != null)
+                            + ", 自定义=" + com.github.tvbox.osc.theme.ThemeRuntime.active()
+                            + ", 跟随系统=" + com.github.tvbox.osc.theme.ThemeRuntime.followsSystem());
+        } catch (Throwable ignored) {
+        }
     }
 }

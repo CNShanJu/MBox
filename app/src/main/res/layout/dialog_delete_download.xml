@@ -42,7 +42,7 @@
             android:layout_marginStart="6dp"
             android:layout_weight="1"
             android:text="同时删除本地文件"
-            android:textColor="@color/text_foreground"
+            android:textColor="@color/text_danger"
             android:textSize="14sp" />
     </LinearLayout>
 

@@ -37,7 +37,7 @@ import java.util.Map;
  */
 public final class ThemeDrawableFactory {
 
-    private static final String RECIPES_ASSET = "theme/theme_shapes_runtime.json";
+    private static final String RECIPES_ASSET = "theme/radius/theme_shapes_runtime.json";
     private static volatile Map<String, ThemeShapeRecipe> recipes;
 
     private ThemeDrawableFactory() {

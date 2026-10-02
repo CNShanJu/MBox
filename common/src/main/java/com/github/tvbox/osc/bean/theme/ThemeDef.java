@@ -9,7 +9,7 @@ import java.util.Map;
  * 一个主题的完整定义(纯数据,Bright 亮色 / Dark 暗色都算):<b>用户自定义主题</b>的落盘形态,
  * 也是导出/导入主题包的内容本体。
  *
- * <p>字段与 {@code assets/theme/theme_colors*.json} 保持同一套键名(多了 {@code kind/id/name/schema/background}),
+ * <p>颜色字段与 {@code assets/theme/themes/bright/*.json}、{@code dark/*.json} 保持同一套键名,
  * 所以内置主题文件可以直接当模板发给别人改,改完导入即可。
  *
  * <p>几个刻意的设计:
@@ -45,7 +45,7 @@ public final class ThemeDef {
     private ThemeType type = ThemeType.BRIGHT;
     /** 创建时间(毫秒):主题列表按它升序(新建的排在后面,与"保存后插到列表下方"的观感一致) */
     private long createdAt = 0L;
-    /** 25 个可配置项:键 → 值(颜色 {@code #RRGGBB}/{@code #AARRGGBB},透明度 {@code "0".."100"}) */
+    /** 可配置项:键 → 值(颜色 {@code #RRGGBB}/{@code #AARRGGBB},透明度 {@code "0".."100"}) */
     private final LinkedHashMap<String, String> colors = new LinkedHashMap<>();
     /** schema 3:语义圆角(dp,无单位后缀) */
     private final LinkedHashMap<String, Float> radii = new LinkedHashMap<>();
