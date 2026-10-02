@@ -194,28 +194,34 @@ jobs:
             exit 0
           fi
 
-          # 上传附件。要点(2026-10-02 v3.6.3 实测踩过):
-          #   - 原来的 `RES=$(curl ... || true)` 把 curl 的错误和 HTTP 状态全丢了,失败时只剩
-          #     "响应: (空)",完全无法定位;这里显式取 http_code 与 curl 自身退出码。
-          #   - 不再用 --retry(它对 multipart 上传的重试语义不明确),改为失败后重试 1 次并强制重连。
+          # 上传附件。三次实测结论(2026-10-02,v3.6.3 / v3.6.4):
+          #   GitHub 的 Azure runner **直连 Gitee 传大文件不可靠** —— 40MB multipart 上传会拿到
+          #   `curl: (35) Connection reset by peer` / `curl: (52) Empty reply from server`(服务端连响应都不给),
+          #   而同一路径上的小请求(建发行版)是秒成的。所以这一步按"尽力而为"处理。
+          # 血泪教训(必须遵守 AGENTS §九「镜像掉队不该阻断发版」):
+          #   - 这里**任何**失败都只能告警,绝不能让 curl 的退出码冒泡成步骤失败 ——
+          #     上一版写成 `-w` + 循环后,curl 52 直接把整条发版流程拖成 failure,比不传附件更糟。
+          #   - 因此循环结束后**显式 `exit 0`**,这也是"绝不阻断发版"的兜底。
           UPLOAD_OK=0
+          RES=""
+          CODE=""
+          CURL_RC=""
           for ATTEMPT in 1 2; do
-            RESFILE=$(mktemp)
+            RESFILE=$(mktemp 2>/dev/null || echo "/tmp/gitee-attach.out")
             CODE=$(curl -sS --max-time 900 --connect-timeout 30 \
                      -H "Expect:" -H "Connection: close" \
                      -o "$RESFILE" -w '%{http_code}' \
                      -F "access_token=$GITEE_TOKEN" \
                      -F "file=@$APK;filename=$NAME;type=application/vnd.android.package-archive" \
-                     "$API/releases/$RID/attach_files" 2>upload_err.txt)
+                     "$API/releases/$RID/attach_files" 2>upload_err.txt) || true
             CURL_RC=$?
             RES=$(cat "$RESFILE" 2>/dev/null || true)
+            rm -f "$RESFILE"
             if [ "$CODE" = "201" ] || [ "$CODE" = "200" ]; then
               UPLOAD_OK=1
-              rm -f "$RESFILE"
               break
             fi
             echo "::warning title=Gitee 附件上传第 ${ATTEMPT} 次未成功::HTTP=${CODE:-无} curl退出码=${CURL_RC} 响应=$(printf '%s' "$RES" | head -c 300)$(printf '%s' "$(cat upload_err.txt 2>/dev/null)" | head -c 300)"
-            rm -f "$RESFILE"
             sleep 10
           done
           URL=$(printf '%s' "$RES" | jq -r '.browser_download_url // empty' 2>/dev/null || true)
@@ -225,4 +231,8 @@ jobs:
             echo "Gitee 附件已上传(接口未回下载地址,按 HTTP ${CODE} 判定成功)"
           else
             echo "::warning title=Gitee 镜像未同步::附件上传失败(HTTP=${CODE:-无} curl退出码=${CURL_RC:-无} 响应=$(printf '%s' "$RES" | head -c 200))"
+            echo "::warning title=请在发行后本机补传::powershell -File scripts/sync-gitee-release.ps1 -Tag $TAG -ApkPath <apk>(国内链路上传稳定;见 AGENTS「代码托管与镜像同步」)"
           fi
+
+          # 兜底:本步永不失败。镜像掉队只告警,发版以 GitHub Release 为权威(AGENTS §九)。
+          exit 0
