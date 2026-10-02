@@ -2,23 +2,23 @@
   "type": "dark",
   "name": "深色",
   "default": true,
-  "bg_body": "#000321",
-  "bg_surface": "#000000",
+  "bg_body": "#171f38",
+  "bg_surface": "#202b49",
   "bg_card_alpha": 72,
   "bg_float_alpha": 96,
 
   "text_highlight": "#4291ff",
 
-  "brand": "#e9e9e9",
+  "brand": "#f2f2f9",
 
-  "btn_confirm_bg": "#e9e9e9",
+  "btn_confirm_bg": "#f2f2f9",
   "btn_confirm_text": "#222436",
-  "btn_cancel_bg": "#e9e9e9",
+  "btn_cancel_bg": "#f2f2f9",
 
   "success": "#08CA2C",
-  "switch_thumb": "#e9e9e9",
+  "switch_thumb": "#f2f2f9",
 
-  "download_active": "#e9e9e9",
+  "download_active": "#f2f2f9",
 
   "desc": {
     "bg_body": "页面背景色(所有页面的底)",
