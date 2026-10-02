@@ -218,14 +218,17 @@ app / feature
 1. **GitHub 是唯一权威,Gitee 只是镜像**:`origin` = `https://github.com/CNShanJu/MBox.git`(权威:CI、Release 都在这边);
    `gitee` = `https://gitee.com/CnAyo/MBox.git`(国内镜像:**代码** + 发行版附件)。
    另一远端 `legacy` 指向更名前的旧仓库 `CNShanJu/TVBoxOS-Mobile`,只作历史留档,**不要往它推新提交**。
-2. **代码同步优先交给 Gitee 的 Pull 镜像(2026-10-02 定)**:在 Gitee 仓库「管理 → 仓库镜像管理」添加
-   **Pull 方向**镜像(源 = `CNShanJu/MBox`),让 **Gitee 自己从 GitHub 拉**分支/tag/提交 ——
-   Gitee 对"拉 GitHub"有专门优化,比本地/CI 主动往 Gitee 推更快更稳。
+2. **代码同步走 Gitee 的 Pull 镜像(2026-10-02 已配置并实测)**:Gitee 仓库「管理 → 仓库镜像管理」已添加
+   **Pull 方向**镜像(源 = `CNShanJu/MBox`),由 **Gitee 自己从 GitHub 拉**分支/标签/提交 ——
+   Gitee 对"拉 GitHub"有专门优化。**所以日常只需 `git push origin`(GitHub),Gitee 会自己跟上**,
+   不必再手工推第二个远端。
    依据:[Gitee 帮助中心 · 仓库镜像管理](https://help.gitee.com/repository/settings/sync-between-gitee-github)。
+   该文档写明镜像**只同步 分支/标签/提交,不含 Releases 与附件** —— 附件另走第 5 条。
+   最短同步间隔 5 分钟;连续 5 次失败会被强制停止;镜像操作会**覆盖**目标仓库的分支/标签,勿两端同时提交。
    **该配置只能手工在网页做,没有开放 API**(2026-10-02 实测:同令牌下 `POST /releases` 返回 400 说明接口可用,
    而 `GET/POST /repos/{o}/{r}/remote_mirrors` 恒为 404/405);`scripts/setup-gitee-mirror.ps1` 只做身份确认
-   并打印配置步骤,不能代配。另外该文档写明镜像**只同步 分支/标签/提交,不含 Releases 与附件** —— 附件另走第 5 条。
-   配好后本地只需正常 `git push origin`;脚本降为**兜底**(镜像未配或临时失效时用):
+   并打印配置步骤,不能代配。
+   脚本降为**兜底**(镜像未配/临时失效/需要立刻同步时用):
 
    ```powershell
    powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sync-release.ps1 -DryRun   # 先看会推什么
