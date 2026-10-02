@@ -21,19 +21,12 @@ if (appConfigFile.exists()) {
 }
 def cfgVersionCode = (appConfig.getProperty('versionCode', '41') ?: '41').toInteger()
 def cfgVersionName = appConfig.getProperty('versionName', '2.2.0') ?: '2.2.0'
+def cfgDebugVersionName = appConfig.getProperty('debugVersionName')?.trim()
+if (!cfgDebugVersionName) {
+    throw new GradleException('app_config.properties must set debugVersionName to the previous published version')
+}
 def cfgAppName = appConfig.getProperty('appName', 'MBox') ?: 'MBox'
 def cfgAppIcon = appConfig.getProperty('appIcon', '@drawable/app_icon') ?: '@drawable/app_icon'
-
-/** debug 包用小一档的版本号(末段 -1,如 3.4.6 → 3.4.5),使 debug 内"检查更新"能检测到当前 release 并触发下载自测 */
-def debugVersionName(String releaseName) {
-    def parts = (releaseName ?: '').trim().split(/\./)
-    if (parts.length < 3) return releaseName
-    def last = parts[parts.length - 1].isInteger() ? parts[parts.length - 1].toInteger() : -1
-    if (last > 1) {
-        parts[parts.length - 1] = String.valueOf(last - 1)
-    }
-    return parts.join('.')
-}
 
 
 // ------------------------------------------------------------------
@@ -73,10 +66,10 @@ android {
 
         // Apk 输出配置
         variant.outputs.all { output ->
-            // debug 包版本号小一档(如 3.4.5):便于从 debug 包触发对 release(3.4.6)的"检查更新→下载"自测
+            // debug 包显示上一版已发布版本，允许跨版本号跳跃后继续检测本次 release。
             String vn = cfgVersionName
             if (variant.buildType.name == buildTypes.debug.getName()) {
-                vn = debugVersionName(cfgVersionName)
+                vn = cfgDebugVersionName
                 output.versionNameOverride = vn
             }
             outputFileName = cfgAppName + '_v' + vn + '_' + variant.buildType.name
@@ -343,23 +336,22 @@ dependencies {
 }
 
 // ------------------------------------------------------------------
-// 主题颜色生成(3.7② 主题自持,资源与任务现在都在 :app):两个主题各一个文件 ——
-//   assets/theme/theme_colors.json(亮色)→ res/values,theme_colors_night.json(暗色)→ res/values-night
+// 主题颜色生成:扫描 assets/theme/themes/{bright,dark}/,每类恰好一份 default=true。
+// 默认预设生成 res/values 与 res/values-night,其它预设随 assets 打包供运行时选择。
 // 每个文件自包含、**每个概念一个键**(底色/各种面+各自的透明度/各级文字色/品牌色/按钮色板/开关/状态色),
 // 只有"和主色同值的别名"不写进文件,由下面的规则表派生(原文件里同一主题内浅色 #1F2937 重复 9 次、
 // #ECECF4 重复 5 次那类)。文件不存在时用内置默认值。
 // ------------------------------------------------------------------
-def themeColorsFile = file('src/main/assets/theme/theme_colors.json')
-def themeColorsNightFile = file('src/main/assets/theme/theme_colors_night.json')
-def themeRadiiFile = file('src/main/assets/theme/theme_radii.json')
-def themeShapesFile = file('src/main/assets/theme/theme_shapes.json')
+def themePresetDir = file('src/main/assets/theme/themes')
+def themeRadiiFile = file('src/main/assets/theme/radius/theme_radii.json')
+def themeShapesFile = file('src/main/assets/theme/radius/theme_shapes.json')
 def themeColorsDir = file("${buildDir}/generated/theme_colors")
 def themeShapesDir = file("${buildDir}/generated/theme_shapes")
 // 生成的主题资产目录(theme_derived_*.json):作为额外的 assets 源目录合并进 assets/theme/
 def themeAssetsDir = file("${buildDir}/generated/theme_assets")
 
 def defaultRadii = [
-        // 主题文件(assets/theme/theme_radii.json)缺失时的兜底:必须与仓库内那份同值。
+        // 圆角文件(assets/theme/radius/theme_radii.json)缺失时的兜底:必须与仓库内那份同值。
         // 原来这里写的是 25dp —— 主题文件一旦缺失/解析失败,全站圆角会突然变成 25dp
         // (小件的圆角超过半高就会被 GradientDrawable 缩成胶囊,而且不会有任何报错)。
         // 注意:readRadii() 只认**这张表里有的键**(JSON 里多出来的键会 WARN 并忽略),
@@ -397,9 +389,9 @@ def defaultRadii = [
 def defaultLightColors = [
         bg_body: '#faf8ff',
         bg_surface: '#ECECF4', bg_float_alpha: 92, bg_card_alpha: 60,
-        text_accent: '#1F2937', text_highlight: '#1890FF',
+        text_highlight: '#1890FF',
         brand: '#1F2937',
-        btn_confirm_bg: '#1F2937', btn_confirm_text: '#FFFFFF',
+        btn_confirm_text: '#FFFFFF',
         btn_cancel_bg: '#661F2937',
         success: '#08CA2C', switch_thumb: '#FFFFFF',
         download_active: '#037AFF'
@@ -407,9 +399,9 @@ def defaultLightColors = [
 def defaultNightColors = [
         bg_body: '#141218',
         bg_surface: '#211D28', bg_float_alpha: 10, bg_card_alpha: 100,
-        text_accent: '#E5E7EB', text_highlight: '#1890FF',
+        text_highlight: '#1890FF',
         brand: '#E5E7EB',
-        btn_confirm_bg: '#E5E7EB', btn_confirm_text: '#141218',
+        btn_confirm_text: '#141218',
         btn_cancel_bg: '#66E5E7EB',
         success: '#08CA2C', switch_thumb: '#FFFFFF',
         download_active: '#037AFF'
@@ -434,7 +426,7 @@ static def readTheme(def file, def defaults) {
             }
         }
         // 非颜色键(type=主题元信息、desc=说明)不参与派生,也不该被"不认识的键"告警误伤
-        def unknown = json.keySet().findAll { it != 'type' && it != 'desc' && !defaults.containsKey(it) }
+        def unknown = json.keySet().findAll { !(it in ['type', 'name', 'default', 'desc']) && !defaults.containsKey(it) }
         if (unknown) println "WARN: ${file.name} 里有不认识的键(已忽略): ${unknown.join(', ')}"
         def d = json['desc']
         if (d instanceof Map) d.each { k, v -> if (v instanceof String) desc[k] = v }
@@ -446,6 +438,29 @@ static def readTheme(def file, def defaults) {
         println "WARN: ${file.name} 解析失败,使用内置默认颜色: ${th.message}"
     }
     return [colors: colors, desc: desc]
+}
+
+/** 预设目录是文件发现入口;每种明暗必须且只能有一份默认预设。 */
+static File defaultThemeFile(File root, String type) {
+    File dir = new File(root, type)
+    File[] files = dir.listFiles({ File f -> f.isFile() && f.name.endsWith('.json') } as FileFilter)
+    if (files == null || files.length == 0) throw new GradleException("缺少 ${type} 主题预设:${dir}")
+    File selected = null
+    Set<String> names = new HashSet<>()
+    files.sort { a, b -> a.name <=> b.name }.each { File f ->
+        def json = new groovy.json.JsonSlurper().parseText(f.getText('UTF-8'))
+        if (!(json instanceof Map) || json.type != type || !(json.name instanceof String)
+                || json.name.trim().isEmpty() || !(json.default instanceof Boolean)) {
+            throw new GradleException("预设 ${f} 必须包含 type=${type}、非空 name 和布尔 default")
+        }
+        if (!names.add(json.name.trim())) throw new GradleException("${type} 预设名称重复:${json.name}")
+        if (json.default) {
+            if (selected != null) throw new GradleException("${type} 有多份 default=true:${selected.name}, ${f.name}")
+            selected = f
+        }
+    }
+    if (selected == null) throw new GradleException("${type} 没有 default=true 的预设")
+    return selected
 }
 
 /** '#RRGGBB' / '#AARRGGBB' -> 0xAARRGGBB;非法值回退 fallback(入参用 def:Groovy 把 8 位十六进制字面量当 Long) */
@@ -489,17 +504,15 @@ static int withAlpha(def colorRaw, def alphaRaw) {
 //     bg_float_alpha → **浮层**:bg_float(所有弹窗与抽屉、长按/上次看到的气泡、首页直播·筛选悬浮钮与更新悬浮圈)。
 //   一句话:页面上的东西(含卡片里的 item)跟 bg_card_alpha;浮起来的那一层跟 bg_float_alpha。
 // 同值别名(不占配置):
-//   color_highlight / select_fill / btn_plain_text = brand(文字主色)
-//   btn_confirm_stroke = btn_confirm_bg 的**不透明版**(alpha 强制 100%:底色透明时边框线仍要实心)
-//   btn_select_bg   = btn_confirm_bg **本身**(连透明度一起:主按钮无色,选中态就跟着无色)
-//   btn_select_text = btn_confirm_text(选中填充上的文字 = 主按钮文字)
+//   color_highlight / select_fill / btn_plain_text / text_accent = brand(文字主色)
+//   btn_select_bg / btn_select_stroke = brand(实心按钮与选中项共用)
+//   btn_select_text = btn_confirm_text
 //   btn_stroke      = btn_cancel_bg(无文字描边容器与输入框用;历史资源名,值同源)
 //   switch_track_on = download_done = success(正向状态色:开关打开 / 下载完成 —— 原本是两个键,值一直相同)
 // 按钮取色口径(用户口径):
-//   ① 纯色按钮:底 = btn_confirm_bg(可带透明度);描边 = 该底色的不透明版(设成半透明/全透明,边框线照样实心)
+//   ① 纯色按钮:底与描边 = 不透明的 brand
 //   ② 空心按钮:无填充,1dp 描边与文字同取 brand;按下仍不填充
-//   ③ 小组件按钮:未选中描边与文字同取 brand,按下仍不填充;真正选中才填充 btn_select_bg + 文字 btn_confirm_text
-//      —— 用户口径"选中态是背景透明无色啊,文字白色":① 的底设成无色时,选中态同样无色,只剩描边与文字
+//   ③ 小组件按钮:未选中描边与文字同取 brand,按下仍不填充;选中态用 brand 实心填充
 // 不派生的固定色:text_danger / swipe_red / swipe_red_text 已写死在 res/values/colors.xml(不随主题)
 static def derivePalette(def c) {
     // 文字主色**强制纯色**(alpha 归 100):用户口径"文字主色不允许设置透明度,只能纯色" ——
@@ -514,10 +527,9 @@ static def derivePalette(def c) {
     // 「文字主色 50%」:给"链接/地址"这类要压一档、又要跟主色同系的文字(如订阅管理里的订阅地址)。
     // 与 text_sub(60%)分开是因为用户对链接明确要求 50%,别再各自写透明度。
     int textMainHalf = withAlpha(brand, 0.5f)
-    // 同上口径:纯色按钮的底与其"不透明版"描边/小组件选中填充
-    int confirmBg = parseColor(c.btn_confirm_bg, brand)
-    int confirmSolid = withAlpha(confirmBg, 100)
+    // 纯色按钮与选中项的填充、描边同取不透明的文字主色。
     int confirmText = parseColor(c.btn_confirm_text, 0xFFFFFFFF)
+    int highlightText = parseColor(c.text_highlight, 0xFF1890FF)
     int hollowStroke = parseColor(c.btn_cancel_bg, 0xFF661F2937)
     // 同一个颜色、两档透明度:页面层(bg_card_alpha)与浮层(bg_float_alpha)
     int surfaceColor = parseColor(c.bg_surface, 0xFFECECF4)
@@ -537,18 +549,17 @@ static def derivePalette(def c) {
             text_hint        : toHex(textHint),
             text_main_half   : toHex(textMainHalf),
             text_disable     : toHex(textSub),
-            text_accent   : toHex(parseColor(c.text_accent, brand)),
-            text_highlight      : toHex(parseColor(c.text_highlight, 0xFF1890FF)),
+            text_accent   : toHex(brand),
+            text_highlight      : toHex(highlightText),
             color_highlight  : toHex(brand),
             select_fill      : toHex(brand),
             press_overlay    : toHex(withAlpha(brand, 0.24f)),
-            btn_confirm_bg   : toHex(confirmBg),
             btn_confirm_text : toHex(confirmText),
-            btn_confirm_stroke: toHex(confirmSolid),
             btn_cancel_bg    : toHex(hollowStroke),
             btn_plain_text   : toHex(brand),
-            btn_select_bg    : toHex(confirmBg),
+            btn_select_bg    : toHex(brand),
             btn_select_text  : toHex(confirmText),
+            btn_select_stroke: toHex(brand),
             btn_stroke       : toHex(hollowStroke),
             switch_track_on  : toHex(success),
             // 「开关-关」不再单独配(2026-10-01,用户口径"开关关闭颜色不自定义,改成开关开启色 透明度30%,
@@ -639,7 +650,7 @@ static def writeRadiiXml(def dir, def name, def radii, def desc) {
  * (ThemeDerivationParityTest)就能拿它跟运行期算法的结果逐键比对,漂移当场变红。
  */
 static def writeDerivedJson(def dir, def name, def colors) {
-    def valuesDir = new File(dir, 'theme')
+    def valuesDir = new File(dir, 'theme/generated')
     valuesDir.mkdirs()
     def f = new File(valuesDir, "${name}.json")
     def sb = new StringBuilder('{\n')
@@ -731,15 +742,14 @@ static def writeThemeShapes(def source, def resDir, def assetsDir) {
         new File(drawableDir, "${id}.xml").setText('<?xml version="1.0" encoding="utf-8"?>\n' + body + '\n', 'UTF-8')
     }
 
-    def runtimeDir = new File(assetsDir, 'theme')
+    def runtimeDir = new File(assetsDir, 'theme/radius')
     runtimeDir.mkdirs()
     def runtime = groovy.json.JsonOutput.prettyPrint(groovy.json.JsonOutput.toJson(recipes)) + '\n'
     new File(runtimeDir, 'theme_shapes_runtime.json').setText(runtime, 'UTF-8')
 }
 
 task generateThemeColors {
-    inputs.file(themeColorsFile).optional()
-    inputs.file(themeColorsNightFile).optional()
+    inputs.dir(themePresetDir)
     inputs.file(themeRadiiFile).optional()
     inputs.file(themeShapesFile)
     outputs.dir(themeColorsDir)
@@ -759,15 +769,18 @@ task generateThemeColors {
             text_hint      : '派生自文字主色 @40%(占位/提示文字:搜索框的「搜索」、输入框提示)',
             text_main_half : '派生自文字主色 @50%(链接/地址这类要与主色同系但压一档的文字)',
             text_disable   : '派生自文字主色 @60%(禁用文字;与次要文字同值)',
+            text_accent    : '同 brand 文字主色(标题与普通选中文字)',
             btn_plain_text : '派生自 brand 文字主色(空心按钮/纯文字按钮的文字)',
-            btn_select_bg  : '同 btn_confirm_bg(小组件按钮/chip/直播选中条 选中态的填充;连透明度一起,主按钮无色则选中态也无色)',
-            btn_select_text: '同 btn_confirm_text(选中填充上的文字 = 主按钮文字)',
-            btn_confirm_stroke: '派生自 btn_confirm_bg 的不透明版(纯色按钮的边框线:底色带透明度时边框仍然实心)',
+            btn_select_bg  : '同 brand(主按钮、小组件、直播选中项的实心填充)',
+            btn_select_text: '同 btn_confirm_text(实心填充上的文字)',
+            btn_select_stroke: '同 brand(实心填充的描边)',
             btn_stroke     : '同 btn_cancel_bg(无文字描边容器与输入框用;历史资源名)'
     ]
     doLast {
-        def light = readTheme(themeColorsFile, defaultLightColors)
-        def night = readTheme(themeColorsNightFile, defaultNightColors)
+        // 输出目录每次重建,避免迁移前的旧派生 JSON 被继续打进 APK。
+        project.delete(themeAssetsDir)
+        def light = readTheme(defaultThemeFile(themePresetDir, 'bright'), defaultLightColors)
+        def night = readTheme(defaultThemeFile(themePresetDir, 'dark'), defaultNightColors)
         // 两套主题的键、说明都应当一致(同一批概念):不一致 = 改了一边忘了另一边
         def descDiff = (light.desc.keySet() + night.desc.keySet()).unique().findAll { light.desc[it] != night.desc[it] }
         if (descDiff) println "WARN: 两个主题文件的 desc 不一致(同一个键应同一说明): ${descDiff.join(', ')}"
@@ -786,5 +799,5 @@ task generateThemeColors {
 preBuild.dependsOn generateThemeColors
 android.sourceSets.main.res.srcDirs += themeColorsDir
 android.sourceSets.main.res.srcDirs += themeShapesDir
-// 生成的主题资产(assets/theme/theme_derived_*.json)与手写的 assets/theme/*.json 合并进同一个目录
+// 生成的 theme/generated 与 theme/radius 资产和手写预设一起合并进 APK。
 android.sourceSets.main.assets.srcDirs += themeAssetsDir
