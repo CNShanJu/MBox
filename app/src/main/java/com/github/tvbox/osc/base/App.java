@@ -516,6 +516,7 @@ public class App extends MultiDexApplication {
      * @param previous 已有实例:重建时当作"根"派生,复用其连接池/线程池 ——
      *                 同一份配置只换 DNS,没必要连连接池一起丢掉
      */
+    @androidx.annotation.OptIn(markerClass = androidx.media3.common.util.UnstableApi.class)
     private static OkHttpClient buildPlaybackClient(OkHttpClient previous) {
         OkHttpClient.Builder builder = previous != null
                 ? previous.newBuilder()
@@ -539,6 +540,7 @@ public class App extends MultiDexApplication {
      * 落到被丢弃的连接池上(卡顿风险);置脏后由下一次取用统一重建。
      * 一次注册(不注销):本类生命周期 = 进程,监听列表用写时复制不会残留无效引用。
      */
+    @androidx.annotation.OptIn(markerClass = androidx.media3.common.util.UnstableApi.class)
     private void registerDohChangeListener() {
         // 写入方(设置页直接写 / 备份恢复 importConfig / 以后新增入口)一律经 SystemConfig 门面,
         // 这里订阅门面变更并复核 DoH:值真变了才重建(OkGoHelper 内部按 url 早退),

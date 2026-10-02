@@ -1,5 +1,6 @@
 package com.github.tvbox.osc.ui.kit;
 
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.util.AttributeSet;
 import android.view.HapticFeedbackConstants;
@@ -40,13 +41,16 @@ import com.google.android.material.navigation.NavigationBarMenuView;
  * 空白区没有子视图接手势、框架不知道,由本类在长按触发时自己补一次;靠
  * {@link #onTouchEvent} 只在"没有子视图消费"时才会被调用这一点区分两者,所以不会一次长按震两下。
  */
+// Material 没有公开菜单项创建/重初始化回调；这里使用已锁定版本的内部视图，
+// 以在每次菜单重建后清理 Tooltip 并保留遥控器长按烟花。升级 Material 时需复核此实现。
+@SuppressLint("RestrictedApi")
 public class FireworksBottomNavigationView extends BottomNavigationView {
 
     /**
      * 换肤:选中/未选中项的文字与图标色。
      *
      * <p>为什么写在这里:这两个色由 {@code app:itemTextColor} / {@code app:itemIconTint} 给,
-     * 值是 {@code @drawable/bottom_navigation_item_selector} —— 而实测**这个容器拿不到换肤注入**
+     * 值是 {@code @color/bottom_navigation_item_selector} —— 而实测**这个容器拿不到换肤注入**
      * (它在 MainActivity 的布局里,注入器抓不到;同一个原因让这条底栏的"底"也一直是内置色,
      * 后来靠 ThemeSweep 补色才修好)。所以在组件自己身上按主题色显式设一遍最稳、也不依赖 inflater。
      */
@@ -59,8 +63,8 @@ public class FireworksBottomNavigationView extends BottomNavigationView {
     /** 用主题色重建底栏的选择器,再塞回 Material 的两个入口(重建不出时退回系统那份) */
     private void applyThemedItemColors() {
         try {
-            if (!com.github.tvbox.osc.theme.ThemeRuntime.active()) return;
-            int selector = com.github.tvbox.osc.R.drawable.bottom_navigation_item_selector;
+            if (com.github.tvbox.osc.theme.ThemeRuntime.runtimePalette() == null) return;
+            int selector = com.github.tvbox.osc.R.color.bottom_navigation_item_selector;
             android.content.res.ColorStateList csl =
                     com.github.tvbox.osc.theme.ThemeDrawables.rebuildColorStateList(selector, getResources());
             if (csl == null) {

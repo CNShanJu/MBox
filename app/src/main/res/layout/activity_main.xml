@@ -36,12 +36,12 @@
                 app:itemBackground="@android:color/transparent"
                 app:itemActiveIndicatorStyle="@style/EmptyActiveIndicator"
                 app:itemIconSize="22dp"
-                app:itemIconTint="@drawable/bottom_navigation_item_selector"
+                app:itemIconTint="@color/bottom_navigation_item_selector"
                 app:itemPaddingTop="10dp"
                 app:itemPaddingBottom="11dp"
                 app:itemTextAppearanceActive="@style/NavItemTextAppearance"
                 app:itemTextAppearanceInactive="@style/NavItemTextAppearance"
-                app:itemTextColor="@drawable/bottom_navigation_item_selector"
+                app:itemTextColor="@color/bottom_navigation_item_selector"
                 app:labelVisibilityMode="labeled"
                 app:menu="@menu/main_bottom_navigation"/>
     </FrameLayout>

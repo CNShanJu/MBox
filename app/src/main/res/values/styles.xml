@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
 
     <!-- ================= 小组件按钮(唯一一份,全局复用) =================
          日志分类键 / 背景图"调整组件位置"键 / 搜索页历史·热词·联想键 / 播放器设置面板里的键 / JSON 导入的「粘贴」键,
@@ -25,7 +25,8 @@
         <item name="android:minHeight">34dp</item>
         <item name="android:gravity">center</item>
         <item name="android:singleLine">true</item>
-        <item name="android:paddingHorizontal">10dp</item>
+        <item name="android:paddingStart">10dp</item>
+        <item name="android:paddingEnd">10dp</item>
     </style>
 
     <!-- 背景图设置页的预设 chip:就是小组件按钮(等分宽度 + 12sp 小一号字),底与字都跟 WidgetBtn 同一套。
@@ -36,8 +37,10 @@
         <item name="android:layout_width">0dp</item>
         <item name="android:layout_height">34dp</item>
         <item name="android:layout_weight">1</item>
-        <item name="android:layout_marginHorizontal">4dp</item>
-        <item name="android:paddingHorizontal">6dp</item>
+        <item name="android:layout_marginStart">4dp</item>
+        <item name="android:layout_marginEnd">4dp</item>
+        <item name="android:paddingStart">6dp</item>
+        <item name="android:paddingEnd">6dp</item>
         <item name="android:textSize">12sp</item>
         <item name="android:ellipsize">end</item>
     </style>
@@ -46,7 +49,7 @@
 
     <style name="AppTheme" parent="Theme.Material3.DayNight.NoActionBar">
         <!-- 明暗由应用的主题选择解析；系统只提供亮暗信号，不自动重着色页面。 -->
-        <item name="android:forceDarkAllowed">false</item>
+        <item name="android:forceDarkAllowed" tools:targetApi="29">false</item>
         <!-- Material 3 色板 -->
         <item name="colorPrimary">@color/md_primary</item>
         <item name="colorOnPrimary">@color/md_on_primary</item>
@@ -85,8 +88,8 @@
         <item name="android:windowFullscreen">true</item>
         <item name="android:windowDrawsSystemBarBackgrounds">false</item>
         <!-- Android 12+ 系统启动画面:背景跟随主题 + 透明图标,去掉"从小变大"的缩放动画 -->
-        <item name="android:windowSplashScreenBackground">@color/bg_body</item>
-        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_splash_blank</item>
+        <item name="android:windowSplashScreenBackground" tools:targetApi="31">@color/bg_body</item>
+        <item name="android:windowSplashScreenAnimatedIcon" tools:targetApi="31">@drawable/ic_splash_blank</item>
     </style>
 
     <style name="AppTheme.NoActionBar">
@@ -194,7 +197,8 @@
         <item name="android:background">?android:attr/selectableItemBackgroundBorderless</item>
         <item name="android:gravity">center</item>
         <item name="android:minHeight">32dp</item>
-        <item name="android:paddingHorizontal">8dp</item>
+        <item name="android:paddingStart">8dp</item>
+        <item name="android:paddingEnd">8dp</item>
         <item name="android:textColor">@color/btn_plain_text</item>
         <item name="android:textSize">14sp</item>
     </style>

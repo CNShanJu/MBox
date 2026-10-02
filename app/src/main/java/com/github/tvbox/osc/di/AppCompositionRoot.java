@@ -20,6 +20,7 @@ public final class AppCompositionRoot {
     }
 
     /** App.onCreate 网络/下载组件初始化后调用 */
+    @androidx.annotation.OptIn(markerClass = androidx.media3.common.util.UnstableApi.class)
     public static void init() {
         android.util.Log.i("AppCompositionRoot", "init: 注入 UrlResolver/ManualCheck/Content/NetworkProvider");
         // "网络不可用"页路由:首页断网或联网请求因断网失败时拉起独立页面(有网自动返回)。

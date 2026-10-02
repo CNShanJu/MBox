@@ -42,6 +42,7 @@ public final class PlayerKernels {
 
     /** doikki 内核工厂:1=IJK(带解码配置) 2=Media3 其它=系统 AndroidMediaPlayer */
     @SuppressWarnings("rawtypes")
+    @androidx.annotation.OptIn(markerClass = androidx.media3.common.util.UnstableApi.class)
     public static PlayerFactory doikkiFactory(int playerType, IJKCode codec) {
         switch (playerType) {
             case 1:

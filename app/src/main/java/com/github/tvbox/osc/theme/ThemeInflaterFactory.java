@@ -1,5 +1,6 @@
 package com.github.tvbox.osc.theme;
 
+import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Context;
 import android.content.res.ColorStateList;
@@ -249,6 +250,7 @@ public final class ThemeInflaterFactory implements LayoutInflater.Factory2 {
     }
 
     /** API 29+ 可直接设置句柄与闪烁光标，覆盖系统主题缓存里的旧强调色。 */
+    @androidx.annotation.RequiresApi(29)
     private static void tintTextHandlesAndCursor(EditText editText, int color) {
         try {
             Drawable middle = tintedHandle(editText.getTextSelectHandle(), editText, color);
@@ -283,6 +285,8 @@ public final class ThemeInflaterFactory implements LayoutInflater.Factory2 {
      * 现象就是"布局明明写了 50%,占位却还是老灰"。
      * 判据:该属性在内联里出现过(再算上 TextInputLayout 的 {@code hintTextColor},两者同义)就跳过。
      */
+    // resolvedAttrs 是合法的 attr ID 数组；Lint 把该重载的参数误判成 R.styleable。
+    @SuppressLint("ResourceType")
     private void applyResolvedStyleAttrs(View view, Context context, AttributeSet attrs,
                                          ThemeColorPalette palette) {
         final int[] resolvedAttrs = {android.R.attr.textColor, android.R.attr.background};
