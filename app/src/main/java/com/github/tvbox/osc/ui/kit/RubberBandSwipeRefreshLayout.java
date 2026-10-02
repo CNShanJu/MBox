@@ -109,20 +109,16 @@ public class RubberBandSwipeRefreshLayout extends FrameLayout {
     /** 下拉 scrub 当前帧进度(0..1):拖动手势中随位移推进并自动轮回;松手触发刷新时从此帧续播 */
     private float mScrubProgress = 0f;
 
-    // ---- 注入环境:动画资产/toast/业务日志(由页面用 LoadingAnim/AppBubble/LogStore 组装,kit 不直连) ----
+    // ---- 注入环境:动画资产/toast(由页面组装,kit 不直连) ----
     private PullRefreshEnv mEnv = PullRefreshEnv.NONE;
 
-    /** 注入页面环境(动画文件/尺寸 + toast/业务日志);不注入则动画/提示无副作用 */
+    /** 注入页面环境(动画文件/尺寸 + toast);不注入则动画/提示无副作用 */
     public void setEnv(@Nullable PullRefreshEnv env) {
         mEnv = env != null ? env : PullRefreshEnv.NONE;
     }
 
     private void toast(String msg) {
         mEnv.toast(msg);
-    }
-
-    private void logBiz(String msg) {
-        mEnv.log(msg);
     }
 
     public RubberBandSwipeRefreshLayout(@NonNull Context context) {
@@ -180,7 +176,6 @@ public class RubberBandSwipeRefreshLayout extends FrameLayout {
             mRePullDown = false;
             mRePullNotified = false;
             settleTo(0f);
-            logBiz("下拉刷新: 结束(数据就绪)");
             toast("刷新完成");
         }
         updateIndicator();
@@ -353,7 +348,6 @@ public class RubberBandSwipeRefreshLayout extends FrameLayout {
                     // 不触发新流程(上一轮未完成)
                     if (!mRePullNotified && mRawPull >= mCancelTriggerPx) {
                         mRePullNotified = true;
-                        logBiz("下拉刷新: 识别到重复下拉(上一轮未完成),防抖不触发新流程");
                         toast("正在刷新中,请稍候");
                     }
                     return true;
@@ -395,7 +389,6 @@ public class RubberBandSwipeRefreshLayout extends FrameLayout {
                     scheduleTimeout();
                     settleTo(refreshHoldOffset());
                     updateIndicator();
-                    logBiz("下拉刷新: 触发,等待业务数据");
                     toast("开始刷新");
                     mRefreshListener.onRefresh();
                 } else if (!mRefreshing) {
@@ -422,7 +415,6 @@ public class RubberBandSwipeRefreshLayout extends FrameLayout {
         mSwallow = true;
         mReArmAt = now() + RE_ARM_COOLDOWN_MS;
         cancelTimeout();
-        logBiz("下拉刷新: 打断(用户操作,将丢弃在途结果)");
         toast("刷新已取消");
         if (mRefreshCancelListener != null) {
             mRefreshCancelListener.onRefreshCancelled();
@@ -613,7 +605,6 @@ public class RubberBandSwipeRefreshLayout extends FrameLayout {
     private final Runnable mRefreshTimeout = () -> {
         if (mRefreshing) {
             mRefreshing = false;
-            logBiz("下拉刷新: 超时(8s)强制收起");
             settleTo(0f);
             updateIndicator();
         }

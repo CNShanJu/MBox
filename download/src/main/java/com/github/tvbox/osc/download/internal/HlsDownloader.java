@@ -363,9 +363,6 @@ class HlsDownloader {
                     try {
                         session.run(idx, () -> downloadSegment(idx, segments.get(idx), segFile, 0, t,
                                 segKeys.get(idx), keyCache, null, segRanges.get(idx)));
-                        // 单项补下成功: 片i 成功 bytes
-                        DownloadLog.LOG.success(DownloadSubType.REPAIR, "补片/片 " + idx + " 成功 " + segFile.length() + "B",
-                                DownloadLog.extras(t.episodeId));
                         okCount++;
                     } catch (IOException e) {
                         if (DownloadExecutor.isInterrupted(t) || e instanceof DownloadErrors.SessionExpired
@@ -928,8 +925,6 @@ class HlsDownloader {
                                 Log.i("TVBox-Download", "分片是包裹型(" + probe.contentHint + " 壳里藏 TS),剥壳下载: "
                                         + segFile.getName() + " 头 " + plan.offset + " 字节,载荷 "
                                         + (plan.length < 0 ? "至流末尾" : plan.length + "B"));
-                                DownloadLog.LOG.info(DownloadSubType.SEGMENT, "包裹型分片剥壳: " + segFile.getName()
-                                        + " 丢弃容器头 " + plan.offset + "B", DownloadLog.extras(t.episodeId));
                                 try {
                                     writeText(wrapMarker, "1");
                                 } catch (Throwable ignored) {

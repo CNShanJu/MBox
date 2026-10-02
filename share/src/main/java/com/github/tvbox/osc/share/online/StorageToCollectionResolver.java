@@ -221,7 +221,6 @@ public final class StorageToCollectionResolver implements StorageToLinkResolver 
         if (direct.isEmpty()) direct = firstMatch(LEGACY_HOTLINK, html, ref);
         if (direct.isEmpty()) {
             // 页面结构没对上:如实说清,并给出可用的替代做法
-            LogStore.log(Category.SYSTEM, "分享: storage.to 分享页未解析出直链 " + ref);
             throw new ShareException(ShareErrorCode.PARSE,
                     "无法从该分享页直接取文件(平台可能已改版)。"
                             + "请在浏览器打开链接自行下载,再从本地文件导入;"

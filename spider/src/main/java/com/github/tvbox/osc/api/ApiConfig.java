@@ -177,7 +177,7 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
                 json = content;
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            LogStore.fail(Category.SUBSCRIPTION, "订阅: 配置解码失败 (" + exceptionType(e) + ")");
         }
         return json;
     }
@@ -225,8 +225,7 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
                 LiveChannelGroup userLiveGroup = proxyLiveGroup(userLiveUrl);
                 if (userLiveGroup != null) liveChannelGroupList.add(userLiveGroup);
             }
-            LogStore.log(Category.SUBSCRIPTION,
-                    "订阅: 切换配置时清理旧订阅直播源 " + loadedSubscriptionUrl + " -> " + apiUrl);
+            LogStore.log(Category.SUBSCRIPTION, "订阅: 切换配置时清理旧订阅直播源");
             loadedSubscriptionUrl = "";
         }
         if (apiUrl.isEmpty()) {
@@ -240,7 +239,7 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
                 callback.success();
                 return;
             } catch (Throwable th) {
-                th.printStackTrace();
+                LogStore.fail(Category.SUBSCRIPTION, "订阅: 缓存配置解析失败 (" + exceptionType(th) + ")");
             }
         }
         String TempKey = null, configUrl = "", pk = ";pk;";
@@ -293,28 +292,29 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
                         fos.flush();
                         fos.close();
                     } catch (Throwable th) {
-                        th.printStackTrace();
+                        LogStore.fail(Category.SUBSCRIPTION, "订阅: 配置缓存写入失败 (" + exceptionType(th) + ")");
                     }
-                    LogStore.success(Category.SUBSCRIPTION, "订阅: 加载配置成功 " + apiUrl);
+                    LogStore.success(Category.SUBSCRIPTION, "订阅: 加载配置成功 (" + logSource(apiUrl) + ")");
                     callback.success();
                 } catch (Throwable th) {
-                    th.printStackTrace();
-                    LogStore.fail(Category.SUBSCRIPTION, "订阅: 配置解析失败 " + apiUrl + " " + th.getMessage());
+                    LogStore.fail(Category.SUBSCRIPTION,
+                            "订阅: 配置解析失败 (" + logSource(apiUrl) + ", " + exceptionType(th) + ")");
                     callback.error(parseErrorTip(th));
                 }
             }
 
             @Override
             public void onError(Throwable e) {
-                LogStore.fail(Category.SUBSCRIPTION, "订阅: 配置拉取失败 " + apiUrl + " " + (e != null ? e.getMessage() : ""));
+                LogStore.fail(Category.SUBSCRIPTION,
+                        "订阅: 配置拉取失败 (" + logSource(apiUrl) + ", " + exceptionType(e) + ")");
                 if (cache.exists()) {
                     try {
                         parseJson(apiUrl, cache);
-                        LogStore.log(Category.SUBSCRIPTION, "订阅: 拉取失败改用本地缓存配置 " + apiUrl);
+                        LogStore.log(Category.SUBSCRIPTION, "订阅: 拉取失败改用本地缓存配置");
                         callback.success();
                         return;
                     } catch (Throwable th) {
-                        th.printStackTrace();
+                        LogStore.fail(Category.SUBSCRIPTION, "订阅: 本地缓存配置解析失败 (" + exceptionType(th) + ")");
                     }
                 }
                 callback.error("拉取配置失败\n" + (e != null ? e.getMessage() : ""));
@@ -335,12 +335,24 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
         return "解析配置失败";
     }
 
+    /** 日志只记录来源类型，绝不写入含口令、查询参数或本地路径的原始地址。 */
+    private static String logSource(String address) {
+        if (address == null || address.isEmpty()) return "未设置来源";
+        if (address.startsWith("clan://")) return "本地订阅";
+        if (address.startsWith("http://") || address.startsWith("https://")) return "网络订阅";
+        return "其他订阅";
+    }
+
+    private static String exceptionType(Throwable error) {
+        return error == null ? "未知错误" : error.getClass().getSimpleName();
+    }
+
     public void loadJar(boolean useCache, String spider, LoadConfigCallback callback) {
         String[] urls = spider.split(";md5;");
         String jarUrl = urls[0];
         String md5 = urls.length > 1 ? urls[1].trim() : "";
         File cache = new File(getAppContext().getFilesDir().getAbsolutePath() + "/csp.jar");
-        LogStore.log(Category.SUBSCRIPTION, "订阅: 开始更新爬虫 jar " + jarUrl);
+        LogStore.log(Category.SUBSCRIPTION, "订阅: 开始更新爬虫 jar");
 
         String realJarUrl = jarUrl.replace("img+", "");
         boolean isJarInImg = jarUrl.startsWith("img+");
@@ -350,7 +362,7 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
         String lastJarUrl = legacyPrefs(HawkConfig.SPIDER_JAR_URL, "");
         boolean subscriptionSwitched = JarCachePolicy.jarUrlChanged(lastJarUrl, realJarUrl);
         if (subscriptionSwitched) {
-            clearSourceJarCache("订阅已更换(爬虫 jar 地址变了)");
+            clearSourceJarCache();
         }
         if (!realJarUrl.equals(lastJarUrl)) {
             PrefsDataStore.put(HawkConfig.SPIDER_JAR_URL, realJarUrl);
@@ -362,16 +374,16 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
         String cachedMd5 = cacheExists && !md5.isEmpty() ? MD5.getFileMd5(cache) : "";
         if (JarCachePolicy.cacheUsable(cacheExists, md5, cachedMd5, useCache)) {
             if (jarLoader.load(cache.getAbsolutePath())) {
-                LogStore.success(Category.SUBSCRIPTION, "订阅: 使用缓存爬虫 jar " + jarUrl);
+                LogStore.success(Category.SUBSCRIPTION, "订阅: 使用缓存爬虫 jar");
                 callback.success();
             } else {
-                LogStore.fail(Category.SUBSCRIPTION, "订阅: 缓存爬虫 jar 加载失败 " + jarUrl);
+                LogStore.fail(Category.SUBSCRIPTION, "订阅: 缓存爬虫 jar 加载失败");
                 callback.error("");
             }
             return;
         }
         if (cacheExists && !md5.isEmpty()) {
-            LogStore.log(Category.SUBSCRIPTION, "订阅: 本地爬虫 jar 与订阅声明不符(md5),重新下载 " + jarUrl);
+            LogStore.log(Category.SUBSCRIPTION, "订阅: 本地爬虫 jar 与订阅声明不符(md5),重新下载");
         }
 
         Map<String, String> headers = new HashMap<>();
@@ -389,8 +401,8 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
                         // 解出来不是包就别动本地那份:原来无条件 delete+覆盖,解码失败会把上一份
                         // 可用 jar 一起毁掉(兜底也就没得兜了)
                         if (imgJar == null || imgJar.length < 4 || imgJar[0] != 'P' || imgJar[1] != 'K') {
-                            LogStore.fail(Category.SUBSCRIPTION, "订阅: 爬虫 jar 图片套路解析失败(内容不是包) " + realJarUrl);
-                            fallbackToLocalJar(cache, cacheExists, realJarUrl, callback);
+                            LogStore.fail(Category.SUBSCRIPTION, "订阅: 爬虫 jar 图片套路解析失败(内容不是包)");
+                            fallbackToLocalJar(cache, cacheExists, callback);
                             return;
                         }
                         if (cache.exists())
@@ -399,31 +411,31 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
                         fos.write(imgJar);
                         fos.flush();
                         fos.close();
-                        onJarDownloaded(cache, md5, callback, realJarUrl);
+                        onJarDownloaded(cache, md5, callback);
                     } catch (Throwable th) {
-                        th.printStackTrace();
-                        LogStore.fail(Category.SUBSCRIPTION, "订阅: 爬虫 jar 图片套路解析失败 " + realJarUrl);
-                        fallbackToLocalJar(cache, cacheExists, realJarUrl, callback);
+                        LogStore.fail(Category.SUBSCRIPTION,
+                                "订阅: 爬虫 jar 图片套路解析失败 (" + exceptionType(th) + ")");
+                        fallbackToLocalJar(cache, cacheExists, callback);
                     }
                 }
 
                 @Override
                 public void onError(Throwable e) {
-                    LogStore.fail(Category.SUBSCRIPTION, "订阅: 爬虫 jar 下载失败 " + realJarUrl + " " + (e != null ? e.getMessage() : ""));
-                    fallbackToLocalJar(cache, cacheExists, realJarUrl, callback);
+                    LogStore.fail(Category.SUBSCRIPTION, "订阅: 爬虫 jar 下载失败 (" + exceptionType(e) + ")");
+                    fallbackToLocalJar(cache, cacheExists, callback);
                 }
             });
         } else {
             HttpClient.download(realJarUrl, cache, headers, null, new FCallBack() {
                 @Override
                 public void onSuccess(File file) {
-                    onJarDownloaded(cache, md5, callback, realJarUrl);
+                    onJarDownloaded(cache, md5, callback);
                 }
 
                 @Override
                 public void onError(Throwable e) {
-                    LogStore.fail(Category.SUBSCRIPTION, "订阅: 爬虫 jar 下载失败 " + realJarUrl + " " + (e != null ? e.getMessage() : ""));
-                    fallbackToLocalJar(cache, cacheExists, realJarUrl, callback);
+                    LogStore.fail(Category.SUBSCRIPTION, "订阅: 爬虫 jar 下载失败 (" + exceptionType(e) + ")");
+                    fallbackToLocalJar(cache, cacheExists, callback);
                 }
             });
         }
@@ -436,9 +448,9 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
      * 顶上来只会得到一堆看不懂的失败,已在 {@link #loadJar} 开头清掉);
      * 且无论成败都给用户失败提示 —— 用的可能不是订阅当前那份,不能装作一切正常。
      */
-    private void fallbackToLocalJar(File cache, boolean cacheExists, String jarUrl, LoadConfigCallback callback) {
+    private void fallbackToLocalJar(File cache, boolean cacheExists, LoadConfigCallback callback) {
         if (cacheExists && JarLoader.isLoadableArchive(cache) && jarLoader.load(cache.getAbsolutePath())) {
-            LogStore.log(Category.SUBSCRIPTION, "订阅: 爬虫 jar 更新失败,回退使用本地缓存(可能与订阅不一致,部分源会不可用) " + jarUrl);
+            LogStore.log(Category.SUBSCRIPTION, "订阅: 爬虫 jar 更新失败,回退使用本地缓存(可能与订阅不一致,部分源会不可用)");
         }
         callback.error("");
     }
@@ -448,7 +460,7 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
      * 只在"订阅换了"时调用:这些文件与旧订阅的站点列表一一对应,留着既占地方,
      * 又会在下次加载时被当成可用缓存(旧 jar 里没有新站点声明的类 → 整源空白)。
      */
-    private void clearSourceJarCache(String why) {
+    private void clearSourceJarCache() {
         try {
             File dir = getAppContext().getFilesDir();
             File[] files = dir == null ? null : dir.listFiles();
@@ -461,13 +473,13 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
             }
             // 内存里的 DexClassLoader / 源实例同样作废(文件已删,别再用它们应答)
             jarLoader.reset();
-            LogStore.log(Category.SUBSCRIPTION, "订阅: " + why + ",清理本地爬虫 jar " + removed + " 个");
+            LogStore.log(Category.SUBSCRIPTION, "订阅: 切换配置时清理本地爬虫 jar " + removed + " 个");
         } catch (Throwable th) {
-            th.printStackTrace();
+            LogStore.fail(Category.SUBSCRIPTION, "订阅: 清理爬虫 jar 缓存失败 (" + exceptionType(th) + ")");
         }
     }
 
-    private void onJarDownloaded(File cache, String md5, LoadConfigCallback callback, String jarUrl) {
+    private void onJarDownloaded(File cache, String md5, LoadConfigCallback callback) {
         // 兼容图片套路:部分源把 jar 伪装成 .jpg,内容是 图片+**+base64(jar)(与配置同套路),需先解码
         try {
             if (!isZipFile(cache)) {
@@ -483,25 +495,25 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
                         fos.write(imgJar);
                         fos.flush();
                         fos.close();
-                        LogStore.log(Category.SUBSCRIPTION, "订阅: 爬虫 jar 图片套路解码成功 " + jarUrl);
+                        LogStore.log(Category.SUBSCRIPTION, "订阅: 爬虫 jar 图片套路解码成功");
                     }
                 }
             }
         } catch (Throwable th) {
-            th.printStackTrace();
+            LogStore.fail(Category.SUBSCRIPTION, "订阅: 爬虫 jar 图片套路解码失败 (" + exceptionType(th) + ")");
         }
         // 订阅给了 md5 就必须相符:否则多半是错误页/半截包(原实现下完直接加载,内容不对也照跑)
         if (!md5.isEmpty() && !md5.equalsIgnoreCase(MD5.getFileMd5(cache))) {
-            LogStore.fail(Category.SUBSCRIPTION, "订阅: 爬虫 jar 校验失败(md5 不符) " + jarUrl);
+            LogStore.fail(Category.SUBSCRIPTION, "订阅: 爬虫 jar 校验失败(md5 不符)");
             cache.delete();
             callback.error("");
             return;
         }
         if (jarLoader.load(cache.getAbsolutePath())) {
-            LogStore.success(Category.SUBSCRIPTION, "订阅: 爬虫 jar 加载成功 " + jarUrl);
+            LogStore.success(Category.SUBSCRIPTION, "订阅: 爬虫 jar 加载成功");
             callback.success();
         } else {
-            LogStore.fail(Category.SUBSCRIPTION, "订阅: 爬虫 jar 加载失败(文件可能损坏或与蜘蛛不匹配) " + jarUrl);
+            LogStore.fail(Category.SUBSCRIPTION, "订阅: 爬虫 jar 加载失败(文件可能损坏或与蜘蛛不匹配)");
             callback.error("");
         }
     }
@@ -536,7 +548,6 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
     }
 
     private void parseJson(String apiUrl, File f) throws Throwable {
-        System.out.println("从本地缓存加载" + f.getAbsolutePath());
         BufferedReader bReader = new BufferedReader(new InputStreamReader(new FileInputStream(f), "UTF-8"));
         StringBuilder sb = new StringBuilder();
         String s = "";
@@ -553,7 +564,7 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
         if (jsonStr != null && !jsonStr.contains("\"sites\"")) {
             String wrapped = CmsApiRules.wrapSiteJson(jsonStr);
             if (wrapped != null && !wrapped.isEmpty()) {
-                LogStore.log(Category.SUBSCRIPTION, "订阅: 裸站点内容补 sites 外壳 " + apiUrl);
+                LogStore.log(Category.SUBSCRIPTION, "订阅: 裸站点内容补 sites 外壳");
                 jsonStr = wrapped;
             }
         }
@@ -667,7 +678,6 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
                             extUrlFix = clanContentFix(clanToAddress(apiUrl), extUrlFix);
                         }
 
-                        System.out.println("Live URL :" + extUrlFix);
                         // 订阅源的直播地址:留着当兜底(用户直播源为空/失败时才用)
                         subscribeLiveUrl = extUrlFix;
                         // 订阅管理「直播源」页的条目(订阅没给名字,name 留空 → 页面按地址推导展示名)。
@@ -678,7 +688,6 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
                     // takagen99 : Getting EPG URL from File Config & put into Settings
                     if (livesOBJ.has("epg")) {
                         String epg = livesOBJ.get("epg").getAsString();
-                        System.out.println("EPG URL :" + epg);
                         PrefsDataStore.put(HawkConfig.EPG_URL, epg);
                     }
 
@@ -700,7 +709,6 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
                         if (livesOBJ.has("type") && !livesOBJ.get("type").isJsonNull()
                                 && "0".equals(livesOBJ.get("type").getAsString()) && livesOBJ.has("epg")) {
                             String epg = livesOBJ.get("epg").getAsString();
-                            System.out.println("EPG URL :" + epg);
                             PrefsDataStore.put(HawkConfig.EPG_URL, epg);
                         }
                     }
@@ -709,7 +717,7 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
 
 
         } catch (Throwable th) {
-            th.printStackTrace();
+            LogStore.fail(Category.SUBSCRIPTION, "订阅: 直播配置解析失败 (" + exceptionType(th) + ")");
         }
 
         // 订阅源兜底:内嵌分组直接用;只给了地址就包成一个"待拉取"的代理分组(与用户直播源同形)

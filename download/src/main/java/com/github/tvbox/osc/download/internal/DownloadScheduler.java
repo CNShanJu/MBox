@@ -880,11 +880,6 @@ public class DownloadScheduler {
         t.fileName = fileName;
         t.savePath = finalFile.getAbsolutePath();
         t.partPath = t.savePath + ".part";
-        // 业务日志: 入队(完整链路起点)
-        DownloadLog.LOG.info(DownloadSubType.ENQUEUE,
-                "加入任务: " + fileName + " url=" + url
-                        + " headers=" + (headers == null ? "null" : headers.keySet().toString()),
-                DownloadLog.extras(episodeId));
         // 复用残留的 .part(上次任务丢失/进程被杀后遗留):直链按已有大小断点续传,避免从头下载
         if (!lower.contains(".m3u8")) {
             File partFile = new File(t.partPath);

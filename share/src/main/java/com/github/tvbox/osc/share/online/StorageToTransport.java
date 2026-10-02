@@ -379,7 +379,6 @@ public final class StorageToTransport extends BaseTransport {
             pendingUploadOwnerToken = null;
             if (confirmed && !fileId.isEmpty()) {
                 api.deleteFileQuietly(fileId, ownerToken);
-                LogStore.log(Category.SYSTEM, "分享: 上传未完成,已回滚删除 " + fileId);
             }
             ShareException err = t instanceof ShareException
                     ? (ShareException) t

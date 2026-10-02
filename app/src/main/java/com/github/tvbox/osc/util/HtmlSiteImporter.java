@@ -37,7 +37,7 @@ public final class HtmlSiteImporter {
     /** 抓取源运行时(App 资源里的通用模板) */
     public static final String RUNTIME_API = "assets://js/lib/maccms.js";
 
-    /** 探测结果:站点名 + 生成的配置文件 + 命中的播放页地址(便于日志核对) */
+    /** 探测结果:站点名 + 生成的配置文件 + 命中的播放页地址 */
     public interface Callback {
         void onFound(String siteName, File configFile, String samplePlayUrl);
 
@@ -90,8 +90,8 @@ public final class HtmlSiteImporter {
                 Result result = null;
                 try {
                     result = scan(inputUrl.trim(), knownText, outDir, progress);
-                } catch (Throwable th) {
-                    com.github.tvbox.osc.log.LogStore.fail(com.github.tvbox.osc.log.Category.SUBSCRIPTION, "订阅导入: 抓页面探测异常 " + inputUrl + " " + th);
+                } catch (Throwable ignored) {
+                    com.github.tvbox.osc.log.LogStore.fail(com.github.tvbox.osc.log.Category.SUBSCRIPTION, "订阅导入: 抓页面探测异常");
                 }
                 final Result r = result;
                 MAIN.post(new Runnable() {
@@ -139,7 +139,6 @@ public final class HtmlSiteImporter {
 
             // 分类页 → 详情页 → 播放页 整条链路都要探通,才算"能抓";
             // 列表路由按候选逐个试(v10 默认 / show 写法 / 伪静态),探通哪个就把哪个模板写进配置
-            String categoryUrl = null;
             HtmlSiteRules.Route listRoute = null;
             String detailUrl = null;
             List<HtmlSiteRules.Probe> plan = new ArrayList<>(hints.classProbes.subList(0,
@@ -158,7 +157,6 @@ public final class HtmlSiteImporter {
                 reportProgress(progress, "正在读取分类页 " + CmsApiRules.displayHost(url));
                 List<String> details = HtmlSiteRules.detailHrefs(fetch(url), 1);
                 if (details.isEmpty()) continue;
-                categoryUrl = url;
                 listRoute = probe.route;
                 detailUrl = absolute(host, prefix, details.get(0));
                 break;
@@ -207,11 +205,9 @@ public final class HtmlSiteImporter {
                     searchRoute != null ? 1 : 0, 1, 0);
             File dest = write(outDir, key, json);
             if (dest == null) return null;
-            com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SUBSCRIPTION, "订阅导入: 抓页面接入成功 " + siteName + " " + host + prefix
-                    + " 分类=" + classes.size() + " 列表路由=" + listRoute
-                    + " 搜索路由=" + (searchRoute == null ? "无" : searchRoute.listUrl)
-                    + " 示例播放页=" + playPageUrl + " 分类页=" + categoryUrl
-                    + " -> " + dest.getAbsolutePath());
+            com.github.tvbox.osc.log.LogStore.success(com.github.tvbox.osc.log.Category.SUBSCRIPTION,
+                    "订阅导入: 抓页面接入成功 分类=" + classes.size()
+                            + " 搜索=" + (searchRoute == null ? "未探通" : "已验证"));
             return new Result(siteName, dest, playPageUrl);
         }
         String stage = !foundClasses ? (readHome ? "首页未识别到分类" : "首页均未读到内容")
@@ -219,7 +215,7 @@ public final class HtmlSiteImporter {
                 : !foundPlayPage ? "详情页未识别到播放链接"
                 : "播放页未取得媒体地址";
         com.github.tvbox.osc.log.LogStore.fail(com.github.tvbox.osc.log.Category.SUBSCRIPTION,
-                "订阅导入: 抓页面未探通 " + host + " 阶段=" + stage + " 候选目录=" + prefixes);
+                "订阅导入: 抓页面未探通 阶段=" + stage);
         return null;
     }
 
@@ -272,8 +268,8 @@ public final class HtmlSiteImporter {
             } finally {
                 writer.close();
             }
-        } catch (Throwable th) {
-            com.github.tvbox.osc.log.LogStore.fail(com.github.tvbox.osc.log.Category.SUBSCRIPTION, "订阅导入: 抓取源配置写入失败 " + dest.getAbsolutePath() + " " + th);
+        } catch (Throwable ignored) {
+            com.github.tvbox.osc.log.LogStore.fail(com.github.tvbox.osc.log.Category.SUBSCRIPTION, "订阅导入: 抓取源配置写入失败");
             return null;
         }
         return dest;

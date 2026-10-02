@@ -64,21 +64,11 @@ public final class DownloadTaskRegistry {
                 String typeName = obj.getClass().getSimpleName();
                 android.util.Log.i("TVBox-Download", "任务分发: " + (t == null || t.fileName == null ? "?" : t.fileName)
                         + " -> " + typeName + " url=" + (t == null ? "null" : t.url));
-                com.github.tvbox.osc.download.internal.DownloadLog.LOG.info(
-                        com.github.tvbox.osc.download.DownloadSubType.RESOLVE,
-                        "任务分发: " + (t == null || t.fileName == null ? "?" : t.fileName) + " -> " + typeName
-                                + " url=" + (t == null ? "null" : t.url),
-                        com.github.tvbox.osc.download.internal.DownloadLog.extras(t == null ? null : t.episodeId));
                 return obj;
             }
         }
         android.util.Log.i("TVBox-Download", "任务分发(兜底直链): " + (t == null || t.fileName == null ? "?" : t.fileName)
                 + " url=" + (t == null ? "null" : t.url));
-        com.github.tvbox.osc.download.internal.DownloadLog.LOG.info(
-                com.github.tvbox.osc.download.DownloadSubType.RESOLVE,
-                "任务分发(兜底直链): " + (t == null || t.fileName == null ? "?" : t.fileName)
-                        + " url=" + (t == null ? "null" : t.url),
-                com.github.tvbox.osc.download.internal.DownloadLog.extras(t == null ? null : t.episodeId));
         return new NormalFileDownloadTask(t, listener, executor);
     }
 }

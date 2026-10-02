@@ -81,7 +81,7 @@ public final class PlaybackSessions {
 
             @Override
             public void onError(int code, String message) {
-                LogStore.log(Category.PLAYER, "会话[" + key + "] 播放错误 code=" + code + " msg=" + message);
+                LogStore.fail(Category.PLAYER, "会话[" + key + "] 播放错误 code=" + code);
                 for (PlayListener l : observers) {
                     try {
                         l.onError(code, message);
@@ -176,7 +176,6 @@ public final class PlaybackSessions {
         Session s = new Session(key, api, owns);
         s.attach();
         sessions.put(key, s);
-        LogStore.log(Category.PLAYER, "播放会话 bind: " + key + (owns ? " (own)" : " (shared)"));
         android.util.Log.d(TAG, "bind key=" + key + " owns=" + owns);
         return s;
     }
@@ -213,7 +212,6 @@ public final class PlaybackSessions {
                 th.printStackTrace();
             }
         }
-        LogStore.log(Category.PLAYER, "播放会话 unbind: " + key + " release=" + (release && s.ownsApi));
         android.util.Log.d(TAG, "unbind key=" + key + " release=" + (release && s.ownsApi));
     }
 

@@ -14,7 +14,7 @@ import java.util.ArrayList;
  * <p>
  * 收敛 LiveActivity/LiveSettingDialog/LiveSettingRightDialog/历史源弹窗对
  * {@link HawkConfig} 直播键的裸 Hawk 读写：键名沿用旧 key（兼容历史数据），
- * 读写封装为强类型方法并统一默认值；变更落日志便于排查。
+ * 读写封装为强类型方法并统一默认值。
  * <p>
  * 频道播放配置按"频道名"键存 JSON 文本；旧 Hawk 存量标量键类加载一次性迁移,
  * 频道键按访问惰性迁移(读取时迁一次并删旧键)。
@@ -39,7 +39,6 @@ public final class LiveConfig {
         int v = Math.max(0, Math.min(5, index));
         if (v == connectTimeout()) return;
         PrefsDataStore.put(HawkConfig.LIVE_CONNECT_TIMEOUT, v);
-        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM, "直播设置: 超时换源=" + v);
     }
 
     // ── 显示偏好 ──
@@ -52,7 +51,6 @@ public final class LiveConfig {
     public static void setShowTime(boolean on) {
         if (showTime() == on) return;
         PrefsDataStore.put(HawkConfig.LIVE_SHOW_TIME, on);
-        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM, "直播设置: 显示时间=" + on);
     }
 
     /** 显示网速(默认关) */
@@ -63,7 +61,6 @@ public final class LiveConfig {
     public static void setShowNetSpeed(boolean on) {
         if (showNetSpeed() == on) return;
         PrefsDataStore.put(HawkConfig.LIVE_SHOW_NET_SPEED, on);
-        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM, "直播设置: 显示网速=" + on);
     }
 
     /** 换台方向反转(默认关:上=上一台) */
@@ -74,7 +71,6 @@ public final class LiveConfig {
     public static void setChannelReverse(boolean on) {
         if (channelReverse() == on) return;
         PrefsDataStore.put(HawkConfig.LIVE_CHANNEL_REVERSE, on);
-        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM, "直播设置: 换台反转=" + on);
     }
 
     /** 上下键换台跨分组(默认关) */
@@ -85,7 +81,6 @@ public final class LiveConfig {
     public static void setCrossGroup(boolean on) {
         if (crossGroup() == on) return;
         PrefsDataStore.put(HawkConfig.LIVE_CROSS_GROUP, on);
-        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM, "直播设置: 跨选分组=" + on);
     }
 
     // ── 频道记忆 / 历史源 ──

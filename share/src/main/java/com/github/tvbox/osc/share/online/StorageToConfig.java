@@ -103,7 +103,6 @@ public final class StorageToConfig {
         } else {
             PrefsDataStore.put(KEY_BASE_URL, v);
         }
-        LogStore.log(Category.SYSTEM, "分享: storage.to 基址=" + baseUrl());
     }
 
     public static boolean isDefaultBaseUrl() {
@@ -120,7 +119,6 @@ public final class StorageToConfig {
     public static void setEnabled(boolean on) {
         if (isEnabled() == on) return;
         PrefsDataStore.put(KEY_ENABLED, on);
-        LogStore.log(Category.SYSTEM, "分享: storage.to 在线分享=" + on);
     }
 
     // ── 有效期 ──
@@ -136,7 +134,6 @@ public final class StorageToConfig {
         int v = Math.max(0, Math.min(days, MAX_ANONYMOUS_EXPIRY_DAYS));
         if (expiryDays() == v) return;
         PrefsDataStore.put(KEY_EXPIRY_DAYS, v);
-        LogStore.log(Category.SYSTEM, "分享: storage.to 有效期=" + (v == 0 ? "平台默认" : v + "天"));
     }
 
     // ── 匿名身份令牌 ──

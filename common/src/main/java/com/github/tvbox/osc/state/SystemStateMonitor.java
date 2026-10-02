@@ -104,6 +104,8 @@ public final class SystemStateMonitor {
     private Context appContext;
 
     private int startedActivityCount = 0;
+    /** 低空间期间只记一次告警；磁盘事件仍按原周期派发。仅主线程访问。 */
+    private boolean diskLowReported = false;
     private String pendingNetwork = null;
     /** 默认网络回调当前跟踪的网络；切网时忽略旧网络迟到的 onLost。 */
     private Network observedDefaultNetwork;
@@ -214,8 +216,6 @@ public final class SystemStateMonitor {
         registerBatterySource(appContext);
         registerTimeSource(appContext);
         startDiskTimer();
-
-        log.info(SystemSubType.BOOT, "SystemStateMonitor 已启动", null);
     }
 
     // ── 网络 ──
@@ -378,7 +378,6 @@ public final class SystemStateMonitor {
                     startedActivityCount++;
                     if (wasBackground) {
                         state.appForeground = true;
-                        log.info(SystemSubType.FOREGROUND, "应用回到前台", null);
                         emit(TYPE_FOREGROUND, VAL_FOREGROUND);
                         checkStoragePermission();
                     }
@@ -389,7 +388,6 @@ public final class SystemStateMonitor {
                     startedActivityCount = Math.max(0, startedActivityCount - 1);
                     if (startedActivityCount == 0) {
                         state.appForeground = false;
-                        log.info(SystemSubType.FOREGROUND, "应用进入后台", null);
                         emit(TYPE_FOREGROUND, VAL_BACKGROUND);
                     }
                 }
@@ -446,7 +444,6 @@ public final class SystemStateMonitor {
                     ? VAL_PORTRAIT : VAL_LANDSCAPE;
             if (value.equals(state.orientation)) return;
             state.orientation = value;
-            log.info(SystemSubType.ORIENTATION, "屏幕方向: " + value, null);
             emit(TYPE_ORIENTATION, value);
         } catch (Throwable th) {
             Log.e("SystemState", "横竖屏状态读取失败", th);
@@ -463,11 +460,9 @@ public final class SystemStateMonitor {
                     String action = intent == null ? "" : intent.getAction();
                     if (Intent.ACTION_SCREEN_ON.equals(action)) {
                         state.screenOn = true;
-                        log.info(SystemSubType.SCREEN, "屏幕点亮", null);
                         emit(TYPE_SCREEN, VAL_ON);
                     } else if (Intent.ACTION_SCREEN_OFF.equals(action)) {
                         state.screenOn = false;
-                        log.info(SystemSubType.SCREEN, "屏幕熄灭", null);
                         emit(TYPE_SCREEN, VAL_OFF);
                     }
                 }
@@ -532,7 +527,6 @@ public final class SystemStateMonitor {
             }
             if (charging != state.charging) {
                 state.charging = charging;
-                log.info(SystemSubType.BATTERY, charging ? "开始充电" : "停止充电", null);
                 emit(TYPE_BATTERY, charging ? VAL_CHARGING : VAL_NORMAL);
             }
         } catch (Throwable th) {
@@ -547,7 +541,6 @@ public final class SystemStateMonitor {
             BroadcastReceiver receiver = new BroadcastReceiver() {
                 @Override
                 public void onReceive(Context ctx, Intent intent) {
-                    log.info(SystemSubType.TIME, "系统时间/时区变化", null);
                     emit(TYPE_TIME, VAL_ON);
                 }
             };
@@ -585,8 +578,13 @@ public final class SystemStateMonitor {
             mainHandler.post(() -> {
                 state.freeDiskBytes = free;
                 if (free >= 0 && free < MIN_FREE_DISK) {
-                    log.warn(SystemSubType.DISK, "磁盘可用空间不足: " + (free / 1024 / 1024) + "MB", null);
+                    if (!diskLowReported) {
+                        diskLowReported = true;
+                        log.warn(SystemSubType.DISK, "磁盘可用空间不足: " + (free / 1024 / 1024) + "MB", null);
+                    }
                     emit(TYPE_DISK, "LOW:" + free);
+                } else if (free >= MIN_FREE_DISK) {
+                    diskLowReported = false;
                 }
             });
         } catch (Throwable ignored) {

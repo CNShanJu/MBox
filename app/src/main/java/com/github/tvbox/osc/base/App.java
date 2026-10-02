@@ -157,8 +157,6 @@ public class App extends MultiDexApplication {
         Utils.initTheme();
         // 业务日志(系统类目):应用启动(旧 AppLog 文件通道已退役,统一走 LogStore 结构化日志)
         LogStore.log(Category.SYSTEM, "应用启动(Android " + android.os.Build.VERSION.RELEASE + ")");
-        // 业务日志(系统类目):记录本机屏幕尺寸(宽×高,px),便于按机型定位布局/适配问题
-        logDeviceScreenToBiz();
         // 暂停启动时的圆角资源自检日志，需要排障时恢复调用。
         // com.github.tvbox.osc.theme.RadiusCheck.report(this);
         // 全局系统状态监控(网络/前后台/横竖屏/电量/磁盘, 基座层)必须先于下载模块初始化:
@@ -211,23 +209,6 @@ public class App extends MultiDexApplication {
             }
             // 系统(OEM)翻明暗后的现场:一行写清"翻了吗、我们跟没跟"(被强翻的机型靠这行定位)
             com.github.tvbox.osc.util.Utils.logNightModeState("系统明暗变化");
-        } catch (Throwable ignored) {
-        }
-    }
-
-    /**
-     * 记录本机屏幕尺寸到业务日志(系统类目,INFO):每次启动调用一次,便于按机型/分辨率定位
-     * 布局与适配问题。用真实显示区域(含状态栏/导航栏,getRealMetrics);LogStore 未启用时静默丢弃。
-     */
-    private void logDeviceScreenToBiz() {
-        try {
-            android.util.DisplayMetrics dm = new android.util.DisplayMetrics();
-            android.view.Display display = ((android.view.WindowManager) getSystemService(android.content.Context.WINDOW_SERVICE)).getDefaultDisplay();
-            display.getRealMetrics(dm);
-            int wDp = Math.round(dm.widthPixels / dm.density);
-            int hDp = Math.round(dm.heightPixels / dm.density);
-            LogStore.log(Category.SYSTEM, "设备屏幕: " + dm.widthPixels + "x" + dm.heightPixels
-                    + " px(" + wDp + "x" + hDp + " dp,density=" + dm.density + ")");
         } catch (Throwable ignored) {
         }
     }

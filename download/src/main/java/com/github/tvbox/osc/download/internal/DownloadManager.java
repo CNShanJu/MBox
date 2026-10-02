@@ -682,7 +682,6 @@ public class DownloadManager {
     /** 设置最大并发数(1-3,上限见 DownloadPolicy.MAX_CONCURRENT),触发重新调度 */
     public void setMaxConcurrent(int n) {
         policy.setMaxConcurrent(n);
-        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.DOWNLOAD, "下载设置: 并发数=" + n);
     }
 
     /**
@@ -704,8 +703,6 @@ public class DownloadManager {
 
     public void setSpeedLimitBytesPerSec(long bytesPerSecond) {
         policy.setSpeedLimitBytesPerSec(bytesPerSecond);
-        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.DOWNLOAD,
-                "下载设置: 限速=" + (bytesPerSecond <= 0 ? "不限速" : (bytesPerSecond / 1024) + "KB/s"));
     }
 
     /** 是否仅 WiFi 下载(默认开启;开启时蜂窝/断网不启动并自动挂起) */
@@ -717,7 +714,6 @@ public class DownloadManager {
         policy.setWifiOnly(wifiOnly);
         // 立即生效,不依赖网络切换事件:开启且当前非WiFi → 暂停全部;关闭 → 恢复挂起任务并唤醒调度
         scheduler.enforceNetworkGate();
-        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.DOWNLOAD, "下载设置: 仅WiFi=" + wifiOnly);
     }
 
     /** 当前网络是否为移动网络(蜂窝) */
