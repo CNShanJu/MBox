@@ -50,6 +50,7 @@ import com.github.tvbox.osc.ui.adapter.FastSearchAdapter
 import com.github.tvbox.osc.ui.adapter.SelectDialogAdapter
 import com.github.tvbox.osc.ui.adapter.SelectDialogAdapter.SelectDialogInterface
 import com.github.tvbox.osc.ui.kit.ListEndTipController
+import com.github.tvbox.osc.ui.kit.PageBackgroundView
 import com.github.tvbox.osc.ui.dialog.AttachActionDialog
 import com.github.tvbox.osc.ui.dialog.ConfirmDialog
 import com.github.tvbox.osc.ui.dialog.DoubanSuggestDialog
@@ -84,6 +85,7 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
         const val EXTRA_HOME_SEARCH_TRANSITION = "home_search_transition"
         const val HOME_SEARCH_TRANSITION_NAME = "home_search_expand"
         private const val HOME_SEARCH_TRANSITION_MS = 360L
+        private const val HOME_SEARCH_REVEAL_MS = 160L
 
         private var mCheckSources: HashMap<String, String>? = null
         fun setCheckedSourcesForSearch(checkedSources: HashMap<String, String>?) {
@@ -106,6 +108,9 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
     private lateinit var sourceViewModel : SourceViewModel
     private var fromHomeSearch = false
     private var homeSearchOverlay: View? = null
+    private var homeSearchBackground: PageBackgroundView? = null
+    private var homeSearchRevealed = false
+    private var homeSearchClosing = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         fromHomeSearch = savedInstanceState == null &&
@@ -130,6 +135,8 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
     private fun prepareHomeSearchTransition() {
         // 单独的共享元素盖住搜索页内容：从首页胶囊扩展为整页，返回时再收回原位置。
         val content = findViewById<FrameLayout>(android.R.id.content)
+        // 背景层由 BaseActivity 提前铺满窗口；共享元素尚在放大时不能先露出整张图。
+        homeSearchBackground = PageBackgroundView.find(this)?.apply { alpha = 0f }
         val overlay = View(this).apply {
             transitionName = HOME_SEARCH_TRANSITION_NAME
             background = ThemeDrawables.themedDrawable(R.drawable.bg_search_round_float, resources)
@@ -151,11 +158,40 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
 
     private fun revealSearchContent() {
         val overlay = homeSearchOverlay ?: return
-        if (isFinishing || isDestroyed) return
-        mBinding.root.animate().alpha(1f).setDuration(160L).start()
-        overlay.animate().alpha(0f).setDuration(160L).withEndAction {
-            overlay.visibility = View.GONE
+        if (isFinishing || isDestroyed || homeSearchClosing || homeSearchRevealed) return
+        homeSearchRevealed = true
+        mBinding.root.animate().alpha(1f).setDuration(HOME_SEARCH_REVEAL_MS).start()
+        homeSearchBackground?.animate()?.alpha(1f)?.setDuration(HOME_SEARCH_REVEAL_MS)?.start()
+        overlay.animate().alpha(0f).setDuration(HOME_SEARCH_REVEAL_MS).withEndAction {
+            overlay.visibility = View.INVISIBLE
         }.start()
+    }
+
+    private fun finishHomeSearchTransition() {
+        if (homeSearchClosing) return
+        homeSearchClosing = true
+        KeyboardUtils.hideSoftInput(this)
+        mBinding.root.animate().cancel()
+        homeSearchBackground?.animate()?.cancel()
+        val overlay = homeSearchOverlay ?: run {
+            finishAfterTransition()
+            return
+        }
+        overlay.animate().cancel()
+        overlay.visibility = View.VISIBLE
+        if (!homeSearchRevealed) {
+            // 进入动画尚未结束时，胶囊本来就可见，直接按系统共享元素动画收回。
+            overlay.alpha = 1f
+            mBinding.root.alpha = 0f
+            homeSearchBackground?.alpha = 0f
+            finishAfterTransition()
+            return
+        }
+        // 先把页面柔和地交回共享元素，再让系统把它缩回首页搜索框。
+        mBinding.root.animate().alpha(0f).setDuration(HOME_SEARCH_REVEAL_MS).start()
+        homeSearchBackground?.animate()?.alpha(0f)?.setDuration(HOME_SEARCH_REVEAL_MS)?.start()
+        overlay.animate().alpha(1f).setDuration(HOME_SEARCH_REVEAL_MS)
+            .withEndAction { if (!isDestroyed) finishAfterTransition() }.start()
     }
 
     private var searchAdapter = FastSearchAdapter()
@@ -443,15 +479,7 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
             return
         }
         if (fromHomeSearch) {
-            KeyboardUtils.hideSoftInput(this)
-            mBinding.root.animate().cancel()
-            homeSearchOverlay?.animate()?.cancel()
-            homeSearchOverlay?.apply {
-                alpha = 1f
-                visibility = View.VISIBLE
-            }
-            mBinding.root.alpha = 0f
-            finishAfterTransition()
+            finishHomeSearchTransition()
         } else {
             super.onBackPressed()
         }

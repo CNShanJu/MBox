@@ -201,7 +201,7 @@
                     android:layout_width="24dp"
                     android:layout_height="24dp"
                     android:src="@drawable/ic_clear"
-                    app:tint="@color/text_hint"
+                    app:tint="@color/text_danger"
                     android:paddingTop="6dp"
                     android:paddingBottom="4dp"
                     />
