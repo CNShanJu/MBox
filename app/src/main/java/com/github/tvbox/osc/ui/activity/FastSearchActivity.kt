@@ -1,5 +1,6 @@
 package com.github.tvbox.osc.ui.activity
 
+import android.animation.TimeInterpolator
 import android.content.res.Configuration
 import android.os.Bundle
 import android.os.SystemClock
@@ -19,6 +20,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.view.animation.DecelerateInterpolator
+import android.view.animation.PathInterpolator
 import android.view.inputmethod.EditorInfo
 import android.widget.FrameLayout
 import android.widget.TextView
@@ -86,6 +88,8 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
         const val HOME_SEARCH_TRANSITION_NAME = "home_search_expand"
         private const val HOME_SEARCH_TRANSITION_MS = 360L
         private const val HOME_SEARCH_REVEAL_MS = 160L
+        private val HOME_SEARCH_ENTER_EASING = PathInterpolator(0.2f, 0f, 0f, 1f)
+        private val HOME_SEARCH_RETURN_EASING = PathInterpolator(0.4f, 0f, 0.2f, 1f)
 
         private var mCheckSources: HashMap<String, String>? = null
         fun setCheckedSourcesForSearch(checkedSources: HashMap<String, String>?) {
@@ -116,20 +120,20 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
         fromHomeSearch = savedInstanceState == null &&
             intent.getBooleanExtra(EXTRA_HOME_SEARCH_TRANSITION, false)
         if (fromHomeSearch) {
-            window.sharedElementEnterTransition = homeSearchTransition()
-            window.sharedElementReturnTransition = homeSearchTransition()
+            window.sharedElementEnterTransition = homeSearchTransition(HOME_SEARCH_ENTER_EASING)
+            window.sharedElementReturnTransition = homeSearchTransition(HOME_SEARCH_RETURN_EASING)
             postponeEnterTransition()
         }
         super.onCreate(savedInstanceState)
         if (fromHomeSearch) prepareHomeSearchTransition()
     }
 
-    private fun homeSearchTransition(): Transition = TransitionSet().apply {
+    private fun homeSearchTransition(easing: TimeInterpolator): Transition = TransitionSet().apply {
         addTransition(ChangeBounds())
         addTransition(ChangeClipBounds())
         addTransition(ChangeTransform())
         duration = HOME_SEARCH_TRANSITION_MS
-        interpolator = DecelerateInterpolator()
+        interpolator = easing
     }
 
     private fun prepareHomeSearchTransition() {
@@ -160,11 +164,14 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
         val overlay = homeSearchOverlay ?: return
         if (isFinishing || isDestroyed || homeSearchClosing || homeSearchRevealed) return
         homeSearchRevealed = true
-        mBinding.root.animate().alpha(1f).setDuration(HOME_SEARCH_REVEAL_MS).start()
-        homeSearchBackground?.animate()?.alpha(1f)?.setDuration(HOME_SEARCH_REVEAL_MS)?.start()
-        overlay.animate().alpha(0f).setDuration(HOME_SEARCH_REVEAL_MS).withEndAction {
-            overlay.visibility = View.INVISIBLE
-        }.start()
+        mBinding.root.animate().alpha(1f).setDuration(HOME_SEARCH_REVEAL_MS)
+            .setInterpolator(HOME_SEARCH_ENTER_EASING).start()
+        homeSearchBackground?.animate()?.alpha(1f)?.setDuration(HOME_SEARCH_REVEAL_MS)
+            ?.setInterpolator(HOME_SEARCH_ENTER_EASING)?.start()
+        overlay.animate().alpha(0f).setDuration(HOME_SEARCH_REVEAL_MS)
+            .setInterpolator(HOME_SEARCH_ENTER_EASING).withEndAction {
+                overlay.visibility = View.INVISIBLE
+            }.start()
     }
 
     private fun finishHomeSearchTransition() {
@@ -188,9 +195,12 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
             return
         }
         // 先把页面柔和地交回共享元素，再让系统把它缩回首页搜索框。
-        mBinding.root.animate().alpha(0f).setDuration(HOME_SEARCH_REVEAL_MS).start()
-        homeSearchBackground?.animate()?.alpha(0f)?.setDuration(HOME_SEARCH_REVEAL_MS)?.start()
+        mBinding.root.animate().alpha(0f).setDuration(HOME_SEARCH_REVEAL_MS)
+            .setInterpolator(HOME_SEARCH_RETURN_EASING).start()
+        homeSearchBackground?.animate()?.alpha(0f)?.setDuration(HOME_SEARCH_REVEAL_MS)
+            ?.setInterpolator(HOME_SEARCH_RETURN_EASING)?.start()
         overlay.animate().alpha(1f).setDuration(HOME_SEARCH_REVEAL_MS)
+            .setInterpolator(HOME_SEARCH_RETURN_EASING)
             .withEndAction { if (!isDestroyed) finishAfterTransition() }.start()
     }
 
