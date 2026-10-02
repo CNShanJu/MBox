@@ -224,7 +224,8 @@ app / feature
    (镜像掉队不该阻断发版),掉队后补推用 `-GiteeOnly`。
    脚本默认**只推当前版本 tag**:Gitee 缺的历史 tag 推上去补不出旧发行版,反而会让 CI 对每个 `v*` tag 各跑一次构建;
    确需全量对齐历史才加 `-AllTags`。
-   `scripts/sync-release.ps1` **必须存为 UTF-8 with BOM**(PS 5.1 按系统代码页读无 BOM 的 .ps1,中文会全乱并报语法错)。
+   `scripts/sync-release.ps1` **必须存为 UTF-8 with BOM**(PS 5.1 按系统代码页读无 BOM 的 .ps1,中文会全乱并报语法错);
+   `scripts/verify-gitee-mirror.ps1` 同理。
 3. **顺序有硬依赖:代码与 tag 必须先到 Gitee,再等 CI 建 Gitee 发行版**。
    `.github/workflows/build-apk.yml` 的 `Sync release APK to Gitee mirror` 步要先按 tag 在镜像仓库找到发行版,
    镜像没有该 tag 时它只告警跳过 —— APK 附件就同步不过去。发版后到 Actions 确认该步没有 `::warning` 跳过。
@@ -237,10 +238,21 @@ app / feature
      没有该版本的附件,App 国内下载只能回落到加速代理或直连。v3.6.1 的 Gitee 发行版是**手工上传**的
      (带 Gitee 自动生成的 `v3.6.1.zip`/`v3.6.1.tar.gz` 源码包;API 上传的发行版不会有这两项 —— 可据此判断
      某版本到底是 CI 同步的还是手工传的)。
-   - **每次发版后的验收动作**:打开该 tag 的 Build APK 运行记录,确认 `Sync release APK to Gitee mirror`
-     步里出现 `Gitee 附件已上传: ...`,而不是 `Gitee 镜像未同步` 的 error/warning;再访问
-     `https://gitee.com/CnAyo/MBox/releases/tag/<tag>` 确认附件在且能下载。
-   - 补同步:配置令牌后重新运行该 tag 的 Build APK 工作流即可(该步按 tag 找发行版,重跑不重复建)。
+   - **每次发版后的验收动作(强制,一条命令)**:不要只看 GitHub Actions 是绿的 —— 缺令牌时那步照样 success。
+     用脚本直接问 Gitee 要答案:
+
+     ```powershell
+     powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-gitee-mirror.ps1
+     ```
+
+     它逐条验「发行版在不在 → 有没有 .apk 附件 → 体积对不对(取 Content-Length)→ 与 GitHub 正式包是否同体积 →
+     匿名能不能下(顺带实测 Gitee 是否忽略 Range)」,任一不过即非零退出,可接进发版流程。批量排查用
+     `-Last 5`(本地最近 5 个 tag,直接看出哪几个版本漏了);只想快速核对附件在不在、不想发下载请求就加 `-NoDownload`
+     (此时体积与对账会标"未测")。脚本只读,不写仓库、不改远端。
+     **注意两个 Gitee 接口坑(脚本里已规避,别再踩)**:`/releases/tags/<tag>` 返回空壳对象(HTTP 200 但字段全空),
+     必须用 `/releases` 列表再按 `tag_name` 过滤;附件对象没有 `size` 字段,体积只能从 HTTP `Content-Length` 拿。
+   - 补同步:配置令牌后重新运行该 tag 的 Build APK 工作流即可(该步按 tag 找发行版,重跑不重复建),
+     再用上面的验收脚本确认 `全部 1 个 tag 的镜像验收通过`。
 
 ### 构建内存纪律(强制)
 
