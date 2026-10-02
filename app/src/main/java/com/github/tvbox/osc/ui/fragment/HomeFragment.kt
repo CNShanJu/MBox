@@ -167,12 +167,7 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
                 AppBubble.toast("请先设置订阅")
                 return@setOnClickListener
             }
-            val intent = Intent(requireContext(), FastSearchActivity::class.java)
-                .putExtra(FastSearchActivity.EXTRA_HOME_SEARCH_TRANSITION, true)
-            val options = ActivityOptions.makeSceneTransitionAnimation(
-                requireActivity(), mBinding.search, FastSearchActivity.HOME_SEARCH_TRANSITION_NAME
-            )
-            startActivity(intent, options.toBundle())
+            openFastSearch()
         }
         mBinding.ivHistory.setOnClickListener {
             jumpActivity(HistoryActivity::class.java)
@@ -183,6 +178,17 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
         setLoadSir(mBinding.contentLayout)
         initViewModel()
         initData()
+    }
+
+    /** 首页搜索框和首页剧集卡片共用展开入口，返回时才能收回到同一个搜索框。 */
+    fun openFastSearch(extras: Bundle? = null) {
+        val intent = Intent(requireContext(), FastSearchActivity::class.java)
+            .putExtra(FastSearchActivity.EXTRA_HOME_SEARCH_TRANSITION, true)
+        if (extras != null) intent.putExtras(extras)
+        val options = ActivityOptions.makeSceneTransitionAnimation(
+            requireActivity(), mBinding.search, FastSearchActivity.HOME_SEARCH_TRANSITION_NAME
+        )
+        startActivity(intent, options.toBundle())
     }
 
     private fun initViewModel() {
@@ -515,7 +521,6 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
             settleFirstScreen()
         } else if (!loadedOnce && !loadInFlight) {
             // 从未加载成功 + 现在有网:补一次初始化
-            LogStore.log(Category.SYSTEM, "首页: 页面可见且从未加载成功,补一次初始化")
             mHandler.post {
                 if (!loadedOnce && !loadInFlight) initData()
             }

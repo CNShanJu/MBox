@@ -145,7 +145,7 @@ public class UserFragment extends BaseLazyFragment {
                     jumpActivity(DetailActivity.class, bundle);
                 } else {
                     bundle.putString("title", vod.name);
-                    jumpActivity(FastSearchActivity.class, bundle);
+                    openFastSearchFromHome(bundle);
                 }
             }
         });
@@ -157,7 +157,7 @@ public class UserFragment extends BaseLazyFragment {
                 Movie.Video vod = ((Movie.Video) adapter.getItem(position));
                 Bundle bundle = new Bundle();
                 bundle.putString("title", vod.name);
-                jumpActivity(FastSearchActivity.class, bundle);
+                openFastSearchFromHome(bundle);
                 return true;
             }
         });
@@ -166,6 +166,14 @@ public class UserFragment extends BaseLazyFragment {
         attachRefreshAndEndTip();
         setLoadSir2(tvHotList1);
         initHomeHotVod(homeHotVodAdapter);
+    }
+
+    private void openFastSearchFromHome(Bundle bundle) {
+        if (getParentFragment() instanceof HomeFragment) {
+            ((HomeFragment) getParentFragment()).openFastSearch(bundle);
+        } else {
+            jumpActivity(FastSearchActivity.class, bundle);
+        }
     }
 
     /**

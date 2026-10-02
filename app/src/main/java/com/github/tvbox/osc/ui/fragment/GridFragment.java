@@ -295,10 +295,10 @@ public class GridFragment extends BaseLazyFragment {
                         changeView(video.id,video.tag.equals("folder"));
                     }
                     else if(homeSourceBean.isQuickSearch() && SystemConfig.isFastSearchMode() && enableFastSearch()){
-                        jumpActivity(FastSearchActivity.class, bundle);
+                        openFastSearchFromHome(bundle);
                     }else{
                         if(TextUtils.isEmpty(video.id) || video.id.startsWith("msearch:")){
-                            jumpActivity(FastSearchActivity.class, bundle);
+                            openFastSearchFromHome(bundle);
 //                            jumpActivity(SearchActivity.class, bundle);
                         }else {
                             jumpActivity(DetailActivity.class, bundle);
@@ -318,7 +318,7 @@ public class GridFragment extends BaseLazyFragment {
                     bundle.putString("id", video.id);
                     bundle.putString("sourceKey", video.sourceKey);
                     bundle.putString("title", video.name);
-                    jumpActivity(FastSearchActivity.class, bundle);
+                    openFastSearchFromHome(bundle);
                 }
                 return true;
             }
@@ -330,6 +330,14 @@ public class GridFragment extends BaseLazyFragment {
         findViewById(R.id.btn_filter).setOnClickListener(view -> showFilter());
         syncFilterButton();
         setLoadSir2(mGridView);
+    }
+
+    private void openFastSearchFromHome(Bundle bundle) {
+        if (getParentFragment() instanceof HomeFragment) {
+            ((HomeFragment) getParentFragment()).openFastSearch(bundle);
+        } else {
+            jumpActivity(FastSearchActivity.class, bundle);
+        }
     }
 
     /**
