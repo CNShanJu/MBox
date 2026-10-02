@@ -56,12 +56,12 @@ public class DialogClampTest {
         assertFalse(DialogClamp.clampScrollHeight(-1, 400, 2000).clamped);
     }
 
-    /** 固定区自己吃满上限(极端窄屏/超大字号):不硬压,交由布局兜底,不能算出负高度 */
+    /** 固定区自己吃满上限(极端窄屏/超大字号):说明区收为零,不能把按钮推出窗口 */
     @Test
     public void fixedAreaEatsAllSpace() {
         DialogClamp.Clamp c = DialogClamp.clampScrollHeight(400, 500, 1500);
-        assertFalse(c.clamped);
-        assertEquals(1500, c.height);
+        assertTrue(c.clamped);
+        assertEquals(0, c.height);
     }
 
     /** 刚好卡在上限:不限高(边界) */

@@ -17,7 +17,7 @@ import com.lxj.xpopup.core.BottomPopupView;
  * 统一的底部弹窗基类:
  * 背景统一使用 {@link R.drawable#bg_bottom_dialog}(顶部圆角 + bg_float 主题色),
  * 最大高度统一按 {@link DialogHeightPolicy} 分档封顶(内容自适应,内容少时保持内容高);
- * 横屏时宽度限制为屏幕 55%,所有宽屏再按 {@link DialogStyle#BOTTOM_MAX_WIDTH_DP} 封顶并居中。
+ * 宽屏时宽度由 {@link DialogStyle#bottomWidthPx(Context)} 按窗口计算并居中。
  * 调主题背景/尺寸只改基类/常量,一处生效全部底部弹窗。
  * 子类只需实现 {@link #getImplLayoutId()} 与各自 {@link #onCreate()};
  * 标题+内容+按钮结构时,中间内容区用 weight=1 + 内部滚动,避免挤压上下标题/按钮。
@@ -55,12 +55,9 @@ public abstract class AppBottomPopupView extends BottomPopupView {
             com.github.tvbox.osc.theme.ThemeDrawables.applyBackground(root, R.drawable.bg_bottom_dialog);
             // 列表条目在挂载/复用时只重放已登记资源令牌,不按当前像素猜颜色。
             com.github.tvbox.osc.theme.ThemeSweep.watchItems(root);
-            // 手机竖屏保持全宽;横屏先收至 55%,平板及超宽屏统一封顶。
+            // 手机竖屏保持全宽；平板按窗口比例放宽，收窄时保持居中。
             int screenWidth = ScreenUtils.getScreenWidth();
-            int maxWidth = Math.round(DialogStyle.BOTTOM_MAX_WIDTH_DP
-                    * getContext().getResources().getDisplayMetrics().density);
-            int width = Math.min(ScreenUtils.isLandscape()
-                    ? Math.round(screenWidth * 0.55f) : screenWidth, maxWidth);
+            int width = Math.min(screenWidth, DialogStyle.bottomWidthPx(getContext()));
             if (width < screenWidth) {
                 ViewGroup.LayoutParams lp = root.getLayoutParams();
                 if (lp == null) {

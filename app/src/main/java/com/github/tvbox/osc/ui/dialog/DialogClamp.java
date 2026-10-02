@@ -29,8 +29,7 @@ public final class DialogClamp {
      * @param maxH            弹窗允许的最大高度(&lt;=0 表示无上限,不限高)
      * @param fixedH          固定区高度:弹窗内边距 + 标题/按钮等其他子视图自然高度(含其外边距)
      * @param naturalScrollH  内容区自然高度(UNSPECIFIED 量出来的真实期望高度)
-     * @return 需限高时 {@code height = maxH - fixedH};放得下时用 {@code maxH - fixedH} 与自然高
-     *         中较大的那个(让卡片长回自然高度,而不是被压在上限上)
+     * @return 说明区可用高度和自然高度中较小的一个；固定区占满窗口时返回 0
      */
     public static Clamp clampScrollHeight(int maxH, int fixedH, int naturalScrollH) {
         if (maxH <= 0 || naturalScrollH <= 0 || fixedH < 0) {
@@ -38,8 +37,8 @@ public final class DialogClamp {
         }
         int allowed = maxH - fixedH;
         if (allowed <= 0) {
-            // 固定区本身就吃满上限(极端窄屏/超大字号):不给内容区留高度,交由布局兜底
-            return new Clamp(false, naturalScrollH);
+            // 窄分屏/大字号时优先保住按钮，不能再让说明把按钮推出窗口。
+            return new Clamp(true, 0);
         }
         if (naturalScrollH <= allowed) {
             // 放得下:回推自然高度,让卡片按内容撑开(而不是停在压扁状态)

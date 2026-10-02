@@ -51,8 +51,12 @@ public final class DialogCoordinator {
 
     /** 居中弹窗，限最大宽度（px；转 dp 语义见调用处注释） */
     public static BasePopupView centerMaxWidth(Context ctx, BasePopupView content, int maxWidthDp) {
+        int maxWidthPx = ConvertUtils.dp2px(maxWidthDp);
+        if (DialogStyle.isTabletWindow(ctx)) {
+            maxWidthPx = Math.max(maxWidthPx, DialogStyle.centerWidthPx(ctx));
+        }
         return builder(ctx)
-                .maxWidth(ConvertUtils.dp2px(maxWidthDp))
+                .maxWidth(maxWidthPx)
                 .asCustom(content);
     }
 
@@ -86,7 +90,7 @@ public final class DialogCoordinator {
                 .popupHeight(ScreenUtils.getScreenHeight())
                 .popupPosition(PopupPosition.Right);
         if (widthDp > 0) {
-            builder = builder.popupWidth(ConvertUtils.dp2px(widthDp));
+            builder = builder.popupWidth(DialogStyle.drawerWidthPx(ctx, widthDp));
         }
         if (!hasShadowBg) {
             builder = builder.hasShadowBg(false);

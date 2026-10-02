@@ -1,16 +1,13 @@
 package com.github.tvbox.osc.ui.dialog;
 
 import android.content.Context;
-import android.content.Intent;
-import android.os.Bundle;
-import android.view.View;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 
 import com.github.tvbox.osc.R;
 import com.github.tvbox.osc.bean.VodInfo;
-import com.github.tvbox.osc.ui.activity.DetailActivity;
+import com.github.tvbox.osc.util.HistoryEntryNavigator;
 import com.github.tvbox.osc.util.FastClickCheckUtil;
 import com.lxj.xpopup.core.PositionPopupView;
 import com.lxj.xpopup.enums.DragOrientation;
@@ -25,8 +22,7 @@ public class LastViewedDialog extends PositionPopupView {
 
     @Override
     protected int getMaxWidth() {
-        return Math.round(DialogStyle.CENTER_MAX_WIDTH_DP
-                * getContext().getResources().getDisplayMetrics().density);
+        return DialogStyle.centerWidthPx(getContext());
     }
 
     @Override
@@ -47,11 +43,7 @@ public class LastViewedDialog extends PositionPopupView {
         textView.setOnClickListener(view -> {
             FastClickCheckUtil.check(view);
             dismiss();
-            Bundle bundle = new Bundle();
-            bundle.putString("id", vodInfo.id);
-            bundle.putString("sourceKey", vodInfo.sourceKey);
-            bundle.putString("vodName", vodInfo.name);
-            getContext().startActivity(new Intent(getContext(),DetailActivity.class).putExtras(bundle));
+            HistoryEntryNavigator.open(getContext(), vodInfo);
         });
     }
 

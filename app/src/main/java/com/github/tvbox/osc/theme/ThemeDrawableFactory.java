@@ -63,6 +63,7 @@ public final class ThemeDrawableFactory {
         if (resId == R.drawable.bg_r_common_solid_select) return "bg_r_common_solid_select";
         if (resId == R.drawable.bg_small_round_float) return "bg_small_round_float";
         if (resId == R.drawable.bg_theme_field) return "bg_theme_field";
+        if (resId == R.drawable.bg_lan_import_field) return "bg_lan_import_field";
         if (resId == R.drawable.button_detail_quick_search) return "button_detail_quick_search";
         if (resId == R.drawable.bg_swipe_pause) return "bg_swipe_pause";
         // 圆形悬浮钮(首页「直播」/「更新」气泡球):**必须登记** ——

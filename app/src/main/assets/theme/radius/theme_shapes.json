@@ -118,6 +118,14 @@
     "strokeWidthDp": 1,
     "states": { "default": { "fill": "transparent", "stroke": "btn_stroke" } }
   },
+  "bg_lan_import_field": {
+    "radius": "radius_btn",
+    "strokeWidth": "stroke_widget_btn",
+    "states": {
+      "focused": { "fill": "bg_surface", "stroke": "text_main" },
+      "default": { "fill": "bg_surface", "stroke": "btn_cancel_bg" }
+    }
+  },
   "button_detail_quick_search": {
     "radius": "radius_widget_btn",
     "strokeWidth": "stroke_widget_btn",

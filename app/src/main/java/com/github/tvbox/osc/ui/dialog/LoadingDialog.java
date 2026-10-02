@@ -37,8 +37,7 @@ public class LoadingDialog extends CenterPopupView {
 
     @Override
     protected int getMaxWidth() {
-        return Math.round(DialogStyle.CENTER_MAX_WIDTH_DP
-                * getContext().getResources().getDisplayMetrics().density);
+        return DialogStyle.centerWidthPx(getContext());
     }
 
     /**

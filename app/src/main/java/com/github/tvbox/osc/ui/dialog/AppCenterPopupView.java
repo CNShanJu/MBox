@@ -3,11 +3,11 @@ package com.github.tvbox.osc.ui.dialog;
 import android.content.Context;
 import android.graphics.Rect;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.ScrollView;
 
 import androidx.annotation.NonNull;
 
-import com.blankj.utilcode.util.ScreenUtils;
 import com.github.tvbox.osc.R;
 import com.lxj.xpopup.core.CenterPopupView;
 
@@ -22,7 +22,8 @@ import com.lxj.xpopup.core.CenterPopupView;
  *       —— 用户口径"弹窗的圆角和抽屉的圆角,设置出来显示效果不一致"。两份 drawable 只差一行 corners 引用,
  *       现已合并成一份 bg_dialog;</li>
  *       基类不强设避免与 XPopup 默认容器叠加产生四角异常;</li>
- *   <li>最大宽度统一 {@link DialogStyle#CENTER_MAX_WIDTH_DP},窄屏自适应;</li>
+ *   <li>宽度统一由 {@link DialogStyle#centerWidthPx(Context)} 按窗口计算；平板上的固定 300/320dp
+ *       布局也在这里同步扩展，手机保持原尺寸;</li>
  *   <li>最大高度统一按 {@link DialogHeightPolicy} 分档封顶(内容自适应,超高自动包 ScrollView 内部滚动);</li>
  * </ul>
  * 调主题背景/宽度/高度只改基类/常量,一处生效全部居中弹窗。
@@ -37,12 +38,7 @@ public abstract class AppCenterPopupView extends CenterPopupView {
 
     @Override
     protected int getMaxWidth() {
-        int dp = DialogStyle.CENTER_MAX_WIDTH_DP;
-        // 横屏时屏幕宽大,适当放宽(≤360dp),内容更舒展;竖屏保持 320dp
-        if (ScreenUtils.isLandscape()) {
-            dp = Math.min(360, Math.round(ScreenUtils.getScreenWidth() / getContext().getResources().getDisplayMetrics().density * 0.5f));
-        }
-        return Math.round(dp * getContext().getResources().getDisplayMetrics().density);
+        return DialogStyle.centerWidthPx(getContext());
     }
 
     /**
@@ -72,6 +68,13 @@ public abstract class AppCenterPopupView extends CenterPopupView {
         // 弹窗晚于 Activity 创建:显示时按明确资源重新应用,不扫描像素颜色猜面板语义。
         View root = getPopupImplView();
         if (root != null) {
+            ViewGroup.LayoutParams params = root.getLayoutParams();
+            int targetWidth = getMaxWidth();
+            if (params != null && (DialogStyle.isTabletWindow(getContext())
+                    || (params.width > 0 && params.width > targetWidth))) {
+                params.width = targetWidth;
+                root.setLayoutParams(params);
+            }
             com.github.tvbox.osc.theme.ThemeDrawables.applyBackground(root, R.drawable.bg_dialog);
             com.github.tvbox.osc.theme.ThemeSweep.watchItems(root);
         }

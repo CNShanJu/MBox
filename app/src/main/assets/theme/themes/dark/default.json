@@ -2,7 +2,7 @@
   "type": "dark",
   "name": "深色",
   "default": true,
-  "bg_body": "#222436",
+  "bg_body": "#05050A",
   "bg_surface": "#1e2030",
   "bg_card_alpha": 72,
   "bg_float_alpha": 96,

@@ -6,7 +6,6 @@ import android.text.TextUtils;
 
 import com.blankj.utilcode.util.AppUtils;
 import com.blankj.utilcode.util.ClipboardUtils;
-import com.blankj.utilcode.util.ConvertUtils;
 import com.github.tvbox.osc.util.AppBubble;
 import com.github.tvbox.osc.R;
 import com.github.tvbox.osc.base.BaseLazyFragment;
@@ -51,7 +50,7 @@ public class MyFragment extends BaseVbFragment<FragmentMyBinding> {
 
         mBinding.addrPlay.setOnClickListener(v ->{
             new XPopup.Builder(getContext())
-                    .maxWidth(ConvertUtils.dp2px(DialogStyle.CENTER_MAX_WIDTH_DP))
+                    .maxWidth(DialogStyle.centerWidthPx(getContext()))
                     .moveUpToKeyboard(false)
                     .setPopupCallback(new SimpleCallback() {
                         @Override
