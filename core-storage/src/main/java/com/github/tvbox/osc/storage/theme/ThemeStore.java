@@ -10,7 +10,10 @@ import com.github.tvbox.osc.bean.theme.ThemePaletteFactory;
 import com.github.tvbox.osc.bean.theme.ThemeShapePalette;
 import com.github.tvbox.osc.bean.theme.ThemeSpec;
 import com.github.tvbox.osc.bean.theme.ThemeType;
+import com.github.tvbox.osc.config.PrefsDataStore;
 import com.github.tvbox.osc.config.SystemConfig;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 import java.io.File;
 import java.io.InputStream;
@@ -129,6 +132,8 @@ public final class ThemeStore {
     private static final Map<ThemeType, List<Preset>> PRESET_CACHE = new java.util.EnumMap<>(ThemeType.class);
     private static final String PRESET_ROOT = "theme/themes/";
     private static final String PRESET_PREFIX = "preset:";
+    private static final String BUNDLED_BACKGROUND_PREFIX = "file:///android_asset/theme/backgrounds/";
+    private static final String KEY_APPLIED_BUILTIN_BACKGROUND = "theme_applied_builtin_background";
 
     private static final class Preset {
         final ThemeDef def;
@@ -337,7 +342,7 @@ public final class ThemeStore {
 
     /**
      * <b>当前生效配色的指纹</b>(便宜、不读 assets):模式 + 选中的自定义主题 + 亮/暗默认主题 +
-     * 生效类型 + 生效主题的 25 个键的哈希。
+     * 生效类型 + 生效主题的全部颜色键的哈希。
      *
      * <p>给"主题弹窗关闭时到底要不要重启"用:只有这个指纹变了(配色/类型真的变了)才值得重启应用 ——
      * 删掉一个没在用的主题、新建一个还没选中的主题都不该白重启一次。
@@ -712,21 +717,135 @@ public final class ThemeStore {
         ThemeDef def = resolveActive();
         String path = "";
         boolean userTheme = def != null && isUserTheme(def.getId());
-        if (userTheme && def.hasBackgroundImage() && ctx != null) {
-            path = ThemeBackgroundLibrary.resolvePath(ctx, def.getBackground().getRef());
+        if (def != null && def.hasBackgroundImage()) {
+            if (userTheme && ctx != null) {
+                path = ThemeBackgroundLibrary.resolvePath(ctx, def.getBackground().getRef());
+            } else if (def.getId().startsWith(PRESET_PREFIX)) {
+                path = bundledBackgroundSource(def.getBackground().getRef());
+            }
         }
+        boolean backgroundChanged = !path.equals(SystemConfig.getThemeDefaultBackground());
         SystemConfig.setThemeDefaultBackground(path);
         // 自定义主题生效 = 它自带的背景(含摆放)优先,全局背景设置整体休眠(设置页入口也隐藏);
         // 切回内置主题(含目录预设)时 SystemConfig 会把休眠前用户的全局摆放原样恢复
         SystemConfig.setActiveThemeCustom(userTheme);
 
-        // 摆放跟"真正生效的背景"走:走到这里 path 非空只可能是自定义主题的图在生效(全局设置已休眠),
-        // 所以无条件写主题摆放;内置主题没有默认图,path 恒为空,自然不碰全局摆放
+        if (!userTheme) {
+            applyBuiltinBackground(def, path, backgroundChanged);
+            return;
+        }
+        // 离开内置预设后丢弃其基线，回到预设时即使图源相同也要重新套用主题值。
+        if (PrefsDataStore.contains(KEY_APPLIED_BUILTIN_BACKGROUND)) {
+            PrefsDataStore.delete(KEY_APPLIED_BUILTIN_BACKGROUND);
+        }
         if (path.isEmpty()) return;
         ThemeDef.Background bg = def.getBackground();
         SystemConfig.setPageBackgroundTransform(bg.getZoom(), bg.getAnchorX(), bg.getAnchorY());
         SystemConfig.setPageBackgroundAlpha(bg.getAlpha());
         SystemConfig.setPageBackgroundScrimEnabled(bg.isScrim());
+    }
+
+    /**
+     * 内置预设的图源可能不变，但 JSON 中的遮罩、透明度或摆放已经更新。
+     * 记录上次应用的主题值作为基线：同一预设更新时只替换仍等于旧默认的字段，
+     * 用户在背景设置页调过的字段继续保留；首次建立基线或切换预设时套用全部默认值。
+     */
+    private static void applyBuiltinBackground(ThemeDef def, String path, boolean sourceChanged) {
+        if (SystemConfig.isPageBackgroundUserSet()) return;
+        ThemeDef.Background bg = def == null ? new ThemeDef.Background() : def.getBackground();
+        String id = def == null ? "fallback:" + activeType().jsonValue : def.getId();
+        AppliedBuiltinBackground next = new AppliedBuiltinBackground(id, path, bg);
+        AppliedBuiltinBackground previous = AppliedBuiltinBackground.decode(
+                PrefsDataStore.getString(KEY_APPLIED_BUILTIN_BACKGROUND, ""));
+        if (!sourceChanged && next.sameAs(previous)) return;
+
+        if (sourceChanged || previous == null || !id.equals(previous.id) || !path.equals(previous.path)) {
+            SystemConfig.setPageBackgroundTransform(next.zoom, next.anchorX, next.anchorY);
+            SystemConfig.setPageBackgroundAlpha(next.alpha);
+            SystemConfig.setPageBackgroundScrimEnabled(next.scrim);
+        } else {
+            float zoom = SystemConfig.getPageBackgroundZoom();
+            float anchorX = SystemConfig.getPageBackgroundAnchorX();
+            float anchorY = SystemConfig.getPageBackgroundAnchorY();
+            if (Float.compare(previous.zoom, next.zoom) != 0 && Float.compare(zoom, previous.zoom) == 0) zoom = next.zoom;
+            if (Float.compare(previous.anchorX, next.anchorX) != 0 && Float.compare(anchorX, previous.anchorX) == 0) anchorX = next.anchorX;
+            if (Float.compare(previous.anchorY, next.anchorY) != 0 && Float.compare(anchorY, previous.anchorY) == 0) anchorY = next.anchorY;
+            SystemConfig.setPageBackgroundTransform(zoom, anchorX, anchorY);
+            if (previous.alpha != next.alpha && SystemConfig.getPageBackgroundAlpha() == previous.alpha) {
+                SystemConfig.setPageBackgroundAlpha(next.alpha);
+            }
+            if (previous.scrim != next.scrim && SystemConfig.isPageBackgroundScrimEnabled() == previous.scrim) {
+                SystemConfig.setPageBackgroundScrimEnabled(next.scrim);
+            }
+        }
+        PrefsDataStore.put(KEY_APPLIED_BUILTIN_BACKGROUND, next.encode());
+    }
+
+    /** 上次应用的内置背景值；只记录打包预设，不记录用户自己的背景配置。 */
+    private static final class AppliedBuiltinBackground {
+        final String id;
+        final String path;
+        final float zoom;
+        final float anchorX;
+        final float anchorY;
+        final int alpha;
+        final boolean scrim;
+
+        AppliedBuiltinBackground(String id, String path, ThemeDef.Background bg) {
+            this(id, path, bg.getZoom(), bg.getAnchorX(), bg.getAnchorY(), bg.getAlpha(), bg.isScrim());
+        }
+
+        AppliedBuiltinBackground(String id, String path, float zoom, float anchorX, float anchorY,
+                                 int alpha, boolean scrim) {
+            this.id = id;
+            this.path = path;
+            this.zoom = zoom;
+            this.anchorX = anchorX;
+            this.anchorY = anchorY;
+            this.alpha = alpha;
+            this.scrim = scrim;
+        }
+
+        boolean sameAs(AppliedBuiltinBackground other) {
+            return other != null && id.equals(other.id) && path.equals(other.path)
+                    && Float.compare(zoom, other.zoom) == 0
+                    && Float.compare(anchorX, other.anchorX) == 0
+                    && Float.compare(anchorY, other.anchorY) == 0
+                    && alpha == other.alpha && scrim == other.scrim;
+        }
+
+        String encode() {
+            JsonObject json = new JsonObject();
+            json.addProperty("id", id);
+            json.addProperty("path", path);
+            json.addProperty("zoom", zoom);
+            json.addProperty("anchorX", anchorX);
+            json.addProperty("anchorY", anchorY);
+            json.addProperty("alpha", alpha);
+            json.addProperty("scrim", scrim);
+            return json.toString();
+        }
+
+        static AppliedBuiltinBackground decode(String raw) {
+            if (raw == null || raw.isEmpty()) return null;
+            try {
+                JsonObject json = JsonParser.parseString(raw).getAsJsonObject();
+                return new AppliedBuiltinBackground(json.get("id").getAsString(), json.get("path").getAsString(),
+                        json.get("zoom").getAsFloat(), json.get("anchorX").getAsFloat(),
+                        json.get("anchorY").getAsFloat(), json.get("alpha").getAsInt(),
+                        json.get("scrim").getAsBoolean());
+            } catch (RuntimeException ignored) {
+                return null;
+            }
+        }
+    }
+
+    /** 内置预设只能引用打包在 theme/backgrounds 下的单个图片文件。 */
+    private static String bundledBackgroundSource(String ref) {
+        if (ref == null || !ref.startsWith(BUNDLED_BACKGROUND_PREFIX)) return "";
+        String filename = ref.substring(BUNDLED_BACKGROUND_PREFIX.length());
+        if (!filename.matches("[A-Za-z0-9_-]+\\.(png|webp|jpg|jpeg)")) return "";
+        return ref;
     }
 
     /** 模式 → 亮暗类型(跟随系统时看当前系统明暗) */

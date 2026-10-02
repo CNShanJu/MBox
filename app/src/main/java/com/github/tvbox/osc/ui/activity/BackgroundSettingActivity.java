@@ -11,6 +11,7 @@ import android.widget.TextView;
 
 import com.blankj.utilcode.util.ScreenUtils;
 import com.github.tvbox.osc.base.BaseVbActivity;
+import com.github.tvbox.osc.bean.theme.ThemeDef;
 import com.github.tvbox.osc.config.SystemConfig;
 import com.github.tvbox.osc.databinding.ActivityBackgroundSettingBinding;
 import com.github.tvbox.osc.storage.theme.ThemeStore;
@@ -621,18 +622,20 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
         });
         mBinding.btnReset.setOnClickListener(v -> {
             FastClickCheckUtil.check(v);
-            // 草稿恢复成"跟随主题默认背景"(浅/深主题即纯色) + 位置/透明度/遮罩回默认;确认后才真正生效
+            // 普通模式恢复该主题自带的图与摆放(内置预设可能带图)，主题编辑模式恢复纯色。
             draftTouched = true;
             draftUserSet = false;
             draftRef = "";
-            // 主题模式下"默认"就是该主题类型的纯色(取内置亮/暗的页面底色),普通模式仍是跟随主题默认背景
-            draftPath = "";
-            draftZoom = 0f;
-            draftAnchorX = BgImageTransform.ANCHOR_CENTER;
-            draftAnchorY = BgImageTransform.ANCHOR_CENTER;
+            draftPath = themeMode ? "" : SystemConfig.getThemeDefaultBackground();
+            ThemeDef active = themeMode ? null : ThemeStore.resolveActive();
+            ThemeDef.Background bg = active != null && active.hasBackgroundImage()
+                    ? active.getBackground() : null;
+            draftZoom = bg == null ? 0f : bg.getZoom();
+            draftAnchorX = bg == null ? BgImageTransform.ANCHOR_CENTER : bg.getAnchorX();
+            draftAnchorY = bg == null ? BgImageTransform.ANCHOR_CENTER : bg.getAnchorY();
             draftLegacyOffsets = false;
-            draftAlpha = SystemConfig.PAGE_BG_ALPHA_DEFAULT;
-            draftScrim = true;
+            draftAlpha = bg == null ? SystemConfig.PAGE_BG_ALPHA_DEFAULT : bg.getAlpha();
+            draftScrim = bg == null || bg.isScrim();
             applyDraft();
         });
         mBinding.btnConfirm.setOnClickListener(v -> {

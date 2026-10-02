@@ -58,7 +58,7 @@ public class PageBackgroundView extends FrameLayout {
         /**
          * 图源:<b>空串=纯色</b>(不挂背景图,页面即主题窗底色);
          * 应用内文件绝对路径 = 用户选的图;{@code file:///android_asset/...} = 打包素材
-         * (后续内置主题自带的默认背景图用这种)。
+         * (内置「莲花」等预设的背景图用这种)。
          */
         public final String imagePath;
         /** 主题色遮罩不透明度 0-100;0=不加遮罩(固定值,用户只能开关遮罩) */

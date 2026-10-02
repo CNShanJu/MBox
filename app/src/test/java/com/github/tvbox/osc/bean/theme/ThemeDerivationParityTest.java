@@ -1,6 +1,7 @@
 package com.github.tvbox.osc.bean.theme;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
@@ -47,7 +48,8 @@ public class ThemeDerivationParityTest {
         JsonObject o = JsonParser.parseString(read(f)).getAsJsonObject();
         Map<String, String> out = new LinkedHashMap<>();
         for (String key : o.keySet()) {
-            if ("type".equals(key) || "name".equals(key) || "default".equals(key) || "desc".equals(key)) continue;
+            if ("type".equals(key) || "name".equals(key) || "default".equals(key)
+                    || "desc".equals(key) || "background".equals(key)) continue;
             out.put(key, o.get(key).getAsString());
         }
         return out;
@@ -140,10 +142,28 @@ public class ThemeDerivationParityTest {
                         && !json.get("name").getAsString().trim().isEmpty());
                 assertTrue(asset + " 缺少布尔 default", json.has("default")
                         && json.get("default").getAsJsonPrimitive().isBoolean());
+                JsonObject desc = json.getAsJsonObject("desc");
+                assertNotNull(asset + " 缺少 desc 说明", desc);
                 if (json.get("default").getAsBoolean()) defaults++;
                 Map<String, String> input = readInput(asset);
                 for (ThemeKey k : ThemeSpec.all()) {
                     assertTrue(asset + " 缺少可配置项: " + k.key, input.containsKey(k.key));
+                    assertTrue(asset + " 的 desc 缺少说明: " + k.key,
+                            desc.has(k.key) && !desc.get(k.key).getAsString().trim().isEmpty());
+                }
+                if (json.has("background")) {
+                    assertTrue(asset + " 的 desc.background 应为对象",
+                            desc.has("background") && desc.get("background").isJsonObject());
+                    JsonObject background = json.getAsJsonObject("background");
+                    JsonObject backgroundDesc = desc.getAsJsonObject("background");
+                    assertEquals(asset + " 的背景说明字段与配置不一致",
+                            background.keySet(), backgroundDesc.keySet());
+                    for (String key : background.keySet()) {
+                        assertTrue(asset + " 的 desc.background 缺少说明: " + key,
+                                backgroundDesc.get(key).isJsonPrimitive()
+                                        && backgroundDesc.get(key).getAsJsonPrimitive().isString()
+                                        && !backgroundDesc.get(key).getAsString().trim().isEmpty());
+                    }
                 }
                 for (String key : input.keySet()) {
                     assertNotNull(asset + " 里有 ThemeSpec 不认识的键: " + key,
@@ -163,5 +183,27 @@ public class ThemeDerivationParityTest {
         assertEquals(ThemeType.DARK, ThemeType.fromJson(
                 JsonParser.parseString(read(repoFile("src/main/assets/theme/themes/" + defaultAsset(ThemeType.DARK))))
                         .getAsJsonObject().get("type").getAsString()));
+    }
+
+    /** 莲花预设只改变背景，颜色仍与默认浅色一致，且打包素材确实存在。 */
+    @Test
+    public void lotusPresetUsesBrightPaletteAndBundledBackground() throws Exception {
+        String lotusJson = read(repoFile("src/main/assets/theme/themes/bright/lotus.json"));
+        JsonObject lotus = JsonParser.parseString(lotusJson).getAsJsonObject();
+        assertEquals("bright", lotus.get("type").getAsString());
+        assertEquals(false, lotus.get("default").getAsBoolean());
+        assertEquals(readInput("bright/default.json"), readInput("bright/lotus.json"));
+
+        ThemeJson.Result parsed = ThemeJson.parse(lotusJson);
+        assertNotNull(parsed.def);
+        assertTrue(parsed.def.hasBackgroundImage());
+        ThemeDef.Background bg = parsed.def.getBackground();
+        String prefix = "file:///android_asset/";
+        assertTrue(bg.getRef().startsWith(prefix));
+        assertTrue(repoFile("src/main/assets/" + bg.getRef().substring(prefix.length())).isFile());
+        assertEquals(0.36f, bg.getZoom(), 0f);
+        assertEquals(1f, bg.getAnchorX(), 0f);
+        assertEquals(1f, bg.getAnchorY(), 0f);
+        assertFalse(bg.isScrim());
     }
 }
