@@ -1,7 +1,6 @@
 package com.github.tvbox.osc.ui.activity
 
 import android.content.res.Configuration
-import android.os.Bundle
 import android.view.View
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
@@ -14,9 +13,8 @@ import com.github.tvbox.osc.log.Category
 import com.github.tvbox.osc.log.LogStore
 import com.github.tvbox.osc.ui.adapter.HistoryAdapter
 import com.github.tvbox.osc.util.FastClickCheckUtil
+import com.github.tvbox.osc.util.HistoryEntryNavigator
 import com.github.tvbox.osc.util.Utils
-import com.lxj.xpopup.XPopup
-import com.owen.tvrecyclerview.widget.V7GridLayoutManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -77,21 +75,17 @@ class HistoryActivity : BaseVbActivity<ActivityHistoryBinding>() {
             BaseQuickAdapter.OnItemClickListener { _: BaseQuickAdapter<*, *>?, view: View?, position: Int ->
                 FastClickCheckUtil.check(view)
                 val vodInfo = historyAdapter!!.data[position]
-                val bundle = Bundle()
-                bundle.putString("id", vodInfo.id)
-                bundle.putString("sourceKey", vodInfo.sourceKey)
-                bundle.putString("vodName", vodInfo.name)
-                jumpActivity(DetailActivity::class.java, bundle)
+                HistoryEntryNavigator.open(this, vodInfo)
             }
     }
 
     private fun initData() {
 
         lifecycleScope.launch(Dispatchers.IO) {
-            // 源是否存在/历史保留上限由 UI 层判定(与旧 RoomDataManger 内聚逻辑等价;storage 不再依赖业务配置)
+            // 保留旧订阅来源的记录；来源不可用时卡片仍可进入同名搜索。
             val allVodRecord = com.github.tvbox.osc.repo.HistoryRepositories.history().query(
                 100,
-                { key -> com.github.tvbox.osc.spiderapi.SourceConfigProviders.get().getSource(key) != null },
+                null,
                 com.github.tvbox.osc.util.HistoryHelper.getHisNum(
                     com.github.tvbox.osc.config.SystemConfig.getHistoryNum()
                 )

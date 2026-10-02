@@ -56,6 +56,8 @@ public class VodInfo implements Serializable {
     public int playIndex = 0;
     public String playNote = "";
     public String sourceKey;
+    /** 保存历史时的订阅地址指纹；旧记录为空，按 sourceKey 兼容判断。 */
+    public String subscriptionFingerprint;
     public String playerCfg = "";
     public boolean reverseSort = false;
 

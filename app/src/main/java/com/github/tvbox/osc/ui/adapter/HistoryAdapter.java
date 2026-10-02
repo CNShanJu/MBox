@@ -1,27 +1,20 @@
 package com.github.tvbox.osc.ui.adapter;
 
 import android.graphics.drawable.Drawable;
-import android.text.TextUtils;
 import android.view.View;
 import android.widget.ImageView;
 import android.widget.TextView;
 
 import androidx.core.content.ContextCompat;
-import androidx.core.graphics.drawable.DrawableCompat;
 
 import com.chad.library.adapter.base.BaseQuickAdapter;
 import com.chad.library.adapter.base.BaseViewHolder;
 import com.github.tvbox.osc.R;
 import com.github.tvbox.osc.bean.VodInfo;
-import com.github.tvbox.osc.picasso.RoundTransformation;
-import com.github.tvbox.osc.spiderapi.SourceConfigProviders;
-import com.github.tvbox.osc.util.DefaultConfig;
-import com.github.tvbox.osc.util.MD5;
-import com.squareup.picasso.Picasso;
+import com.github.tvbox.osc.util.HistorySourceBinding;
 
 import java.util.ArrayList;
 
-import me.jessyan.autosize.utils.AutoSizeUtils;
 
 /**
  * @author pj567
@@ -42,7 +35,7 @@ public class HistoryAdapter extends BaseQuickAdapter<VodInfo, BaseViewHolder> {
             tvYear.setText(String.valueOf(item.year));
             tvYear.setVisibility(View.VISIBLE);
         }*/
-        tvYear.setText(SourceConfigProviders.get().getSource(item.sourceKey).getName());
+        tvYear.setText(HistorySourceBinding.sourceLabel(item));
 
         TextView tvNote = helper.getView(R.id.tvNote);
         if (item.note == null || item.note.isEmpty()) {
