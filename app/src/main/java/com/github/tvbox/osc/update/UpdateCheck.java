@@ -9,8 +9,6 @@ import com.github.tvbox.osc.config.SystemConfig;
 import com.github.tvbox.osc.ui.dialog.UpdateNoteDialog;
 import com.github.tvbox.osc.util.AppBubble;
 
-import java.util.concurrent.atomic.AtomicBoolean;
-
 /**
  * 更新检查的共用入口:把"检查 → 发现新版本弹更新说明 → 用户点立即更新开始下载"这段固定动作收在一处,
  * 供两处复用——
@@ -38,8 +36,8 @@ public final class UpdateCheck {
         void onFailed(String message);
     }
 
-    /** 每个进程只自动检查一次(启动检查的语义:一次启动最多检查一次) */
-    private static final AtomicBoolean AUTO_CHECKED = new AtomicBoolean(false);
+    /** 手动检查优先于本进程排队或在途的自动检查。 */
+    private static final UpdateCheckGate CHECK_GATE = new UpdateCheckGate();
 
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
 
@@ -53,6 +51,11 @@ public final class UpdateCheck {
      */
     public static void check(final Context context, final Listener listener) {
         if (context == null) return;
+        CHECK_GATE.onManualCheck();
+        performCheck(context, listener);
+    }
+
+    private static void performCheck(final Context context, final Listener listener) {
         if (listener != null) listener.onChecking();
         final Updater updater = UpdaterProvider.get();
         updater.checkUpdate(context, new Updater.Callback() {
@@ -114,23 +117,27 @@ public final class UpdateCheck {
             if (onFinished != null) onFinished.run();
             return;
         }
-        if (!AUTO_CHECKED.compareAndSet(false, true)) {
+        if (!CHECK_GATE.beginAutoCheck()) {
             if (onFinished != null) onFinished.run();
             return;
         }
-        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM, "更新: 启动自动检查更新");
-        check(context, new Listener() {
+        performCheck(context, new Listener() {
             @Override
             public void onChecking() {
             }
 
             @Override
             public boolean onResult(UpdateInfo newVersion) {
-                com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM, newVersion == null
-                        ? "更新: 启动自动检查,已是最新" : "更新: 启动自动检查,发现新版本 v" + newVersion.versionName);
-                if (onFinished != null) MAIN.post(onFinished);
                 if (newVersion != null) {
+                    com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM,
+                            "更新: 发现新版本 v" + newVersion.versionName);
+                }
+                if (onFinished != null) MAIN.post(onFinished);
+                if (newVersion != null && CHECK_GATE.mayShowAutoPrompt()
+                        && SystemConfig.isAutoCheckUpdate()) {
                     MAIN.post(() -> {
+                        // 网络回调与主线程排队期间都可能发生手动检查。
+                        if (!CHECK_GATE.mayShowAutoPrompt() || !SystemConfig.isAutoCheckUpdate()) return;
                         if (context instanceof Activity) {
                             Activity host = (Activity) context;
                             if (host.isFinishing() || host.isDestroyed()

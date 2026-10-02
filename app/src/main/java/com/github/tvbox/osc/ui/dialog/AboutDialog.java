@@ -11,7 +11,7 @@ import com.github.tvbox.osc.update.UpdateCheck;
 import com.github.tvbox.osc.update.UpdateInfo;
 import com.github.tvbox.osc.util.AppBubble;
 import com.google.android.material.button.MaterialButton;
-import com.lxj.xpopup.core.BottomPopupView;
+import com.lxj.xpopup.enums.PopupStatus;
 
 import org.jetbrains.annotations.NotNull;
 
@@ -46,11 +46,13 @@ public class AboutDialog extends AppBottomPopupView {
             UpdateCheck.check(getContext(), new UpdateCheck.Listener() {
                 @Override
                 public void onChecking() {
-                    showStatus(tvStatus, "正在检查更新...");
+                    if (acceptsCheckResult()) showStatus(tvStatus, "正在检查更新...");
                 }
 
                 @Override
                 public boolean onResult(UpdateInfo newVersion) {
+                    // 用户在网络请求期间关掉了「关于」面板，晚到的结果不再拉起说明弹窗。
+                    if (!acceptsCheckResult()) return true;
                     btn.setEnabled(true);
                     if (newVersion == null) {
                         showStatus(tvStatus, "当前已是最新版本");
@@ -66,12 +68,17 @@ public class AboutDialog extends AppBottomPopupView {
 
                 @Override
                 public void onFailed(String message) {
+                    if (!acceptsCheckResult()) return;
                     tvStatus.setVisibility(View.GONE);
                     btn.setEnabled(true);
                     AppBubble.toast(message);
                 }
             });
         });
+    }
+
+    private boolean acceptsCheckResult() {
+        return popupStatus == PopupStatus.Show || popupStatus == PopupStatus.Showing;
     }
 
     private static void showStatus(TextView tvStatus, String text) {
