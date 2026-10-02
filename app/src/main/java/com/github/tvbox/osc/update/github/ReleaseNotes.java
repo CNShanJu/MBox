@@ -94,40 +94,38 @@ final class ReleaseNotes {
         List<Note> shown = new ArrayList<>();
         List<String> bodies = new ArrayList<>();
         for (Note n : notes) {
-            String body = userFacing(n.body);
+            // 旧版 CI 曾在手写说明前再加一次版本标题。先清掉标题/引言再判空，
+            // 否则只有开发者围栏的 release 也会被当作一个用户可见版本。
+            String body = dropVersionHeader(userFacing(n.body), n.version);
             if (body.isEmpty()) continue;
             shown.add(n);
             bodies.add(body);
         }
         if (shown.isEmpty()) return "";
-        // 单版本也走同一套去重:弹窗标题已是"发现新版本 vX",正文自带的版本标题/引言不再重复
-        if (shown.size() == 1) return dropVersionHeader(bodies.get(0), shown.get(0).version);
-        Note newest = shown.get(0);
-        Note oldest = shown.get(shown.size() - 1);
+        // 单版本的版本号已在弹窗标题中，不再在正文重复。
+        if (shown.size() == 1) return bodies.get(0);
         StringBuilder sb = new StringBuilder();
-        sb.append("本次升级跨 ").append(shown.size()).append(" 个版本(v")
-                .append(oldest.version).append(" → v").append(newest.version).append(")")
+        // 这里的数量是有用户可读说明的版本数，不是实际跨过的版本数；
+        // 最早一条说明也未必是用户当前版本，不能用它拼升级区间。
+        sb.append("本次升级包含 ").append(shown.size()).append(" 个版本的更新说明")
                 .append(truncated ? "，以下展示最近的说明：" : "，各版本改动如下：").append("\n\n");
         for (int i = 0; i < shown.size(); i++) {
             sb.append("## v").append(shown.get(i).version).append("\n")
-                    .append(dropVersionHeader(bodies.get(i), shown.get(i).version));
+                    .append(bodies.get(i));
             if (i < shown.size() - 1) sb.append("\n\n");
         }
         return sb.toString();
     }
 
-    /** 小节顶部我们自己补 {@code ## v<版本>}:正文里重复的版本标题与"相比 vX 的更新:"引言去掉 */
+    /** 去掉正文开头连续重复的自身版本标题与"相比 vX 的更新:"引言 */
     private static String dropVersionHeader(String body, String version) {
         String[] lines = body.split("\n", -1);
         int from = 0;
-        Matcher heading = VERSION_LINE.matcher(lines[0]);
-        if (heading.matches() && version.equals(heading.group(1))) {
-            from = 1;
-            while (from < lines.length && lines[from].trim().isEmpty()) from++;
-        }
-        // 引言独立判断:作者只写"相比 vX 的更新:"而行首没有版本标题时同样要去掉
-        Matcher intro = COMPARE_LINE.matcher(from < lines.length ? lines[from] : "");
-        if (intro.matches()) {
+        while (from < lines.length) {
+            Matcher heading = VERSION_LINE.matcher(lines[from].trim());
+            boolean ownHeading = heading.matches() && version.equals(heading.group(1));
+            boolean intro = COMPARE_LINE.matcher(lines[from].trim()).matches();
+            if (!ownHeading && !intro) break;
             from++;
             while (from < lines.length && lines[from].trim().isEmpty()) from++;
         }

@@ -88,6 +88,7 @@ jobs:
       # 正文规范(AGENTS §九:禁止照搬 commit):用户可读说明由维护者写在
       # doc/release-notes-<tag>.md(UTF-8),CI 只把它贴上去;文件缺失时正文只留 dev 围栏
       # (App 更新弹窗会自动剔除围栏内容),绝不把 commit 标题直接给用户看。
+      # 不预写版本标题:说明文件可能自带标题,也可能只有 dev 围栏(无用户可见改动)。
       - name: Prepare Release Notes
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
@@ -95,8 +96,6 @@ jobs:
           PREV=$(git tag --list 'v*' --sort=-version:refname | sed -n '2p')
           NOTES="doc/release-notes-${TAG}.md"
           {
-            echo "## ${TAG}"
-            echo ""
             if [ -f "$NOTES" ]; then
               cat "$NOTES"
             fi

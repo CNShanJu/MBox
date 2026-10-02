@@ -76,6 +76,26 @@ public class ReleaseNotesTest {
         assertFalse(out.contains("相比"));
     }
 
+    /** 旧版 CI 会在手写说明前再加一次标题，纯内部版也会剩一行孤立标题。 */
+    @Test
+    public void workflowPrefixedNotes_doNotDuplicateHeadingOrCountDevOnlyVersion() {
+        String newest = "## v3.6.4\n\n## v3.6.4\n\n**新增**\n- 莲花背景";
+        String devOnly = "## v3.6.3\n\n<!-- dev -->\n发包流程调整\n<!-- /dev -->";
+        String out = ReleaseNotes.aggregate(Arrays.asList(
+                new ReleaseNotes.Note("3.6.4", newest),
+                new ReleaseNotes.Note("3.6.3", devOnly)), false);
+        assertEquals("**新增**\n- 莲花背景", out);
+        assertFalse(out.contains("本次升级跨"));
+        assertFalse(out.contains("v3.6.4"));
+    }
+
+    @Test
+    public void workflowPrefixedDevOnlyNote_hasNoUserFacingContent() {
+        String body = "## v3.6.3\n\n<!-- dev -->\n发包流程调整\n<!-- /dev -->";
+        assertEquals("", ReleaseNotes.aggregate(Collections.singletonList(
+                new ReleaseNotes.Note("3.6.3", body)), false));
+    }
+
     /** 没有版本标题、只写了引言时,引言同样要去掉 */
     @Test
     public void singleVersion_dropsIntroWithoutHeading() {
@@ -108,7 +128,8 @@ public class ReleaseNotesTest {
                 new ReleaseNotes.Note("3.4.4", "<!-- dev -->\n纯内部重构\n<!-- /dev -->"),
                 new ReleaseNotes.Note("3.4.3", "## 3.4.3\n\n相比 3.4.2 的更新:\n- 修复闪退"));
         String out = ReleaseNotes.aggregate(notes, false);
-        assertTrue(out.contains("本次升级跨 2 个版本(v3.4.3 → v3.4.5)"));
+        assertTrue(out.contains("本次升级包含 2 个版本的更新说明"));
+        assertFalse(out.contains("v3.4.3 → v3.4.5"));
         assertTrue(out.indexOf("## v3.4.5") < out.indexOf("## v3.4.3"));
         assertFalse(out.contains("纯内部重构"));
         // 正文自带的版本标题与"相比 vX 的更新"引言不再重复
