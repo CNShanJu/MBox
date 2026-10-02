@@ -42,6 +42,7 @@ public final class SystemConfig {
     private static final String KEY_LAN_SERVER_ENABLE = "lan_server_enable";
     private static final String KEY_LAN_PAIRING_CODE = "lan_pairing_code";
     private static final String KEY_INTERNAL_RESTART_AT = "internal_restart_at";
+    private static final String KEY_THEME_RESTART_CACHE_AT = "_private_theme_restart_cache_at";
     private static final String KEY_AUTO_UPDATE_PROMPT_VERSION = "auto_update_prompt_version";
     private static final String KEY_AUTO_UPDATE_PROMPT_AT = "auto_update_prompt_at";
     private static final String KEY_AUTO_CHECK_UPDATE = "auto_check_update";
@@ -81,6 +82,8 @@ public final class SystemConfig {
     public static final int PAGE_BG_ALPHA_DEFAULT = 100;
 
     private static final List<Listener> listeners = new CopyOnWriteArrayList<>();
+    /** 防止 AppCompat 在旧进程重建主页时提前消费主题重启标记。 */
+    private static long themeRestartCacheMarkedInProcessAt;
 
 
     private SystemConfig() {
@@ -226,6 +229,22 @@ public final class SystemConfig {
         PrefsDataStore.delete(KEY_INTERNAL_RESTART_AT);
         long elapsed = System.currentTimeMillis() - markedAt;
         return markedAt > 0 && elapsed >= 0 && elapsed <= 120_000L;
+    }
+
+    /** 主题只改变外观；真重启后的首页可优先读取现有订阅配置与爬虫包缓存。 */
+    public static synchronized void markThemeRestartUseCache() {
+        long markedAt = System.currentTimeMillis();
+        PrefsDataStore.put(KEY_THEME_RESTART_CACHE_AT, markedAt);
+        themeRestartCacheMarkedInProcessAt = markedAt;
+    }
+
+    /** 仅由新进程消费一次，超时则按普通冷启动处理。 */
+    public static synchronized boolean consumeThemeRestartUseCache() {
+        long markedAt = PrefsDataStore.getLong(KEY_THEME_RESTART_CACHE_AT, 0L);
+        if (markedAt <= 0 || markedAt == themeRestartCacheMarkedInProcessAt) return false;
+        PrefsDataStore.delete(KEY_THEME_RESTART_CACHE_AT);
+        long elapsed = System.currentTimeMillis() - markedAt;
+        return elapsed >= 0 && elapsed <= 120_000L;
     }
 
     /** 同一新版本的自动弹窗 24 小时内只出现一次；手动检查不受影响。 */

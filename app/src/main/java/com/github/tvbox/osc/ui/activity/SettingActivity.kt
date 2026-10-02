@@ -742,10 +742,12 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
      *
      * <p>配置不会丢:选择关系在 {@link ThemePickerDialog#commitIfDirty()} 里已**同步落盘**
      * ({@code PrefsDataStore} 的写是阻塞式),重启后按新配置解析(见 {@code ThemeRuntime.install})。
+     * 主题没有改订阅，只给这次真重启标记一次配置缓存快速路径，避免主页额外等待配置网络拉取。
      */
     private fun applyThemeAndRestart() {
         Utils.initTheme()
         SystemConfig.markInternalRestart()
+        SystemConfig.markThemeRestartUseCache()
         AppUtils.relaunchApp(true)
     }
 

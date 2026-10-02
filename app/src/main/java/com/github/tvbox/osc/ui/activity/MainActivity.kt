@@ -11,6 +11,7 @@ import com.github.tvbox.osc.R
 import com.github.tvbox.osc.util.AppBubble
 import com.github.tvbox.osc.base.BaseVbActivity
 import com.github.tvbox.osc.constant.IntentKey
+import com.github.tvbox.osc.config.SystemConfig
 import com.github.tvbox.osc.databinding.ActivityMainBinding
 import com.github.tvbox.osc.ui.fragment.GridFragment
 import com.github.tvbox.osc.ui.fragment.HomeFragment
@@ -28,7 +29,11 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>() {
 
     override fun init() {
 
-        useCacheConfig = intent.extras?.getBoolean(IntentKey.CACHE_CONFIG_CHANGED, false)?:false
+        // 主题真重启会清空 Intent 标志；只在下一进程的一次主页创建中复用磁盘配置缓存。
+        if (SystemConfig.consumeThemeRestartUseCache()) {
+            intent.putExtra(IntentKey.CACHE_CONFIG_CHANGED, true)
+        }
+        useCacheConfig = intent.getBooleanExtra(IntentKey.CACHE_CONFIG_CHANGED, false)
 
         mBinding.vp.adapter = object : FragmentPagerAdapter(supportFragmentManager) {
             override fun getItem(position: Int): Fragment {
