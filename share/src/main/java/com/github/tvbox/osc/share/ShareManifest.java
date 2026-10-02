@@ -22,9 +22,8 @@ import java.util.List;
  * <p>字段解析用显式 try/catch 且各字段独立兜底:清单里多一个未知字段、少一个可选字段
  * 都不该让整包作废(旧版本写的清单也要能读)。
  *
- * <p>与 app 侧 {@code BackupDialog.buildManifest()} 的关系:那份清单只覆盖"设置+Room",
- * 是本地备份目录用的;schema 语义与这里保持一致(见 {@link #SCHEMA_CURRENT}),
- * 后续统一到本类,避免两套清单各写各的。
+ * <p>局域网批量配置包和本地全量备份包均使用本清单；归档的具体内容由
+ * {@code domains} 与 {@code fileName} 标识，传输平台只负责收发字节。
  */
 public final class ShareManifest {
 

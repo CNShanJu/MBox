@@ -2,6 +2,7 @@ package com.github.tvbox.osc.data;
 
 import android.content.Context;
 import android.database.Cursor;
+import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteException;
 
 import androidx.annotation.NonNull;
@@ -190,24 +191,68 @@ public class AppDataManager {
     }
 
     public static boolean restore(final File path) throws IOException {
+        if (path == null || !path.isFile() || path.length() == 0
+                || path.length() > 512L * 1024L * 1024L)
+            throw new IOException("备份数据库不存在或超过 512 MB");
         try {
             return runOnDb(() -> {
-                if (dbInstance != null && dbInstance.isOpen()) {
-                    dbInstance.close();
-                }
-                dbInstance = null; // 覆盖文件后置空,下次使用自动重建(新文件)
                 File db = dbFile();
-                if (db.exists()) {
-                    db.delete();
+                File parent = db.getParentFile();
+                if (!parent.isDirectory() && !parent.mkdirs()) throw new IOException("无法创建数据库目录");
+                File staged = File.createTempFile("tvbox-restore-", ".db", parent);
+                File previous = null;
+                try {
+                    copyFile(path, staged);
+                    validateRestoreDatabase(staged);
+                    // 校验与复制完成前不碰现有数据库；替换在 Room 的专用线程上串行执行。
+                    if (dbInstance != null) dbInstance.close();
+                    dbInstance = null;
+                    if (db.exists()) {
+                        previous = File.createTempFile("tvbox-previous-", ".db", parent);
+                        if (!previous.delete() || !db.renameTo(previous))
+                            throw new IOException("无法暂存原数据库");
+                    }
+                    if (!staged.renameTo(db)) {
+                        if (previous != null && !previous.renameTo(db))
+                            throw new IOException("数据库替换失败，原数据库位于 " + previous.getName());
+                        previous = null;
+                        throw new IOException("无法替换数据库");
+                    }
+                    // TRUNCATE 模式仍可能留下空 journal；旧 sidecar 不能配新数据库使用。
+                    new File(db.getPath() + "-journal").delete();
+                    new File(db.getPath() + "-wal").delete();
+                    new File(db.getPath() + "-shm").delete();
+                    return true;
+                } finally {
+                    staged.delete();
+                    if (previous != null && db.exists()) previous.delete();
                 }
-                if (!db.getParentFile().exists())
-                    db.getParentFile().mkdirs();
-                copyFile(path, db);
-                return true;
             });
         } catch (RuntimeException e) {
             if (e.getCause() instanceof IOException) throw (IOException) e.getCause();
             throw e;
+        }
+    }
+
+    private static void validateRestoreDatabase(File file) throws IOException {
+        try (SQLiteDatabase sqlite = SQLiteDatabase.openDatabase(
+                file.getPath(), null, SQLiteDatabase.OPEN_READONLY)) {
+            try (Cursor cursor = sqlite.rawQuery("PRAGMA quick_check(1)", null)) {
+                if (!cursor.moveToFirst() || !"ok".equalsIgnoreCase(cursor.getString(0)))
+                    throw new IOException("备份数据库校验失败");
+            }
+            try (Cursor cursor = sqlite.rawQuery("PRAGMA user_version", null)) {
+                if (!cursor.moveToFirst() || cursor.getInt(0) < 1 || cursor.getInt(0) > 2)
+                    throw new IOException("备份数据库版本不受支持");
+            }
+            try (Cursor cursor = sqlite.rawQuery(
+                    "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN "
+                            + "('cache', 'vodRecord', 'vodCollect', 'room_master_table')", null)) {
+                if (!cursor.moveToFirst() || cursor.getInt(0) != 4)
+                    throw new IOException("备份数据库表结构不完整");
+            }
+        } catch (SQLiteException error) {
+            throw new IOException("备份数据库无法读取", error);
         }
     }
 

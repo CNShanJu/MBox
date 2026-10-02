@@ -4,6 +4,8 @@ import android.content.Intent
 import android.graphics.Typeface
 import android.net.Uri
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.provider.OpenableColumns
 import android.util.Log
 import android.view.View
@@ -23,6 +25,7 @@ import com.github.tvbox.osc.config.SystemConfig
 import com.github.tvbox.osc.databinding.ActivitySubscriptionBinding
 import com.github.tvbox.osc.spiderapi.LiveChannelConfigProviders
 import com.github.tvbox.osc.spiderapi.LiveChannelConfigApi
+import com.github.tvbox.osc.transfer.ConfigBundle
 import com.github.tvbox.osc.ui.adapter.LiveSourceAdapter
 import com.github.tvbox.osc.ui.adapter.SubscriptionAdapter
 import com.github.tvbox.osc.ui.dialog.AttachActionDialog
@@ -43,6 +46,7 @@ import com.github.tvbox.osc.spiderapi.CmsApiRules
 import com.github.tvbox.osc.util.CmsSiteImporter
 import com.github.tvbox.osc.util.FastClickCheckUtil
 import com.github.tvbox.osc.util.HCallBack
+import com.github.tvbox.osc.util.HeavyTaskUtil
 import com.github.tvbox.osc.util.HtmlSiteImporter
 import com.github.tvbox.osc.util.HttpClient
 import com.github.tvbox.osc.util.LiveConfig
@@ -61,6 +65,7 @@ import com.lxj.xpopup.XPopup
 
 import java.io.File
 import java.io.FileOutputStream
+import java.lang.ref.WeakReference
 import java.net.UnknownHostException
 import java.security.MessageDigest
 import java.util.function.Consumer
@@ -430,7 +435,7 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
                 file
             )
             val intent = Intent(Intent.ACTION_SEND)
-            intent.type = "application/json"
+            intent.type = if (file.name.endsWith(".zip", ignoreCase = true)) "application/zip" else "application/json"
             intent.putExtra(Intent.EXTRA_STREAM, uri)
             intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             startActivity(Intent.createChooser(intent, "分享订阅清单"))
@@ -857,6 +862,7 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
             // (与设置页改直播源同一个处理:不带 CACHE_CONFIG_CHANGED 回首页重新加载)
             LogStore.log(Category.SUBSCRIPTION, "订阅: 直播源有变更,退出本页时重载配置")
             if (mBeforeUrl == mSelectedUrl) {
+                SystemConfig.markInternalRestart()
                 jumpActivity(MainActivity::class.java)
                 overridePendingTransition(R.anim.fade_in, R.anim.fade_out)
             }
@@ -988,8 +994,13 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
             LogStore.log(Category.SUBSCRIPTION, "订阅: 本地导入选择文件 " + name + " (" + uri + ")")
             if (name.isNullOrEmpty() ||
                 !name.lowercase().endsWith(".txt") && !name.lowercase().endsWith(".json")
+                && !name.lowercase().endsWith(".zip")
             ) {
-                AppBubble.toast("请选择 txt/json 订阅文件")
+                AppBubble.toast("请选择 txt/json 订阅文件或订阅清单 ZIP")
+                return
+            }
+            if (name.lowercase().endsWith(".zip")) {
+                importSubscriptionZip(uri, name, mPendingChecked)
                 return
             }
             // 本地导入一律**复制一份进应用内部**再当订阅用(不再直接引用原文件):
@@ -997,6 +1008,10 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
             val importFile = importCopyOf(uri, name)
             if (importFile == null || !isUnderPrimaryStorage(importFile)) {
                 AppBubble.toast("文件无法读取，请选本机订阅文件")
+                return
+            }
+            if (name.lowercase().endsWith(".json") && importFile.length() > MAX_JUDGE_BYTES) {
+                importLargeSubscriptionDocument(importFile, name, mPendingChecked)
                 return
             }
             // 订阅清单式文件(形如 [{name,url},...],同本机调试用的默认订阅清单格式):
@@ -1042,11 +1057,137 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
         }
     }
 
+    /** ZIP 仅作为批量订阅清单入口；解压与校验在共享执行器，完成后仍逐条验证订阅。 */
+    private fun importSubscriptionZip(uri: Uri, name: String, checked: Boolean) {
+        val app = applicationContext
+        val resolver = app.contentResolver
+        val cache = app.cacheDir
+        val activityRef = WeakReference(this)
+        val main = Handler(Looper.getMainLooper())
+        AppBubble.toast("正在读取订阅清单…")
+        HeavyTaskUtil.getBigTaskExecutorService().execute {
+            var temporary: File? = null
+            var entries: JsonArray? = null
+            var error: String? = null
+            try {
+                val archive = File.createTempFile("subscription_import_", ".zip", cache)
+                temporary = archive
+                val input = resolver.openInputStream(uri) ?: throw java.io.IOException("文件打不开")
+                input.use { source ->
+                    archive.outputStream().use { target ->
+                        val buffer = ByteArray(8192)
+                        var total = 0L
+                        while (true) {
+                            val read = source.read(buffer)
+                            if (read < 0) break
+                            total += read
+                            if (total > ConfigBundle.MAX_ARCHIVE_BYTES) throw java.io.IOException("订阅包超过 64 MB")
+                            target.write(buffer, 0, read)
+                        }
+                    }
+                }
+                val parsed = ConfigBundle(app).readSubscriptionSelection(archive)
+                if (parsed.size() == 0 || parsed.size() > 500) throw java.io.IOException("订阅清单条数无效")
+                entries = activityRef.get()?.prepareEmbeddedEntries(parsed)
+                    ?: throw java.io.IOException("导入页面已关闭")
+            } catch (failure: Exception) {
+                error = failure.message ?: "订阅包读取失败"
+            } finally {
+                temporary?.delete()
+            }
+            val imported = entries
+            val failure = error
+            main.post {
+                val activity = activityRef.get() ?: return@post
+                if (activity.isFinishing || activity.isDestroyed) return@post
+                if (failure != null) {
+                    AppBubble.toast(failure)
+                } else if (imported != null) {
+                    activity.addOrigin = Subscription.ORIGIN_LOCAL
+                    if (!activity.importSubscriptionEntries(imported, checked, name, Subscription.ORIGIN_LOCAL))
+                        AppBubble.toast("清单中无有效订阅")
+                }
+            }
+        }
+    }
+
+    /** Large single JSON exports may embed an 8 MB local subscription; parse off the UI thread. */
+    private fun importLargeSubscriptionDocument(file: File, name: String, checked: Boolean) {
+        val activityRef = WeakReference(this)
+        val main = Handler(Looper.getMainLooper())
+        HeavyTaskUtil.getBigTaskExecutorService().execute {
+            var entries: JsonArray? = null
+            var error: String? = null
+            try {
+                if (file.length() <= 32L * 1024 * 1024) {
+                    val parsed = JsonParser.parseString(file.readText(Charsets.UTF_8))
+                    if (parsed.isJsonObject) {
+                        val obj = parsed.asJsonObject
+                        val schema = runCatching { obj.get("schema")?.asInt }.getOrNull()
+                        val category = runCatching { obj.get("category")?.asString }.getOrNull()
+                        if (schema == 1 && category == "subscriptions") {
+                            val items = obj.get("items")
+                            if (items == null || !items.isJsonArray || items.asJsonArray.size() !in 1..500)
+                                throw java.io.IOException("订阅清单格式无效")
+                            entries = activityRef.get()?.prepareEmbeddedEntries(items.asJsonArray)
+                                ?: throw java.io.IOException("导入页面已关闭")
+                        }
+                    }
+                }
+            } catch (failure: java.io.IOException) {
+                error = failure.message ?: "订阅清单读取失败"
+            } catch (_: Exception) {
+                // 其它大 JSON 仍按原有本地配置文件入口处理。
+            }
+            val imported = entries
+            val failure = error
+            main.post {
+                val activity = activityRef.get() ?: return@post
+                if (activity.isFinishing || activity.isDestroyed) return@post
+                when {
+                    failure != null -> AppBubble.toast(failure)
+                    imported != null -> {
+                        activity.addOrigin = Subscription.ORIGIN_LOCAL
+                        if (!activity.importSubscriptionEntries(imported, checked, name, Subscription.ORIGIN_LOCAL))
+                            AppBubble.toast("清单中无有效订阅")
+                        SubscriptionConfig.setLastImportDir(file.parent)
+                    }
+                    else -> activity.addLocalFileSubscription(file, name, checked)
+                }
+            }
+        }
+    }
+
     /** 应用专属导入目录(外部存储根下,clan:// 副本可被本地文件服务器读取,无需额外存储权限) */
     private fun importDir(): File {
-        val dir = File(getExternalFilesDir(null), "subscription_import")
-        if (!dir.exists()) dir.mkdirs()
+        val external = getExternalFilesDir(null) ?: throw java.io.IOException("应用存储目录不可用")
+        val dir = File(external, "subscription_import")
+        if (!dir.isDirectory && !dir.mkdirs()) throw java.io.IOException("无法创建订阅目录")
         return dir
+    }
+
+    /** ZIP/大 JSON 在共享执行器先还原内嵌文件，UI 线程只负责逐条加入订阅。 */
+    private fun prepareEmbeddedEntries(entries: JsonArray): JsonArray {
+        for (element in entries) {
+            if (isFinishing || isDestroyed) throw java.io.IOException("导入页面已关闭")
+            if (!element.isJsonObject) continue
+            val item = element.asJsonObject
+            if (!SubscriptionImportRules.mayBeListEntry(item)) continue
+            val raw = item.stringValue("content")
+            if (raw.isBlank()) continue
+            val name = item.stringValue("name").trim().ifEmpty { item.stringValue("sourceName").trim() }
+            val content = SubscriptionImportRules.normalizedContent(raw)
+            val file = content?.let { writeLibraryFile(item.stringValue("file"), name, it) }
+            item.remove("content")
+            if (file == null) {
+                item.addProperty("url", "")
+                item.addProperty("sourceUrl", "")
+            } else {
+                item.addProperty("url", clanPathOf(file))
+                item.addProperty("name", name.ifEmpty { file.nameWithoutExtension })
+            }
+        }
+        return entries
     }
 
     /**
@@ -1279,6 +1420,13 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
         if (root.isJsonArray && importSubscriptionEntries(root.asJsonArray, checked, label + "清单", origin)) return true
         if (!root.isJsonObject) return false
         val obj = root.asJsonObject
+        // 新单条导出与批量 ZIP 内的 subscriptions.json 共用这一层描述格式。
+        val schema = runCatching { obj.get("schema")?.asInt }.getOrNull()
+        val category = runCatching { obj.get("category")?.asString }.getOrNull()
+        val described = obj.get("items")
+        if (schema == 1 && category == "subscriptions" && described != null && described.isJsonArray
+            && importSubscriptionEntries(described.asJsonArray, checked, label + "订阅", origin)
+        ) return true
         // 2) 多线路
         val urls = obj.get("urls")
         if (urls != null && urls.isJsonArray
@@ -1540,9 +1688,13 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
     private fun libraryFileOf(url: String): File? {
         val prefix = "clan://localhost/"
         if (!url.startsWith(prefix)) return null
-        val f = File("/storage/emulated/0" + url.removePrefix(prefix))
-        val dir = importDir()
-        return if (f.absolutePath.startsWith(dir.absolutePath + File.separator)) f else null
+        return try {
+            val f = File("/storage/emulated/0/" + url.removePrefix(prefix)).canonicalFile
+            val dir = importDir().canonicalFile
+            if (f.path.startsWith(dir.path + File.separator)) f else null
+        } catch (_: java.io.IOException) {
+            null
+        }
     }
 
     /**
@@ -1551,12 +1703,22 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
      */
     private fun writeLibraryFile(suggestedName: String, displayName: String, content: String): File? {
         return try {
+            val bytes = content.toByteArray(Charsets.UTF_8)
+            if (bytes.size > 8 * 1024 * 1024) return null
             val base = sanitizeImportName(suggestedName.ifBlank { displayName.ifBlank { "导入订阅" } })
             val dot = base.lastIndexOf('.')
             val stem = if (dot > 0) base.substring(0, dot) else base
             val ext = if (dot > 0) base.substring(dot) else ".json"
             val file = File(importDir(), stem + "_" + contentDigest(content) + ext)
-            if (!file.exists()) file.writeText(content, Charsets.UTF_8)
+            val atomic = android.util.AtomicFile(file)
+            val output = atomic.startWrite()
+            try {
+                output.write(bytes)
+                atomic.finishWrite(output)
+            } catch (failure: Throwable) {
+                atomic.failWrite(output)
+                throw failure
+            }
             file
         } catch (t: Throwable) {
             t.printStackTrace()
@@ -2019,6 +2181,7 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
             SubscriptionConfig.setApiUrl(mSelectedUrl)
             SubscriptionConfig.setSubscriptions(mSubscriptions)
             LogStore.log(Category.SUBSCRIPTION, "订阅: 切换后重启进程，释放旧爬虫库")
+            SystemConfig.markInternalRestart()
             AppUtils.relaunchApp(true)
         }
         super.finish()

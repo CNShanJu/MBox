@@ -26,6 +26,8 @@ public final class PrefsDataStore {
     private static final Gson GSON = new Gson();
 
     private static final String FILE_NAME = "prefs.pb";
+    private static final String PRIVATE_KEY_PREFIX = "_private_";
+    private static final String LAN_PAIRING_CODE_KEY = "lan_pairing_code";
 
     private static volatile RxDataStore<Preferences> store;
     private static volatile ConcurrentHashMap<String, Object> cache = new ConcurrentHashMap<>();
@@ -208,59 +210,115 @@ public final class PrefsDataStore {
 
     // ── 备份/恢复(BackupDialog 聚合;DataStore 为全部配置域的唯一权威)──
 
-    /** 导出全部键值为 JSON 文本(标量 + putJson 的 JSON 文本原样往返;备份写盘用) */
+    /** 导出用户配置；配对令牌等应用私有键不进入备份或共享包。 */
     public static String exportJson() {
         try {
-            return GSON.toJson(cache);
+            java.util.Map<String, Object> exportable = new java.util.LinkedHashMap<>();
+            for (java.util.Map.Entry<String, Object> entry : cache.entrySet()) {
+                if (!entry.getKey().startsWith(PRIVATE_KEY_PREFIX)
+                        && !LAN_PAIRING_CODE_KEY.equals(entry.getKey())) {
+                    exportable.put(entry.getKey(), entry.getValue());
+                }
+            }
+            return GSON.toJson(exportable);
         } catch (Throwable th) {
-            th.printStackTrace();
-            return "{}";
+            throw new IllegalStateException("设置数据导出失败", th);
         }
     }
 
-    /** 从 JSON 文本恢复全部键值(与 {@link #exportJson()} 对称;写后内存/磁盘立即生效)。
+    /** 从 JSON 文本恢复可导出的键值(与 {@link #exportJson()} 对称;写后内存/磁盘立即生效)。
      *  @return 实际恢复的键数量(-1 表示解析失败) */
     public static int importJson(String json) {
         if (json == null) return 0;
         try {
-            java.lang.reflect.Type type = new com.google.gson.reflect.TypeToken<java.util.LinkedHashMap<String, Object>>() {
-            }.getType();
-            java.util.Map<String, Object> map = GSON.fromJson(json, type);
-            return map == null ? 0 : importAll(map);
+            return importAll(parseImportValues(json));
         } catch (Throwable th) {
             th.printStackTrace();
             return -1;
         }
     }
 
-    /** 写入全部键值(未经 JSON 的类型原样写回);数值做整/浮点归一,避免 Gson Object 化后变 Double 而丢失类型。
-     *  @return 实际写入的键数量 */
+    /** 保留备份 JSON 的整数词法，避免 Gson Object 模式把长整数先转成 Double。 */
+    static java.util.Map<String, Object> parseImportValues(String json) {
+        com.google.gson.JsonElement parsed = com.google.gson.JsonParser.parseString(json);
+        if (!parsed.isJsonObject()) throw new IllegalArgumentException("备份设置不是 JSON 对象");
+        java.util.Map<String, Object> values = new java.util.LinkedHashMap<>();
+        for (java.util.Map.Entry<String, com.google.gson.JsonElement> entry
+                : parsed.getAsJsonObject().entrySet()) {
+            if (!entry.getValue().isJsonPrimitive()) continue;
+            com.google.gson.JsonPrimitive value = entry.getValue().getAsJsonPrimitive();
+            if (value.isBoolean()) values.put(entry.getKey(), value.getAsBoolean());
+            else if (value.isString()) values.put(entry.getKey(), value.getAsString());
+            else if (value.isNumber()) {
+                String raw = value.getAsString();
+                if (!raw.contains(".") && !raw.contains("e") && !raw.contains("E")) {
+                    try {
+                        long integer = Long.parseLong(raw);
+                        values.put(entry.getKey(), integer >= Integer.MIN_VALUE && integer <= Integer.MAX_VALUE
+                                ? (Object) (int) integer : integer);
+                        continue;
+                    } catch (NumberFormatException ignored) { }
+                }
+                try {
+                    float decimal = Float.parseFloat(raw);
+                    if (!Float.isNaN(decimal) && !Float.isInfinite(decimal))
+                        values.put(entry.getKey(), decimal);
+                } catch (NumberFormatException ignored) { }
+            }
+        }
+        return values;
+    }
+
+    /** 一次性写入可恢复键值；失败时不更新内存缓存，避免备份只恢复一部分设置。
+     *  数值做整/浮点归一,避免 Gson Object 化后变 Double 而丢失类型。
+     *  @return 实际写入的键数量，-1 表示落盘失败 */
     public static int importAll(java.util.Map<String, Object> cfg) {
         if (cfg == null) return 0;
-        int count = 0;
+        java.util.Map<String, Object> values = new java.util.LinkedHashMap<>();
         for (java.util.Map.Entry<String, Object> e : cfg.entrySet()) {
             String key = e.getKey();
             Object v = e.getValue();
-            if (key == null || v == null) continue;
-            try {
-                if (v instanceof Boolean || v instanceof String) {
-                    put(key, v);
-                    count++;
-                } else if (v instanceof Number) {
-                    double d = ((Number) v).doubleValue();
-                    if (d == Math.rint(d) && !Double.isInfinite(d) && Math.abs(d) <= Integer.MAX_VALUE) {
-                        put(key, (int) d);
-                    } else {
-                        put(key, (float) d);
-                    }
-                    count++;
-                } else {
-                    // 不支持的运行时类型跳过(不影响其余键)
-                }
-            } catch (Throwable ignored) {
+            if (key == null || v == null || key.startsWith(PRIVATE_KEY_PREFIX)
+                    || LAN_PAIRING_CODE_KEY.equals(key)) continue;
+            if (v instanceof Boolean || v instanceof String) {
+                values.put(key, v);
+            } else if (v instanceof Integer || v instanceof Long || v instanceof Float) {
+                values.put(key, v);
+            } else if (v instanceof Number) {
+                double d = ((Number) v).doubleValue();
+                if (Double.isNaN(d) || Double.isInfinite(d) || Math.abs(d) > Float.MAX_VALUE) continue;
+                values.put(key, d == Math.rint(d) && Math.abs(d) <= Integer.MAX_VALUE
+                        ? (Object) (int) d : (float) d);
             }
         }
-        return count;
+        if (values.isEmpty()) return 0;
+        RxDataStore<Preferences> s = store;
+        if (s == null) return -1;
+        synchronized (WRITE_LOCK) {
+            try {
+                s.updateDataAsync(prefs -> {
+                    MutablePreferences mutable = prefs.toMutablePreferences();
+                    for (Preferences.Key<?> old : prefs.asMap().keySet()) {
+                        if (values.containsKey(old.getName())) mutable.remove(old);
+                    }
+                    for (java.util.Map.Entry<String, Object> entry : values.entrySet()) {
+                        String key = entry.getKey();
+                        Object value = entry.getValue();
+                        if (value instanceof String) mutable.set(PreferencesKeys.stringKey(key), (String) value);
+                        else if (value instanceof Boolean) mutable.set(PreferencesKeys.booleanKey(key), (Boolean) value);
+                        else if (value instanceof Integer) mutable.set(PreferencesKeys.intKey(key), (Integer) value);
+                        else if (value instanceof Long) mutable.set(PreferencesKeys.longKey(key), (Long) value);
+                        else if (value instanceof Float) mutable.set(PreferencesKeys.floatKey(key), (Float) value);
+                    }
+                    return io.reactivex.rxjava3.core.Single.just(mutable);
+                }).blockingGet();
+                cache.putAll(values);
+                return values.size();
+            } catch (Throwable error) {
+                error.printStackTrace();
+                return -1;
+            }
+        }
     }
 
     private static void write(java.util.function.Function<Preferences, MutablePreferences> fn) {

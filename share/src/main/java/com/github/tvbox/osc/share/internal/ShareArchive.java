@@ -18,15 +18,19 @@ import java.io.OutputStream;
 import java.nio.charset.Charset;
 import java.security.MessageDigest;
 import java.util.Enumeration;
+import java.util.HashSet;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import java.util.zip.ZipOutputStream;
+import java.util.zip.CRC32;
 
 /**
- * 归档包读写工具(ZIP)。导出包 = 一个 zip,内含
- * {@link ShareManifest#ENTRY_PREFS} / {@link ShareManifest#ENTRY_ROOM} / {@link ShareManifest#ENTRY_MANIFEST}。
+ * 归档包读写工具(ZIP)。包内至少有 {@link ShareManifest#ENTRY_MANIFEST}；
+ * 全量备份还包含 {@link ShareManifest#ENTRY_PREFS} / {@link ShareManifest#ENTRY_ROOM}，
+ * 按类别的配置包则由业务层选择其余条目。
  *
  * <p>为什么把解压放在本模块而不是让 :app 自己写一份:
  * <ul>
@@ -203,14 +207,25 @@ public final class ShareArchive {
      * 保证失败不留半套数据)。
      */
     public static void extractTo(@NonNull File archive, @NonNull File destDir) throws IOException {
+        extractTo(archive, destDir, MAX_ENTRY_BYTES, MAX_TOTAL_BYTES);
+    }
+
+    /** Domain-specific extraction limits may be stricter than the full-backup defaults. */
+    public static void extractTo(@NonNull File archive, @NonNull File destDir,
+                                 long maxEntryBytes, long maxTotalBytes) throws IOException {
+        if (maxEntryBytes <= 0 || maxTotalBytes <= 0) throw new IOException("归档解压上限无效");
+        maxEntryBytes = Math.min(maxEntryBytes, MAX_ENTRY_BYTES);
+        maxTotalBytes = Math.min(maxTotalBytes, MAX_TOTAL_BYTES);
         if (!destDir.exists() && !destDir.mkdirs()) {
             throw new IOException("无法创建目标目录: " + destDir);
         }
         String destCanonical = destDir.getCanonicalPath();
         long total = 0L;
+        Set<String> seenPaths = new HashSet<>();
         try (ZipFile zip = new ZipFile(archive)) {
             Enumeration<? extends ZipEntry> it = zip.entries();
             while (it.hasMoreElements()) {
+                if (seenPaths.size() >= 1024) throw new SecurityException("归档条目数量超限");
                 ZipEntry entry = it.nextElement();
                 String name = entry.getName();
                 if (name == null || name.isEmpty() || name.indexOf('\0') >= 0) {
@@ -226,13 +241,14 @@ public final class ShareArchive {
                         && !targetCanonical.startsWith(destCanonical + File.separator)) {
                     throw new SecurityException("归档条目逃出目标目录: " + name);
                 }
+                if (!seenPaths.add(targetCanonical)) throw new SecurityException("归档包含重复条目: " + name);
                 if (entry.isDirectory()) {
                     if (!target.exists() && !target.mkdirs()) {
                         throw new IOException("无法创建目录: " + name);
                     }
                     continue;
                 }
-                if (entry.getSize() > MAX_ENTRY_BYTES) {
+                if (entry.getSize() > maxEntryBytes) {
                     throw new SecurityException("归档条目过大: " + name);
                 }
                 File p = target.getParentFile();
@@ -244,16 +260,22 @@ public final class ShareArchive {
                     byte[] buf = new byte[BUF];
                     int n;
                     long written = 0L;
+                    CRC32 crc = new CRC32();
                     while ((n = in.read(buf)) > 0) {
                         written += n;
                         total += n;
-                        if (written > MAX_ENTRY_BYTES) {
+                        if (written > maxEntryBytes) {
                             throw new SecurityException("归档条目解压超限: " + name);
                         }
-                        if (total > MAX_TOTAL_BYTES) {
+                        if (total > maxTotalBytes) {
                             throw new SecurityException("归档解压总量超限");
                         }
+                        crc.update(buf, 0, n);
                         os.write(buf, 0, n);
+                    }
+                    if ((entry.getSize() >= 0 && entry.getSize() != written)
+                            || (entry.getCrc() >= 0 && entry.getCrc() != crc.getValue())) {
+                        throw new IOException("归档条目校验失败: " + name);
                     }
                 }
             }

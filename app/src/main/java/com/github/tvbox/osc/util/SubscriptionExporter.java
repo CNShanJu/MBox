@@ -9,6 +9,7 @@ import com.github.tvbox.osc.R;
 import com.github.tvbox.osc.bean.Subscription;
 import com.github.tvbox.osc.log.Category;
 import com.github.tvbox.osc.log.LogStore;
+import com.github.tvbox.osc.transfer.ConfigBundle;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -20,6 +21,8 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.text.SimpleDateFormat;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -29,7 +32,7 @@ import java.util.Locale;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * 订阅导出:把勾选的订阅导出成**描述清单**(JSON 数组),不做抓取、不做合并。
+ * 订阅导出:单条生成 JSON 描述,多条生成配置 ZIP；不做抓取或合并。
  *
  * <p>每条形如:
  * <pre>
@@ -97,12 +100,23 @@ public final class SubscriptionExporter {
                 JsonArray arr = new JsonArray();
                 for (Subscription item : items) {
                     if (epoch != RUN_EPOCH.get()) return;   // 已被取消/被新任务取代,别再读文件了
-                    arr.add(describe(item));
+                    arr.add(describeForTransfer(item));
                 }
                 if (arr.size() == 0) {
                     err = "请先选择要导出的订阅";
                 } else {
-                    out = write(app, arr.toString());
+                    if (arr.size() > 1) {
+                        File temporary = new ConfigBundle(app).exportSubscriptionSelection(arr);
+                        try { out = writeArchive(app, temporary); }
+                        finally { temporary.delete(); }
+                    } else {
+                        JsonObject single = new JsonObject();
+                        single.addProperty("schema", 1);
+                        single.addProperty("category", "subscriptions");
+                        single.addProperty("createdAt", System.currentTimeMillis());
+                        single.add("items", arr);
+                        out = write(app, single.toString());
+                    }
                     count = arr.size();
                 }
             } catch (Throwable t) {
@@ -113,7 +127,10 @@ public final class SubscriptionExporter {
             final File fOut = out;
             final String fErr = err;
             final int fCount = count;
-            if (epoch != RUN_EPOCH.get()) return; // 已有更新的导出任务/已取消,本次结果作废
+            if (epoch != RUN_EPOCH.get()) {
+                if (out != null) out.delete();
+                return;
+            }
             MAIN.post(() -> {
                 if (cb == null) return;
                 if (fOut == null) cb.onError(fErr == null ? "导出失败" : fErr);
@@ -127,7 +144,8 @@ public final class SubscriptionExporter {
     // ------------------------------------------------------------------
 
     /** 一条订阅 → 描述对象(纯本地信息;type 派生、origin 取记录、本地文件内嵌内容) */
-    private static JsonObject describe(Subscription item) {
+    /** 局域网同步复用同一份订阅描述清单，保留本地订阅的内嵌内容。 */
+    public static JsonObject describeForTransfer(Subscription item) {
         JsonObject o = new JsonObject();
         String url = item.getUrl() == null ? "" : item.getUrl().trim();
         boolean local = url.startsWith("clan://");
@@ -137,14 +155,15 @@ public final class SubscriptionExporter {
         o.addProperty("url", url);
         if (local) {
             File f = resolveClanFile(url);
-            if (f != null && f.isFile() && f.length() <= MAX_CONFIG_BYTES) {
-                o.addProperty("file", f.getName());
-                // 内嵌原文:换机导入、或用户把原文件删了都能还原(读不到就只留 url,不阻断导出)
-                try {
-                    o.addProperty("content", readText(f));
-                } catch (Throwable t) {
-                    LogStore.fail(Category.SUBSCRIPTION, "订阅: 导出时读取本地订阅内容失败 " + f.getName());
-                }
+            if (f == null || !f.isFile() || f.length() > MAX_CONFIG_BYTES)
+                throw new IllegalStateException("本地订阅文件缺失或超过 8 MB：" + item.getName());
+            o.addProperty("file", f.getName());
+            try {
+                String content = readText(f);
+                if (content.trim().isEmpty()) throw new IOException("本地订阅内容为空");
+                o.addProperty("content", content);
+            } catch (IOException error) {
+                throw new IllegalStateException("本地订阅文件读取失败：" + item.getName(), error);
             }
         }
         return o;
@@ -187,25 +206,52 @@ public final class SubscriptionExporter {
 
     /** 写入应用外部缓存目录(FileProvider 已覆盖 external-cache-path,可直接分享);保留最近几份 */
     private static File write(Context ctx, String json) throws IOException {
-        File dir = new File(ctx.getExternalCacheDir(), "subscription_export");
+        File root = ctx.getExternalCacheDir();
+        if (root == null) throw new IOException("导出目录不可用");
+        File dir = new File(root, "subscription_export");
         if (!dir.exists() && !dir.mkdirs()) throw new IOException("导出目录不可用");
         prune(dir);
-        String name = ctx.getString(R.string.app_name) + "订阅清单_"
-                + new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date()) + ".json";
-        File out = new File(dir, name);
+        File out = newExportFile(ctx, dir, ".json");
         try (OutputStreamWriter writer = new OutputStreamWriter(new FileOutputStream(out), "UTF-8")) {
             writer.write(json);
+        } catch (IOException error) {
+            out.delete();
+            throw error;
         }
         return out;
+    }
+
+    /** Copy the shared bulk package to FileProvider's external cache, then remove its private staging ZIP. */
+    private static File writeArchive(Context ctx, File archive) throws IOException {
+        File root = ctx.getExternalCacheDir();
+        if (root == null) throw new IOException("导出目录不可用");
+        File dir = new File(root, "subscription_export");
+        if (!dir.exists() && !dir.mkdirs()) throw new IOException("导出目录不可用");
+        prune(dir);
+        File out = newExportFile(ctx, dir, ".zip");
+        try (InputStream in = new FileInputStream(archive); OutputStream target = new FileOutputStream(out)) {
+            byte[] buffer = new byte[8192]; int n;
+            while ((n = in.read(buffer)) > 0) target.write(buffer, 0, n);
+            return out;
+        } catch (IOException error) {
+            out.delete();
+            throw error;
+        }
+    }
+
+    private static File newExportFile(Context ctx, File dir, String suffix) throws IOException {
+        String prefix = ctx.getString(R.string.app_name) + "订阅清单_"
+                + new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date()) + "_";
+        return File.createTempFile(prefix, suffix, dir);
     }
 
     /** 只留最近 {@link #KEEP_EXPORT_FILES} 份导出文件 */
     private static void prune(File dir) {
         try {
             File[] files = dir.listFiles();
-            if (files == null || files.length <= KEEP_EXPORT_FILES) return;
+            if (files == null || files.length < KEEP_EXPORT_FILES) return;
             Arrays.sort(files, Comparator.comparingLong(File::lastModified).reversed());
-            for (int i = KEEP_EXPORT_FILES; i < files.length; i++) {
+            for (int i = KEEP_EXPORT_FILES - 1; i < files.length; i++) {
                 //noinspection ResultOfMethodCallIgnored
                 files[i].delete();
             }

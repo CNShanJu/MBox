@@ -6,6 +6,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.security.SecureRandom;
+import java.util.Locale;
 
 /**
  * 系统配置门面（配置门面模式 3.6：数据自持 + 模块内持久化 + 变更订阅）。
@@ -38,6 +40,10 @@ public final class SystemConfig {
     private static final String KEY_DEBUG_OPEN = "debug_open";
     private static final String KEY_IGNORE_SSL_ERROR = "ignore_ssl_error";
     private static final String KEY_LAN_SERVER_ENABLE = "lan_server_enable";
+    private static final String KEY_LAN_PAIRING_CODE = "lan_pairing_code";
+    private static final String KEY_INTERNAL_RESTART_AT = "internal_restart_at";
+    private static final String KEY_AUTO_UPDATE_PROMPT_VERSION = "auto_update_prompt_version";
+    private static final String KEY_AUTO_UPDATE_PROMPT_AT = "auto_update_prompt_at";
     private static final String KEY_AUTO_CHECK_UPDATE = "auto_check_update";
     // 全局页面背景("body"底图):用户设置(键不存在=跟随主题) + 主题默认图 + 遮罩/缩放/位置
     private static final String KEY_PAGE_BG = "page_bg_image";
@@ -187,6 +193,51 @@ public final class SystemConfig {
     /** 局域网服务开关（默认关：关闭时 HTTP 服务仅监听 127.0.0.1） */
     public static boolean isLanServerEnabled() {
         return PrefsDataStore.getBoolean(KEY_LAN_SERVER_ENABLE, false);
+    }
+
+    /** 配对码在一次开启周期内保持不变，服务或进程重建时复用。 */
+    public static synchronized String getOrCreateLanPairingCode() {
+        String code = PrefsDataStore.getString(KEY_LAN_PAIRING_CODE, "");
+        if (code.matches("[0-9]{8}")) return code;
+        return regenerateLanPairingCode();
+    }
+
+    /** 仅由用户主动刷新配对码，或关闭后重新开启局域网服务时调用。 */
+    public static synchronized String regenerateLanPairingCode() {
+        String previous = PrefsDataStore.getString(KEY_LAN_PAIRING_CODE, "");
+        SecureRandom random = new SecureRandom();
+        String code;
+        do {
+            code = String.format(Locale.ROOT, "%08d", random.nextInt(100000000));
+        } while (code.equals(previous));
+        LanSessionConfig.clear();
+        PrefsDataStore.put(KEY_LAN_PAIRING_CODE, code);
+        return code;
+    }
+
+    /** 标记由设置/订阅/还原触发的应用内部重启，不把它当成一次新的启动更新检查。 */
+    public static void markInternalRestart() {
+        PrefsDataStore.put(KEY_INTERNAL_RESTART_AT, System.currentTimeMillis());
+    }
+
+    /** 消费短时重启标记；过期标记不影响用户下次主动打开应用。 */
+    public static synchronized boolean consumeInternalRestart() {
+        long markedAt = PrefsDataStore.getLong(KEY_INTERNAL_RESTART_AT, 0L);
+        PrefsDataStore.delete(KEY_INTERNAL_RESTART_AT);
+        long elapsed = System.currentTimeMillis() - markedAt;
+        return markedAt > 0 && elapsed >= 0 && elapsed <= 120_000L;
+    }
+
+    /** 同一新版本的自动弹窗 24 小时内只出现一次；手动检查不受影响。 */
+    public static synchronized boolean claimAutoUpdatePrompt(String version) {
+        if (version == null || version.isEmpty()) return false;
+        String previous = PrefsDataStore.getString(KEY_AUTO_UPDATE_PROMPT_VERSION, "");
+        long lastAt = PrefsDataStore.getLong(KEY_AUTO_UPDATE_PROMPT_AT, 0L);
+        long now = System.currentTimeMillis();
+        if (version.equals(previous) && now >= lastAt && now - lastAt < 86_400_000L) return false;
+        PrefsDataStore.put(KEY_AUTO_UPDATE_PROMPT_VERSION, version);
+        PrefsDataStore.put(KEY_AUTO_UPDATE_PROMPT_AT, now);
+        return true;
     }
 
     /**
@@ -492,6 +543,11 @@ public final class SystemConfig {
 
     public static void setLanServerEnabled(boolean on) {
         if (isLanServerEnabled() == on) return;
+        if (on) regenerateLanPairingCode();
+        else {
+            LanSessionConfig.clear();
+            PrefsDataStore.delete(KEY_LAN_PAIRING_CODE);
+        }
         PrefsDataStore.put(KEY_LAN_SERVER_ENABLE, on);
         com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM, "系统设置: 局域网服务=" + on);
         fireChanged();

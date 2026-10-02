@@ -3,6 +3,7 @@ package com.github.tvbox.osc.ui.dialog;
 import android.content.Context;
 import android.os.Environment;
 import android.os.Handler;
+import android.os.Looper;
 import android.view.View;
 
 import androidx.annotation.NonNull;
@@ -12,19 +13,23 @@ import com.github.tvbox.osc.util.AppBubble;
 import com.chad.library.adapter.base.BaseQuickAdapter;
 import com.github.tvbox.osc.R;
 import com.github.tvbox.osc.data.AppDataManager;
+import com.github.tvbox.osc.share.ShareArchives;
+import com.github.tvbox.osc.transfer.BackupArchive;
 import com.github.tvbox.osc.ui.adapter.TitleWithDelAdapter;
 import com.github.tvbox.osc.util.FileUtils;
+import com.github.tvbox.osc.util.HeavyTaskUtil;
 import com.lxj.xpopup.core.BasePopupView;
 import com.owen.tvrecyclerview.widget.TvRecyclerView;
 
 import org.jetbrains.annotations.NotNull;
 
 import java.io.File;
-import java.text.SimpleDateFormat;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
-import java.util.Date;
 import java.util.List;
 
 /**
@@ -33,6 +38,8 @@ import java.util.List;
  * 自动经 XPopup.Builder 绑定，兼容旧 Dialog 式调用点。
  */
 public class BackupDialog extends AppBottomPopupView {
+    private static final Handler MAIN = new Handler(Looper.getMainLooper());
+    private boolean busy;
 
     public BackupDialog(@NonNull @NotNull Context context) {
         super(context);
@@ -67,8 +74,32 @@ public class BackupDialog extends AppBottomPopupView {
         findViewById(R.id.backupNow).setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                backup();
-                adapter.setNewData(allBackup());
+                if (busy) return;
+                busy = true;
+                BackupArchive archive = new BackupArchive(getContext().getApplicationContext());
+                WeakReference<BackupDialog> dialogRef = new WeakReference<>(BackupDialog.this);
+                WeakReference<TitleWithDelAdapter> adapterRef = new WeakReference<>(adapter);
+                HeavyTaskUtil.getBigTaskExecutorService().execute(() -> {
+                    String error = null;
+                    File created = null;
+                    try { created = archive.create(backupRoot()); }
+                    catch (Exception failure) { error = failure.getMessage() == null
+                            ? failure.getClass().getSimpleName() : failure.getMessage(); }
+                    String message = error;
+                    File result = created;
+                    MAIN.post(() -> {
+                        BackupDialog dialog = dialogRef.get();
+                        if (dialog != null) {
+                            dialog.busy = false;
+                            TitleWithDelAdapter current = adapterRef.get();
+                            if (current != null) current.setNewData(dialog.allBackup());
+                        }
+                        if (message != null) { AppBubble.toast("备份失败：" + message); return; }
+                        com.github.tvbox.osc.share.ShareManifest manifest = ShareArchives.manifest(result);
+                        boolean withRoom = manifest != null && manifest.domains().contains("room");
+                        AppBubble.toast((withRoom ? "备份完成：" : "仅设置已备份：") + result.getName());
+                    });
+                });
             }
         });
     }
@@ -85,8 +116,7 @@ public class BackupDialog extends AppBottomPopupView {
     List<String> allBackup() {
         ArrayList<String> result = new ArrayList<>();
         try {
-            String root = Environment.getExternalStorageDirectory().getAbsolutePath();
-            File file = new File(root + "/tvbox_backup/");
+            File file = backupRoot();
             File[] list = file.exists() ? file.listFiles() : null;
             if (list != null) {
                 Arrays.sort(list, new Comparator<File>() {
@@ -97,11 +127,7 @@ public class BackupDialog extends AppBottomPopupView {
                     }
                 });
                 for (File f : list) {
-                    if (result.size() > 10) {
-                        FileUtils.recursiveDelete(f);
-                        continue;
-                    }
-                    if (f.isDirectory()) {
+                    if (f.isDirectory() || f.isFile() && f.getName().endsWith(".zip")) {
                         result.add(f.getName());
                     }
                 }
@@ -113,119 +139,85 @@ public class BackupDialog extends AppBottomPopupView {
     }
 
     void restore(String dir) {
-        try {
-            String root = Environment.getExternalStorageDirectory().getAbsolutePath();
-            File backup = new File(root + "/tvbox_backup/" + dir);
-            if (!backup.exists() || !backup.isDirectory()) {
-                AppBubble.toast("未找到备份目录");
-                return;
-            }
-            int prefsCount = 0;
-            boolean dbOk = false;
-
-            // 1) 配置域(DataStore:设置/订阅/搜索历史/源勾选记忆...):新格式 prefs.json,兼容旧格式 config.json
-            File cfgFile = firstExisting(backup, "prefs.json", "config.json");
-            if (cfgFile != null) {
-                byte[] cfgData = FileUtils.readSimple(cfgFile);
-                if (cfgData != null) {
-                    prefsCount = com.github.tvbox.osc.config.PrefsDataStore
-                            .importJson(new String(cfgData, "UTF-8"));
-                }
-            }
-            // 2) Room DB(播放历史/收藏/缓存):新格式 room.db,兼容旧格式 sqlite
-            File db = firstExisting(backup, "room.db", "sqlite");
-            if (db != null) {
+        if (busy) return;
+        ConfirmDialog.show(getContext(), "还原备份", "将覆盖本机设置，数据库记录也可能被替换。确认还原「" + dir + "」吗？", "开始还原", () -> {
+            busy = true;
+            BackupArchive archive = new BackupArchive(getContext().getApplicationContext());
+            WeakReference<BackupDialog> dialogRef = new WeakReference<>(BackupDialog.this);
+            HeavyTaskUtil.getBigTaskExecutorService().execute(() -> {
+                String error = null;
+                String result = null;
                 try {
-                    dbOk = AppDataManager.restore(db);
-                } catch (Throwable ignored) {
-                }
-            }
+                    File backup = selectedBackup(dir);
+                    result = backup.isFile() ? archive.restore(backup) : restoreLegacy(backup);
+                } catch (Exception failure) { error = failure.getMessage() == null
+                        ? failure.getClass().getSimpleName() : failure.getMessage(); }
+                String message = error;
+                String restored = result;
+                MAIN.post(() -> {
+                    BackupDialog dialog = dialogRef.get();
+                    if (dialog == null) return;
+                    dialog.busy = false;
+                    if (message != null) { AppBubble.toast("恢复失败：" + message); return; }
+                    AppBubble.toast(restored + "，正在重启");
+                    dialog.restartApp();
+                });
+            });
+        });
+    }
 
-            if (prefsCount <= 0 && !dbOk) {
-                AppBubble.toast("备份中无可恢复数据");
-                com.github.tvbox.osc.log.LogStore.fail(com.github.tvbox.osc.log.Category.SYSTEM,
-                        "备份还原: 未找到可恢复的数据(目录 " + backup.getName() + ")");
-                return;
+    private static String restoreLegacy(File backup) throws Exception {
+        if (!backup.isDirectory()) throw new java.io.IOException("未找到备份目录");
+        File cfgFile = firstExisting(backup, "prefs.json", "config.json");
+        String json = null;
+        if (cfgFile != null) {
+            json = new String(readLegacyPrefs(cfgFile), java.nio.charset.StandardCharsets.UTF_8);
+            if (!com.google.gson.JsonParser.parseString(json).isJsonObject())
+                throw new IOException("旧版设置数据格式无效");
+        }
+        File db = firstExisting(backup, "room.db", "sqlite");
+        boolean dbOk = db != null && AppDataManager.restore(db);
+        int prefsCount = json == null ? 0 : com.github.tvbox.osc.config.PrefsDataStore.importJson(json);
+        if (prefsCount < 0) throw new IOException(dbOk
+                ? "数据库已恢复，但旧版设置写入失败" : "旧版设置写入失败");
+        if (prefsCount <= 0 && !dbOk) throw new java.io.IOException("备份中无可恢复数据");
+        return "旧版备份已恢复";
+    }
+
+    private static byte[] readLegacyPrefs(File file) throws IOException {
+        final int limit = 32 * 1024 * 1024;
+        if (file.length() > limit) throw new IOException("旧版设置数据超过 32 MB");
+        try (FileInputStream in = new FileInputStream(file);
+             java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream()) {
+            byte[] buffer = new byte[8192];
+            int count;
+            while ((count = in.read(buffer)) > 0) {
+                if (out.size() + count > limit) throw new IOException("旧版设置数据超过 32 MB");
+                out.write(buffer, 0, count);
             }
-            StringBuilder msg = new StringBuilder();
-            if (prefsCount > 0) msg.append("设置/订阅/搜索历史");
-            if (dbOk) {
-                if (msg.length() > 0) msg.append("、");
-                msg.append("播放历史/收藏");
-            }
-            msg.append(" 已恢复,即将重启应用!");
-            AppBubble.toast("恢复完成，正在重启");
-            com.github.tvbox.osc.log.LogStore.success(com.github.tvbox.osc.log.Category.SYSTEM,
-                    "备份还原: 恢复成功 " + msg + " (键数=" + prefsCount + ",db=" + dbOk + ")");
-            restartApp();
-        } catch (Throwable e) {
-            e.printStackTrace();
-            AppBubble.toast("恢复失败");
-            com.github.tvbox.osc.log.LogStore.fail(com.github.tvbox.osc.log.Category.SYSTEM,
-                    "备份还原: 数据流异常 " + e);
+            return out.toByteArray();
         }
     }
 
-    void backup() {
-        try {
-            String root = Environment.getExternalStorageDirectory().getAbsolutePath();
-            File dir = new File(root + "/tvbox_backup/");
-            if (!dir.exists())
-                dir.mkdirs();
-            File backup = new File(dir, new SimpleDateFormat("yyyy-MM-dd-HHmmss").format(new Date()));
-            backup.mkdirs();
-
-            // 1) 配置域(DataStore:设置/订阅/搜索历史/源勾选记忆...)
-            boolean cfgOk = FileUtils.writeSimple(
-                    com.github.tvbox.osc.config.PrefsDataStore.exportJson().getBytes("UTF-8"),
-                    new File(backup, "prefs.json"));
-            // 2) Room DB(播放历史/收藏/缓存条目):新装可缺失,不阻塞整体备份
-            boolean dbOk = false;
-            try {
-                dbOk = AppDataManager.backup(new File(backup, "room.db"));
-            } catch (Throwable ignored) {
-            }
-            // 3) 归档清单:记录格式版本/应用版本,保证"后期改动后老备份仍可读、新字段可后向兼容"
-            FileUtils.writeSimple(buildManifest().getBytes("UTF-8"), new File(backup, "manifest.json"));
-
-            if (cfgOk) {
-                String tip = dbOk ? "备份完成" : "设置已备份，播放记录未备份";
-                AppBubble.toast(tip);
-                com.github.tvbox.osc.log.LogStore.success(com.github.tvbox.osc.log.Category.SYSTEM,
-                        "数据备份: 备份成功 " + backup.getName() + " (cfg=" + cfgOk + ",db=" + dbOk + ")");
-            } else {
-                FileUtils.recursiveDelete(backup);
-                AppBubble.toast("备份失败!");
-                com.github.tvbox.osc.log.LogStore.fail(com.github.tvbox.osc.log.Category.SYSTEM,
-                        "数据备份: 写配置失败,已清理备份目录");
-            }
-        } catch (Throwable e) {
-            e.printStackTrace();
-            AppBubble.toast("备份失败!");
-            com.github.tvbox.osc.log.LogStore.fail(com.github.tvbox.osc.log.Category.SYSTEM,
-                    "数据备份: 异常 " + e);
-        }
+    private static File backupRoot() {
+        return new File(Environment.getExternalStorageDirectory(), "tvbox_backup");
     }
 
-    /** 归档清单:格式版本 schema + 来源应用信息 + 覆盖域,便于后续版本升级读取/校验 */
-    private String buildManifest() {
-        try {
-            com.google.gson.JsonObject o = new com.google.gson.JsonObject();
-            o.addProperty("schema", 1);
-            o.addProperty("createdAt", new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()));
-            o.addProperty("appVersion", AppUtils.getAppVersionName());
-            o.addProperty("versionCode", AppUtils.getAppVersionCode());
-            o.addProperty("domains", "prefs,room");
-            return o.toString();
-        } catch (Throwable ignored) {
-            return "{}";
-        }
+    private static File selectedBackup(String name) throws java.io.IOException {
+        if (name == null || name.isEmpty() || name.contains("/") || name.contains("\\") || name.equals(".."))
+            throw new java.io.IOException("备份名称无效");
+        File root = backupRoot().getCanonicalFile();
+        File selected = new File(root, name).getCanonicalFile();
+        if (!root.equals(selected.getParentFile())) throw new java.io.IOException("备份路径无效");
+        return selected;
     }
 
     /** 依序返回目录中第一个存在的文件(新格式优先,旧格式兜底),均不存在返回 null */
-    private static File firstExisting(File dir, String... names) {
+    private static File firstExisting(File dir, String... names) throws IOException {
+        File root = dir.getCanonicalFile();
         for (String n : names) {
-            File f = new File(dir, n);
+            File f = new File(root, n).getCanonicalFile();
+            if (!root.equals(f.getParentFile())) throw new IOException("旧版备份路径无效");
             if (f.exists() && f.isFile()) return f;
         }
         return null;
@@ -238,6 +230,7 @@ public class BackupDialog extends AppBottomPopupView {
      * 重启后 Home 会重拉配置/重开 Room,读取的即为还原后的数据。
      */
     private void restartApp() {
+        com.github.tvbox.osc.config.SystemConfig.markInternalRestart();
         try {
             android.content.Intent launch = getContext().getPackageManager()
                     .getLaunchIntentForPackage(getContext().getPackageName());
@@ -259,9 +252,9 @@ public class BackupDialog extends AppBottomPopupView {
 
     void delete(String dir) {
         try {
-            String root = Environment.getExternalStorageDirectory().getAbsolutePath();
-            File backup = new File(root + "/tvbox_backup/" + dir);
-            FileUtils.recursiveDelete(backup);
+            File backup = selectedBackup(dir);
+            if (backup.isDirectory()) FileUtils.recursiveDelete(backup);
+            else if (!backup.delete()) throw new java.io.IOException("删除失败");
             AppBubble.toast("删除成功");
             com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM,
                     "备份: 删除备份目录 " + dir);
