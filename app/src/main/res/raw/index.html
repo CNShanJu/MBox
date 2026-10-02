@@ -38,10 +38,10 @@
 
     <div id="dashboard" hidden>
       <section id="homePage" class="route-page" hidden>
-        <section class="card hero"><div><p class="eyebrow">欢迎使用</p><h1>手机内容，在电脑上打开</h1><p class="muted">视频库与 App「我的 → 本地视频」保持一致。已配对设备可在手机上的局域网控制台查看和踢出。</p></div></section>
+        <section class="card hero"><div><p class="eyebrow">欢迎使用</p><h1>手机内容，在浏览器中打开</h1><p class="muted">视频库与 App「我的 → 本地视频」保持一致。已配对设备可在手机上的局域网控制台查看和踢出。</p></div></section>
         <div class="grid">
           <a class="card nav-card" href="/video.html" data-route="video"><p class="eyebrow">本地播放</p><h2>视频库</h2><p class="muted">浏览 App 本地视频的文件夹与视频，播放结束后自动播放同组下一集。</p><span>打开视频库 →</span></a>
-          <a class="card nav-card" href="/cast.html" data-route="cast"><p class="eyebrow">在线播放</p><h2>推送播放</h2><p class="muted">接收手机播放器推送的视频，在电脑上选集、继续播放。</p><span>打开推送播放 →</span></a>
+          <a class="card nav-card" href="/cast.html" data-route="cast"><p class="eyebrow">在线播放</p><h2>推送播放</h2><p class="muted">接收手机播放器推送的视频，在浏览器中选集、继续播放。</p><span>打开推送播放 →</span></a>
           <a class="card nav-card" href="/files.html" data-route="files"><p class="eyebrow">管理</p><h2>本地文件</h2><p class="muted">浏览、上传、下载和管理手机文件。</p><span>打开文件页 →</span></a>
         </div>
         <section class="card"><p class="eyebrow">数据迁移</p><h2>从手机取回数据</h2><p class="muted">按类型下载；另一台 MBox 可在手机「局域网配置导入」里连接并选择导入。</p><div id="dataTypes" class="data-types"></div></section>
@@ -59,7 +59,7 @@
             <section class="card player-card">
               <div class="section-head"><div><p class="eyebrow">正在播放</p><h1 id="videoTitle">选择一个视频</h1></div><span id="playbackStatus" class="pill">等待播放</span></div>
               <video id="video" controls playsinline preload="metadata"></video>
-              <p id="videoMessage" class="muted">从左侧选文件夹和视频。</p>
+              <p id="videoMessage" class="muted">选择文件夹和视频后开始播放。</p>
               <label class="toggle"><input id="autoNext" type="checkbox" checked> 播放结束后自动播放当前文件夹下一集</label>
             </section>
             <section class="card">
@@ -94,6 +94,19 @@
     </div>
     <div id="notice" class="notice" role="status" hidden></div>
   </main>
+  <script>
+    // 外部脚本在旧浏览器中无法解析时，仍给出可见的失败提示。
+    setTimeout(function () {
+      var pair = document.getElementById('pairPanel');
+      var dashboard = document.getElementById('dashboard');
+      if (!pair.hidden || !dashboard.hidden) return;
+      pair.hidden = false;
+      document.getElementById('connection').textContent = window.mboxPageScriptReady ? '连接超时' : '无法打开';
+      document.getElementById('pairError').textContent = window.mboxPageScriptReady
+        ? '暂未收到手机回应。请确认局域网服务仍在运行，然后刷新。'
+        : '页面未能启动。请刷新，或换用较新的浏览器。';
+    }, 5000);
+  </script>
   <script src="/hls.js" defer></script>
   <script src="/script.js" defer></script>
 </body>

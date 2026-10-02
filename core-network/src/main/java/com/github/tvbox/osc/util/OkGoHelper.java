@@ -14,6 +14,7 @@ import com.github.tvbox.osc.util.urlhttp.BrotliInterceptor;
 import java.io.File;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
@@ -24,6 +25,7 @@ import okhttp3.Cache;
 import okhttp3.ConnectionSpec;
 import okhttp3.Dns;
 import okhttp3.HttpUrl;
+import okhttp3.Interceptor;
 import okhttp3.OkHttpClient;
 import okhttp3.dnsoverhttps.DnsOverHttps;
 import okhttp3.logging.HttpLoggingInterceptor;
@@ -172,6 +174,8 @@ public class OkGoHelper {
     /** 默认客户端(可被 DoH 变更整体替换,故 volatile;读方取一次引用用到底,不会中途换池) */
     static volatile OkHttpClient defaultClient = null;
     static volatile OkHttpClient noRedirectClient = null;
+    /** 局域网视频中转专用:流式读取媒体,不能让 BODY 日志预读完整响应。 */
+    private static volatile OkHttpClient mediaRelayClient = null;
     /** 图片专用客户端(带磁盘缓存):仅给 Picasso 等图片加载用,与 API/搜索流量隔离 */
     private static volatile OkHttpClient imageClient = null;
 
@@ -180,7 +184,7 @@ public class OkGoHelper {
 
     /**
      * 安全 DNS 改动后<b>立即</b>换用新解析器:重建 DoH 解析器 + 本模块按 DoH 构建的客户端
-     * ({@code defaultClient}/{@code noRedirectClient},图片客户端置空下次懒建),
+     * ({@code defaultClient}/{@code noRedirectClient}/{@code mediaRelayClient},图片客户端置空下次懒建),
      * 再广播给外部模块(spider/download/app 各自重建自己的 client)。
      * <p>
      * 为什么必须重建而不是改字段:OkHttp 的 DNS 是 build 时拷进 client 的,已建好的 client
@@ -275,6 +279,12 @@ public class OkGoHelper {
         builder.followRedirects(false);
         builder.followSslRedirects(false);
         noRedirectClient = builder.build();
+        OkHttpClient.Builder mediaBuilder = noRedirectClient.newBuilder();
+        for (Iterator<Interceptor> it = mediaBuilder.interceptors().iterator(); it.hasNext(); ) {
+            if (it.next() instanceof HttpLoggingInterceptor) it.remove();
+        }
+        // API 的 10 秒读超时会截断慢速媒体分片;保留连接/DNS/TLS/UA/网络守卫策略。
+        mediaRelayClient = mediaBuilder.readTimeout(30, TimeUnit.SECONDS).build();
         // 图片客户端派生自 defaultClient(共享连接池),置空即可:下次取用时按新根重建
         imageClient = null;
     }
@@ -285,6 +295,11 @@ public class OkGoHelper {
 
     public static OkHttpClient getNoRedirectClient() {
         return noRedirectClient;
+    }
+
+    /** 局域网视频中转共享客户端:禁用响应体日志,避免视频下载完毕后才开始向浏览器输出。 */
+    public static OkHttpClient getMediaRelayClient() {
+        return mediaRelayClient;
     }
 
     /**

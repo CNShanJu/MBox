@@ -60,11 +60,13 @@ import java.util.Locale;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
+import java.util.zip.GZIPInputStream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
 import fi.iki.elonen.NanoHTTPD;
 import okhttp3.Request;
+import org.brotli.dec.BrotliInputStream;
 
 /**
  * @author pj567
@@ -116,6 +118,8 @@ public class RemoteServer extends NanoHTTPD {
 
     private static final Gson GSON = new Gson();
     private static final Pattern CAST_MEDIA_ID = Pattern.compile("[0-9a-f]{32}");
+    private static final Pattern CAST_MEDIA_RANGE = Pattern.compile("bytes=(?:\\d+-\\d*|-\\d+)");
+    private static final long SLOW_CAST_READ_MS = 3000;
 
     private static String deviceRef(LanDevice device) {
         return device.id.substring(0, Math.min(8, device.id.length()));
@@ -128,6 +132,18 @@ public class RemoteServer extends NanoHTTPD {
         }
         LogStore.fail(Category.PLAYER, "局域网投屏取流失败 device=" + deviceRef(device)
                 + " revision=" + device.playbackRevision + " reason=" + reason);
+    }
+
+    private static void logSlowCastRead(LanDevice device, String stage, long elapsedMs, long bytes) {
+        if (elapsedMs < SLOW_CAST_READ_MS) return;
+        long now = System.currentTimeMillis();
+        synchronized (device) {
+            if (now - device.lastSlowMediaLogAt < TimeUnit.MINUTES.toMillis(1)) return;
+            device.lastSlowMediaLogAt = now;
+        }
+        LogStore.log(Category.PLAYER, "局域网投屏取流耗时 device=" + deviceRef(device)
+                + " revision=" + device.playbackRevision + " stage=" + stage
+                + " elapsedMs=" + elapsedMs + " bytes=" + bytes);
     }
 
     private synchronized void logPlaybackAuthDenied() {
@@ -154,6 +170,7 @@ public class RemoteServer extends NanoHTTPD {
         private volatile long playbackRevision;
         private volatile long nextRequestedRevision;
         private volatile long loggedMediaFailureRevision = -1;
+        private volatile long lastSlowMediaLogAt;
         private volatile long loggedPlaybackEventRevision = -1;
         private final Set<String> loggedPlaybackEvents = ConcurrentHashMap.newKeySet();
         private final Set<String> castProxyPaths = ConcurrentHashMap.newKeySet();
@@ -384,6 +401,7 @@ public class RemoteServer extends NanoHTTPD {
         String event = params.get("event");
         if (!("playing".equals(event) || "autoplay_blocked".equals(event)
                 || "media_error".equals(event) || "hls_error".equals(event)
+                || "rebuffer".equals(event)
                 || "unsupported".equals(event)))
             return createPlainTextResponse(Response.Status.BAD_REQUEST, "invalid event");
         String detail = params.get("detail");
@@ -559,6 +577,13 @@ public class RemoteServer extends NanoHTTPD {
             }
             return output.toByteArray();
         }
+    }
+
+    private static InputStream decodeCastPlaylist(InputStream stream, String encoding) throws IOException {
+        if (encoding == null || "identity".equalsIgnoreCase(encoding)) return stream;
+        if ("gzip".equalsIgnoreCase(encoding)) return new GZIPInputStream(stream);
+        if ("br".equalsIgnoreCase(encoding)) return new BrotliInputStream(stream);
+        throw new IOException("unsupported playlist encoding");
     }
 
     private static String generateToken() {
@@ -983,16 +1008,12 @@ public class RemoteServer extends NanoHTTPD {
             LanDevice device = authorizedDevice(session);
             if (device == null) return createPlainTextResponse(Response.Status.FORBIDDEN, "forbidden");
             boolean accepted = requestNextEpisode(device, params.get("revision"));
-            LogStore.log(Category.PLAYER, "局域网投屏下一集 device=" + deviceRef(device)
-                    + " accepted=" + accepted);
             return jsonResponse(Response.Status.OK, "{\"accepted\":" + accepted + "}");
         }
         if (fileName.equals("/api/playback/select")) {
             LanDevice device = authorizedDevice(session);
             if (device == null) return createPlainTextResponse(Response.Status.FORBIDDEN, "forbidden");
             boolean accepted = requestSelectedEpisode(device, params.get("revision"), params.get("index"));
-            LogStore.log(Category.PLAYER, "局域网投屏选集 device=" + deviceRef(device)
-                    + " accepted=" + accepted);
             return jsonResponse(Response.Status.OK, "{\"accepted\":" + accepted + "}");
         }
         if (fileName.equals("/api/playback/event")) {
@@ -1136,6 +1157,7 @@ public class RemoteServer extends NanoHTTPD {
         String range = session.getHeaders().get("range");
         okhttp3.Response upstream = null;
         String requestUrl = media.url;
+        long requestStartNs = System.nanoTime();
         try {
             for (int redirects = 0; redirects <= 5; redirects++) {
                 Request.Builder request = new Request.Builder().url(requestUrl).get();
@@ -1149,8 +1171,11 @@ public class RemoteServer extends NanoHTTPD {
                             || name.equalsIgnoreCase("range")) continue;
                     try { request.header(name, value); } catch (IllegalArgumentException ignored) { }
                 }
-                if (range != null && range.matches("bytes=\\d+-\\d*")) request.header("Range", range);
-                upstream = OkGoHelper.getNoRedirectClient().newCall(request.build()).execute();
+                if (range != null && range.length() <= 80 && CAST_MEDIA_RANGE.matcher(range).matches())
+                    request.header("Range", range);
+                // Range 与 Content-Length 都按原始媒体字节计;禁止压缩中途改变字节位置。
+                request.header("Accept-Encoding", "identity");
+                upstream = OkGoHelper.getMediaRelayClient().newCall(request.build()).execute();
                 String location = upstream.header("Location");
                 if (upstream.code() < 300 || upstream.code() > 399 || location == null) break;
                 okhttp3.HttpUrl next = upstream.request().url().resolve(location);
@@ -1172,6 +1197,8 @@ public class RemoteServer extends NanoHTTPD {
             logMediaFailure(viewer, "empty_response");
             return createPlainTextResponse(Response.Status.INTERNAL_ERROR, "media unavailable");
         }
+        logSlowCastRead(viewer, "upstream_headers",
+                TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - requestStartNs), 0);
         okhttp3.ResponseBody body = upstream.body();
         if (body == null || !upstream.isSuccessful()) {
             int code = upstream.code();
@@ -1186,7 +1213,8 @@ public class RemoteServer extends NanoHTTPD {
                 || media.url.toLowerCase(Locale.ROOT).contains("m3u8");
         if (playlist) {
             try (okhttp3.Response response = upstream) {
-                byte[] source = readCastPlaylist(body.byteStream());
+                byte[] source = readCastPlaylist(decodeCastPlaylist(body.byteStream(),
+                        response.header("Content-Encoding")));
                 if (viewer.playbackRevision != mediaRevision || viewer.castMedia.get(mediaId) != media)
                     return createPlainTextResponse(Response.Status.NOT_FOUND, "media expired");
                 String rewritten = LanCastRelayRules.rewrite(new String(source, StandardCharsets.UTF_8),
@@ -1209,6 +1237,8 @@ public class RemoteServer extends NanoHTTPD {
         }
         final okhttp3.Response sourceResponse = upstream;
         InputStream stream = new FilterInputStream(body.byteStream()) {
+            private long relayedBytes;
+
             private void requireCurrentCast() throws IOException {
                 if (devices.get(viewer.token) != viewer || viewer.playbackRevision != media.revision
                         || viewer.castMedia.get(mediaId) != media)
@@ -1216,11 +1246,28 @@ public class RemoteServer extends NanoHTTPD {
             }
             @Override public int read() throws IOException {
                 requireCurrentCast();
-                return super.read();
+                try {
+                    int value = super.read();
+                    if (value >= 0) relayedBytes++;
+                    return value;
+                } catch (IOException error) {
+                    logMediaFailure(viewer, "stream_" + error.getClass().getSimpleName());
+                    throw error;
+                }
             }
             @Override public int read(byte[] buffer, int off, int len) throws IOException {
                 requireCurrentCast();
-                return super.read(buffer, off, len);
+                long started = System.nanoTime();
+                try {
+                    int count = super.read(buffer, off, len);
+                    if (count > 0) relayedBytes += count;
+                    logSlowCastRead(viewer, "upstream_body",
+                            TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started), relayedBytes);
+                    return count;
+                } catch (IOException error) {
+                    logMediaFailure(viewer, "stream_" + error.getClass().getSimpleName());
+                    throw error;
+                }
             }
             @Override public void close() throws IOException {
                 try { super.close(); } finally { sourceResponse.close(); }
@@ -1232,6 +1279,9 @@ public class RemoteServer extends NanoHTTPD {
                 : newChunkedResponse(status, mime, stream);
         String contentRange = upstream.header("Content-Range");
         if (contentRange != null) result.addHeader("Content-Range", contentRange);
+        // 个别源站忽略 identity 仍返回压缩体;流未解码,须连同字节范围一起原样交给浏览器。
+        String contentEncoding = upstream.header("Content-Encoding");
+        if (contentEncoding != null) result.addHeader("Content-Encoding", contentEncoding);
         String acceptRanges = upstream.header("Accept-Ranges");
         if (acceptRanges != null) result.addHeader("Accept-Ranges", acceptRanges);
         result.addHeader("Cache-Control", "no-store");

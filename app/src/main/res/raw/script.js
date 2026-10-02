@@ -11,6 +11,8 @@ let playingQueue = [];
 let currentVideoIndex = -1;
 let playbackRevision = 0;
 let castHls = null;
+let castPlaybackStarted = false;
+let castRebufferReported = false;
 let noticeTimer;
 
 function notice(message) {
@@ -22,6 +24,7 @@ function notice(message) {
 function disconnected() {
   $('dashboard').hidden = true;
   $('pairPanel').hidden = false;
+  $('pairError').textContent = '';
   $('mainNav').hidden = true;
   $('logoutButton').hidden = true;
   $('connection').textContent = '未连接';
@@ -49,7 +52,7 @@ function sendPlaybackEvent(event, detail = '') {
   }).catch(() => {});
 }
 async function pair(code) {
-  const platform = navigator.userAgentData?.platform || navigator.platform || '电脑';
+  const platform = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '电脑';
   const response = await fetch('/api/pair', {method:'POST',credentials:'same-origin',cache:'no-store',
     headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},
     body:new URLSearchParams({code,name:(platform + ' 浏览器').slice(0,32)})});
@@ -128,7 +131,7 @@ function downloadBlob(blob, name) {
 }
 async function loadCatalog() {
   const catalog = await (await request('/api/lan/catalog')).json();
-  const container = $('dataTypes'); container.replaceChildren();
+  const container = $('dataTypes'); container.textContent = '';
   const labels = {subscriptions:'订阅源',live:'直播源',themes:'主题',settings:'我的设置',history:'历史记录'};
   for (const category of catalog.categories || []) {
     if (!labels[category.id]) continue;
@@ -176,12 +179,13 @@ function durationText(milliseconds) {
 }
 async function loadVideoLibrary() {
   const data = await (await request('/api/videos')).json();
-  const previous = videoGroups[selectedVideoFolder]?.name;
+  const previousGroup = videoGroups[selectedVideoFolder];
+  const previous = previousGroup && previousGroup.name;
   videoGroups = (data.folders || []).sort((a,b) => byName.compare(a.name,b.name));
   $('videoCount').textContent = (data.count || 0) + ' 个视频 · ' + videoGroups.length + ' 个文件夹';
   if (!videoGroups.length) {
     selectedVideoFolder = -1; folderVideos = [];
-    $('videoFolders').replaceChildren(); $('videoList').replaceChildren();
+    $('videoFolders').textContent = ''; $('videoList').textContent = '';
     $('videoPath').textContent = '暂无本地视频'; $('videoFolderCount').textContent = '';
     const empty = document.createElement('p'); empty.className = 'muted';
     empty.textContent = 'App「我的 → 本地视频」目前没有视频。';
@@ -197,7 +201,7 @@ function selectVideoFolder(index) {
   folderVideos = (group.videos || []).slice().sort((a,b) => byName.compare(a.name,b.name));
   $('videoPath').textContent = group.name;
   $('videoFolderCount').textContent = folderVideos.length + ' 个视频';
-  const folders = $('videoFolders'); folders.replaceChildren();
+  const folders = $('videoFolders'); folders.textContent = '';
   videoGroups.forEach((item,position) => {
     const button = document.createElement('button');
     button.className = 'folder-row' + (position === index ? ' active' : '');
@@ -207,7 +211,7 @@ function selectVideoFolder(index) {
     button.onclick = () => selectVideoFolder(position);
     folders.append(button);
   });
-  const list = $('videoList'); list.replaceChildren();
+  const list = $('videoList'); list.textContent = '';
   folderVideos.forEach((item,position) => {
     const row = document.createElement('div'); row.className = 'video-item'; row.dataset.id = String(item.id);
     const play = document.createElement('button'); play.className = 'name';
@@ -245,7 +249,7 @@ async function pollPlayback() {
         $('castStatus').textContent = '等待播放';
         $('castMessage').textContent = '在手机播放器设置中选择「推送到电脑播放」。';
         $('castEpisodeCount').textContent = '等待手机推送视频';
-        $('castEpisodes').replaceChildren();
+        $('castEpisodes').textContent = '';
       }
       return;
     }
@@ -271,9 +275,11 @@ function clearCastPlayer() {
   if (castHls) { castHls.destroy(); castHls = null; }
   player.removeAttribute('src');
   player.load();
+  castPlaybackStarted = false;
+  castRebufferReported = false;
 }
 function renderCastEpisodes(episodes, selectedIndex) {
-  const list = $('castEpisodes'); list.replaceChildren();
+  const list = $('castEpisodes'); list.textContent = '';
   $('castEpisodeCount').textContent = episodes.length ? episodes.length + ' 集 · 点击切换' : '当前视频没有可选集';
   episodes.forEach((name,index) => {
     const row = document.createElement('div');
@@ -355,7 +361,7 @@ async function onCastEnded() {
 async function listFiles(path) {
   const data = await (await request(fileUrl(path))).json();
   folder = path; $('folderPath').textContent = '/' + path;
-  const list = $('fileList'); list.replaceChildren();
+  const list = $('fileList'); list.textContent = '';
   if (!data.files || !data.files.length) {
     const empty = document.createElement('p'); empty.className = 'muted'; empty.textContent = '这里还没有文件'; list.append(empty);
   }
@@ -419,11 +425,20 @@ $('video').addEventListener('error',() => {
   if ($('video').src) $('videoMessage').textContent = '浏览器无法播放此格式。可换用 MP4 或 WebM 视频。';
 });
 $('castVideo').addEventListener('ended',onCastEnded);
-$('castVideo').addEventListener('playing',() => sendPlaybackEvent('playing'));
+$('castVideo').addEventListener('playing',() => {
+  castPlaybackStarted = true;
+  sendPlaybackEvent('playing');
+});
+$('castVideo').addEventListener('waiting',() => {
+  if (!castPlaybackStarted || castRebufferReported) return;
+  castRebufferReported = true;
+  sendPlaybackEvent('rebuffer');
+});
 $('castVideo').addEventListener('error',() => {
   if ($('castVideo').hasAttribute('src') && !castHls) {
     $('castMessage').textContent = '浏览器无法播放此视频格式，或播放地址已失效。';
-    sendPlaybackEvent('media_error',String($('castVideo').error?.code || 0));
+    const mediaError = $('castVideo').error;
+    sendPlaybackEvent('media_error',String(mediaError ? mediaError.code : 0));
   }
 });
 $('refreshFiles').onclick = () => listFiles(folder).catch(error => notice(error.message));
@@ -442,7 +457,11 @@ $('uploadFiles').onchange = async event => {
   catch (error) { notice(error.message); }
   event.target.value = '';
 };
-request('/api/session').then(showDashboard).catch(() => {});
+window.mboxPageScriptReady = true;
+request('/api/session').then(showDashboard).catch(error => {
+  disconnected();
+  if (error.message !== '请先输入手机上的配对码') $('pairError').textContent = '连接失败：' + error.message;
+});
 setInterval(() => { if (!$('dashboard').hidden) loadTheme().catch(() => {}); },10000);
 setInterval(() => {
   if ($('dashboard').hidden) return;
