@@ -253,6 +253,10 @@ app / feature
      必须用 `/releases` 列表再按 `tag_name` 过滤;附件对象没有 `size` 字段,体积只能从 HTTP `Content-Length` 拿。
    - 补同步:配置令牌后重新运行该 tag 的 Build APK 工作流即可(该步按 tag 找发行版,重跑不重复建),
      再用上面的验收脚本确认 `全部 1 个 tag 的镜像验收通过`。
+     不想等 CI、或想立刻知道令牌配得对不对,用 `scripts/sync-gitee-release.ps1`:
+     `-VerifyOnly` 只验令牌与作用域(不写任何东西),或 `-Tag vX.Y.Z -ApkPath <apk>` 直接把附件补传到
+     Gitee 发行版。**令牌不要写在命令行参数里**(会进 PowerShell 历史),用 `-TokenFile` 或交互式输入,用完删掉;
+     CI 侧一律走 GitHub Secrets。
 
 ### 构建内存纪律(强制)
 
