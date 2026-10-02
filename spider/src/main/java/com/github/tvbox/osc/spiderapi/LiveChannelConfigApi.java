@@ -37,6 +37,16 @@ public interface LiveChannelConfigApi {
     /** 当前已解析的订阅直播源所属地址；切源后的旧数据不得归属到新订阅。 */
     String getLoadedSubscriptionUrl();
 
+    /**
+     * 只读取指定订阅的直播清单供管理页预览，不切换当前配置或加载爬虫。
+     * 回调可在后台线程触发；失败时 sources 为空且 error 非空。
+     */
+    void previewSubscribeLiveSources(String subscriptionUrl, PreviewCallback callback);
+
+    interface PreviewCallback {
+        void onResult(List<SubscribeLiveSource> sources, String error);
+    }
+
     /** 订阅源自带的单个直播源;{@link #url} 为空 = 订阅里的<b>内嵌频道分组</b>(不是单个直播源地址) */
     final class SubscribeLiveSource {
         /** 展示名(订阅里 lives 的分组名;订阅没给名字时为空串,由页面按地址推导) */

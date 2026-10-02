@@ -11,6 +11,7 @@ import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import com.blankj.utilcode.util.ClipboardUtils
+import com.blankj.utilcode.util.AppUtils
 import com.blankj.utilcode.util.LogUtils
 import com.github.tvbox.osc.util.AppBubble
 import com.chad.library.adapter.base.BaseQuickAdapter
@@ -21,6 +22,7 @@ import com.github.tvbox.osc.bean.Subscription
 import com.github.tvbox.osc.config.SystemConfig
 import com.github.tvbox.osc.databinding.ActivitySubscriptionBinding
 import com.github.tvbox.osc.spiderapi.LiveChannelConfigProviders
+import com.github.tvbox.osc.spiderapi.LiveChannelConfigApi
 import com.github.tvbox.osc.ui.adapter.LiveSourceAdapter
 import com.github.tvbox.osc.ui.adapter.SubscriptionAdapter
 import com.github.tvbox.osc.ui.dialog.AttachActionDialog
@@ -83,6 +85,12 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
     private var liveTabActive = false
     /** 本次进页面是否改过"当前直播源"(退出时需要重载配置,直播页才看得到新源) */
     private var liveSourceChanged = false
+    /** 未生效订阅的直播清单只用于本页预览；回调用 epoch 防止切源后旧结果覆盖新列表。 */
+    private val livePreviewCache = HashMap<String, List<LiveChannelConfigApi.SubscribeLiveSource>>()
+    private var livePreviewLoadingUrl: String? = null
+    private var livePreviewFailedUrl: String? = null
+    private var livePreviewSelectedUrl = ""
+    private var livePreviewEpoch = 0
     /** 底部多选操作栏(公共组件)上的"删除"键:有没有勾选项决定它的可用态 */
     private lateinit var mDeleteAction: TextView
     /** 当前多选作用于哪个列表:true=直播源页,false=订阅源页 */
@@ -143,6 +151,12 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
         mSubscriptionAdapter.setNewData(mSubscriptions)
         updateEmptyState()
         refreshLiveSources()
+        mBinding.tvLivePreviewState.setOnClickListener {
+            if (livePreviewFailedUrl == mSelectedUrl) {
+                livePreviewFailedUrl = null
+                refreshLiveSources()
+            }
+        }
         warnIfDebugDataDomain()
         // 打开页面即留一条摘要:条数 / 当前启用 / 各来源分布(排障时先看这条就知道"用户手里有什么")
         val originStat = mSubscriptions.groupingBy { it.origin }.eachCount()
@@ -238,14 +252,14 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
                 } else {
                     "确定删除订阅吗？"
                 }
-                com.github.tvbox.osc.ui.dialog.ConfirmDialog.show(
+                com.github.tvbox.osc.ui.dialog.ConfirmDialog.showDanger(
                     this@SubscriptionActivity,
                     "删除订阅",
                     delMsg,
                     "删除"
-                ) {
-                    if (batchImportInProgress) return@show
-                    if (mSubscriptions.none { it === target }) return@show
+                ) confirmDelete@{
+                    if (batchImportInProgress) return@confirmDelete
+                    if (mSubscriptions.none { it === target }) return@confirmDelete
                     removeSubscription(target)
                     persistSubscriptions()
                 }
@@ -274,6 +288,7 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
             LogStore.log(Category.SUBSCRIPTION, "订阅: 切换到 " + chosen.name)
             //删除/选择只刷新,不触发重新排序
             mSubscriptionAdapter.notifyDataSetChanged()
+            refreshLiveSources()
         }
 
         mSubscriptionAdapter.onItemLongClickListener =
@@ -674,37 +689,97 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
     private fun persistSubscriptions() {
         mSubscriptionAdapter.notifyDataSetChanged()   //删除/选择只刷新,不触发重新排序
         updateEmptyState()
-        if (liveTabActive) refreshLiveSources()       //订阅变了,直播源页的「来自:X」跟着变
         SubscriptionConfig.setApiUrl(mSelectedUrl)
         SubscriptionConfig.setSubscriptions(mSubscriptions)
+        refreshLiveSources()                           //订阅变了,直播源页的「来自:X」跟着变
     }
 
     /**
      * 重建直播源列表:订阅导入的在前(不可删)、用户自建的在后;勾中的那条 = 当前生效的直播源。
-     * 订阅导入的**不落库** —— 每次都从当前订阅配置实时读([LiveChannelConfigProviders]),
-     * 所以换订阅/更新订阅后自然"旧的消失、新的出现",与用户口径"跟着视频订阅源走"一致。
+     * 订阅导入的**不落库**。已加载的订阅读内存；页面里刚选中但还未生效的订阅读只读预览，
+     * 不加载爬虫，也不把上一条订阅的直播源误标成新订阅的内容。
      */
     private fun refreshLiveSources() {
         val provider = LiveChannelConfigProviders.get()
-        val imported = provider.subscribeLiveSources.takeIf {
-            mSelectedUrl.isNotEmpty() && provider.loadedSubscriptionUrl == mSelectedUrl
-        }.orEmpty().map {
+        val selected = mSelectedUrl
+        if (livePreviewSelectedUrl != selected) {
+            livePreviewSelectedUrl = selected
+            livePreviewEpoch++
+            livePreviewLoadingUrl = null
+            livePreviewFailedUrl = null
+        }
+        val importedSources = when {
+            selected.isEmpty() -> emptyList()
+            provider.loadedSubscriptionUrl == selected -> provider.subscribeLiveSources
+            livePreviewCache.containsKey(selected) -> livePreviewCache[selected].orEmpty()
+            else -> {
+                requestLivePreview(selected)
+                emptyList()
+            }
+        }
+        val imported = importedSources.map {
             LiveSourceEntries.Imported(it.name, it.url)
         }
+        val userHistory = LiveConfig.liveHistory()
+        val activeLiveUrl = SystemConfig.getLiveUrl()
+        val oldImported = selected != provider.loadedSubscriptionUrl &&
+            provider.subscribeLiveSources.any { it.url == activeLiveUrl } &&
+            !userHistory.contains(activeLiveUrl)
+        val displayedLiveUrl = if (oldImported && imported.none { it.url == activeLiveUrl }) ""
+            else activeLiveUrl
         val entries = LiveSourceEntries.build(
             currentName(),
             imported,
-            LiveConfig.liveHistory(),
-            SystemConfig.getLiveUrl()
+            userHistory,
+            displayedLiveUrl
         )
         mLiveSourceAdapter.setNewData(entries)
+        updateLivePreviewState(provider.loadedSubscriptionUrl)
         val empty = entries.isEmpty()
         mBinding.rvLive.visibility = if (empty) View.GONE else View.VISIBLE
         mBinding.llEmptyLive.root.visibility = if (empty) View.VISIBLE else View.GONE
         if (empty) {
             mBinding.llEmptyLive.tvEmptyText.text =
-                "暂无直播源\n点右上角 + 添加自己的直播源\n订阅自带的直播源会自动出现在这里"
+                if (livePreviewLoadingUrl == selected) "正在读取所选订阅的直播源…"
+                else "暂无直播源\n点右上角 + 添加自己的直播源\n订阅自带的直播源会自动出现在这里"
         }
+    }
+
+    private fun requestLivePreview(url: String) {
+        if (livePreviewLoadingUrl == url || livePreviewFailedUrl == url) return
+        livePreviewLoadingUrl = url
+        val epoch = ++livePreviewEpoch
+        val owner = java.lang.ref.WeakReference(this)
+        LiveChannelConfigProviders.get().previewSubscribeLiveSources(url) { sources, error ->
+            val activity = owner.get() ?: return@previewSubscribeLiveSources
+            activity.runOnUiThread {
+                if (activity.isFinishing || activity.isDestroyed ||
+                    epoch != activity.livePreviewEpoch || activity.mSelectedUrl != url) return@runOnUiThread
+                activity.livePreviewLoadingUrl = null
+                if (error == null) activity.livePreviewCache[url] = sources.toList()
+                else activity.livePreviewFailedUrl = url
+                activity.refreshLiveSources()
+            }
+        }
+    }
+
+    private fun updateLivePreviewState(loadedUrl: String) {
+        val selected = mSelectedUrl
+        val state = mBinding.tvLivePreviewState
+        if (selected.isEmpty() || selected == loadedUrl) {
+            state.visibility = View.GONE
+            state.isClickable = false
+            return
+        }
+        val name = currentName().ifBlank { "所选视频源" }
+        val suffix = if (selected != mBeforeUrl) " · 退出后生效" else ""
+        state.text = when {
+            livePreviewLoadingUrl == selected -> "正在读取「$name」的直播源…$suffix"
+            livePreviewFailedUrl == selected -> "暂时无法预览「$name」的直播源，点此重试$suffix"
+            else -> "预览「$name」的直播源$suffix"
+        }
+        state.isClickable = livePreviewFailedUrl == selected
+        state.visibility = View.VISIBLE
     }
 
     /**
@@ -841,13 +916,12 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
         SubscriptionConfig.setSubscriptions(mSubscriptions)
         LogStore.log(Category.SUBSCRIPTION, "订阅: 编辑 " + name)
         AppBubble.toast("已保存")
-        // 改的就是当前启用订阅的地址 → 按新地址重载配置(与切换订阅同一套:清任务栈回首页)
+        // 改的就是当前启用订阅的地址 → 与切换订阅走同一套进程重启。
         if (wasChecked && oldUrl != url) {
-            SubscriptionConfig.setApiUrl(url)
-            val intent = Intent(this, MainActivity::class.java)
-            intent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
-            startActivity(intent)
-            overridePendingTransition(R.anim.fade_in, R.anim.fade_out)
+            mSelectedUrl = url
+            finish()
+        } else if (liveTabActive || checked && !wasChecked) {
+            refreshLiveSources()
         }
     }
 
@@ -1916,6 +1990,7 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
             mSubscriptions.add(Subscription(name, url, addOrigin).setChecked(false))
         }
         LogStore.success(Category.SUBSCRIPTION, "订阅: 导入成功 $name $url (来源=$addOrigin)")
+        if (checkNewest && liveTabActive) refreshLiveSources()
     }
 
     override fun onPause() {
@@ -1926,12 +2001,25 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
     }
 
     override fun finish() {
-        //切换了订阅地址
+        // 不同订阅的 csp.jar 可加载同名 native 库。只清 Activity 任务栈仍在同一进程，
+        // 旧 ClassLoader 持有该库时新 ClassLoader 会被 ART 拒绝，首页可能卡到 45 秒看门狗。
         if (mBeforeUrl != mSelectedUrl) {
-            val intent = Intent(this, MainActivity::class.java)
-            intent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
-            startActivity(intent)
-            overridePendingTransition(R.anim.fade_in, R.anim.fade_out)
+            // relaunchApp(true) 会结束当前进程；先同步落盘，不能依赖稍后的 onPause。
+            val provider = LiveChannelConfigProviders.get()
+            val selectedLiveUrl = SystemConfig.getLiveUrl()
+            if (selectedLiveUrl.isNotEmpty() &&
+                provider.loadedSubscriptionUrl != mSelectedUrl &&
+                provider.subscribeLiveSources.any { it.url == selectedLiveUrl } &&
+                !LiveConfig.liveHistory().contains(selectedLiveUrl) &&
+                livePreviewCache[mSelectedUrl].orEmpty().none { it.url == selectedLiveUrl }
+            ) {
+                // 旧订阅独有的直播地址不能随着视频源切换变成一条“用户自建”源。
+                SystemConfig.setLiveUrl("")
+            }
+            SubscriptionConfig.setApiUrl(mSelectedUrl)
+            SubscriptionConfig.setSubscriptions(mSubscriptions)
+            LogStore.log(Category.SUBSCRIPTION, "订阅: 切换后重启进程，释放旧爬虫库")
+            AppUtils.relaunchApp(true)
         }
         super.finish()
     }

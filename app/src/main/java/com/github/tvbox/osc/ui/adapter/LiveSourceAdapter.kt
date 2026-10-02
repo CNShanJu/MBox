@@ -85,7 +85,7 @@ class LiveSourceAdapter : BaseQuickAdapter<LiveSourceEntries.Entry, BaseViewHold
         )
 
         // 勾选圈:普通态 = "当前生效的那条";多选态 = "勾选要删的那条"(不可勾的行收起来)
-        holder.setVisible(R.id.cb, !embedded && (!selectMode || canSelect))
+        holder.setGone(R.id.cb, !embedded && (!selectMode || canSelect))
         holder.setChecked(
             R.id.cb,
             if (selectMode) canSelect && selected.contains(item.url)
@@ -95,11 +95,11 @@ class LiveSourceAdapter : BaseQuickAdapter<LiveSourceEntries.Entry, BaseViewHold
         // 「来自:订阅名」徽标:只有订阅导入的才有
         val from = item.fromSubscription
         val hasFrom = !from.isNullOrEmpty()
-        holder.setVisible(R.id.tv_from, hasFrom)
+        holder.setGone(R.id.tv_from, hasFrom)
         if (hasFrom) holder.setText(R.id.tv_from, "来自: $from")
 
         // 删除键:多选态收起(改用操作栏的"删除");其余只有用户自建的才有
-        holder.setVisible(R.id.iv_del, !selectMode && item.removable())
+        holder.setGone(R.id.iv_del, !selectMode && item.removable())
         holder.addOnClickListener(R.id.iv_del)
 
         // ✕ 必须自己吃掉长按:Android 在"没有长按监听"时,长按抬手依旧走 click,

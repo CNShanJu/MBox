@@ -50,6 +50,9 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Collections;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -110,6 +113,12 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
      */
     private final List<com.github.tvbox.osc.spiderapi.LiveChannelConfigApi.SubscribeLiveSource> subscribeLiveSources = new ArrayList<>();
     private volatile String loadedSubscriptionUrl = "";
+    /** 管理页只读预览共用执行器；不参与当前订阅的加载与爬虫生命周期。 */
+    private static final ExecutorService LIVE_PREVIEW_EXECUTOR = Executors.newFixedThreadPool(2, task -> {
+        Thread thread = new Thread(task, "subscription-live-preview");
+        thread.setDaemon(true);
+        return thread;
+    });
     private List<ParseBean> parseBeanList;
     private List<String> vipParseFlags;
     private List<IJKCode> ijkCodes;
@@ -682,7 +691,7 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
                         // 同一份解析结果再折算成"直播源清单"给订阅管理页(单频道分组 = 一个直播源地址)
                         collectSubscribeLiveSources(subscribeLiveGroupList);
                     } else {
-                        // type=0 可以出现多次:每条都是独立直播源。首条仍作为未指定用户直播源时的默认兜底。
+                        // type=0/3 可以出现多次:每条有地址的都是独立直播源。首条仍作为未指定用户直播源时的默认兜底。
                         for (com.github.tvbox.osc.spiderapi.LiveChannelConfigApi.SubscribeLiveSource source
                                 : SubscriptionLiveSourceParser.parseTypedSources(infoJson.get("lives").getAsJsonArray())) {
                             addSubscribeLiveSource(source.name, source.url);
@@ -1067,6 +1076,96 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
 
     public String getLoadedSubscriptionUrl() {
         return loadedSubscriptionUrl;
+    }
+
+    /** 预览尚未生效的订阅，不调用 parseJson，避免改写当前视频/直播配置。 */
+    public void previewSubscribeLiveSources(String subscriptionUrl,
+            com.github.tvbox.osc.spiderapi.LiveChannelConfigApi.PreviewCallback callback) {
+        if (callback == null) return;
+        if (subscriptionUrl == null || subscriptionUrl.isEmpty()) {
+            callback.onResult(Collections.emptyList(), null);
+            return;
+        }
+        if (subscriptionUrl.equals(loadedSubscriptionUrl)) {
+            callback.onResult(new ArrayList<>(subscribeLiveSources), null);
+            return;
+        }
+        LIVE_PREVIEW_EXECUTOR.execute(() -> {
+            try {
+                String sourceUrl = subscriptionUrl;
+                String key = null;
+                int keyIndex = sourceUrl.indexOf(";pk;");
+                if (keyIndex >= 0) {
+                    key = sourceUrl.substring(keyIndex + 4);
+                    sourceUrl = sourceUrl.substring(0, keyIndex);
+                }
+                String requestUrl = sourceUrl.startsWith("clan://") ? clanToAddress(sourceUrl)
+                        : sourceUrl.startsWith("http") ? sourceUrl : "http://" + sourceUrl;
+                SubUrlResolver resolver = SubUrlResolvers.find(requestUrl);
+                if (resolver != null) requestUrl = resolver.transform(requestUrl);
+                Map<String, String> headers = new HashMap<>();
+                headers.put("User-Agent", userAgent);
+                headers.put("Accept", requestAccept);
+                File cache = new File(getAppContext().getFilesDir(), MD5.encode(subscriptionUrl));
+                String content;
+                boolean cached = false;
+                try {
+                    content = HttpClient.getSync(requestUrl, headers);
+                } catch (Throwable networkError) {
+                    byte[] bytes = cache.exists() && cache.length() <= 4L * 1024 * 1024
+                            ? readFileBytes(cache) : null;
+                    if (bytes == null) throw new IllegalStateException(networkError);
+                    content = new String(bytes, StandardCharsets.UTF_8);
+                    cached = true;
+                }
+                if (!cached) {
+                    content = FindResult(content, key);
+                    if (sourceUrl.startsWith("clan://")) {
+                        content = clanContentFix(clanToAddress(sourceUrl), content);
+                    }
+                    content = fixContentPath(sourceUrl, content);
+                }
+                JsonObject config = new Gson().fromJson(content, JsonObject.class);
+                if (config == null) throw new IllegalArgumentException("订阅内容为空");
+                callback.onResult(previewLiveSourcesFrom(config, sourceUrl), null);
+            } catch (Throwable error) {
+                callback.onResult(Collections.emptyList(), "无法读取订阅直播源");
+            }
+        });
+    }
+
+    /** 与正式加载的 lives 三种形态一致，只提取清单，不写 EPG/配置或下载插件。 */
+    private List<com.github.tvbox.osc.spiderapi.LiveChannelConfigApi.SubscribeLiveSource>
+            previewLiveSourcesFrom(JsonObject config, String sourceUrl) {
+        JsonArray lives = config.has("lives") && config.get("lives").isJsonArray()
+                ? config.getAsJsonArray("lives") : null;
+        if (lives == null || lives.size() == 0 || !lives.get(0).isJsonObject()) {
+            return Collections.emptyList();
+        }
+        JsonObject first = lives.get(0).getAsJsonObject();
+        String firstText = first.toString();
+        int proxyIndex = firstText.indexOf("proxy://");
+        if (proxyIndex >= 0) {
+            try {
+                String proxy = DefaultConfig.checkReplaceProxy(
+                        firstText.substring(proxyIndex, firstText.lastIndexOf('"')));
+                String ext = Uri.parse(proxy).getQueryParameter("ext");
+                if (ext == null || ext.isEmpty()) return Collections.emptyList();
+                String url = ext.startsWith("http") || ext.startsWith("clan://") ? ext
+                        : new String(Base64.decode(ext,
+                                Base64.DEFAULT | Base64.URL_SAFE | Base64.NO_WRAP), StandardCharsets.UTF_8);
+                if (url.startsWith("clan://")) {
+                    url = clanContentFix(clanToAddress(sourceUrl), url);
+                }
+                return Collections.singletonList(
+                        new com.github.tvbox.osc.spiderapi.LiveChannelConfigApi.SubscribeLiveSource("", url));
+            } catch (Throwable ignored) {
+                return Collections.emptyList();
+            }
+        }
+        return first.has("type")
+                ? SubscriptionLiveSourceParser.parseTypedSources(lives)
+                : SubscriptionLiveSourceParser.parseEmbeddedSources(lives);
     }
 
     /**

@@ -33,6 +33,11 @@ public final class LiveChannelConfigProviders {
         }
 
         @Override
+        public void previewSubscribeLiveSources(String subscriptionUrl, PreviewCallback callback) {
+            if (callback != null) callback.onResult(Collections.emptyList(), "直播源预览暂不可用");
+        }
+
+        @Override
         public void loadLives(JsonArray livesArray) {
         }
     };

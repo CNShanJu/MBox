@@ -5,13 +5,14 @@
      排版要点(踩过的坑):
       1) 名称/徽标那一行用 LinearLayout + 名称 weight=1 + ellipsize=end —— 名称再长也只会自己省略,
          不会把「来自:xx」挤出屏幕(以前名称 wrap_content 顶在徽标左边,长名字直接把徽标推出可视区);
-      2) 内容区 toLeftOf 删除键 + marginEnd,地址与文字都不会钻到 ✕ 底下(用户口径"x 和文字都贴着了")。 -->
-<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+      2) 横向布局的内容区占剩余宽度；不可删除时 ✕ 收起，徽标自然贴到卡片右侧。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/item"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:orientation="horizontal"
     android:padding="10dp">
 
     <CheckBox
@@ -23,26 +24,12 @@
         android:button="@drawable/button_checkbox_square"
         android:focusable="false"/>
 
-    <ImageView
-        android:id="@+id/iv_del"
-        android:layout_width="30dp"
-        android:layout_height="30dp"
-        android:layout_alignParentRight="true"
-        android:layout_alignParentTop="true"
-        android:layout_marginStart="@dimen/dp_8"
-        android:layout_marginLeft="@dimen/dp_8"
-        android:paddingHorizontal="6dp"
-        android:src="@drawable/dkplayer_ic_action_close"
-        app:tint="@color/text_danger"/>
-
     <LinearLayout
         android:id="@+id/content"
-        android:layout_width="match_parent"
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:layout_toRightOf="@+id/cb"
-        android:layout_toLeftOf="@+id/iv_del"
+        android:layout_weight="1"
         android:layout_marginStart="@dimen/dp_8"
-        android:layout_marginLeft="@dimen/dp_8"
         android:orientation="vertical">
 
         <LinearLayout
@@ -94,4 +81,13 @@
             tools:text="https://gh.927223.xy…ster/m3u/iptv.m3u"/>
     </LinearLayout>
 
-</RelativeLayout>
+    <ImageView
+        android:id="@+id/iv_del"
+        android:layout_width="30dp"
+        android:layout_height="30dp"
+        android:layout_marginStart="@dimen/dp_8"
+        android:paddingHorizontal="6dp"
+        android:src="@drawable/dkplayer_ic_action_close"
+        app:tint="@color/text_danger"/>
+
+</LinearLayout>

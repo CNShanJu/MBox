@@ -48,4 +48,38 @@ public class SubscriptionLiveSourceParserTest {
         assertFalse(sources.get(0).hasUrl());
         assertEquals("备用", sources.get(1).name);
     }
+
+    @Test
+    public void typeThreePlaylistRemainsSelectable() {
+        JsonArray lives = JsonParser.parseString("["
+                + "{\"name\":\"Gather蕉\",\"type\":3,\"url\":\"https://example.org/live.txt\"},"
+                + "{\"name\":\"内嵌分组\",\"type\":3}]"
+        ).getAsJsonArray();
+
+        List<LiveChannelConfigApi.SubscribeLiveSource> sources = SubscriptionLiveSourceParser.parseTypedSources(lives);
+
+        assertEquals(2, sources.size());
+        assertEquals("https://example.org/live.txt", sources.get(0).url);
+        assertFalse(sources.get(1).hasUrl());
+    }
+
+    @Test
+    public void previewOfEmbeddedGroupsMatchesSelectableSingleChannelRule() {
+        JsonArray lives = JsonParser.parseString("["
+                + "{\"group\":\"单频道\",\"channels\":[{\"name\":\"电视\","
+                + "\"urls\":[\"https://live.example/a.m3u8$主线\"]}]},"
+                + "{\"group\":\"多频道\",\"channels\":["
+                + "{\"name\":\"甲\",\"urls\":[\"https://live.example/a\"]},"
+                + "{\"name\":\"乙\",\"urls\":[\"https://live.example/b\"]}]}]"
+        ).getAsJsonArray();
+
+        List<LiveChannelConfigApi.SubscribeLiveSource> sources =
+                SubscriptionLiveSourceParser.parseEmbeddedSources(lives);
+
+        assertEquals(2, sources.size());
+        assertEquals("单频道", sources.get(0).name);
+        assertEquals("https://live.example/a.m3u8", sources.get(0).url);
+        assertEquals("多频道", sources.get(1).name);
+        assertFalse(sources.get(1).hasUrl());
+    }
 }

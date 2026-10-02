@@ -164,12 +164,33 @@
         android:clipToOutline="true"
         android:visibility="gone">
 
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/tv_live_preview_state"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingHorizontal="20dp"
+            android:paddingTop="12dp"
+            android:paddingBottom="4dp"
+            android:textColor="@color/text_sub_foreground"
+            android:textSize="12sp"
+            android:visibility="gone" />
+
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1">
+
         <com.github.tvbox.osc.ui.kit.RubberBandRecyclerView
             android:id="@+id/rv_live"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:background="@android:color/transparent"
-            android:clipToPadding="true"
+            android:clipToPadding="false"
             android:paddingVertical="10dp"
             tools:listitem="@layout/item_live_source"
             app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"/>
@@ -180,6 +201,8 @@
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:visibility="gone" />
+        </FrameLayout>
+        </LinearLayout>
         </FrameLayout>
     </FrameLayout>
 
