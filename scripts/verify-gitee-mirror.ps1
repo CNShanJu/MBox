@@ -143,7 +143,9 @@ foreach ($t in $Tag) {
   if (-not $rel) {
     Write-Bad "Gitee 上没有 $t 的发行版"
     Write-Host "        页面: https://gitee.com/$GiteeOwner/$GiteeRepo/releases/tag/$t" -ForegroundColor DarkGray
-    Write-Host '        常见原因:缺 GITEE_TOKEN 导致 CI 静默跳过;或该版本人工创建发行版时忘了建。' -ForegroundColor DarkGray
+    Write-Host '        常见原因:缺 GITEE_MBOX_TOKEN 导致 CI 静默跳过;或该版本人工创建发行版时忘了建。' -ForegroundColor DarkGray
+    Write-Host '        注意:重跑旧 tag 的 Build APK 不会采用最新工作流(用的是该次运行所属提交里的文件),' -ForegroundColor DarkGray
+    Write-Host '        改过 workflow 后要补传,请发新 tag,或用 scripts/sync-gitee-release.ps1 本地补。' -ForegroundColor DarkGray
     $failed += $t
     continue
   }

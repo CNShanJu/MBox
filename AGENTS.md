@@ -229,6 +229,10 @@ app / feature
 3. **顺序有硬依赖:代码与 tag 必须先到 Gitee,再等 CI 建 Gitee 发行版**。
    `.github/workflows/build-apk.yml` 的 `Sync release APK to Gitee mirror` 步要先按 tag 在镜像仓库找到发行版,
    镜像没有该 tag 时它只告警跳过 —— APK 附件就同步不过去。发版后到 Actions 确认该步没有 `::warning` 跳过。
+   **改了 workflow 后重跑旧 tag 是无效的**(2026-10-02 实测):`Re-run all jobs` 用的是**该次运行所属提交里**的
+   工作流文件,不是 `main` 上的最新版 —— 日志里会看到它仍在回显旧脚本(如旧的 `::notice`、旧变量名)。
+   所以"改工作流 → 重跑旧 tag"这条路走不通:要么**发一个新 tag**(新提交 → 新工作流),
+   要么用 `scripts/sync-gitee-release.ps1` 本地把附件补上去。
 4. **镜像掉队要能发现**:任一端的 `main` 或 `v*` tag 明显落后时用 `-GiteeOnly` 补推,不要长期放任手工推。
 5. **CI 同步 APK 到 Gitee 依赖 Secrets,缺令牌会静默跳过**(强制检查):
    令牌 Secret 名固定 **`GITEE_MBOX_TOKEN`**(工作流里映射成环境变量 `GITEE_TOKEN` 供 shell 使用;
@@ -253,11 +257,13 @@ app / feature
      (此时体积与对账会标"未测")。脚本只读,不写仓库、不改远端。
      **注意两个 Gitee 接口坑(脚本里已规避,别再踩)**:`/releases/tags/<tag>` 返回空壳对象(HTTP 200 但字段全空),
      必须用 `/releases` 列表再按 `tag_name` 过滤;附件对象没有 `size` 字段,体积只能从 HTTP `Content-Length` 拿。
-   - 补同步:配置令牌后重新运行该 tag 的 Build APK 工作流即可(该步按 tag 找发行版,重跑不重复建),
-     再用上面的验收脚本确认 `全部 1 个 tag 的镜像验收通过`。
-     不想等 CI、或想立刻知道令牌配得对不对,用 `scripts/sync-gitee-release.ps1`:
-     `-VerifyOnly` 只验令牌与作用域(不写任何东西),或 `-Tag vX.Y.Z -ApkPath <apk>` 直接把附件补传到
-     Gitee 发行版。**令牌不要写在命令行参数里**(会进 PowerShell 历史),用 `-TokenFile` 或交互式输入,用完删掉;
+   - 补同步(按需求选一条):
+     - **CI 路径**:令牌配好后**发一个新 tag**(新提交 → 新工作流)即自动同步;若某历史版本要补,
+       只能靠下面第 2 条,重跑旧 tag 无效(见本节第 3 条)。
+     - **本地路径(不等 CI)**:用 `scripts/sync-gitee-release.ps1` ——
+       `-VerifyOnly` 只验令牌与作用域(不写任何东西),或 `-Tag vX.Y.Z -ApkPath <apk>` 直接把附件补传到
+       Gitee 发行版(该脚本自己建发行版、传附件,末尾自动调验收脚本复核)。
+     **令牌不要写在命令行参数里**(会进 PowerShell 历史),用 `-TokenFile` 或交互式输入,用完删掉;
      CI 侧一律走 GitHub Secrets。
 
 ### 构建内存纪律(强制)
