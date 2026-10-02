@@ -7,6 +7,9 @@
 
 ## 0. 近期进展补充（2026-09-25）
 
+- **Media3 在线续播与 seek 后偶发画面停住（2026-10-02，待真机回归）**：用户反馈声音继续、画面停在一帧，历史记录续播和拖动进度时更明显。代码核查：历史恢复会在播放器准备后立即 seek；Media3 已使用 `PREVIOUS_SYNC`，但轨道选择器仍强制 `setTunnelingEnabled(true)`。Android 官方文档明确提示隧道播放有较多设备兼容问题，Media3 项目也记录过隧道播放连续 seek 后画面冻结。默认关闭隧道播放，保留关键帧 seek、同步 MediaCodec 和解码回退；这是一项针对可疑设备路径的修正，是否覆盖用户所见问题仍需按 `device-regression-checklist.md` §B 人工验证。
+  - **已机器验证**：`:app:assembleDebug :app:assembleRelease :app:testDebugUnitTest checkModuleDependencies` 全绿；首次构建因 Release dex 输出文件被占用失败，重试通过。**待人工验证**：历史续播和拖动进度后画面持续更新、音画同步；本批未操作真机。
+
 - **旧 ExoPlayer 迁至 Media3（2026-10-01）**：使用与 compileSdk 34 匹配的 Media3 1.4.1，移除旧 ExoPlayer 2.18.7 全部依赖；DASH/HLS/RTSP/RTMP、缓存及自定义 OkHttpDataSource 全部迁移。类型 2 和兼容类名保留，点播/直播选项改为 Media3；音轨/字幕用 `Tracks`/`TrackSelectionOverride`、`CueGroup`，字幕监听替换及释放时清理。保留 `PREVIOUS_SYNC`、同步 MediaCodec、解码回退和单次重试；请求头按媒体源复制，复用注入的客户端，避免跨源 UA/鉴权头污染及重复 UA。门禁增加旧依赖/import 拦截、Media3 版本对齐及 UI import 红线。
   - **已机器验证**：`:app:assembleDebug :app:assembleRelease :app:testDebugUnitTest checkModuleDependencies` 全绿；新增请求头重播/隔离 2 个 JVM 用例通过；运行时依赖树 Media3 全为 1.4.1、无旧 ExoPlayer。
   - **待人工验证**：点播/直播/本地起播、连续 seek、倍速、多音轨/字幕、全屏/PiP、后台播放/通知、安全 DNS 切换后起播；详见 `device-regression-checklist.md` §B。本批未操作真机。
