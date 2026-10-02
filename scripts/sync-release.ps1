@@ -160,7 +160,12 @@ try {
   if (-not $GiteeOnly) {
     Invoke-Git fetch origin --tags --prune | Out-Null
     if ($LASTEXITCODE -ne 0) {
-      Fail ' git fetch origin 失败(网络或凭据问题)。' @('确认能访问 https://github.com/CNShanJu/MBox.git。')
+      Fail ' git fetch origin 失败(网络、代理或凭据问题)。' @(
+        '确认能访问 https://github.com/CNShanJu/MBox.git。',
+        '本机 GitHub 直连可能不通、需走本地代理;那就在当前会话先设好再重跑:',
+        "  `$env:HTTP_PROXY='http://127.0.0.1:7890'; `$env:HTTPS_PROXY='http://127.0.0.1:7890'",
+        '凭据失效则:git credential-manager github login'
+      )
     }
     # 抢先拦下"上游有本地没有的提交":这种发散直接 push 必然被拒,而且会造成
     # GitHub 推成功、Gitee 推失败的半同步状态(镜像掉队还得多跑一次 -GiteeOnly)。
