@@ -18,6 +18,11 @@ public interface LiveSettingHost {
     /** 更换播放解码 */
     void changePlayer(int position);
 
+    /** 与在线播放、本地播放和设置页共用的后台播放模式。 */
+    int getBackgroundPlayType();
+
+    void setBackgroundPlayType(int position);
+
     /** 偏好设置变化后即时刷新两套控制条的显示项 */
     void refreshPreferenceUi();
 }

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 后台播放通知(折叠/普通态):剧名 / 集数各一行 + 右侧应用图标。
+<!-- 后台播放通知(折叠/普通态):左侧图标与两行标题同排。
      与展开态同样要求"单行 + 省略号 + 宽度受约束":长剧名换行会把集数顶出折叠高度,
      也会压到右侧图标上 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
@@ -9,6 +9,13 @@
     android:orientation="horizontal"
     android:paddingHorizontal="14dp"
     android:paddingVertical="10dp">
+
+    <ImageView
+        android:id="@+id/iv_logo"
+        android:layout_width="30dp"
+        android:layout_height="30dp"
+        android:layout_marginEnd="10dp"
+        android:src="@drawable/app_icon" />
 
     <LinearLayout
         android:layout_width="0dp"
@@ -36,12 +43,5 @@
             android:text="SubtitleSubtitleSubtitleSubtitleSubtitleSubtitle"
             android:textSize="12sp" />
     </LinearLayout>
-
-    <ImageView
-        android:id="@+id/iv_logo"
-        android:layout_width="26dp"
-        android:layout_height="26dp"
-        android:layout_marginStart="8dp"
-        android:src="@drawable/app_icon" />
 
 </LinearLayout>

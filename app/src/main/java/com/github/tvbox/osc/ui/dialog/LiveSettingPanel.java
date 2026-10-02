@@ -7,6 +7,7 @@ import com.github.tvbox.osc.bean.LiveSettingGroup;
 import com.github.tvbox.osc.bean.LiveSettingItem;
 import com.github.tvbox.osc.ui.adapter.LiveSettingGroupAdapter;
 import com.github.tvbox.osc.ui.adapter.LiveSettingItemAdapter;
+import com.github.tvbox.osc.util.BackgroundPlaySettings;
 import com.github.tvbox.osc.util.FastClickCheckUtil;
 import com.github.tvbox.osc.util.LiveConfig;
 
@@ -20,7 +21,7 @@ import java.util.List;
 /**
  * 直播设置面板协调器（合并 LiveSettingDialog / LiveSettingRightDialog 的重复实现）。
  * <p>
- * 分组:画面比例 / 播放解码 / 超时换源 / 偏好设置。
+ * 分组:画面比例 / 播放解码 / 超时换源 / 偏好设置 / 后台播放。
  * 线路选择已从设置面板移除,改为在非全屏点击线路文字或全屏控制条点击线路信息,
  * 弹出独立线路抽屉进行切换。
  * <p>
@@ -75,14 +76,15 @@ final class LiveSettingPanel {
         });
     }
 
-    /** 静态分组：画面比例 / 播放解码 / 超时换源 / 偏好设置 */
+    /** 静态分组：画面比例 / 播放解码 / 超时换源 / 偏好设置 / 后台播放 */
     private void buildStaticGroups() {
-        ArrayList<String> groupNames = new ArrayList<>(Arrays.asList("画面比例", "播放解码", "超时换源", "偏好设置"));
+        ArrayList<String> groupNames = new ArrayList<>(Arrays.asList("画面比例", "播放解码", "超时换源", "偏好设置", "后台播放"));
         ArrayList<ArrayList<String>> items = new ArrayList<>();
         items.add(new ArrayList<>(Arrays.asList("默认", "16:9", "4:3", "填充", "原始", "裁剪")));
         items.add(new ArrayList<>(Arrays.asList("系统", "ijk硬解", "ijk软解", "Media3")));
         items.add(new ArrayList<>(Arrays.asList("5s", "10s", "15s", "20s", "25s", "30s")));
         items.add(new ArrayList<>(Arrays.asList("显示时间", "显示网速", "换台反转", "跨选分类")));
+        items.add(new ArrayList<>(BackgroundPlaySettings.MODES));
 
         groups.clear();
         for (int i = 0; i < groupNames.size(); i++) {
@@ -121,6 +123,9 @@ final class LiveSettingPanel {
                 break;
             case 1:
                 itemAdapter.selectItem(mHost.getLivePlayerType(), true, true);
+                break;
+            case 4:
+                itemAdapter.selectItem(mHost.getBackgroundPlayType(), true, true);
                 break;
         }
         int scrollTo = itemAdapter.getSelectedItemIndex();
@@ -169,6 +174,12 @@ final class LiveSettingPanel {
                 }
                 itemAdapter.selectItem(position, select, false);
                 mHost.refreshPreferenceUi(); // 显示时间/显示网速等即时作用于全屏与小窗控制条
+                break;
+            case 4: // 后台播放与另外两种播放场景共用 PlayConfig
+                if (position != mHost.getBackgroundPlayType()) {
+                    mHost.setBackgroundPlayType(position);
+                    itemAdapter.selectItem(position, true, true);
+                }
                 break;
         }
     }

@@ -6,6 +6,7 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.media.MediaMetadata;
 import android.media.session.MediaSession;
 import android.media.session.PlaybackState;
@@ -27,6 +28,7 @@ import com.github.tvbox.osc.player.MyVideoView;
 import com.github.tvbox.osc.ui.activity.DetailActivity;
 
 import java.lang.ref.WeakReference;
+import java.util.Locale;
 
 /**
  * 后台播放前台服务(后台播放=开启时承载)。
@@ -72,6 +74,8 @@ public class PlayService extends Service {
         }
     };
     private boolean lastPlaying;
+    private long lastNotifiedPosition = -1L;
+    private long lastNotifiedDuration = -1L;
 
     /** "标题&&集数" 分段读取,越界/缺段返回空串,避免 split 后越界崩溃 */
     private static String splitPart(String info, int index) {
@@ -136,7 +140,13 @@ public class PlayService extends Service {
             videoInfo = newVideoInfo;
             syncMediaMetadata();
         }
-        NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, buildNotification());
+        if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(this,
+                android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return;
+        try {
+            NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, buildNotification());
+        } catch (SecurityException denied) {
+            // Android 13+ 用户可撤销通知权限；刷新通知不能把播放页一起崩掉。
+        }
     }
 
     private static final String CHANNEL_ID = "MyChannelId";
@@ -157,7 +167,12 @@ public class PlayService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        startForeground(NOTIFICATION_ID, buildNotification());
+        try {
+            startForeground(NOTIFICATION_ID, buildNotification());
+        } catch (RuntimeException unavailable) {
+            stopSelf(startId);
+            return START_NOT_STICKY;
+        }
         if (mediaSession != null) {
             mediaSession.setActive(true);
         }
@@ -269,11 +284,14 @@ public class PlayService extends Service {
     private void syncMediaMetadata() {
         if (mediaSession == null) return;
         try {
+            MyVideoView videoView = currentVideoView();
             mediaSession.setMetadata(new MediaMetadata.Builder()
                     .putString(MediaMetadata.METADATA_KEY_TITLE, videoTitle())
                     .putString(MediaMetadata.METADATA_KEY_ARTIST, videoSubtitle())
                     .putString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE, videoTitle())
                     .putString(MediaMetadata.METADATA_KEY_ALBUM, "MBox")
+                    .putLong(MediaMetadata.METADATA_KEY_DURATION,
+                            Math.max(0L, videoView == null ? 0L : videoView.getDuration()))
                     .build());
         } catch (Throwable th) {
             // 元数据同步失败不影响功能
@@ -282,12 +300,12 @@ public class PlayService extends Service {
 
     /** 轮询共享播放器状态 → 媒体会话 PlaybackState + 通知图标(暂停/播放) */
     private void syncPlaybackState() {
-        if (mediaSession == null) return;
         try {
             // 视图已被回收时按"未播放/进度 0"上报,不额外打日志(轮询会反复触发,避免刷屏)
             MyVideoView videoView = currentVideoView();
             boolean playing = videoView != null && videoView.isPlaying();
-            long position = videoView != null ? videoView.getCurrentPosition() : 0L;
+            long position = videoView != null ? Math.max(0L, videoView.getCurrentPosition()) : 0L;
+            long duration = videoView != null ? Math.max(0L, videoView.getDuration()) : 0L;
             long actions = PlaybackState.ACTION_PLAY
                     | PlaybackState.ACTION_PAUSE
                     | PlaybackState.ACTION_PLAY_PAUSE
@@ -295,14 +313,23 @@ public class PlayService extends Service {
                     | PlaybackState.ACTION_SKIP_TO_PREVIOUS
                     | PlaybackState.ACTION_STOP
                     | PlaybackState.ACTION_SEEK_TO;
-            mediaSession.setPlaybackState(new PlaybackState.Builder()
-                    .setActions(actions)
-                    .setState(playing ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_PAUSED,
-                            position, 1.0f)
-                    .build());
-            if (playing != lastPlaying) {
+            if (mediaSession != null) {
+                mediaSession.setPlaybackState(new PlaybackState.Builder()
+                        .setActions(actions)
+                        .setState(playing ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_PAUSED,
+                                position, playing ? 1.0f : 0.0f)
+                        .build());
+            }
+            if (duration != lastNotifiedDuration) syncMediaMetadata();
+            if (playing != lastPlaying || duration != lastNotifiedDuration
+                    || Math.abs(position - lastNotifiedPosition) >= 2000L) {
                 lastPlaying = playing;
-                NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, buildNotification());
+                lastNotifiedPosition = position;
+                lastNotifiedDuration = duration;
+                if (Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(this,
+                        android.Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
+                    NotificationManagerCompat.from(this).notify(NOTIFICATION_ID, buildNotification());
+                }
             }
         } catch (Throwable th) {
             // 播放器释放竞态等瞬态,忽略
@@ -320,11 +347,17 @@ public class PlayService extends Service {
         // 视图已被回收时按"暂停"显示:通知仍可见(服务还在),但不再假装能控制播放
         MyVideoView videoView = currentVideoView();
         boolean playing = videoView != null && videoView.isPlaying();
+        long position = videoView != null ? Math.max(0L, videoView.getCurrentPosition()) : 0L;
+        long duration = videoView != null ? Math.max(0L, videoView.getDuration()) : 0L;
 
         // 展开布局
         RemoteViews remoteViews = new RemoteViews(getPackageName(), R.layout.notification_player);
         remoteViews.setTextViewText(R.id.tv_title, title);
         remoteViews.setTextViewText(R.id.tv_subtitle, "正在播放: " + episodes);
+        remoteViews.setTextViewText(R.id.tv_position, formatTime(position));
+        remoteViews.setTextViewText(R.id.tv_duration, duration > 0 ? formatTime(duration) : "--:--");
+        remoteViews.setProgressBar(R.id.progress_playback, 1000,
+                duration > 0 ? (int) Math.min(1000L, position * 1000L / duration) : 0, false);
         remoteViews.setImageViewResource(R.id.iv_play_pause, playing ? R.drawable.ic_notify_pause : R.drawable.ic_notify_play);
         // 创建通知栏操作(RemoteViews 大布局按钮)
         remoteViews.setOnClickPendingIntent(R.id.iv_previous, getPendingIntent(IntentKey.BROADCAST_ACTION_PREV));
@@ -351,6 +384,14 @@ public class PlayService extends Service {
                 .setShowWhen(false)
                 .setStyle(new NotificationCompat.BigTextStyle().bigText("默认展开"));
         return builder.build();
+    }
+
+    private static String formatTime(long milliseconds) {
+        long seconds = Math.max(0L, milliseconds) / 1000L;
+        long hours = seconds / 3600L;
+        return hours > 0
+                ? String.format(Locale.ROOT, "%d:%02d:%02d", hours, seconds / 60L % 60L, seconds % 60L)
+                : String.format(Locale.ROOT, "%02d:%02d", seconds / 60L, seconds % 60L);
     }
 
     private PendingIntent getPendingIntentActivity() {

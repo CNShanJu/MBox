@@ -13,7 +13,9 @@ import com.github.tvbox.osc.databinding.DialogPlayingControlBinding;
 import com.github.tvbox.osc.player.MyVideoView;
 import com.github.tvbox.osc.player.controller.PlaybackSettingsController;
 import com.github.tvbox.osc.ui.adapter.SelectDialogAdapter;
+import com.github.tvbox.osc.util.BackgroundPlaySettings;
 import com.github.tvbox.osc.util.PlayerHelper;
+import com.github.tvbox.osc.server.ControlManager;
 import com.lxj.xpopup.core.BasePopupView;
 
 import java.util.ArrayList;
@@ -69,14 +71,18 @@ final class PlayingControlPanel {
         mBinding.player.setText(mController.settingsPlayerBtn().getText());
         mBinding.decode.setText(mController.settingsIjkBtn().getText());
         mBinding.renderMode.setText(PlayerHelper.getRenderName(mController.getRenderType()));
+        mBinding.backgroundPlay.setText(BackgroundPlaySettings.currentLabel());
         // 播放设置弹窗常显"横竖屏",便于切回横屏
         mBinding.landscapePortrait.setVisibility(View.VISIBLE);
+        mBinding.lanPush.setVisibility(mController.supportsLanPush()
+                && ControlManager.get().lanState() == ControlManager.LAN_ACTIVE
+                ? View.VISIBLE : View.GONE);
         updateAboutIjkVisible();
         updateSpeedUi();
         // 「点击型」小组件按钮的点击特效(按下整键透明度 80% 再恢复):倍速那几个是"选择型",
         // 靠选中态换色反馈,不套这个特效(用户口径:"一种是选择按钮一种是点击按钮")
-        for (int id : new int[]{R.id.scale, R.id.player, R.id.decode, R.id.render_mode, R.id.landscape_portrait,
-                R.id.subtitle, R.id.voice, R.id.replay, R.id.refresh, R.id.start_end_reset}) {
+        for (int id : new int[]{R.id.scale, R.id.player, R.id.decode, R.id.render_mode, R.id.background_play, R.id.landscape_portrait,
+                R.id.subtitle, R.id.voice, R.id.replay, R.id.refresh, R.id.start_end_reset, R.id.lan_push}) {
             com.github.tvbox.osc.ui.kit.WidgetPressEffect.attach(mBinding.getRoot().findViewById(id));
         }
     }
@@ -125,11 +131,13 @@ final class PlayingControlPanel {
         mBinding.player.setOnClickListener(view -> showPlayerDialog());
         mBinding.decode.setOnClickListener(view -> changeAndUpdateText(mBinding.decode, mController.settingsIjkBtn()));
         mBinding.renderMode.setOnClickListener(view -> showRenderDialog());
+        mBinding.backgroundPlay.setOnClickListener(view -> showBackgroundPlayDialog());
 
         // 其他
         mBinding.startEndReset.setOnClickListener(view -> resetSkipStartEnd());
         mBinding.replay.setOnClickListener(view -> changeAndUpdateText(null, mController.settingsRetryBtn()));
         mBinding.refresh.setOnClickListener(view -> changeAndUpdateText(null, mController.settingsRefreshBtn()));
+        mBinding.lanPush.setOnClickListener(view -> dismissWith(mController::requestLanPush));
         mBinding.subtitle.setOnClickListener(view -> dismissWith(() -> changeAndUpdateText(null, mController.settingsZimuBtn())));
         mBinding.voice.setOnClickListener(view -> dismissWith(() -> changeAndUpdateText(null, mController.settingsAudioBtn())));
         // 横竖屏:点击切换并同步文案
@@ -234,6 +242,26 @@ final class PlayingControlPanel {
                 return PlayerHelper.getRenderName(value);
             }
         }, INT_DIFF, new ArrayList<>(Arrays.asList(0, 1)), cur);
+        dialog.show();
+    }
+
+    private void showBackgroundPlayDialog() {
+        int current = BackgroundPlaySettings.currentMode();
+        SelectDialog<String> dialog = new SelectDialog<>(mActivity);
+        dialog.setTip("后台播放");
+        dialog.setAdapter(new SelectDialogAdapter.SelectDialogInterface<String>() {
+            @Override
+            public void click(String value, int pos) {
+                dialog.cancel();
+                BackgroundPlaySettings.select(mActivity, pos);
+                mBinding.backgroundPlay.setText(BackgroundPlaySettings.currentLabel());
+            }
+
+            @Override
+            public String getDisplay(String value) {
+                return value;
+            }
+        }, SelectDialogAdapter.stringDiff, BackgroundPlaySettings.MODES, current);
         dialog.show();
     }
 

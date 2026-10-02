@@ -49,6 +49,7 @@ import com.github.tvbox.osc.ui.kit.LinearSpacingItemDecoration;
 import com.github.tvbox.osc.ui.widget.LiveNormalControlView;
 import com.github.tvbox.osc.ui.widget.LiveSideControlView;
 import com.github.tvbox.osc.util.FastClickCheckUtil;
+import com.github.tvbox.osc.util.BackgroundPlaySettings;
 import com.github.tvbox.osc.util.HCallBack;
 import com.github.tvbox.osc.util.HttpClient;
 import com.github.tvbox.osc.util.LiveConfig;
@@ -574,7 +575,6 @@ public class LiveActivity extends BaseActivity implements LiveLineSelectHost, Li
     }
 
     private void initChannelGroupView() {
-        mChannelGroupView.setHasFixedSize(true);
         mChannelGroupView.setLayoutManager(new V7LinearLayoutManager(this.mContext, 1, false));
 
         liveChannelGroupAdapter = new LiveChannelGroupNewAdapter();
@@ -606,7 +606,6 @@ public class LiveActivity extends BaseActivity implements LiveLineSelectHost, Li
     }
 
     private void initLiveChannelView() {
-        mLiveChannelView.setHasFixedSize(true);
         mLiveChannelView.setLayoutManager(new V7LinearLayoutManager(this.mContext, 1, false));
 
         liveChannelItemAdapter = new LiveChannelItemNewAdapter();
@@ -901,6 +900,16 @@ public class LiveActivity extends BaseActivity implements LiveLineSelectHost, Li
     @Override
     public int getLivePlayerType() {
         return livePlayerManager.getLivePlayerType();
+    }
+
+    @Override
+    public int getBackgroundPlayType() {
+        return BackgroundPlaySettings.currentMode();
+    }
+
+    @Override
+    public void setBackgroundPlayType(int position) {
+        BackgroundPlaySettings.select(this, position);
     }
 
     @Override

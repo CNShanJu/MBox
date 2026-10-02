@@ -9,6 +9,10 @@ import android.widget.TextView;
  */
 public interface PlaybackSettingsController {
 
+    default boolean supportsLanPush() { return false; }
+
+    default void requestLanPush() { }
+
     TextView settingsPlayerBtn();
 
     TextView settingsScaleBtn();

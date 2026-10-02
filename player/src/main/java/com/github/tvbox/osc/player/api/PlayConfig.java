@@ -82,7 +82,8 @@ public final class PlayConfig {
 
     /** 后台播放：0 关闭 1 开启 2 画中画，默认 0 */
     public static int getBackgroundPlayType() {
-        return PrefsDataStore.getInt(KEY_BACKGROUND_PLAY_TYPE, 0);
+        int mode = PrefsDataStore.getInt(KEY_BACKGROUND_PLAY_TYPE, 0);
+        return mode >= 0 && mode <= 2 ? mode : 0;
     }
 
     /** 视频净化（播放页净化控件），默认开 */

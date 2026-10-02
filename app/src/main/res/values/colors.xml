@@ -38,6 +38,8 @@
     <color name="gray_darker_press_alpha">#3C808080</color>
     <!-- 视频画面上的进度、暂停与直播提示浮层固定为 15% 白色半透明底。 -->
     <color name="player_overlay_bg">#26FFFFFF</color>
+    <!-- 后台播放通知的控制图标 PNG 主色为 #2C2C2C，进度条与图标保持一致。 -->
+    <color name="notification_control_color">#2C2C2C</color>
 
     <!--    通用颜色-->
     <color name="white">#FFFFFF</color>
