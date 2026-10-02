@@ -223,16 +223,16 @@ public class SelectDialogAdapter<T> extends ListAdapter<T, SelectDialogAdapter.S
      * 选择行的底:由主题的"不透明面"向页面底色轻微混合,并保留行布局原本的圆角。
      *
      * <p>为什么要保留圆角:行布局那份底是"圆角色块",直接 {@code setBackgroundColor} 会把圆角一起丢掉。
-     * 所以这里用原 drawable 的 ConstantState 复制一份、只改颜色 —— 圆角/形状/内边距全都不动。
+     * 所以按同一份配方现造行底、只改颜色。不要复制 ConstantState：框架可能按密度再次缩放圆角。
      */
     public static Drawable createRowBackground(Context ctx, Drawable base) {
         try {
             com.github.tvbox.osc.bean.theme.ThemeColorPalette palette =
-                    com.github.tvbox.osc.theme.ThemeRuntime.palette();
+                    com.github.tvbox.osc.theme.ThemeRuntime.runtimePalette();
             if (palette == null) return base;
             int mixed = mix(opaqueSurface(palette), palette.get("bg_body", 0xFFFAF8FF), ROW_MIX);
-            Drawable copy = base.getConstantState() == null
-                    ? base : base.getConstantState().newDrawable();
+            Drawable copy = com.github.tvbox.osc.theme.ThemeDrawables.rebuild(
+                    R.drawable.bg_small_round_gray, ctx.getResources());
             if (copy instanceof android.graphics.drawable.GradientDrawable) {
                 ((android.graphics.drawable.GradientDrawable) copy).setColor(mixed);
                 return copy;

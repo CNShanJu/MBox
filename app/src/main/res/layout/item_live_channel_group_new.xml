@@ -18,6 +18,7 @@
         android:gravity="center"
         android:marqueeRepeatLimit="marquee_forever"
         android:singleLine="true"
-        android:textColor="@color/text_foreground"
+        android:duplicateParentState="true"
+        android:textColor="@color/live_channel_text"
         tools:text="中央频道"/>
 </LinearLayout>

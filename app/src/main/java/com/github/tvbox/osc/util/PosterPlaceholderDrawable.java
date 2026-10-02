@@ -18,6 +18,8 @@ import androidx.annotation.Nullable;
 import androidx.core.content.ContextCompat;
 
 import com.github.tvbox.osc.R;
+import com.github.tvbox.osc.bean.theme.ThemeShapePalette;
+import com.github.tvbox.osc.theme.ThemeRuntime;
 
 /**
  * 全 App 海报占位统一组件(加载态 / 失败态两种形态,只此一处实现):
@@ -126,7 +128,9 @@ public class PosterPlaceholderDrawable extends Drawable {
         // 圆角:调用方没给(<=0)就沿用卡片档 —— 与 XML 占位 placeholder_poster 同源
         cornerRadiusPx = radiusPx > 0f
                 ? radiusPx
-                : context.getResources().getDimension(R.dimen.radius_card);
+                : (ThemeRuntime.snapshot() == null
+                        ? context.getResources().getDimension(R.dimen.radius_card)
+                        : ThemeRuntime.shapePalette().radiusPx(ThemeShapePalette.RADIUS_CARD, density));
         icon = ContextCompat.getDrawable(context, R.drawable.ic_placeholder_cat);
         textSizePx = 12f * density;
         minTextSizePx = 9f * density;

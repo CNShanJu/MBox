@@ -25,6 +25,7 @@ import com.github.tvbox.osc.log.Category
 import com.github.tvbox.osc.log.LogStore
 import com.github.tvbox.osc.storage.theme.ThemeArchive
 import com.github.tvbox.osc.storage.theme.ThemeStore
+import com.github.tvbox.osc.theme.ThemeRuntime
 import com.github.tvbox.osc.ui.adapter.SelectDialogAdapter
 import com.github.tvbox.osc.ui.adapter.SelectDialogAdapter.SelectDialogInterface
 import com.github.tvbox.osc.ui.dialog.ColorPickerDialog
@@ -237,7 +238,7 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
             swatch.setOnClickListener {
                 FastClickCheckUtil.check(it)
                 // 注意:这里不能捕获 draft —— 导入主题包会整份换掉草稿,捕获的旧对象会把编辑写丢
-                // key.opaqueOnly(目前是「文字主色」):取色板不给透明度那一行,只收纯色
+                // key.opaqueOnly(文字主色与实心按钮底色):取色板不给透明度那一行,只收纯色
                 ColorPickerDialog.show(this, key.label, draft?.color(key.key) ?: "", key.opaqueOnly) { hex ->
                     setValue(key, hex)
                 }
@@ -281,7 +282,7 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
             val hex = text.replace("#", "").uppercase()
             when {
                 !hex.matches(Regex("(?i)[0-9a-f]{6}|[0-9a-f]{8}")) -> false
-                // 只允许纯色的键(「文字主色」):写成 8 位时必须是不透明(FF 开头),否则就是"设了透明度",不接受
+                // 只允许纯色的键:写成 8 位时必须是不透明(FF 开头),否则就是"设了透明度",不接受
                 key.opaqueOnly && hex.length == 8 -> hex.startsWith("FF")
                 else -> true
             }
@@ -317,7 +318,10 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
 
     private fun swatchDrawable(color: Int): GradientDrawable {
         val g = GradientDrawable()
-        g.cornerRadius = dp(6).toFloat()
+        // 覆盖布局中的 bg_theme_field 时保留它的 common_corners 圆角档。
+        g.cornerRadius = if (ThemeRuntime.snapshot() == null) resources.getDimension(R.dimen.common_corners)
+        else ThemeRuntime.shapePalette().radiusPx(
+            ThemeShapePalette.COMMON_CORNERS, resources.displayMetrics.density)
         g.setColor(color)
         g.setStroke(dp(1), ContextCompat.getColor(this, R.color.btn_stroke))
         return g
@@ -568,7 +572,7 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
         mBinding.tvName.text = if (d.name.isEmpty()) "未命名" else d.name
     }
 
-    /** 把 25 个键的所有输入框刷成草稿里的值(同一个键可能有两行,一起刷) */
+    /** 把全部颜色键的输入框刷成草稿里的值(同一个键可能有两行,一起刷) */
     private fun refreshAllValues() {
         val d = draft ?: return
         for (key in ThemeSpec.all()) {

@@ -763,7 +763,7 @@ public final class ThemeDrawables {
         /** selector 的 item 内容:属性上的 drawable,或内嵌一个 shape/layer-list/... */
         private Drawable buildItemChild(XmlResourceParser p) {
             int drawableRes = p.getAttributeResourceValue(NS, "drawable", 0);
-            if (drawableRes != 0) return res.getDrawable(drawableRes);
+            if (drawableRes != 0) return referencedDrawable(drawableRes);
             int depth = p.getDepth();
             try {
                 while (true) {
@@ -777,6 +777,20 @@ public final class ThemeDrawables {
             } catch (Throwable th) {
                 return null;
             }
+        }
+
+        /**
+         * 引用的子 drawable 也要参与主题重建。直播分组/频道的 listSelector 只在 item 上
+         * 写了 {@code @drawable/item_right_bg} / 配方资源，主题色在被引用的子资源里；
+         * 直接 {@code res.getDrawable()} 会把整份 selector 留在编译期颜色。
+         */
+        private Drawable referencedDrawable(int drawableRes) {
+            Drawable themed = ThemeDrawables.rebuild(drawableRes, res);
+            if (themed != null) {
+                usedThemed = true;
+                return themed;
+            }
+            return res.getDrawable(drawableRes);
         }
 
         // ── layer-list ──
@@ -804,7 +818,7 @@ public final class ThemeDrawables {
 
                     Drawable child = null;
                     if (drawableRes != 0) {
-                        child = res.getDrawable(drawableRes);
+                        child = referencedDrawable(drawableRes);
                     } else {
                         // 内嵌 drawable:继续往下读第一个 START_TAG
                         while (true) {
@@ -874,7 +888,7 @@ public final class ThemeDrawables {
             Drawable child = null;
             int drawableRes = p.getAttributeResourceValue(NS, "drawable", 0);
             if (drawableRes != 0) {
-                child = res.getDrawable(drawableRes);
+                child = referencedDrawable(drawableRes);
             } else {
                 int depth = p.getDepth();
                 try {

@@ -12,10 +12,9 @@ import java.nio.file.Files;
  * 「跟随系统」翻明暗这条链路的源码级绊线(纯 JVM;真机行为由用户人工验证)。
  *
  * <p>钉住的是<b>用户看得见的那半个问题</b>:主页/直播/详情在清单里声明了 {@code uiMode},
- * 系统<b>不会重建</b>它们;而内置主题的颜色是 inflate 那一刻从 {@code values/values-night} 取回的
- * <b>资源</b> —— 光重解析换肤快照(自定义主题那条通道)救不了已经画出来的视图:
- * 底栏、卡片、状态栏图标、弹窗深浅全停在翻明暗之前那一套,观感就是"跟随系统没生效"。
- * 所以这三类页面必须<b>自己重建一次</b>,且只在"跟随系统"模式下做。
+ * 系统<b>不会重建</b>它们。跟随系统时要换运行时调色板;固定主题也要重铺视图,
+ * 避免系统刷新把颜色和形状盖回平台资源。
+ * 所以这三类页面在系统明暗变化后必须<b>自己重建一次</b>。
  */
 public class ThemeNightFollowContractTest {
 
@@ -60,7 +59,7 @@ public class ThemeNightFollowContractTest {
                 body.contains("customId.isEmpty()"));
     }
 
-    /** 主页/直播/详情声明了 uiMode，跟随系统与自定义主题都要在明暗变化后重铺视图 */
+    /** 主页/直播/详情声明了 uiMode，跟随系统与固定主题都要在明暗变化后重铺视图 */
     @Test
     public void configChangeRecreatesWhenFollowingSystem() throws Exception {
         String src = baseActivity();
@@ -70,8 +69,8 @@ public class ThemeNightFollowContractTest {
         String handler = methodBody(src, "private void handleSystemNightChange(");
         assertTrue("跟随系统切换亮暗后必须重建页面:" + handler,
                 handler.contains("ThemeRuntime.followsSystem()"));
-        assertTrue("自定义主题在系统明暗变化后也要重铺，避免平台资源盖掉原有样式:" + handler,
-                handler.contains("ThemeRuntime.active()"));
+        assertTrue("运行时调色板已装配时也要重铺内置与自定义主题，避免平台资源盖掉原有样式:" + handler,
+                handler.contains("ThemeRuntime.runtimePalette()"));
         assertTrue("播放中的页面可以不重建:" + handler,
                 handler.contains("allowRecreateOnNightChange()"));
         assertTrue("挡下的重建要记下来,等空闲补做:" + handler,
@@ -87,8 +86,10 @@ public class ThemeNightFollowContractTest {
     public void pendingRecreateIsAppliedOnResume() throws Exception {
         String body = methodBody(baseActivity(), "protected void onResume()");
         assertTrue("onResume 要补做被挡下的重建:" + body, body.contains("nightRecreatePending"));
-        assertTrue("补做时照样要确认还在跟随系统:" + body,
+        assertTrue("补做时要确认还在跟随系统:" + body,
                 body.contains("ThemeRuntime.followsSystem()"));
+        assertTrue("固定主题恢复前也需要补做被挡下的重建:" + body,
+                body.contains("ThemeRuntime.runtimePalette()"));
     }
 
     /** 播放中的两页不许被重建掉(正在看的片子/直播不能被翻明暗打断) */

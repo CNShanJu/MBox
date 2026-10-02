@@ -13,6 +13,8 @@ import androidx.annotation.NonNull;
 
 import com.github.tvbox.osc.R;
 import com.github.tvbox.osc.bean.theme.ThemePalette;
+import com.github.tvbox.osc.bean.theme.ThemeShapePalette;
+import com.github.tvbox.osc.theme.ThemeRuntime;
 import com.github.tvbox.osc.ui.kit.ColorPlateView;
 import com.github.tvbox.osc.ui.kit.HueBarView;
 import com.github.tvbox.osc.util.Utils;
@@ -210,7 +212,11 @@ public class ColorPickerDialog extends AppCenterPopupView {
         GradientDrawable g = new GradientDrawable();
         // 圆角走主题的"小件档"(common_corners),不要在代码里写死 dp ——
         // 写死的那一份不吃主题文件,用户改圆角时这一块就是"没生效"的那块。
-        g.setCornerRadius(getResources().getDimensionPixelSize(R.dimen.common_corners));
+        float radius = ThemeRuntime.snapshot() == null
+                ? getResources().getDimension(R.dimen.common_corners)
+                : ThemeRuntime.shapePalette().radiusPx(
+                        ThemeShapePalette.COMMON_CORNERS, getResources().getDisplayMetrics().density);
+        g.setCornerRadius(radius);
         g.setColor((alpha << 24) | (rgb & 0xFFFFFF));
         g.setStroke(Math.max(1, (int) dp(1)), theme(R.color.btn_stroke));
         preview.setBackground(g);

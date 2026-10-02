@@ -100,6 +100,7 @@
         android:layout_gravity="center"
         android:indeterminateBehavior="repeat"
         android:indeterminateDrawable="@drawable/anim_loading"
+        android:indeterminateTint="@color/text_foreground"
         android:indeterminateOnly="true"
         android:visibility="gone"
         tools:visibility="visible"/>

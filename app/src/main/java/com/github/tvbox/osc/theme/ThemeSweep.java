@@ -26,7 +26,7 @@ public final class ThemeSweep {
 
     /** 对根与子树应用已登记的资源令牌。未登记视图原样放过;不按颜色值推断任何语义。 */
     public static void apply(View root) {
-        if (root == null || !ThemeRuntime.active()) return;
+        if (root == null || ThemeRuntime.runtimePalette() == null) return;
         applyRegisteredTree(root);
         try {
             root.post(() -> applyRegisteredTree(root));
@@ -83,7 +83,7 @@ public final class ThemeSweep {
 
     /** RecyclerView 条目在每次挂载/复用时重放已登记令牌。 */
     public static void watchItems(View root) {
-        if (root == null || !ThemeRuntime.active()) return;
+        if (root == null || ThemeRuntime.runtimePalette() == null) return;
         if (root instanceof androidx.recyclerview.widget.RecyclerView) {
             ((androidx.recyclerview.widget.RecyclerView) root)
                     .addOnChildAttachStateChangeListener(
@@ -106,7 +106,7 @@ public final class ThemeSweep {
 
     private static Integer themedColor(int colorRes, View view) {
         try {
-            ThemePalette palette = ThemeRuntime.palette();
+            ThemePalette palette = ThemeRuntime.runtimePalette();
             String token = ThemeColorAliases.paletteNameOf(colorRes);
             if (palette != null && token != null) return palette.get(token);
             return ContextCompat.getColor(view.getContext(), colorRes);

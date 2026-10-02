@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <!-- 以下核心色由 assets/theme/theme_colors_night.json 生成控制(values-night/theme_colors.xml) -->
+    <!-- 以下核心色由 assets/theme/themes/dark/ 下的默认主题派生(values-night/theme_colors.xml) -->
     <color name="bg_gray">@color/bg_card</color>
-    <!-- bg_float(弹层/抽屉背景, 现为半透明可调) 已上移到 assets/theme/theme_colors_night.json 统一维护, 此处不再重复定义 -->
+    <!-- bg_float(弹层/抽屉背景, 现为半透明可调) 由默认暗色主题统一维护, 此处不再重复定义 -->
 
     <color name="text_foreground">@color/text_main</color>
     <color name="text_sub_foreground">@color/text_sub</color>
@@ -37,7 +37,7 @@
     <!-- 开关轨道-关闭态(浅色主题浅灰;深色主题深灰,避免深色主题下白底白点) -->
 
 
-    <!-- bg_surface(底部导航栏磨砂遮罩)与 bg_float(悬浮钮磨砂遮罩)已上移到 assets/theme/theme_colors_night.json
+    <!-- bg_surface(底部导航栏磨砂遮罩)与 bg_float(悬浮钮磨砂遮罩)由默认暗色主题
          统一维护(颜色+透明度), 生成到 values-night/theme_colors.xml, 此处不再重复定义 -->
 
     <!-- 悬浮圆钮(直播/筛选)描边色:暗色用亮色 35% 透明度描边, 纯黑背景上清晰可见 -->

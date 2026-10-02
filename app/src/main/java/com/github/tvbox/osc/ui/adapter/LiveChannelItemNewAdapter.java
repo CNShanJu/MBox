@@ -33,21 +33,9 @@ public class LiveChannelItemNewAdapter extends BaseQuickAdapter<LiveChannelItem,
         TextView tvChannel = holder.getView(R.id.tvChannelName);
         tvChannel.setText(item.getChannelName());
         int channelIndex = item.getChannelIndex();
-        // 字色:走 Resources(Activity 的 getResources 已被 BaseActivity 换成换肤包装),
-        // getColor(text_foreground) 在自定义主题下会返回主题的文字主色 —— 这一句本来是跟着主题走的。
-        // 底:**必须走 ThemeDrawables.applyBackground**。原来写的是
-        // mContext.getResources().getDrawable(...):它拿的是**编译期**那份 drawable(换肤包装只对
-        // 单色矢量图标做 tint,不会重建 shape 里的 @color),于是自定义主题下"底仍是内置的浅色填充、
-        // 字已经换成主题的对比色(btn_select_text)" —— 白字压浅底,用户口径就是
-        // "直播页中间那栏频道名的文字没走文字主色"(其实字走对了,是底没跟着走)。
-        if (channelIndex == selectedChannelIndex && channelIndex != focusedChannelIndex) {
-            // 选中态与预设 chip 同源：深色默认底透明时用高亮字与同色描边。
-            tvChannel.setTextColor(mContext.getResources().getColor(R.color.btn_select_text));
-            com.github.tvbox.osc.theme.ThemeDrawables.applyBackground(root, R.drawable.bg_r_common_solid_select);
-        } else {
-            tvChannel.setTextColor(mContext.getResources().getColor(R.color.text_foreground));
-            com.github.tvbox.osc.theme.ThemeDrawables.applyBackground(root, R.drawable.bg_transparent);
-        }
+        // 选中、按下、焦点共用主题状态底；文字通过 duplicateParentState 同步切换。
+        com.github.tvbox.osc.theme.ThemeDrawables.applyBackground(root, R.drawable.item_bg_selector_right);
+        root.setSelected(channelIndex == selectedChannelIndex || channelIndex == focusedChannelIndex);
     }
 
     public void setSelectedChannelIndex(int selectedChannelIndex) {

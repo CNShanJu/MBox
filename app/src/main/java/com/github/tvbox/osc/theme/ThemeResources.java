@@ -129,12 +129,16 @@ public class ThemeResources extends Resources {
     @Override
     @SuppressWarnings("deprecation")
     public ColorStateList getColorStateList(int id) throws NotFoundException {
+        Integer color = overrideColor(id);
+        if (color != null) return ColorStateList.valueOf(color);
         ColorStateList override = ThemeDrawables.rebuildColorStateList(id, this);
         return override != null ? override : super.getColorStateList(id);
     }
 
     @Override
     public ColorStateList getColorStateList(int id, Theme theme) throws NotFoundException {
+        Integer color = overrideColor(id);
+        if (color != null) return ColorStateList.valueOf(color);
         ColorStateList override = ThemeDrawables.rebuildColorStateList(id, this);
         return override != null ? override : super.getColorStateList(id, theme);
     }

@@ -24,8 +24,7 @@ import java.util.List;
  *
  * <p>为什么不用 XPopup 自带的 {@code asAttachList}:它的面/文字色来自库内固定样式,
  * 不吃我们的主题文件 —— 自定义主题下气泡会是一块"外来"的白/深底,看着很割裂。
- * 这里自己出布局:{@code theme_shapes.json#bg_bubble}(主题悬浮面 bg_float;圆角走小件档,
- * 与同屏的 chip 同档)+
+ * 这里自己出布局:{@code theme_shapes.json#bg_bubble}(主题悬浮面 bg_float;圆角走小卡片档)+
  * 文字色按动作类型取主题色(普通 {@code text_main}、危险 {@code text_danger},与列表工具条上的"删除"同色)。
  *
  * <p>用法:

@@ -30,17 +30,10 @@ public class LiveChannelGroupNewAdapter extends BaseQuickAdapter<LiveChannelGrou
         TextView tvGroupName = holder.getView(R.id.tvChannelGroupName);
         tvGroupName.setText(item.getGroupName());
         int groupIndex = item.getGroupIndex();
-        // 字色走 Resources(getColor → 换肤包装,跟着主题);底必须走 ThemeDrawables.applyBackground ——
-        // 原来用 getResources().getDrawable(...) 拿的是编译期那份,自定义主题下"底没变、字变了",
-        // 与中间那栏是同一个毛病(见 LiveChannelItemNewAdapter.convert 的说明)。
-        if (groupIndex == selectedGroupIndex && groupIndex != focusedGroupIndex) {
-            // 选中态与预设 chip 同源：深色默认底透明时用高亮字与同色描边。
-            tvGroupName.setTextColor(mContext.getResources().getColor(R.color.btn_select_text));
-            com.github.tvbox.osc.theme.ThemeDrawables.applyBackground(root, R.drawable.bg_r_common_solid_select);
-        } else {
-            tvGroupName.setTextColor(mContext.getResources().getColor(R.color.text_foreground));
-            com.github.tvbox.osc.theme.ThemeDrawables.applyBackground(root, R.drawable.bg_transparent);
-        }
+        // RecyclerView 不消费 listSelector；把随主题重建的状态底直接装在条目根上。
+        // 文字通过 duplicateParentState + live_channel_text 与选中/按下/焦点底同步。
+        com.github.tvbox.osc.theme.ThemeDrawables.applyBackground(root, R.drawable.item_bg_selector_left);
+        root.setSelected(groupIndex == selectedGroupIndex || groupIndex == focusedGroupIndex);
     }
 
     public void setSelectedGroupIndex(int selectedGroupIndex) {
@@ -58,7 +51,10 @@ public class LiveChannelGroupNewAdapter extends BaseQuickAdapter<LiveChannelGrou
     }
 
     public void setFocusedGroupIndex(int focusedGroupIndex) {
+        int previousFocusedGroupIndex = this.focusedGroupIndex;
         this.focusedGroupIndex = focusedGroupIndex;
+        if (previousFocusedGroupIndex != -1)
+            notifyItemChanged(previousFocusedGroupIndex);
         if (this.focusedGroupIndex != -1)
             notifyItemChanged(this.focusedGroupIndex);
         else if (this.selectedGroupIndex != -1)

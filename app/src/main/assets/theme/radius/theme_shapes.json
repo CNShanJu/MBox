@@ -70,7 +70,7 @@
     "states": { "default": { "fill": "bg_float" } }
   },
   "bg_bubble": {
-    "radius": "common_corners",
+    "radius": "radius_card",
     "states": { "default": { "fill": "bg_float" } }
   },
   "bg_bottom_dialog": {
@@ -108,6 +108,28 @@
     "radius": "common_corners",
     "strokeWidth": "stroke_widget_btn",
     "states": { "default": { "fill": "btn_select_bg", "stroke": "btn_select_stroke" } }
+  },
+  "live_row_selector": {
+    "radius": "common_corners",
+    "strokeWidth": "stroke_widget_btn",
+    "states": {
+      "selected": { "fill": "btn_select_bg", "stroke": "btn_select_stroke" },
+      "pressed": { "fill": "btn_select_bg", "stroke": "btn_select_stroke" },
+      "focused": { "fill": "btn_select_bg", "stroke": "btn_select_stroke" },
+      "default": { "fill": "transparent" }
+    }
+  },
+  "subtitle_result_fill": {
+    "radius": "common_corners",
+    "states": { "default": { "fill": "btn_select_bg" } }
+  },
+  "subtitle_result_focus": {
+    "radius": "common_corners",
+    "strokeWidthDp": 1,
+    "states": {
+      "focused": { "fill": "transparent", "stroke": "btn_select_text" },
+      "default": { "fill": "transparent" }
+    }
   },
   "bg_small_round_float": {
     "radius": "radius_card",

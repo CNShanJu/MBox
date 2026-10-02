@@ -10,7 +10,7 @@ import com.github.tvbox.osc.R;
 import com.google.android.material.switchmaterial.SwitchMaterial;
 
 /**
- * 统一的开关组件(跟随主题,颜色全部来自 assets/theme/theme_colors*.json):
+ * 统一的开关组件(跟随主题,颜色来自 assets/theme/themes/ 下的主题配置):
  * 开 = `switch_track_on`(蓝色 #1890FF,两主题一致),关 = `switch_track_off`
  * (该主题主色派生:亮色 #1F2937 / 暗色由主色压暗而来),圆点 = `switch_thumb`(固定白色)。
  * 开/关靠轨道颜色 + 圆点位置同时区分。

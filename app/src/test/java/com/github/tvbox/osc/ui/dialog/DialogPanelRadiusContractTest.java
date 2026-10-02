@@ -28,13 +28,13 @@ import java.util.regex.Pattern;
  * ① 任何 dialog 布局根上的"面板底"圆角必须是 {@code @dimen/radius_dialog};
  * ② {@code bg_large_round_popup} 不许复活(复活就又是两档);
  * ③ ShadowLayout 形态的面板壳(搜索字幕)也必须走 {@code radius_dialog}。
- * 气泡类浮层(长按动作/上次看到/联想面板)按既有口径走小件档 {@code common_corners},属白名单。
+ * 气泡类浮层(长按动作/搜索页更多/上次看到)走小卡片档 {@code radius_card},属白名单。
  */
 public class DialogPanelRadiusContractTest {
 
     private static final String PANEL_RADIUS = "@dimen/radius_dialog";
 
-    /** 气泡档浮层:按"同一屏挨着的件必须同档"的口径,它们跟同屏的 chip 一起走 common_corners */
+    /** 气泡档浮层:统一走小卡片圆角;它们是提示浮层,不沿用同屏 chip 的按钮圆角 */
     private static final String[] BUBBLE_DRAWABLES = {"bg_bubble"};
 
     private static File repoRoot() {

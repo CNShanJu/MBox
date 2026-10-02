@@ -61,6 +61,10 @@ public final class ThemeDrawableFactory {
         if (resId == R.drawable.bg_playing_control) return "bg_playing_control";
         if (resId == R.drawable.bg_search_round_float) return "bg_search_round_float";
         if (resId == R.drawable.bg_r_common_solid_select) return "bg_r_common_solid_select";
+        if (resId == R.drawable.item_bg_selector_left
+                || resId == R.drawable.item_bg_selector_right) return "live_row_selector";
+        if (resId == R.drawable.bg_r_common_solid_primary) return "subtitle_result_fill";
+        if (resId == R.drawable.shape_setting_sort_focus) return "subtitle_result_focus";
         if (resId == R.drawable.bg_small_round_float) return "bg_small_round_float";
         if (resId == R.drawable.bg_theme_field) return "bg_theme_field";
         if (resId == R.drawable.bg_lan_import_field) return "bg_lan_import_field";

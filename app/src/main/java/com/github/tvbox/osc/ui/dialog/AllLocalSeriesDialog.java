@@ -1,10 +1,7 @@
 package com.github.tvbox.osc.ui.dialog;
 
 import android.content.Context;
-import android.view.View;
-
 import androidx.annotation.NonNull;
-import androidx.core.content.ContextCompat;
 import androidx.recyclerview.widget.GridLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -44,8 +41,6 @@ public class AllLocalSeriesDialog extends AppDrawerPopupView {
     @Override
     protected void onCreate() {
         super.onCreate();
-        View bg = findViewById(R.id.bg);
-        bg.setBackgroundColor(ContextCompat.getColor(getContext(), R.color.bg_float));
         findViewById(R.id.v_drag_zone).setVisibility(GONE); // 右侧抽屉无拖拽手势条,隐藏热区
         RecyclerView rv = findViewById(R.id.rv);
 

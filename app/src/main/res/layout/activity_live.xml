@@ -188,7 +188,6 @@
 				android:layout_width="@dimen/dp_140"
 				android:layout_height="wrap_content"
 				android:fadeScrollbars="false"
-				android:listSelector="@drawable/item_bg_selector_left"
 				android:paddingHorizontal="10dp"
 				android:paddingVertical="10dp"
 				android:scrollbars="none"
@@ -203,7 +202,6 @@
 				android:layout_height="match_parent"
 				android:fadeScrollbars="false"
 				android:focusable="true"
-				android:listSelector="@drawable/item_bg_selector_right"
 				android:scrollbars="none"
 				tools:listitem="@layout/item_live_channel_new"
 

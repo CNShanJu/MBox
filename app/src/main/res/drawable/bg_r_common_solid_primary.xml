@@ -1,17 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<selector xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:state_focused="true">
-        <shape>
-            <corners android:radius="@dimen/common_corners" />
-            <!--  选中按钮颜色   -->
-            <!--<solid android:color="@color/color_353744" />-->
-            <solid android:color="@color/gray_darker_press_alpha" />
-        </shape>
-    </item>
-    <item android:state_focused="false">
-        <shape>
-            <corners android:radius="@dimen/common_corners" />
-            <solid android:color="@color/colorPrimary" />
-        </shape>
-    </item>
-</selector>
+<!-- 字幕搜索结果行保留实心按钮底色与文字对比；焦点反馈由内层 shape_setting_sort_focus 描边提供。 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <corners android:radius="@dimen/common_corners" />
+    <solid android:color="@color/btn_select_bg" />
+</shape>

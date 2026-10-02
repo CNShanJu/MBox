@@ -31,11 +31,11 @@ import java.lang.reflect.Field;
  *   <li>{@code app:tint} / {@code android:tint} —— 图标着色(单色矢量图标靠它,不必重建矢量);</li>
  *   <li>{@code android:background} —— 纯色直接换色,drawable 交给 {@link ThemeDrawables} 重建;</li>
  *   <li>{@code android:src} / {@code app:srcCompat} —— 图标(setImageTintList)或可重建 drawable;</li>
- *   <li>{@code backgroundTint} / {@code drawableTint} / {@code progressTint} / {@code indeterminateTint}
+ *   <li>{@code backgroundTint} / {@code drawableTint} / {@code progressTint} / {@code progressBackgroundTint} / {@code indeterminateTint}
  *       / {@code thumbTint} / {@code trackTint} / {@code buttonTint} / {@code cardBackgroundColor}
  *       / {@code strokeColor} 等;</li>
- *   <li>{@code progressDrawable} —— 进度条的**轨道**色写在 drawable 里(如更新进度条
- *       {@code bg_update_progress}),只给 {@code progressTint} 是改不到它的:这里按原 XML 重建一份
+ *   <li>{@code progressDrawable} —— 轨道色写在 XML drawable 里的进度条,
+ *       只给 {@code progressTint} 是改不到它的:这里按原 XML 重建一份
  *       (重建保留 {@code @android:id/progress} 等 layer id,所以随后的 {@code setProgressTintList} 照样生效);</li>
  *   <li>第三方控件自定义的属性(如 TitleBar 的 {@code titleColor}、ShadowLayout 的
  *       {@code hl_layoutBackground}):逐项调用已经核对过的公开 API。禁止按属性名猜 setter;
@@ -91,41 +91,30 @@ public final class ThemeInflaterFactory implements LayoutInflater.Factory2 {
                 ? (LayoutInflater.Factory) current1 : null;
         ThemeInflaterFactory factory = new ThemeInflaterFactory(existing2, existing1);
         if (writeField(inflater, "mFactory2", factory)) {
-            log(inflater, true);
             return;
         }
         // 反射改不了(极少数 ROM/被加固的包):退回"二次设置"这条会被系统拒绝的路,失败即放弃
         try {
             inflater.setFactory2(factory);
-            log(inflater, true);
         } catch (Throwable ignored) {
-            // 装不上 = 布局里那些 @color 引用不会跟着自定义主题走(只剩代码取色/窗口底色两条通道),
-            // 页面上会表现为"主题只变了一部分"。写进日志,便于和"主题压根没生效"区分开
-            log(inflater, false);
+            // 装不上 = 布局里的 @color 引用不会跟随运行时调色板，
+            // 页面上会表现为"主题只变了一部分"。只在此时记录失败。
+            logInstallFailure(inflater);
         }
     }
 
-    /** 把"注入器到底装上没有"写进运行日志(见 install 的说明) */
-    private static void log(LayoutInflater inflater, boolean ok) {
-        String msg = "主题: 布局注入器" + (ok ? "已装 " : "未装上(反射被拦,布局里的颜色不会跟着主题走) ")
+    /** 只有注入失败才留业务日志；正常安装无需逐份记录。 */
+    private static void logInstallFailure(LayoutInflater inflater) {
+        String msg = "主题: 布局注入器未装上(反射被拦,布局里的颜色不会跟着主题走) "
                 + inflater.getContext().getClass().getSimpleName();
         try {
-            com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM, msg);
+            com.github.tvbox.osc.log.LogStore.fail(com.github.tvbox.osc.log.Category.SYSTEM, msg);
         } catch (Throwable ignored) {
         }
-        // 同时进 logcat(固定 tag):排障时 `adb logcat -s MBoxRadius` 一眼能看到
-        // "这个 inflater 到底装上注入器没有" —— 业务日志默认关门控,只落库等于查不到。
+        // 业务日志默认关闭；失败同时进错误流，便于定位主题只生效一部分的情况。
         try {
-            android.util.Log.i("MBoxRadius", msg);
+            android.util.Log.e("MBoxRadius", msg);
         } catch (Throwable ignored) {
-        }
-        // 反射被拦是"主题只生效一半"的典型原因,必须留痕(正常路径不记,避免刷屏)
-        if (!ok) {
-            try {
-                android.util.Log.w("MBoxRadius",
-                        "布局注入器未装上(反射被拦):" + inflater.getContext().getClass().getName());
-            } catch (Throwable ignored) {
-            }
         }
     }
 
@@ -431,18 +420,20 @@ public final class ThemeInflaterFactory implements LayoutInflater.Factory2 {
                 return true;
             }
             case "progressTint":
+            case "progressBackgroundTint":
             case "indeterminateTint":
             case "secondaryProgressTint": {
                 ColorStateList csl = colorStateList(resId, context, palette);
                 if (csl == null || !(view instanceof android.widget.ProgressBar)) return false;
                 android.widget.ProgressBar pb = (android.widget.ProgressBar) view;
                 if ("progressTint".equals(attrName)) pb.setProgressTintList(csl);
+                else if ("progressBackgroundTint".equals(attrName)) pb.setProgressBackgroundTintList(csl);
                 else if ("indeterminateTint".equals(attrName)) pb.setIndeterminateTintList(csl);
                 else pb.setSecondaryProgressTintList(csl);
                 return true;
             }
             case "progressDrawable": {
-                // 进度条的**轨道**色写在 drawable 里(如更新进度条 bg_update_progress 的 switch_track_off),
+                // 进度条的**轨道**色如果写在 drawable 里,
                 // 光靠 progressTint 只能改进度那一层 → 自定义主题下轨道仍是内置色。这里按原 XML 重建一份
                 // (重建会保留 @android:id/progress 等 layer id,所以后面的 setProgressTintList 照样生效)。
                 Drawable rebuilt = ThemeDrawables.rebuild(resId, context.getResources());

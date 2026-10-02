@@ -18,12 +18,14 @@ import com.github.tvbox.osc.storage.theme.ThemeStore;
  * <p>它回答一个问题:"这次启动,界面该按哪套颜色和形状画?"。颜色、圆角、描边、主题类型、
  * 自定义标记和指纹始终封装在同一份 {@link ThemeSnapshot} 中,切换时只做一次原子替换:
  * <ul>
- *   <li><b>内置亮/暗主题</b>:配方背景经 {@link ThemeDrawableFactory} 渲染,首帧 XML 也由同一份配方生成;</li>
- *   <li><b>自定义主题</b>:快照带上自定义颜色与形状,于是
+ *   <li><b>内置亮/暗主题</b>:运行时调色板与配方共同供色,不让 OEM 的 {@code -night}
+ *       配置单独改动窗口、弹窗和代码取色;</li>
+ *   <li><b>自定义主题</b>:快照带上自定义颜色与形状,经
  *       {@link ThemeResources}(代码取色)、{@link ThemeInflaterFactory}(布局属性)、
- *       {@link ThemeDrawables}(drawable/图标)三条通道一起把它铺到界面上。</li>
+ *       {@link ThemeDrawables}(drawable/图标)同样铺到界面上。</li>
  * </ul>
- * {@link #palette()} 只保留给尚未迁移的旧颜色包装层:内置主题仍返回 {@code null},不代表统一配方渲染停用。
+ * {@link #palette()} 只保留给兼容扫描与诊断:内置主题仍返回 {@code null};
+ * 界面取色一律使用 {@link #runtimePalette()}。
  *
  * <p>"这次启动"是关键字:主题改动一律<b>不实时生效</b>,而是写配置 + 重启 App
  * (与既有的浅色/深色切换同一条链路)。所以这里在进程启动时解析一次,之后全程只读 ——
@@ -199,7 +201,7 @@ public final class ThemeRuntime {
         return current == null ? ThemeType.BRIGHT : current.type;
     }
 
-    /** 换肤层是否在介入(只影响"要不要多做一层包装",不影响正确性) */
+    /** 是否选中了自定义主题(兼容扫描与诊断用；界面取色门槛看 {@link #runtimePalette()})。 */
     public static boolean active() {
         ThemeSnapshot current = snapshot;
         return current != null && current.custom;
@@ -246,17 +248,14 @@ public final class ThemeRuntime {
      * <p>为什么必须做:所有页面布局的根节点都是透明的,内容实际浮在窗口底色上 ——
      * 底色不对,整个页面就会透出编译期的旧色(浅色主题下最明显:faf8ff 的底 vs 用户设的深底)。
      *
-     * <p><b>不用自定义主题时这里直接返回,绝不碰窗口背景</b>:窗口背景是主题
-     * {@code android:windowBackground} 给的(就是 {@code bg_body}),
-     * 主动 `setBackgroundDrawable(null)` 会把它清掉(页面根节点全透明,清了就是黑屏/透出下层),
-     * 这正是"内置亮/暗模式下不介入"的含义 —— 不介入就要彻底不碰。
+     * <p>内置亮/暗主题也从运行时调色板取色：页面根节点透明，若只依赖编译期
+     * {@code android:windowBackground}，OEM 强制翻转 {@code uiMode} 时窗口底会透出另一套颜色。
+     * 快照尚未装配时保留平台窗口底，不清空它。
      */
     public static void applyTo(Activity activity) {
         if (activity == null) return;
         ThemeColorPalette p = colorPalette();
-        ThemeSnapshot current = snapshot;
-        if (current == null || !current.custom) return; // 内置主题窗口底走原生资源
-        if (p == null) return; // 不介入
+        if (p == null) return;
         Window window = activity.getWindow();
         if (window == null) return;
         try {

@@ -321,16 +321,17 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
         } catch (Throwable ignored) {
         }
         // 上次因"正在播放"挡下的明暗重建,等这页空闲了补上(否则它会一直停在翻明暗之前那套色)
-        if (nightRecreatePending) {
+        if (nightRecreatePending && allowRecreateOnNightChange()) {
             nightRecreatePending = false;
-            if (allowRecreateOnNightChange() && com.github.tvbox.osc.theme.ThemeRuntime.followsSystem()) {
+            if (com.github.tvbox.osc.theme.ThemeRuntime.followsSystem()
+                    || com.github.tvbox.osc.theme.ThemeRuntime.runtimePalette() != null) {
                 recreateForSystemNight();
             }
         }
     }
 
     // ------------------------------------------------------------------
-    // 「跟随系统」下手机自己翻明暗
+    // 系统翻明暗时重铺页面
     // ------------------------------------------------------------------
 
     /** 建这页时系统的明暗(判断 onConfigurationChanged 里"是不是真的翻明暗了",而不是转屏/字号变化) */
@@ -358,10 +359,8 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
     }
 
     /**
-     * 主页/直播/详情在清单里声明了 {@code uiMode}(系统不重建它们),所以翻明暗只能自己处理:
-     * 内置主题的颜色是 inflate 那一刻从 values/values-night 取回的<b>资源</b>,
-     * 之前的视图不会因为配置变了就跟着换 —— 不重建就是"跟随系统没生效"(旧色一直留着:
-     * 底色、状态栏图标、弹窗深浅全停在翻明暗之前那一套)。
+     * 主页/直播/详情在清单里声明了 {@code uiMode}(系统不重建它们),所以翻明暗只能自己处理。
+     * 跟随系统时要换运行时调色板;固定主题也要重铺视图,避免系统刷新把颜色和形状盖回平台资源。
      */
     @Override
     public void onConfigurationChanged(Configuration newConfig) {
@@ -378,10 +377,10 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
         }
         if (night == createdSystemNight) return;
         createdSystemNight = night;
-        // 跟随系统时换亮暗类型；固定的自定义主题也要重铺一次，防止系统配置刷新
-        // 把既有 View 的颜色/形状退回平台资源。显式内置主题由固定夜间模式与资源保证。
+        // 跟随系统时换亮暗类型；显式内置主题和自定义主题也要重铺一次，防止系统配置刷新
+        // 把既有 View 的颜色/形状退回平台资源。门槛是运行时调色板是否已装配。
         if (!com.github.tvbox.osc.theme.ThemeRuntime.followsSystem()
-                && !com.github.tvbox.osc.theme.ThemeRuntime.active()) return;
+                && com.github.tvbox.osc.theme.ThemeRuntime.runtimePalette() == null) return;
         if (!allowRecreateOnNightChange()) {
             nightRecreatePending = true;
             return;

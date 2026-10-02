@@ -9,6 +9,8 @@ import android.widget.TextView;
 import androidx.annotation.NonNull;
 
 import com.github.tvbox.osc.R;
+import com.github.tvbox.osc.bean.theme.ThemeShapePalette;
+import com.github.tvbox.osc.theme.ThemeRuntime;
 import com.github.tvbox.osc.util.LoadingAnim;
 import com.lxj.xpopup.core.CenterPopupView;
 
@@ -108,7 +110,11 @@ public class LoadingDialog extends CenterPopupView {
         GradientDrawable panelBackground = new GradientDrawable();
         // 主题允许 bg_float 半透明，进度面板强制不透底以免页面文字穿透。
         panelBackground.setColor(getResources().getColor(R.color.bg_float) | 0xFF000000);
-        panelBackground.setCornerRadius(getResources().getDimension(R.dimen.radius_dialog));
+        float radius = ThemeRuntime.snapshot() == null
+                ? getResources().getDimension(R.dimen.radius_dialog)
+                : ThemeRuntime.shapePalette().radiusPx(
+                        ThemeShapePalette.RADIUS_DIALOG, getResources().getDisplayMetrics().density);
+        panelBackground.setCornerRadius(radius);
         statusPanel.setBackground(panelBackground);
         if (msgView != null) msgView.setTextColor(getResources().getColor(R.color.text_foreground));
     }

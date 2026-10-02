@@ -51,6 +51,37 @@ public class ThemeBuiltinRuntimeColorContractTest {
         assertFalse("取底/取状态色通道不得再用仅自定义主题的 palette()",
                 drawables.contains("ThemeRuntime.palette()"));
         assertTrue(drawables.contains("ThemeRuntime.runtimePalette()"));
+
+        String sweep = read("src/main/java/com/github/tvbox/osc/theme/ThemeSweep.java");
+        assertFalse("兼容扫描不能跳过内置主题的复刷", sweep.contains("ThemeRuntime.active()"));
+        assertFalse("显式令牌取色不能退回仅自定义主题的 palette()",
+                sweep.contains("ThemeRuntime.palette()"));
+        assertTrue(sweep.contains("ThemeRuntime.runtimePalette()"));
+    }
+
+    /** 单色别名通过 ColorStateList API 取色时也必须覆盖编译期 -night 值。 */
+    @Test
+    public void plainColorStateListUsesTheRuntimeColor() throws Exception {
+        String resources = read("src/main/java/com/github/tvbox/osc/theme/ThemeResources.java");
+        int first = resources.indexOf("public ColorStateList getColorStateList(int id)");
+        int end = resources.indexOf("// ── drawable", first);
+        assertTrue(first >= 0 && end > first);
+        String methods = resources.substring(first, end);
+        assertTrue("两个 getColorStateList 重载都应先处理单色别名",
+                methods.split("Integer color = overrideColor\\(id\\);", -1).length == 3);
+        assertTrue(methods.contains("ColorStateList.valueOf(color)"));
+    }
+
+    /** 页面根透明时，Window 底不能被 OEM 的 -night 配色单独翻暗。 */
+    @Test
+    public void windowBackgroundUsesTheRuntimePaletteForBuiltinThemes() throws Exception {
+        String runtime = read("src/main/java/com/github/tvbox/osc/theme/ThemeRuntime.java");
+        int start = runtime.indexOf("public static void applyTo(Activity activity)");
+        int end = runtime.indexOf("public static void installInflaterFactory", start);
+        assertTrue(start >= 0 && end > start);
+        String method = runtime.substring(start, end);
+        assertFalse(method.contains("!current.custom"));
+        assertTrue(method.contains("window.setBackgroundDrawable(new ColorDrawable(p.get(\"bg_body\")))"));
     }
 
     /** 应用上下文也要有取色通道(气泡/Toast/通知/应用上下文弹窗),但不能归一明暗位 */
