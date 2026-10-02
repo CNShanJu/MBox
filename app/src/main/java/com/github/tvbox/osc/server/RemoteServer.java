@@ -1,13 +1,26 @@
 package com.github.tvbox.osc.server;
 
 import android.annotation.SuppressLint;
+import android.content.ContentUris;
 import android.content.Context;
+import android.database.Cursor;
+import android.net.Uri;
 import android.net.wifi.WifiManager;
 import android.os.Environment;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.ParcelFileDescriptor;
+import android.provider.MediaStore;
 import android.util.Base64;
 
 import com.github.tvbox.osc.R;
 import com.github.tvbox.osc.base.App;
+import com.github.tvbox.osc.config.SystemConfig;
+import com.github.tvbox.osc.config.LanSessionConfig;
+import com.github.tvbox.osc.log.Category;
+import com.github.tvbox.osc.log.LogStore;
+import com.github.tvbox.osc.transfer.ConfigDataExchange;
+import com.github.tvbox.osc.transfer.ConfigBundle;
 import com.github.tvbox.osc.util.FileUtils;
 import com.github.tvbox.osc.util.OkGoHelper;
 import com.google.gson.Gson;
@@ -16,9 +29,11 @@ import com.google.gson.JsonObject;
 
 import java.io.BufferedOutputStream;
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.Inet4Address;
@@ -35,13 +50,21 @@ import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.security.SecureRandom;
+import java.security.MessageDigest;
+import java.nio.charset.StandardCharsets;
+import java.util.Locale;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
 import fi.iki.elonen.NanoHTTPD;
+import okhttp3.Request;
 
 /**
  * @author pj567
@@ -58,14 +81,485 @@ public class RemoteServer extends NanoHTTPD {
 
     public static String m3u8Content;
 
-    /**
-     * 进程级随机管理令牌:局域网侧对 /upload、/delFile、/delFolder、/newFolder、/action
-     * 及目录列表等"管理型"请求必须携带(web 控制台页面运行时由 /token.js 注入),
-     * 本机(loopback)请求放行 —— 阻断同网段其它设备未授权读写/删除。
-     */
-    private final String accessToken = generateToken();
+    /** 每台设备独立的配对会话；踢出时撤销该设备的 Cookie 或请求头令牌。 */
+    private volatile String pairingCode;
+    private final Map<String, FailedPairing> failedPairings = new ConcurrentHashMap<>();
+    private long lastPlaybackAuthDeniedLogAt;
+    private final Map<String, LanDevice> devices = new ConcurrentHashMap<>();
+    private long lastSessionsSavedAt;
+    private static final long ACTIVE_DEVICE_WINDOW_MS = 60000;
+    private static final long SESSION_WINDOW_MS = 600000;
+    private volatile EpisodeCast episodeCast;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+
+    public interface NextEpisodeHandler {
+        boolean playNext();
+        default boolean selectEpisode(int index) { return false; }
+    }
+
+    private static final class EpisodeCast {
+        final String owner;
+        final String deviceId;
+        final NextEpisodeHandler handler;
+        volatile List<String> episodes;
+        volatile int selectedIndex;
+
+        EpisodeCast(String owner, String deviceId, List<String> episodes, int selectedIndex,
+                    NextEpisodeHandler handler) {
+            this.owner = owner;
+            this.deviceId = deviceId;
+            this.episodes = new ArrayList<>(episodes);
+            this.selectedIndex = selectedIndex;
+            this.handler = handler;
+        }
+    }
 
     private static final Gson GSON = new Gson();
+    private static final Pattern CAST_MEDIA_ID = Pattern.compile("[0-9a-f]{32}");
+
+    private static String deviceRef(LanDevice device) {
+        return device.id.substring(0, Math.min(8, device.id.length()));
+    }
+
+    private static void logMediaFailure(LanDevice device, String reason) {
+        synchronized (device) {
+            if (device.loggedMediaFailureRevision == device.playbackRevision) return;
+            device.loggedMediaFailureRevision = device.playbackRevision;
+        }
+        LogStore.fail(Category.PLAYER, "局域网投屏取流失败 device=" + deviceRef(device)
+                + " revision=" + device.playbackRevision + " reason=" + reason);
+    }
+
+    private synchronized void logPlaybackAuthDenied() {
+        long now = System.currentTimeMillis();
+        if (now - lastPlaybackAuthDeniedLogAt < 60000) return;
+        lastPlaybackAuthDeniedLogAt = now;
+        LogStore.fail(Category.SYSTEM, "局域网播放状态鉴权失败 reason=session_missing_or_expired");
+    }
+
+    private static final class FailedPairing {
+        int count;
+        long windowStart;
+    }
+
+    public static final class LanDevice {
+        public final String id;
+        public final String name;
+        public final String ip;
+        public final String kind;
+        public final long connectedAt;
+        public volatile long lastSeen;
+        private final String token;
+        private volatile JsonObject playback;
+        private volatile long playbackRevision;
+        private volatile long nextRequestedRevision;
+        private volatile long loggedMediaFailureRevision = -1;
+        private volatile long loggedPlaybackEventRevision = -1;
+        private final Set<String> loggedPlaybackEvents = ConcurrentHashMap.newKeySet();
+        private final Set<String> castProxyPaths = ConcurrentHashMap.newKeySet();
+        private final Map<String, CastMedia> castMedia = new ConcurrentHashMap<>();
+        private final Map<String, String> castMediaByUrl = new HashMap<>();
+
+        private LanDevice(String token, String name, String ip, String kind) {
+            this.id = generateToken();
+            this.token = token;
+            this.name = name;
+            this.ip = ip;
+            this.kind = kind;
+            this.connectedAt = System.currentTimeMillis();
+            this.lastSeen = connectedAt;
+        }
+
+        private LanDevice(LanSessionConfig.Record saved) {
+            this.id = saved.id;
+            this.token = saved.token;
+            this.name = saved.name;
+            this.ip = saved.ip;
+            this.kind = saved.kind;
+            this.connectedAt = saved.connectedAt;
+            this.lastSeen = saved.lastSeen;
+        }
+
+        public String currentTitle() {
+            JsonObject state = playback;
+            return state != null && state.has("title") ? state.get("title").getAsString() : "";
+        }
+    }
+
+    private static final class CastMedia {
+        final String url;
+        final Map<String, String> headers;
+        volatile long revision;
+        volatile long lastRegisteredAt;
+
+        CastMedia(String url, Map<String, String> headers, long revision) {
+            this.url = url;
+            this.headers = headers;
+            this.revision = revision;
+            this.lastRegisteredAt = System.currentTimeMillis();
+        }
+    }
+
+    private static void clearCastMedia(LanDevice device) {
+        synchronized (device) {
+            device.castMedia.clear();
+            device.castMediaByUrl.clear();
+        }
+    }
+
+    public List<LanDevice> connectedDevices() {
+        long now = System.currentTimeMillis();
+        ArrayList<LanDevice> active = new ArrayList<>();
+        for (LanDevice device : pairedDevices()) {
+            if (now - device.lastSeen <= ACTIVE_DEVICE_WINDOW_MS) active.add(device);
+        }
+        return active;
+    }
+
+    public List<LanDevice> pairedDevices() {
+        long now = System.currentTimeMillis();
+        ArrayList<LanDevice> paired = new ArrayList<>();
+        boolean expired = false;
+        for (LanDevice device : devices.values()) {
+            if (now - device.lastSeen > SESSION_WINDOW_MS) {
+                if (devices.remove(device.token, device)) {
+                    expired = true;
+                    LogStore.log(Category.SYSTEM, "局域网配对会话过期 device=" + deviceRef(device));
+                }
+            }
+            else paired.add(device);
+        }
+        if (expired) persistSessions(true);
+        paired.sort((a, b) -> Long.compare(b.lastSeen, a.lastSeen));
+        return paired;
+    }
+
+    public boolean kickDevice(String id) {
+        if (id == null) return false;
+        for (LanDevice device : devices.values()) {
+            if (id.equals(device.id)) {
+                EpisodeCast cast = episodeCast;
+                if (cast != null && id.equals(cast.deviceId)) clearEpisodeCast();
+                boolean removed = devices.remove(device.token, device);
+                if (removed) {
+                    persistSessions(true);
+                    LogStore.log(Category.SYSTEM, "局域网设备已踢出 device=" + deviceRef(device));
+                }
+                return removed;
+            }
+        }
+        return false;
+    }
+
+    public void setEpisodeCast(String owner, String deviceId, List<String> episodes, int selectedIndex,
+                               NextEpisodeHandler handler) {
+        EpisodeCast previous = episodeCast;
+        if (previous != null && !previous.deviceId.equals(deviceId)) {
+            for (LanDevice device : devices.values()) {
+                if (device.id.equals(previous.deviceId)) {
+                    device.playback = null;
+                    device.castProxyPaths.clear();
+                    clearCastMedia(device);
+                    break;
+                }
+            }
+        }
+        episodeCast = new EpisodeCast(owner, deviceId, episodes, selectedIndex, handler);
+        for (LanDevice device : devices.values()) {
+            if (device.id.equals(deviceId) && device.playback != null) {
+                JsonObject state = device.playback.deepCopy();
+                state.addProperty("revision", ++device.playbackRevision);
+                for (CastMedia media : device.castMedia.values()) media.revision = device.playbackRevision;
+                addEpisodeState(state, episodeCast);
+                device.playback = state;
+                break;
+            }
+        }
+    }
+
+    public void clearEpisodeCast(String owner) {
+        EpisodeCast cast = episodeCast;
+        if (cast != null && owner != null && owner.equals(cast.owner)) episodeCast = null;
+    }
+
+    public void clearEpisodeCast() {
+        episodeCast = null;
+    }
+
+    public boolean updateEpisodeCast(String owner, String title, String url, int selectedIndex,
+                                     List<String> episodes, Map<String, String> headers) {
+        EpisodeCast cast = episodeCast;
+        if (cast != null && owner != null && owner.equals(cast.owner)) {
+            cast.selectedIndex = selectedIndex;
+            if (episodes != null) cast.episodes = new ArrayList<>(episodes);
+            return publishBrowserPlayback(cast.deviceId, title, url, headers);
+        }
+        return false;
+    }
+
+    public void markEpisodeAdvancing(String owner) {
+        EpisodeCast cast = episodeCast;
+        if (cast == null || owner == null || !owner.equals(cast.owner)) return;
+        for (LanDevice device : devices.values()) {
+            if (cast.deviceId.equals(device.id)) {
+                device.nextRequestedRevision = device.playbackRevision;
+                return;
+            }
+        }
+    }
+
+    private boolean requestNextEpisode(LanDevice device, String rawRevision) {
+        EpisodeCast cast = episodeCast;
+        if (device == null || cast == null || !device.id.equals(cast.deviceId) || cast.handler == null) return false;
+        long revision;
+        try { revision = Long.parseLong(rawRevision); } catch (Exception ignored) { return false; }
+        synchronized (device) {
+            if (revision != device.playbackRevision) return false;
+            if (revision == device.nextRequestedRevision) return true;
+            device.nextRequestedRevision = revision;
+        }
+        FutureTask<Boolean> task = new FutureTask<>(() -> {
+            return episodeCast == cast && cast.handler.playNext();
+        });
+        mainHandler.post(task);
+        try {
+            boolean accepted = task.get(3, TimeUnit.SECONDS);
+            if (!accepted) resetNextRequest(device, revision);
+            return accepted;
+        } catch (Exception error) {
+            mainHandler.removeCallbacks(task);
+            task.cancel(false);
+            resetNextRequest(device, revision);
+            return false;
+        }
+    }
+
+    private static void resetNextRequest(LanDevice device, long revision) {
+        synchronized (device) {
+            if (device.nextRequestedRevision == revision) device.nextRequestedRevision = -1;
+        }
+    }
+
+    private boolean requestSelectedEpisode(LanDevice device, String rawRevision, String rawIndex) {
+        EpisodeCast cast = episodeCast;
+        if (device == null || cast == null || !device.id.equals(cast.deviceId)
+                || cast.handler == null) return false;
+        final long revision;
+        final int index;
+        try {
+            revision = Long.parseLong(rawRevision);
+            index = Integer.parseInt(rawIndex);
+        } catch (Exception ignored) { return false; }
+        List<String> episodes = cast.episodes;
+        if (index < 0 || index >= episodes.size()) return false;
+        synchronized (device) {
+            if (revision != device.playbackRevision) return false;
+            device.nextRequestedRevision = revision;
+        }
+        FutureTask<Boolean> task = new FutureTask<>(() -> episodeCast == cast
+                && cast.handler.selectEpisode(index));
+        mainHandler.post(task);
+        try {
+            boolean accepted = task.get(3, TimeUnit.SECONDS);
+            if (!accepted) resetNextRequest(device, revision);
+            return accepted;
+        } catch (Exception error) {
+            mainHandler.removeCallbacks(task);
+            task.cancel(false);
+            resetNextRequest(device, revision);
+            return false;
+        }
+    }
+
+    private static void addEpisodeState(JsonObject state, EpisodeCast cast) {
+        JsonArray episodes = new JsonArray();
+        for (String name : cast.episodes) episodes.add(name);
+        state.add("episodes", episodes);
+        state.addProperty("selectedIndex", cast.selectedIndex);
+    }
+
+    private Response recordPlaybackEvent(LanDevice device, Map<String, String> params) {
+        if (device == null || !"browser".equals(device.kind))
+            return createPlainTextResponse(Response.Status.FORBIDDEN, "forbidden");
+        String event = params.get("event");
+        if (!("playing".equals(event) || "autoplay_blocked".equals(event)
+                || "media_error".equals(event) || "hls_error".equals(event)
+                || "unsupported".equals(event)))
+            return createPlainTextResponse(Response.Status.BAD_REQUEST, "invalid event");
+        String detail = params.get("detail");
+        if (detail == null) detail = "";
+        if (detail.length() > 48 || !detail.matches("[A-Za-z0-9_:-]*"))
+            return createPlainTextResponse(Response.Status.BAD_REQUEST, "invalid detail");
+        long revision;
+        try { revision = Long.parseLong(params.get("revision")); }
+        catch (Exception ignored) { return createPlainTextResponse(Response.Status.BAD_REQUEST, "invalid revision"); }
+        if (revision != device.playbackRevision || device.playback == null)
+            return jsonResponse(Response.Status.OK, "{\"ok\":false}");
+        synchronized (device) {
+            if (device.loggedPlaybackEventRevision != revision) {
+                device.loggedPlaybackEventRevision = revision;
+                device.loggedPlaybackEvents.clear();
+            }
+            if (!device.loggedPlaybackEvents.add(event))
+                return jsonResponse(Response.Status.OK, "{\"ok\":true}");
+        }
+        String message = "局域网投屏浏览器 " + event + " device=" + deviceRef(device)
+                + " revision=" + revision + (detail.isEmpty() ? "" : " detail=" + detail);
+        if ("playing".equals(event)) LogStore.success(Category.PLAYER, message);
+        else if ("autoplay_blocked".equals(event)) LogStore.log(Category.PLAYER, message);
+        else LogStore.fail(Category.PLAYER, message);
+        return jsonResponse(Response.Status.OK, "{\"ok\":true}");
+    }
+
+    public String getPairingCode() {
+        return pairingCode;
+    }
+
+    /** 用户手动更新配对码时撤销旧会话，旧码和已配对令牌立即失效。 */
+    public synchronized String rotatePairingCode() {
+        pairingCode = SystemConfig.regenerateLanPairingCode();
+        devices.clear();
+        failedPairings.clear();
+        clearEpisodeCast();
+        return pairingCode;
+    }
+
+    /** 手机端主动发送到已打开控制台的浏览器。 */
+    public synchronized boolean publishBrowserPlayback(String deviceId, String title, String url) {
+        return publishBrowserPlayback(deviceId, title, url, null);
+    }
+
+    public synchronized boolean publishBrowserPlayback(String deviceId, String title, String url,
+                                                       Map<String, String> headers) {
+        if (url == null || url.trim().isEmpty()) {
+            LogStore.fail(Category.PLAYER, "局域网投屏发布失败 reason=empty_url");
+            return false;
+        }
+        String playable = LanCastUrlRules.browserUrl(url, serverPort);
+        if (playable == null || playable.length() > 8192) {
+            LogStore.fail(Category.PLAYER, "局域网投屏发布失败 reason=unsupported_url");
+            return false;
+        }
+        LanDevice target = null;
+        for (LanDevice device : connectedDevices()) {
+            if (device.id.equals(deviceId) && "browser".equals(device.kind)) {
+                target = device;
+                break;
+            }
+        }
+        if (target == null) {
+            LogStore.fail(Category.PLAYER, "局域网投屏发布失败 reason=target_offline");
+            return false;
+        }
+        JsonObject state = new JsonObject();
+        state.addProperty("revision", ++target.playbackRevision);
+        state.addProperty("title", title == null ? "手机推送的视频" : title);
+        clearCastMedia(target);
+        if (playable.startsWith("/")) {
+            state.addProperty("url", playable);
+        } else {
+            String relay = registerCastMedia(target, playable, headers);
+            if (relay == null) return false;
+            state.addProperty("url", relay);
+        }
+        state.addProperty("hls", playable.toLowerCase(Locale.ROOT).contains("m3u8"));
+        state.addProperty("nativeVideo", playable.toLowerCase(Locale.ROOT)
+                .matches(".*\\.(mp4|m4v|webm|mov|mkv)([?#].*)?$"));
+        EpisodeCast cast = episodeCast;
+        if (cast != null && target.id.equals(cast.deviceId)) addEpisodeState(state, cast);
+        target.castProxyPaths.clear();
+        if (playable.startsWith("/") && LanCastUrlRules.isProxyPath(playable.split("\\?", 2)[0])) {
+            target.castProxyPaths.add(playable);
+        }
+        target.playback = state;
+        LogStore.success(Category.PLAYER, "局域网投屏已发送 device=" + deviceRef(target)
+                + " revision=" + target.playbackRevision
+                + " relay=" + !playable.startsWith("/"));
+        return true;
+    }
+
+    private static String registerCastMedia(LanDevice device, String url, Map<String, String> headers) {
+        if (url == null || url.length() > 8192) return null;
+        synchronized (device) {
+            String previousId = device.castMediaByUrl.get(url);
+            CastMedia previous = previousId == null ? null : device.castMedia.get(previousId);
+            if (previous != null && previous.revision == device.playbackRevision) {
+                previous.lastRegisteredAt = System.currentTimeMillis();
+                return "/api/cast/media?id=" + previousId;
+            }
+            if (device.castMedia.size() >= 4096) {
+                long cutoff = System.currentTimeMillis() - TimeUnit.MINUTES.toMillis(5);
+                for (Map.Entry<String, CastMedia> entry : device.castMedia.entrySet()) {
+                    CastMedia media = entry.getValue();
+                    if (media.lastRegisteredAt < cutoff && device.castMedia.remove(entry.getKey(), media))
+                        device.castMediaByUrl.remove(media.url, entry.getKey());
+                }
+            }
+            if (device.castMedia.size() >= 4096) {
+                logMediaFailure(device, "resource_limit");
+                return null;
+            }
+            String id = generateToken();
+            device.castMedia.put(id, new CastMedia(url,
+                    headers == null ? java.util.Collections.emptyMap() : new HashMap<>(headers),
+                    device.playbackRevision));
+            device.castMediaByUrl.put(url, id);
+            return "/api/cast/media?id=" + id;
+        }
+    }
+
+    private static Map<String, String> headersForChild(String parentUrl, String childUrl,
+                                                       Map<String, String> headers) {
+        if (headers.isEmpty()) return headers;
+        try {
+            java.net.URI parent = new java.net.URI(parentUrl);
+            java.net.URI child = new java.net.URI(childUrl);
+            if (parent.getHost() != null && parent.getHost().equalsIgnoreCase(child.getHost())
+                    && parent.getScheme().equalsIgnoreCase(child.getScheme())
+                    && effectivePort(parent) == effectivePort(child)) return headers;
+        } catch (Exception ignored) { }
+        Map<String, String> safe = new HashMap<>(headers);
+        java.util.Iterator<String> keys = safe.keySet().iterator();
+        while (keys.hasNext()) {
+            String key = keys.next();
+            if (key == null || key.equalsIgnoreCase("cookie") || key.equalsIgnoreCase("authorization")
+                    || key.equalsIgnoreCase("proxy-authorization")) keys.remove();
+        }
+        return safe;
+    }
+
+    private static int effectivePort(java.net.URI uri) {
+        return uri.getPort() != -1 ? uri.getPort()
+                : "https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80;
+    }
+
+    private LanDevice castProxyViewer(IHTTPSession session) {
+        LanDevice device = authorizedDevice(session);
+        if (device == null || !"browser".equals(device.kind)) return null;
+        String query = session.getQueryParameterString();
+        String path = session.getUri() + (query == null || query.isEmpty() ? "" : "?" + query);
+        if (device.castProxyPaths.contains(path)) return device;
+        logMediaFailure(device, "proxy_not_allowed");
+        return null;
+    }
+
+    private static boolean isPlaylistMime(String mime, String proxyMode) {
+        String type = mime == null ? "" : mime.toLowerCase(Locale.ROOT);
+        return type.contains("mpegurl") || type.contains("m3u8")
+                || "m3u8".equalsIgnoreCase(proxyMode);
+    }
+
+    private static byte[] readCastPlaylist(InputStream stream) throws IOException {
+        try (InputStream source = stream; ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = source.read(buffer)) != -1) {
+                if (output.size() + read > 2 * 1024 * 1024) throw new IOException("playlist too large");
+                output.write(buffer, 0, read);
+            }
+            return output.toByteArray();
+        }
+    }
 
     private static String generateToken() {
         byte[] bytes = new byte[16];
@@ -81,6 +575,8 @@ public class RemoteServer extends NanoHTTPD {
     public RemoteServer(int port, Context context) {
         super(port);
         mContext = context;
+        pairingCode = initialPairingCode();
+        restoreSessions();
         addGetRequestProcess();
         addPostRequestProcess();
     }
@@ -93,16 +589,59 @@ public class RemoteServer extends NanoHTTPD {
     public RemoteServer(String hostname, int port, Context context) {
         super(hostname == null || hostname.isEmpty() ? null : hostname, port);
         mContext = context;
+        pairingCode = initialPairingCode();
+        restoreSessions();
         addGetRequestProcess();
         addPostRequestProcess();
+    }
+
+    private static String initialPairingCode() {
+        return SystemConfig.isLanServerEnabled() ? SystemConfig.getOrCreateLanPairingCode()
+                : String.format(Locale.ROOT, "%08d", new SecureRandom().nextInt(100000000));
+    }
+
+    private void restoreSessions() {
+        if (!SystemConfig.isLanServerEnabled()) return;
+        long now = System.currentTimeMillis();
+        List<LanSessionConfig.Record> stored = LanSessionConfig.load(pairingCode);
+        for (LanSessionConfig.Record saved : stored) {
+            if (devices.size() >= 32) break;
+            if (saved == null || saved.id == null || !saved.id.matches("[0-9a-f]{32}")
+                    || saved.token == null || !saved.token.matches("[0-9a-f]{32}")
+                    || saved.name == null || saved.name.length() > 32
+                    || saved.ip == null || saved.ip.length() > 64
+                    || !("browser".equals(saved.kind) || "mbox".equals(saved.kind))
+                    || saved.lastSeen <= 0 || saved.lastSeen > now + 60000
+                    || now - saved.lastSeen > SESSION_WINDOW_MS) continue;
+            devices.put(saved.token, new LanDevice(saved));
+        }
+        lastSessionsSavedAt = now;
+        if (!stored.isEmpty()) LogStore.log(Category.SYSTEM, "局域网配对会话恢复 count=" + devices.size());
+    }
+
+    private synchronized void persistSessions(boolean force) {
+        if (!SystemConfig.isLanServerEnabled()) return;
+        long now = System.currentTimeMillis();
+        if (!force && now - lastSessionsSavedAt < 60000) return;
+        List<LanSessionConfig.Record> saved = new ArrayList<>();
+        for (LanDevice device : devices.values()) {
+            if (now - device.lastSeen > SESSION_WINDOW_MS) continue;
+            saved.add(new LanSessionConfig.Record(device.id, device.token, device.name,
+                    device.ip, device.kind, device.connectedAt, device.lastSeen));
+        }
+        LanSessionConfig.save(pairingCode, saved);
+        lastSessionsSavedAt = now;
     }
 
     private void addGetRequestProcess() {
         getRequestList.add(new RawRequestProcess(this.mContext, "/", R.raw.index, NanoHTTPD.MIME_HTML));
         getRequestList.add(new RawRequestProcess(this.mContext, "/index.html", R.raw.index, NanoHTTPD.MIME_HTML));
+        // 可直达地址共用一张网页外壳；页面切换交给浏览器 History API。
+        getRequestList.add(new RawRequestProcess(this.mContext, "/video.html", R.raw.index, NanoHTTPD.MIME_HTML));
+        getRequestList.add(new RawRequestProcess(this.mContext, "/cast.html", R.raw.index, NanoHTTPD.MIME_HTML));
+        getRequestList.add(new RawRequestProcess(this.mContext, "/files.html", R.raw.index, NanoHTTPD.MIME_HTML));
         getRequestList.add(new RawRequestProcess(this.mContext, "/style.css", R.raw.style, "text/css"));
-        getRequestList.add(new RawRequestProcess(this.mContext, "/ui.css", R.raw.ui, "text/css"));
-        getRequestList.add(new RawRequestProcess(this.mContext, "/jquery.js", R.raw.jquery, "application/x-javascript"));
+        getRequestList.add(new RawRequestProcess(this.mContext, "/hls.js", R.raw.hls_js, "application/javascript"));
         getRequestList.add(new RawRequestProcess(this.mContext, "/script.js", R.raw.script, "application/x-javascript"));
         getRequestList.add(new RawRequestProcess(this.mContext, "/favicon.ico", R.drawable.app_icon, "image/x-icon"));
     }
@@ -119,8 +658,11 @@ public class RemoteServer extends NanoHTTPD {
 
     @Override
     public void stop() {
+        persistSessions(true);
         super.stop();
         isStarted = false;
+        devices.clear();
+        clearEpisodeCast();
     }
 
     @Override
@@ -133,25 +675,89 @@ public class RemoteServer extends NanoHTTPD {
         if (fileName.indexOf('?') >= 0) {
             fileName = fileName.substring(0, fileName.indexOf('?'));
         }
-        // 动态令牌注入:web 控制台页面通过 <script src="/token.js"> 拿到本次进程的
-        // 管理令牌,后续所有管理型 AJAX 自动携带;token.js 禁止缓存(服务重启后令牌变化)
-        if (session.getMethod() == Method.GET && fileName.equals("/token.js")) {
-            Response tokenResponse = NanoHTTPD.newFixedLengthResponse(
-                    NanoHTTPD.Response.Status.OK,
-                    "application/javascript",
-                    "window.TVBOX_TOKEN='" + accessToken + "';\n");
-            tokenResponse.addHeader("Cache-Control", "no-store");
-            return tokenResponse;
-        }
+        if (fileName.equals("/token.js")) return createPlainTextResponse(Response.Status.NOT_FOUND, "not found");
         if (session.getMethod() == Method.GET) {
+            if (fileName.equals("/api/session")) {
+                boolean paired = authorizedDevice(session) != null;
+                return jsonResponse(paired ? Response.Status.OK : Response.Status.FORBIDDEN,
+                        paired ? "{\"paired\":true}" : "{\"paired\":false}");
+            }
+            if (fileName.equals("/api/theme")) return serveTheme(session);
+            if (fileName.equals("/api/videos")) {
+                if (!isAuthorized(session, session.getParms())) return createPlainTextResponse(Response.Status.FORBIDDEN, "forbidden");
+                return jsonResponse(Response.Status.OK, LanVideoLibrary.catalog().toString());
+            }
+            if (fileName.equals("/api/videos/media")) return serveMediaVideo(session);
+            if (fileName.equals("/api/playback")) {
+                if (!isAuthorized(session, session.getParms())) {
+                    logPlaybackAuthDenied();
+                    return createPlainTextResponse(Response.Status.FORBIDDEN, "forbidden");
+                }
+                LanDevice device = authorizedDevice(session);
+                JsonObject state = device == null ? null : device.playback;
+                return jsonResponse(Response.Status.OK, state == null ? "{\"revision\":0}" : state.toString());
+            }
+            if (fileName.equals("/api/cast/media")) return serveCastMedia(session);
+            if (fileName.equals("/api/lan/catalog")) {
+                if (!isAuthorized(session, session.getParms())) return createPlainTextResponse(Response.Status.FORBIDDEN, "forbidden");
+                return jsonResponse(Response.Status.OK, ConfigDataExchange.catalog().toString());
+            }
+            if (fileName.equals("/api/lan/archive")) {
+                if (!isAuthorized(session, session.getParms())) return createPlainTextResponse(Response.Status.FORBIDDEN, "forbidden");
+                String raw = session.getParms().get("categories");
+                if (raw == null || raw.length() > 100) return createPlainTextResponse(Response.Status.BAD_REQUEST, "invalid categories");
+                Set<String> selected = new java.util.LinkedHashSet<>(Arrays.asList(raw.split(",")));
+                File archive;
+                try { archive = new ConfigBundle(mContext).exportSelected(selected); }
+                catch (Exception error) { return createPlainTextResponse(Response.Status.BAD_REQUEST,
+                        "配置导出失败：" + (error.getMessage() == null ? "请检查所选数据" : error.getMessage())); }
+                try {
+                    InputStream input = new FileInputStream(archive);
+                    InputStream disposable = new FilterInputStream(input) {
+                        @Override public void close() throws IOException { super.close(); archive.delete(); }
+                    };
+                    Response download = newFixedLengthResponse(Response.Status.OK, "application/zip", disposable, archive.length());
+                    download.addHeader("Cache-Control", "no-store");
+                    download.addHeader("Content-Disposition", "attachment; filename=mbox-config.zip");
+                    return download;
+                } catch (IOException error) {
+                    archive.delete();
+                    return createPlainTextResponse(Response.Status.INTERNAL_ERROR, "archive unavailable");
+                }
+            }
+            if (fileName.equals("/api/lan/data")) {
+                if (!isAuthorized(session, session.getParms())) return createPlainTextResponse(Response.Status.FORBIDDEN, "forbidden");
+                JsonObject data = ConfigDataExchange.exportCategory(session.getParms().get("category"));
+                return data == null ? createPlainTextResponse(Response.Status.BAD_REQUEST, "invalid category")
+                        : jsonResponse(Response.Status.OK, data.toString());
+            }
+            if (fileName.equals("/api/lan/theme")) {
+                if (!isAuthorized(session, session.getParms())) return createPlainTextResponse(Response.Status.FORBIDDEN, "forbidden");
+                File archive = ConfigDataExchange.exportTheme(mContext, session.getParms().get("id"));
+                if (archive == null) return createPlainTextResponse(Response.Status.NOT_FOUND, "theme not found");
+                try {
+                    InputStream source = new FileInputStream(archive);
+                    InputStream disposable = new java.io.FilterInputStream(source) {
+                        @Override public void close() throws IOException { super.close(); archive.delete(); }
+                    };
+                    Response download = newFixedLengthResponse(Response.Status.OK, "application/octet-stream", disposable, archive.length());
+                    download.addHeader("Cache-Control", "no-store");
+                    return download;
+                } catch (IOException error) {
+                    archive.delete();
+                    return createPlainTextResponse(Response.Status.INTERNAL_ERROR, "theme export failed");
+                }
+            }
             for (RequestProcess process : getRequestList) {
                 if (process.isRequest(session, fileName)) {
                     return process.doResponse(session, fileName, session.getParms(), null);
                 }
             }
             if (fileName.equals("/proxy")) {
-                // 仅本机使用(spider/播放器代理转发),不对局域网开放
-                if (!isLoopbackRequest(session)) {
+                // 局域网侧仅允许已配对、且当前正在接收本机代理视频的浏览器读取。
+                boolean castBrowser = !isLoopbackRequest(session);
+                LanDevice castViewer = castBrowser ? castProxyViewer(session) : null;
+                if (castBrowser && castViewer == null) {
                     return createPlainTextResponse(NanoHTTPD.Response.Status.FORBIDDEN, "forbidden");
                 }
                 Map<String, String> params = session.getParms();
@@ -162,6 +768,7 @@ public class RemoteServer extends NanoHTTPD {
                     // jar 代理方法缺失/未加载时 proxyLocal 返回 null(还有异常吞掉的情况),
                     // 直接返回错误响应, 避免 rs[0] 读 null 数组崩溃
                     if (rs == null || rs.length < 2) {
+                        if (castViewer != null) logMediaFailure(castViewer, "proxy_unavailable");
                         return NanoHTTPD.newFixedLengthResponse(
                                 NanoHTTPD.Response.Status.INTERNAL_ERROR,
                                 "text/plain",
@@ -179,14 +786,35 @@ public class RemoteServer extends NanoHTTPD {
                                 NanoHTTPD.Response.Status.lookup(code), mime, "");
                     }
                     InputStream stream = (InputStream) rs[2];
+                    boolean rewrittenPlaylist = castBrowser && isPlaylistMime(mime, params.get("do"));
+                    if (rewrittenPlaylist) {
+                        try {
+                            byte[] playlist = readCastPlaylist(stream);
+                            long castRevision = castViewer.playbackRevision;
+                            String rewritten = LanCastUrlRules.rewritePlaylist(
+                                    new String(playlist, StandardCharsets.UTF_8), serverPort, local -> {
+                                        if (castViewer.playbackRevision == castRevision
+                                                && castViewer.castProxyPaths.size() < 4096) {
+                                            castViewer.castProxyPaths.add(local);
+                                        }
+                                    });
+                            stream = new ByteArrayInputStream(rewritten.getBytes(StandardCharsets.UTF_8));
+                        } catch (IOException error) {
+                            return createPlainTextResponse(Response.Status.BAD_REQUEST, "playlist too large");
+                        }
+                    }
                     Response response = NanoHTTPD.newChunkedResponse(
                             NanoHTTPD.Response.Status.lookup(code),
                             mime,
                             stream);
+                    if (castBrowser) response.addHeader("Cache-Control", "no-store");
                     if (rs.length > 3) {
                         try {
                             HashMap<String, String> headers = (HashMap<String, String>) rs[3];
                             for (String key : headers.keySet()) {
+                                if (rewrittenPlaylist && ("content-length".equalsIgnoreCase(key)
+                                        || "content-encoding".equalsIgnoreCase(key)
+                                        || "content-range".equalsIgnoreCase(key))) continue;
                                 response.addHeader(key, headers.get(key));
                             }
                         } catch (Throwable th) {
@@ -225,13 +853,24 @@ public class RemoteServer extends NanoHTTPD {
                 }
                 return NanoHTTPD.newFixedLengthResponse(NanoHTTPD.Response.Status.OK, NanoHTTPD.MIME_PLAINTEXT, new ByteArrayInputStream(rs), rs.length);
             } else if (fileName.equals("/purify.m3u8") || fileName.equals("/m3u8")) {
-                // 仅本机播放器代理使用(广告过滤后的清单)。
+                // 本机播放器使用；正在接收该视频的已配对浏览器也可读取。
                 // 规范路径是 /purify.m3u8:播放器按路径扩展名判定容器类型,没有 .m3u8 后缀的路径
                 // 会被 Exo 判成 Progressive 首播失败;/m3u8 保留兼容旧调用方。
-                if (!isLoopbackRequest(session)) {
+                boolean castBrowser = !isLoopbackRequest(session);
+                LanDevice castViewer = castBrowser ? castProxyViewer(session) : null;
+                if (castBrowser && castViewer == null) {
                     return createPlainTextResponse(NanoHTTPD.Response.Status.FORBIDDEN, "forbidden");
                 }
                 String content = m3u8Content == null ? "" : m3u8Content;
+                if (castBrowser) {
+                    long castRevision = castViewer.playbackRevision;
+                    content = LanCastUrlRules.rewritePlaylist(content, serverPort, local -> {
+                        if (castViewer.playbackRevision == castRevision
+                                && castViewer.castProxyPaths.size() < 4096) {
+                            castViewer.castProxyPaths.add(local);
+                        }
+                    });
+                }
                 Response purify = NanoHTTPD.newFixedLengthResponse(NanoHTTPD.Response.Status.OK,
                         "application/vnd.apple.mpegurl", content);
                 // 名单是全局单槽(每次起播覆盖):禁止播放器缓存,避免 seek/重试拿到上一条清单
@@ -247,9 +886,12 @@ public class RemoteServer extends NanoHTTPD {
         return getRequestList.get(0).doResponse(session, "", null, null);
     }
 
-    /** GET /file/<rel>: 具体文件字节流不鉴权(本机与局域网 clan:// 播放都依赖);目录列表属于管理功能,需令牌 */
+    /** GET /file/<rel>: 本机回环直通，局域网侧文件和目录都需配对。 */
     private Response serveFileGet(IHTTPSession session, String rel) {
         try {
+            if (!isAuthorized(session, session.getParms())) {
+                return createPlainTextResponse(Response.Status.FORBIDDEN, "forbidden");
+            }
             File root = storageRoot();
             File localFile;
             if (rel == null || rel.trim().isEmpty() || rel.equals(".")) {
@@ -262,7 +904,7 @@ public class RemoteServer extends NanoHTTPD {
             }
             if (localFile.exists()) {
                 if (localFile.isFile()) {
-                    return NanoHTTPD.newChunkedResponse(NanoHTTPD.Response.Status.OK, "application/octet-stream", new FileInputStream(localFile));
+                    return streamLocalFile(session, localFile);
                 } else {
                     if (!isAuthorized(session, session.getParms())) {
                         return createPlainTextResponse(NanoHTTPD.Response.Status.FORBIDDEN, "forbidden");
@@ -280,6 +922,31 @@ public class RemoteServer extends NanoHTTPD {
 
     /** POST 处理:解析 body 后统一做管理鉴权,再分发到各处理函数 */
     private Response serveFilePost(IHTTPSession session, String fileName) {
+        boolean managed = fileName.equals("/action") || fileName.equals("/upload")
+                || fileName.equals("/newFolder") || fileName.equals("/delFolder") || fileName.equals("/delFile");
+        if (managed && !isAuthorized(session, session.getParms())) {
+            return createPlainTextResponse(Response.Status.FORBIDDEN, "forbidden");
+        }
+        boolean playbackAction = fileName.equals("/api/playback/next")
+                || fileName.equals("/api/playback/select")
+                || fileName.equals("/api/playback/event");
+        if (playbackAction
+                && authorizedDevice(session) == null) {
+            return createPlainTextResponse(Response.Status.FORBIDDEN, "forbidden");
+        }
+        if (fileName.equals("/api/pair") || playbackAction) {
+            try {
+                String length = session.getHeaders().get("content-length");
+                if (playbackAction && length == null) {
+                    return createPlainTextResponse(Response.Status.BAD_REQUEST, "content length required");
+                }
+                if (Long.parseLong(length == null ? "0" : length) > 1024) {
+                    return createPlainTextResponse(Response.Status.BAD_REQUEST, "request too large");
+                }
+            } catch (NumberFormatException ignored) {
+                return createPlainTextResponse(Response.Status.BAD_REQUEST, "invalid content length");
+            }
+        }
         Map<String, String> files = new HashMap<>();
         try {
             if (session.getHeaders().containsKey("content-type")) {
@@ -303,13 +970,36 @@ public class RemoteServer extends NanoHTTPD {
         }
         Map<String, String> params = session.getParms();
         if (params == null) params = new HashMap<>();
-        // 管理/变更类接口统一鉴权:本机(loopback)放行,局域网侧必须携带进程令牌
-        if (fileName.equals("/action") || fileName.equals("/upload")
-                || fileName.equals("/newFolder") || fileName.equals("/delFolder") || fileName.equals("/delFile")) {
-            if (!isAuthorized(session, params)) {
-                return createPlainTextResponse(NanoHTTPD.Response.Status.FORBIDDEN, "forbidden");
-            }
+        if (fileName.equals("/api/pair")) return handlePair(session, params);
+        if (fileName.equals("/api/logout")) {
+            LanDevice device = authorizedDevice(session);
+            if (device == null) return createPlainTextResponse(Response.Status.FORBIDDEN, "forbidden");
+            kickDevice(device.id);
+            Response response = jsonResponse(Response.Status.OK, "{\"paired\":false}");
+            response.addHeader("Set-Cookie", "mbox_lan=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict");
+            return response;
         }
+        if (fileName.equals("/api/playback/next")) {
+            LanDevice device = authorizedDevice(session);
+            if (device == null) return createPlainTextResponse(Response.Status.FORBIDDEN, "forbidden");
+            boolean accepted = requestNextEpisode(device, params.get("revision"));
+            LogStore.log(Category.PLAYER, "局域网投屏下一集 device=" + deviceRef(device)
+                    + " accepted=" + accepted);
+            return jsonResponse(Response.Status.OK, "{\"accepted\":" + accepted + "}");
+        }
+        if (fileName.equals("/api/playback/select")) {
+            LanDevice device = authorizedDevice(session);
+            if (device == null) return createPlainTextResponse(Response.Status.FORBIDDEN, "forbidden");
+            boolean accepted = requestSelectedEpisode(device, params.get("revision"), params.get("index"));
+            LogStore.log(Category.PLAYER, "局域网投屏选集 device=" + deviceRef(device)
+                    + " accepted=" + accepted);
+            return jsonResponse(Response.Status.OK, "{\"accepted\":" + accepted + "}");
+        }
+        if (fileName.equals("/api/playback/event")) {
+            LanDevice device = authorizedDevice(session);
+            return recordPlaybackEvent(device, params);
+        }
+        // 管理/变更类接口统一鉴权:本机(loopback)放行,局域网侧必须携带进程令牌
         for (RequestProcess process : postRequestList) {
             if (process.isRequest(session, fileName)) {
                 return process.doResponse(session, fileName, params, files);
@@ -326,7 +1016,7 @@ public class RemoteServer extends NanoHTTPD {
                 return handleDelete(params, false);
             }
         } catch (Throwable th) {
-            return NanoHTTPD.newFixedLengthResponse(NanoHTTPD.Response.Status.OK, NanoHTTPD.MIME_PLAINTEXT, "OK");
+            return createPlainTextResponse(NanoHTTPD.Response.Status.INTERNAL_ERROR, "operation failed");
         }
         //default page: index.html(与历史行为一致)
         return getRequestList.get(0).doResponse(session, "", null, null);
@@ -382,7 +1072,7 @@ public class RemoteServer extends NanoHTTPD {
         }
         File file = new File(parent, safeName);
         if (!file.exists()) {
-            file.mkdirs();
+            if (!file.mkdirs()) return createPlainTextResponse(NanoHTTPD.Response.Status.INTERNAL_ERROR, "cannot create folder");
             File flag = new File(file, ".tvbox_folder");
             if (!flag.exists()) flag.createNewFile();
         }
@@ -413,6 +1103,7 @@ public class RemoteServer extends NanoHTTPD {
             } else {
                 target.delete();
             }
+            if (target.exists()) return createPlainTextResponse(NanoHTTPD.Response.Status.INTERNAL_ERROR, "cannot delete target");
         }
         return NanoHTTPD.newFixedLengthResponse(NanoHTTPD.Response.Status.OK, NanoHTTPD.MIME_PLAINTEXT, "OK");
     }
@@ -425,17 +1116,327 @@ public class RemoteServer extends NanoHTTPD {
                 || ip.startsWith("127."));
     }
 
-    /** 管理接口鉴权:本机直连放行;局域网请求必须携带与进程令牌一致的 token(参数或 X-TVBox-Token 请求头) */
+    /** 管理接口鉴权:本机直连放行；局域网请求需 Cookie 或 X-TVBox-Token 请求头。 */
     private boolean isAuthorized(IHTTPSession session, Map<String, String> params) {
         if (isLoopbackRequest(session)) return true;
-        String token = params == null ? null : params.get("token");
-        if (token == null) {
-            Map<String, String> headers = session.getHeaders();
-            if (headers != null) {
-                token = headers.get("x-tvbox-token");
+        return authorizedDevice(session) != null;
+    }
+
+    private Response serveCastMedia(IHTTPSession session) {
+        LanDevice viewer = authorizedDevice(session);
+        if (viewer == null || !"browser".equals(viewer.kind))
+            return createPlainTextResponse(Response.Status.FORBIDDEN, "forbidden");
+        String mediaId = session.getParms() == null ? null : session.getParms().get("id");
+        if (mediaId == null || !CAST_MEDIA_ID.matcher(mediaId).matches())
+            return createPlainTextResponse(Response.Status.BAD_REQUEST, "invalid media id");
+        CastMedia media = viewer.castMedia.get(mediaId);
+        if (media == null || media.revision != viewer.playbackRevision)
+            return createPlainTextResponse(Response.Status.NOT_FOUND, "media expired");
+        final long mediaRevision = media.revision;
+        String range = session.getHeaders().get("range");
+        okhttp3.Response upstream = null;
+        String requestUrl = media.url;
+        try {
+            for (int redirects = 0; redirects <= 5; redirects++) {
+                Request.Builder request = new Request.Builder().url(requestUrl).get();
+                Map<String, String> requestHeaders = headersForChild(media.url, requestUrl, media.headers);
+                for (Map.Entry<String, String> header : requestHeaders.entrySet()) {
+                    String name = header.getKey();
+                    String value = header.getValue();
+                    if (name == null || value == null || value.length() > 4096
+                            || name.equalsIgnoreCase("host") || name.equalsIgnoreCase("connection")
+                            || name.equalsIgnoreCase("content-length") || name.equalsIgnoreCase("accept-encoding")
+                            || name.equalsIgnoreCase("range")) continue;
+                    try { request.header(name, value); } catch (IllegalArgumentException ignored) { }
+                }
+                if (range != null && range.matches("bytes=\\d+-\\d*")) request.header("Range", range);
+                upstream = OkGoHelper.getNoRedirectClient().newCall(request.build()).execute();
+                String location = upstream.header("Location");
+                if (upstream.code() < 300 || upstream.code() > 399 || location == null) break;
+                okhttp3.HttpUrl next = upstream.request().url().resolve(location);
+                upstream.close();
+                upstream = null;
+                if (redirects == 5 || next == null
+                        || !LanCastRelayRules.allowedRedirect(media.url, next.toString())) {
+                    logMediaFailure(viewer, "redirect_blocked");
+                    return createPlainTextResponse(Response.Status.FORBIDDEN, "media redirect blocked");
+                }
+                requestUrl = next.toString();
+            }
+        } catch (Exception error) {
+            if (upstream != null) upstream.close();
+            logMediaFailure(viewer, "request_" + error.getClass().getSimpleName());
+            return createPlainTextResponse(Response.Status.INTERNAL_ERROR, "media unavailable");
+        }
+        if (upstream == null) {
+            logMediaFailure(viewer, "empty_response");
+            return createPlainTextResponse(Response.Status.INTERNAL_ERROR, "media unavailable");
+        }
+        okhttp3.ResponseBody body = upstream.body();
+        if (body == null || !upstream.isSuccessful()) {
+            int code = upstream.code();
+            upstream.close();
+            logMediaFailure(viewer, "upstream_http_" + code);
+            Response.Status status = Response.Status.lookup(code);
+            return createPlainTextResponse(status == null ? Response.Status.INTERNAL_ERROR : status,
+                    "media unavailable");
+        }
+        String mime = upstream.header("Content-Type", "application/octet-stream");
+        boolean playlist = isPlaylistMime(mime, "")
+                || media.url.toLowerCase(Locale.ROOT).contains("m3u8");
+        if (playlist) {
+            try (okhttp3.Response response = upstream) {
+                byte[] source = readCastPlaylist(body.byteStream());
+                if (viewer.playbackRevision != mediaRevision || viewer.castMedia.get(mediaId) != media)
+                    return createPlainTextResponse(Response.Status.NOT_FOUND, "media expired");
+                String rewritten = LanCastRelayRules.rewrite(new String(source, StandardCharsets.UTF_8),
+                        response.request().url().toString(), child ->
+                                viewer.playbackRevision == mediaRevision
+                                        && viewer.castMedia.get(mediaId) == media
+                                        ? registerCastMedia(viewer, child,
+                                                headersForChild(media.url, child, media.headers)) : null);
+                if (viewer.playbackRevision != mediaRevision || viewer.castMedia.get(mediaId) != media)
+                    return createPlainTextResponse(Response.Status.NOT_FOUND, "media expired");
+                byte[] bytes = rewritten.getBytes(StandardCharsets.UTF_8);
+                Response result = newFixedLengthResponse(Response.Status.OK,
+                        "application/vnd.apple.mpegurl", new ByteArrayInputStream(bytes), bytes.length);
+                result.addHeader("Cache-Control", "no-store");
+                return result;
+            } catch (IOException error) {
+                logMediaFailure(viewer, "playlist_io");
+                return createPlainTextResponse(Response.Status.BAD_REQUEST, "playlist unavailable");
             }
         }
-        return token != null && accessToken.equals(token);
+        final okhttp3.Response sourceResponse = upstream;
+        InputStream stream = new FilterInputStream(body.byteStream()) {
+            private void requireCurrentCast() throws IOException {
+                if (devices.get(viewer.token) != viewer || viewer.playbackRevision != media.revision
+                        || viewer.castMedia.get(mediaId) != media)
+                    throw new IOException("cast revoked");
+            }
+            @Override public int read() throws IOException {
+                requireCurrentCast();
+                return super.read();
+            }
+            @Override public int read(byte[] buffer, int off, int len) throws IOException {
+                requireCurrentCast();
+                return super.read(buffer, off, len);
+            }
+            @Override public void close() throws IOException {
+                try { super.close(); } finally { sourceResponse.close(); }
+            }
+        };
+        Response.Status status = upstream.code() == 206 ? Response.Status.PARTIAL_CONTENT : Response.Status.OK;
+        long size = body.contentLength();
+        Response result = size >= 0 ? newFixedLengthResponse(status, mime, stream, size)
+                : newChunkedResponse(status, mime, stream);
+        String contentRange = upstream.header("Content-Range");
+        if (contentRange != null) result.addHeader("Content-Range", contentRange);
+        String acceptRanges = upstream.header("Accept-Ranges");
+        if (acceptRanges != null) result.addHeader("Accept-Ranges", acceptRanges);
+        result.addHeader("Cache-Control", "no-store");
+        return result;
+    }
+
+    private LanDevice authorizedDevice(IHTTPSession session) {
+        String token = null;
+        Map<String, String> headers = session.getHeaders();
+        if (headers != null) {
+            token = headers.get("x-tvbox-token");
+            if (token == null) {
+                String cookie = headers.get("cookie");
+                if (cookie != null) {
+                    for (String item : cookie.split(";")) {
+                        String part = item.trim();
+                        if (part.startsWith("mbox_lan=")) {
+                            token = part.substring("mbox_lan=".length());
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        LanDevice device = token == null ? null : devices.get(token);
+        if (device != null) {
+            long now = System.currentTimeMillis();
+            if (now - device.lastSeen > SESSION_WINDOW_MS) {
+                devices.remove(device.token, device);
+                persistSessions(true);
+                LogStore.log(Category.SYSTEM, "局域网配对会话过期 device=" + deviceRef(device));
+                return null;
+            }
+            device.lastSeen = now;
+            persistSessions(false);
+        }
+        return device;
+    }
+
+    /** 按 MediaStore 视频 ID 读取，与 App「我的 → 本地视频」是同一批内容。 */
+    private Response serveMediaVideo(IHTTPSession session) {
+        if (!isAuthorized(session, session.getParms())) {
+            return createPlainTextResponse(Response.Status.FORBIDDEN, "forbidden");
+        }
+        long id;
+        try { id = Long.parseLong(session.getParms().get("id")); }
+        catch (Exception ignored) { return createPlainTextResponse(Response.Status.BAD_REQUEST, "invalid video id"); }
+        if (id <= 0) return createPlainTextResponse(Response.Status.BAD_REQUEST, "invalid video id");
+        Uri uri = ContentUris.withAppendedId(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, id);
+        try {
+            String name;
+            long catalogSize;
+            try (Cursor cursor = mContext.getContentResolver().query(uri,
+                    new String[]{MediaStore.Video.Media.DISPLAY_NAME, MediaStore.Video.Media.SIZE},
+                    null, null, null)) {
+                if (cursor == null || !cursor.moveToFirst()) {
+                    return createPlainTextResponse(Response.Status.NOT_FOUND, "video not found");
+                }
+                name = cursor.getString(0);
+                catalogSize = cursor.getLong(1);
+            }
+            String mime = mContext.getContentResolver().getType(uri);
+            if (mime == null || mime.isEmpty() || mime.equals("application/octet-stream")) mime = mimeForName(name);
+            ParcelFileDescriptor descriptor = mContext.getContentResolver().openFileDescriptor(uri, "r");
+            if (descriptor == null) return createPlainTextResponse(Response.Status.NOT_FOUND, "video not found");
+            long size = descriptor.getStatSize();
+            if (size < 0) size = catalogSize;
+            if (size < 0) { descriptor.close(); return createPlainTextResponse(Response.Status.INTERNAL_ERROR, "video length unavailable"); }
+            InputStream stream = new FilterInputStream(new FileInputStream(descriptor.getFileDescriptor())) {
+                @Override public void close() throws IOException {
+                    try { super.close(); } finally { descriptor.close(); }
+                }
+            };
+            return streamFileResponse(session, stream, size, mime);
+        } catch (Exception error) {
+            return createPlainTextResponse(Response.Status.NOT_FOUND, "video unavailable");
+        }
+    }
+
+    /** 浏览器 seek 依赖 Range；文件读取只在 NanoHTTPD 工作线程执行。 */
+    private Response streamLocalFile(IHTTPSession session, File file) throws IOException {
+        return streamFileResponse(session, new FileInputStream(file), file.length(), mimeForName(file.getName()));
+    }
+
+    private static String mimeForName(String fileName) {
+        String name = fileName == null ? "" : fileName.toLowerCase(Locale.ROOT);
+        return name.endsWith(".mp4") || name.endsWith(".m4v") ? "video/mp4"
+                : name.endsWith(".webm") ? "video/webm"
+                : name.endsWith(".mov") ? "video/quicktime"
+                : name.endsWith(".mkv") ? "video/x-matroska"
+                : name.endsWith(".avi") ? "video/x-msvideo"
+                : name.endsWith(".flv") ? "video/x-flv"
+                : name.endsWith(".m3u8") ? "application/vnd.apple.mpegurl"
+                : name.endsWith(".ts") ? "video/mp2t"
+                : "application/octet-stream";
+    }
+
+    private Response streamFileResponse(IHTTPSession session, InputStream stream, long size, String mime) throws IOException {
+        long from = 0;
+        long to = size - 1;
+        boolean partial = false;
+        String range = session.getHeaders().get("range");
+        if (range != null && range.matches("bytes=\\d+-\\d*")) {
+            String[] parts = range.substring(6).split("-", 2);
+            try {
+                from = Long.parseLong(parts[0]);
+                if (parts.length > 1 && !parts[1].isEmpty()) to = Math.min(to, Long.parseLong(parts[1]));
+                partial = true;
+            } catch (NumberFormatException ignored) { partial = false; }
+        }
+        if (partial && (from >= size || from > to)) {
+            stream.close();
+            Response invalid = createPlainTextResponse(Response.Status.RANGE_NOT_SATISFIABLE, "range not satisfiable");
+            invalid.addHeader("Content-Range", "bytes */" + size);
+            return invalid;
+        }
+        try {
+            long skipped = 0;
+            while (skipped < from) {
+                long step = stream.skip(from - skipped);
+                if (step <= 0) throw new IOException("cannot seek file");
+                skipped += step;
+            }
+        } catch (IOException error) { stream.close(); throw error; }
+        LanDevice viewer = authorizedDevice(session);
+        InputStream responseStream = viewer == null ? stream : new FilterInputStream(stream) {
+            private void requireCurrentSession() throws IOException {
+                if (devices.get(viewer.token) != viewer) throw new IOException("device disconnected");
+            }
+            @Override public int read() throws IOException { requireCurrentSession(); return super.read(); }
+            @Override public int read(byte[] buffer, int off, int len) throws IOException {
+                requireCurrentSession(); return super.read(buffer, off, len);
+            }
+        };
+        Response result = newFixedLengthResponse(partial ? Response.Status.PARTIAL_CONTENT : Response.Status.OK,
+                mime, responseStream, size == 0 ? 0 : to - from + 1);
+        result.addHeader("Accept-Ranges", "bytes");
+        if (partial) result.addHeader("Content-Range", "bytes " + from + "-" + to + "/" + size);
+        result.addHeader("Cache-Control", "no-store");
+        return result;
+    }
+
+
+    private Response handlePair(IHTTPSession session, Map<String, String> params) {
+        String ip = session.getRemoteIpAddress() == null ? "unknown" : session.getRemoteIpAddress();
+        FailedPairing failure = failedPairings.computeIfAbsent(ip, key -> new FailedPairing());
+        long now = System.currentTimeMillis();
+        synchronized (failure) {
+            if (now - failure.windowStart > 60000) { failure.windowStart = now; failure.count = 0; }
+            if (failure.count >= 8) return jsonResponse(Response.Status.FORBIDDEN, "{\"error\":\"请稍后重试\"}");
+            String code = params.get("code");
+            if (code == null || !MessageDigest.isEqual(pairingCode.getBytes(StandardCharsets.US_ASCII),
+                    code.getBytes(StandardCharsets.US_ASCII))) {
+                failure.count++;
+                if (failure.count == 1 || failure.count == 8)
+                    LogStore.fail(Category.SYSTEM, "局域网配对失败 attempts=" + failure.count);
+                return jsonResponse(Response.Status.FORBIDDEN, "{\"error\":\"配对码不正确\"}");
+            }
+            failure.count = 0;
+        }
+        String token = generateToken();
+        String kind = "mbox".equals(session.getHeaders().get("x-mbox-client")) ? "mbox" : "browser";
+        String label = params.get("name");
+        if (label == null || label.trim().isEmpty()) {
+            String agent = session.getHeaders().get("user-agent");
+            label = "mbox".equals(kind) ? "MBox"
+                    : agent != null && agent.contains("Windows") ? "Windows 浏览器"
+                    : agent != null && agent.contains("Macintosh") ? "Mac 浏览器"
+                    : "浏览器";
+        }
+        label = label.replaceAll("[\\p{Cntrl}]", "").trim();
+        if (label.length() > 32) label = label.substring(0, 32);
+        if (pairedDevices().size() >= 32) {
+            return jsonResponse(Response.Status.SERVICE_UNAVAILABLE, "{\"error\":\"已连接设备过多，请先踢出闲置设备\"}");
+        }
+        LanDevice device = new LanDevice(token, label, ip, kind);
+        devices.put(token, device);
+        persistSessions(true);
+        LogStore.success(Category.SYSTEM, "局域网配对成功 kind=" + kind
+                + " device=" + deviceRef(device));
+        Response response = jsonResponse(Response.Status.OK, "{\"paired\":true,\"token\":\"" + token + "\"}");
+        response.addHeader("Set-Cookie", "mbox_lan=" + token + "; Path=/; HttpOnly; SameSite=Strict");
+        return response;
+    }
+
+    private Response serveTheme(IHTTPSession session) {
+        if (!isAuthorized(session, session.getParms())) return createPlainTextResponse(Response.Status.FORBIDDEN, "forbidden");
+        JsonObject result = new JsonObject();
+        result.addProperty("dark", com.github.tvbox.osc.theme.ThemeRuntime.type().isDark());
+        com.github.tvbox.osc.bean.theme.ThemePalette palette = com.github.tvbox.osc.theme.ThemeRuntime.runtimePalette();
+        JsonObject colors = new JsonObject();
+        if (palette != null) {
+            for (Map.Entry<String, Integer> e : palette.asMap().entrySet()) {
+                colors.addProperty(e.getKey(), com.github.tvbox.osc.bean.theme.ThemeColorPalette.toHex(e.getValue()));
+            }
+        }
+        result.add("colors", colors);
+        return jsonResponse(Response.Status.OK, result.toString());
+    }
+
+    private static Response jsonResponse(Response.IStatus status, String json) {
+        Response response = newFixedLengthResponse(status, "application/json; charset=utf-8", json);
+        response.addHeader("Cache-Control", "no-store");
+        response.addHeader("X-Content-Type-Options", "nosniff");
+        return response;
     }
 
     /** 外部存储根目录:所有文件类接口的允许范围 */

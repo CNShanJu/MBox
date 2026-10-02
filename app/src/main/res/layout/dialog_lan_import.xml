@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingHorizontal="20dp"
+    android:paddingTop="20dp"
+    android:paddingBottom="24dp">
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="连接服务器"
+        android:textColor="@color/text_foreground"
+        android:textSize="18sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:text="输入另一台 MBox 的访问地址和配对码。连接后可选择要导入的配置。"
+        android:textColor="@color/text_sub_foreground"
+        android:textSize="13sp" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="18dp"
+        android:text="服务器地址"
+        android:textColor="@color/text_foreground"
+        android:textSize="14sp" />
+
+    <EditText
+        android:id="@+id/etLanPeerAddress"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:layout_marginTop="7dp"
+        android:background="@drawable/bg_lan_import_field"
+        android:hint="http://192.168.1.2:9978/"
+        android:inputType="textUri"
+        android:paddingHorizontal="14dp"
+        android:singleLine="true"
+        android:textColor="@color/text_foreground"
+        android:textColorHint="@color/text_sub_foreground" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="14dp"
+        android:text="配对码"
+        android:textColor="@color/text_foreground"
+        android:textSize="14sp" />
+
+    <EditText
+        android:id="@+id/etLanPeerCode"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:layout_marginTop="7dp"
+        android:background="@drawable/bg_lan_import_field"
+        android:hint="对方手机上的 8 位数字"
+        android:inputType="numberPassword"
+        android:maxLength="8"
+        android:paddingHorizontal="14dp"
+        android:singleLine="true"
+        android:textColor="@color/text_foreground"
+        android:textColorHint="@color/text_sub_foreground" />
+
+    <TextView
+        android:id="@+id/tvLanImportStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:textColor="@color/text_sub_foreground"
+        android:textSize="13sp"
+        android:visibility="gone" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnLanConnect"
+        style="@style/BtnPrimary"
+        android:layout_width="match_parent"
+        android:layout_height="42dp"
+        android:layout_marginTop="18dp"
+        android:text="连接服务器" />
+</LinearLayout>

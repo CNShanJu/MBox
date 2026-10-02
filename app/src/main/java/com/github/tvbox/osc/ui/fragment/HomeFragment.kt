@@ -33,6 +33,7 @@ import com.github.tvbox.osc.bean.VodInfo
 import com.github.tvbox.osc.constant.IntentKey
 import com.github.tvbox.osc.databinding.FragmentHomeBinding
 import com.github.tvbox.osc.server.ControlManager
+import com.github.tvbox.osc.service.LanServerService
 import com.github.tvbox.osc.ui.activity.CollectActivity
 import com.github.tvbox.osc.ui.activity.FastSearchActivity
 import com.github.tvbox.osc.ui.activity.HistoryActivity
@@ -130,6 +131,7 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
 
     override fun init() {
         ControlManager.get().startServer()
+        if (SystemConfig.isLanServerEnabled()) LanServerService.start(requireContext())
         // 搜索框是 Fragment 内的自定义视图；显式应用主题令牌，避免 inflater 未覆盖时停在包内配色。
         com.github.tvbox.osc.theme.ThemeDrawables.applyBackground(
             mBinding.search, R.drawable.bg_search_round_float
@@ -631,6 +633,7 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
     }
 
     private fun refreshHomeSources() {
+        SystemConfig.markInternalRestart()
         val intent = Intent(App.getInstance(), MainActivity::class.java)
         intent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
         val bundle = Bundle()
@@ -641,16 +644,17 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
 
     override fun onDestroy() {
         super.onDestroy()
-        ControlManager.get().stopServer()
+        // 局域网由前台服务承载；首页销毁或手机锁屏不能把电脑连接一起关闭。
+        if (!ControlManager.get().isLanServing()) ControlManager.get().stopServer()
     }
 
     private fun queryHistory() {
         lifecycleScope.launch {
             val vodInfoList = withContext(Dispatchers.IO) {
-                // 源是否存在/历史保留上限由 UI 层判定(与旧 RoomDataManger 内聚逻辑等价;storage 不再依赖业务配置)
+                // 上次观看保留旧订阅的记录；点击不可用来源时进入当前订阅同名搜索。
                 val allVodRecord = com.github.tvbox.osc.repo.HistoryRepositories.history().query(
                     100,
-                    { key -> SourceConfigProviders.get().getSource(key) != null },
+                    null,
                     com.github.tvbox.osc.util.HistoryHelper.getHisNum(
                         com.github.tvbox.osc.config.SystemConfig.getHistoryNum()
                     )

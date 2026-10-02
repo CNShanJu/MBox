@@ -35,8 +35,13 @@ public class RawRequestProcess implements RequestProcess {
     public NanoHTTPD.Response doResponse(NanoHTTPD.IHTTPSession session, String fileName, Map<String, String> params, Map<String, String> files) {
         InputStream inputStream = mContext.getResources().openRawResource(this.resourceId);
         try {
-            return RemoteServer.newFixedLengthResponse(NanoHTTPD.Response.Status.OK, mimeType + "; charset=utf-8", inputStream, (long) inputStream.available());
+            NanoHTTPD.Response response = RemoteServer.newFixedLengthResponse(
+                    NanoHTTPD.Response.Status.OK, mimeType + "; charset=utf-8", inputStream,
+                    (long) inputStream.available());
+            response.addHeader("Cache-Control", "no-store");
+            return response;
         } catch (IOException IOExc) {
+            try { inputStream.close(); } catch (IOException ignored) { }
             return RemoteServer.createPlainTextResponse(NanoHTTPD.Response.Status.INTERNAL_ERROR, "SERVER INTERNAL ERROR: IOException: " + IOExc.getMessage());
         }
     }

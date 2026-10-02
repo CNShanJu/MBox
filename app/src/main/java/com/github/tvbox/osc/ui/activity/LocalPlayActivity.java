@@ -12,7 +12,6 @@ import com.blankj.utilcode.util.NotificationUtils;
 import com.blankj.utilcode.util.SPUtils;
 import com.github.tvbox.osc.util.AppBubble;
 import com.github.tvbox.osc.base.BaseVbActivity;
-import com.github.tvbox.osc.bean.CastVideo;
 import com.github.tvbox.osc.bean.ParseBean;
 import com.github.tvbox.osc.bean.VideoInfo;
 import com.github.tvbox.osc.bean.VodInfo;
@@ -23,7 +22,6 @@ import com.github.tvbox.osc.player.PlayerSession;
 import com.github.tvbox.osc.player.api.PlayConfig;
 import com.github.tvbox.osc.player.controller.LocalVideoController;
 import com.github.tvbox.osc.ui.dialog.AllLocalSeriesDialog;
-import com.github.tvbox.osc.ui.dialog.CastListDialog;
 import com.github.tvbox.osc.ui.dialog.DialogCoordinator;
 import com.github.tvbox.osc.ui.dialog.PlayingControlRightDialog;
 import com.github.tvbox.osc.util.BroadcastUtils;
@@ -311,7 +309,7 @@ public class LocalPlayActivity extends BaseVbActivity<ActivityLocalPlayBinding> 
 
             @Override
             public void cast() {
-                showCastDialog();
+                // 本地视频由电脑端视频库浏览，无需从手机播放器推送。
             }
 
             @Override
@@ -452,6 +450,7 @@ public class LocalPlayActivity extends BaseVbActivity<ActivityLocalPlayBinding> 
 
     @Override
     public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode) {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O) return;
         super.onPictureInPictureModeChanged(isInPictureInPictureMode);
         if (pipHelper != null) pipHelper.onPictureInPictureModeChanged(isInPictureInPictureMode);
     }
@@ -465,18 +464,10 @@ public class LocalPlayActivity extends BaseVbActivity<ActivityLocalPlayBinding> 
 
     /** 进入画中画(小窗) */
     public void enterPip() {
-        if (pipHelper != null) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O && pipHelper != null) {
             pipHelper.enterPip();
             mController.hideBottom();
         }
-    }
-
-    /** 投屏弹窗(桩实现:暂不可用,与在线播放一致) */
-    public void showCastDialog() {
-        VideoInfo info = mVideoList.get(mPosition);
-        DialogCoordinator.centerMaxWidth(this,
-                new CastListDialog(this, new CastVideo(info.getDisplayName(), "file://" + info.getPath())), 360)
-                .show();
     }
 
     @Override

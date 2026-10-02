@@ -4,6 +4,8 @@ import android.content.Context;
 import android.util.Log;
 
 import com.github.tvbox.osc.config.SystemConfig;
+import com.github.tvbox.osc.log.Category;
+import com.github.tvbox.osc.log.LogStore;
 
 import java.io.IOException;
 import java.util.regex.Matcher;
@@ -109,6 +111,97 @@ public class ControlManager {
         return out;
     }
 
+    /** 只在手机端展示的配对码；服务重建后仍沿用本次开启时生成的值。 */
+    public String getPairingCode() {
+        RemoteServer server = mServer;
+        return server == null || !server.isStarting() || !lanBound ? "" : server.getPairingCode();
+    }
+
+    /** 用户主动更换配对码，旧设备会话同时撤销。 */
+    public String rotatePairingCode() {
+        RemoteServer server = mServer;
+        return server != null && server.isStarting() && lanBound
+                ? server.rotatePairingCode() : "";
+    }
+
+    /** 从手机播放器向指定且仍在线的电脑网页推送当前视频。 */
+    public boolean pushToBrowser(String deviceId, String title, String url) {
+        return pushToBrowser(deviceId, title, url, null);
+    }
+
+    public boolean pushToBrowser(String deviceId, String title, String url,
+                                 java.util.Map<String, String> headers) {
+        RemoteServer server = mServer;
+        return server != null && server.isStarting() && lanBound
+                && server.publishBrowserPlayback(deviceId, title, url, headers);
+    }
+
+    public String pushFailureMessage(String deviceId, String url) {
+        if (!isLanServing()) return "局域网服务未运行，请重新开启后重试";
+        if (LanCastUrlRules.browserUrl(url, RemoteServer.serverPort) == null) {
+            return "当前播放地址无法供电脑访问，请换一个播放源";
+        }
+        for (RemoteServer.LanDevice device : connectedDevices()) {
+            if (device.id.equals(deviceId) && "browser".equals(device.kind)) {
+                return "推送未完成，请稍后重试";
+            }
+        }
+        return "目标浏览器已离线，请在电脑上重新打开局域网页面";
+    }
+
+    public java.util.List<RemoteServer.LanDevice> connectedDevices() {
+        RemoteServer server = mServer;
+        return server != null && server.isStarting() && lanBound
+                ? server.connectedDevices() : java.util.Collections.emptyList();
+    }
+
+    public java.util.List<RemoteServer.LanDevice> pairedDevices() {
+        RemoteServer server = mServer;
+        return server != null && server.isStarting() && lanBound
+                ? server.pairedDevices() : java.util.Collections.emptyList();
+    }
+
+    /** 当前实例确实监听局域网；设置开关刚变更而尚未重启时仍按实际绑定状态判断。 */
+    public boolean isLanServing() {
+        RemoteServer server = mServer;
+        return server != null && server.isStarting() && lanBound;
+    }
+
+    public boolean kickDevice(String id) {
+        RemoteServer server = mServer;
+        return server != null && server.isStarting() && lanBound && server.kickDevice(id);
+    }
+
+    public void setEpisodeCast(String owner, String deviceId, java.util.List<String> episodes,
+                               int selectedIndex, RemoteServer.NextEpisodeHandler handler) {
+        RemoteServer server = mServer;
+        if (server != null && server.isStarting() && lanBound)
+            server.setEpisodeCast(owner, deviceId, episodes, selectedIndex, handler);
+    }
+
+    public boolean updateEpisodeCast(String owner, String title, String url, int selectedIndex,
+                                     java.util.List<String> episodes,
+                                     java.util.Map<String, String> headers) {
+        RemoteServer server = mServer;
+        return server != null && server.isStarting() && lanBound
+                && server.updateEpisodeCast(owner, title, url, selectedIndex, episodes, headers);
+    }
+
+    public void markEpisodeAdvancing(String owner) {
+        RemoteServer server = mServer;
+        if (server != null) server.markEpisodeAdvancing(owner);
+    }
+
+    public void clearEpisodeCast() {
+        RemoteServer server = mServer;
+        if (server != null) server.clearEpisodeCast();
+    }
+
+    public void clearEpisodeCast(String owner) {
+        RemoteServer server = mServer;
+        if (server != null) server.clearEpisodeCast(owner);
+    }
+
     public void startServer() {
         boolean lanEnabled = SystemConfig.isLanServerEnabled();
         RemoteServer running = mServer;
@@ -170,6 +263,8 @@ public class ControlManager {
                     Log.w("TVBox-Server", preferredPort + " 被占用,本机服务回退到 " + tryPort
                             + ";源里写死 127.0.0.1:" + preferredPort + " 的代理地址会连不上");
                 }
+                if (lanEnabled) LogStore.success(Category.SYSTEM,
+                        "局域网服务已启动 port=" + tryPort);
                 break;
             } catch (IOException ex) {
                 RemoteServer.serverPort++;
@@ -178,6 +273,8 @@ public class ControlManager {
         } while (RemoteServer.serverPort < 9999);
         if (!started) {
             Log.w("TVBox-Server", "本机服务启动失败:从 " + preferredPort + " 起连续端口都被占用");
+            if (lanEnabled) LogStore.fail(Category.SYSTEM,
+                    "局域网服务启动失败 reason=port_unavailable");
         }
     }
 
@@ -190,6 +287,7 @@ public class ControlManager {
      */
     public void stopServer() {
         RemoteServer s = mServer;
+        boolean wasLanBound = lanBound;
         mServer = null;
         lanBound = false;
         if (s != null && s.isStarting()) {
@@ -198,5 +296,6 @@ public class ControlManager {
             } catch (Throwable ignored) {
             }
         }
+        if (wasLanBound) LogStore.log(Category.SYSTEM, "局域网服务已停止");
     }
 }

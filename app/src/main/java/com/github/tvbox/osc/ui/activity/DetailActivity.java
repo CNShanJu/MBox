@@ -51,6 +51,8 @@ import com.github.tvbox.osc.ui.adapter.SeriesFlagAdapter;
 import com.github.tvbox.osc.ui.dialog.AllVodSeriesBottomDialog;
 import com.github.tvbox.osc.ui.dialog.AllVodSeriesRightDialog;
 import com.github.tvbox.osc.ui.dialog.CastListDialog;
+import com.github.tvbox.osc.server.ControlManager;
+import com.github.tvbox.osc.server.RemoteServer;
 import com.github.tvbox.osc.ui.dialog.DialogCoordinator;
 import com.github.tvbox.osc.ui.dialog.DownloadDialogCoordinator;
 import com.github.tvbox.osc.ui.dialog.QuickSearchDialog;
@@ -101,6 +103,7 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
             new DownloadDialogCoordinator(this, this);
     private Movie.Video mVideo;
     private VodInfo vodInfo;
+    private final String lanCastOwner = java.util.UUID.randomUUID().toString();
     public SeriesFlagAdapter seriesFlagAdapter;
     public SeriesAdapter seriesAdapter;
     public String vodId;
@@ -486,7 +489,8 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
             return;
         }
         int type = PlayConfig.getBackgroundPlayType();
-        if (type == 2) {
+        if (type == 2 && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O
+                && pipHelper != null) {
             pipHelper.enterPip(); // 自动进入小窗
         } else if (type == 1) {
             openBackgroundPlay = true; // onPause 里启动后台播放服务
@@ -501,7 +505,9 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
                 public void onReceive(Context context, Intent intent) {
                     String action = intent.getAction();
                     if (action != null && action.equals(Intent.ACTION_CLOSE_SYSTEM_DIALOGS)) {
-                        openBackgroundPlay = PlayConfig.getBackgroundPlayType() == 1 && playFragment.getPlayer() != null && playFragment.getPlayer().isPlaying();
+                        openBackgroundPlay = PlayConfig.getBackgroundPlayType() == 1
+                                && playFragment != null && playFragment.getPlayer() != null
+                                && playFragment.getPlayer().isPlaying();
                     }
                 }
             };
@@ -542,10 +548,40 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     }
 
     public void showCastDialog() {
-
+        if (vodInfo == null || playFragment == null || vodInfo.seriesMap == null
+                || vodInfo.seriesMap.get(vodInfo.playFlag) == null
+                || vodInfo.playIndex < 0
+                || vodInfo.playIndex >= vodInfo.seriesMap.get(vodInfo.playFlag).size()) return;
+        String playingUrl = playFragment.getFinalUrl();
+        if (TextUtils.isEmpty(playingUrl)) {
+            AppBubble.toast("当前播放地址仍在解析，请稍后重试");
+            return;
+        }
         VodInfo.VodSeries vodSeries = vodInfo.seriesMap.get(vodInfo.playFlag).get(vodInfo.playIndex);
+        List<String> castEpisodes = currentCastEpisodeNames();
         DialogCoordinator.centerMaxWidth(this, new CastListDialog(this, new CastVideo(vodSeries.name
-                , TextUtils.isEmpty(playFragment.getFinalUrl()) ? vodSeries.url : playFragment.getFinalUrl())), 360)
+                , playingUrl), deviceId -> {
+                    ControlManager.get().setEpisodeCast(lanCastOwner, deviceId, castEpisodes,
+                            vodInfo.playIndex, new RemoteServer.NextEpisodeHandler() {
+                                @Override public boolean playNext() {
+                                    if (vodInfo == null || playFragment == null || vodInfo.seriesMap == null
+                                            || vodInfo.seriesMap.get(vodInfo.playFlag) == null
+                                            || vodInfo.playIndex + 1 >= vodInfo.seriesMap.get(vodInfo.playFlag).size()) return false;
+                                    playFragment.playNext(false);
+                                    return true;
+                                }
+
+                                @Override public boolean selectEpisode(int index) {
+                                    if (vodInfo == null || playFragment == null || vodInfo.seriesMap == null
+                                            || vodInfo.seriesMap.get(vodInfo.playFlag) == null
+                                            || index < 0 || index >= vodInfo.seriesMap.get(vodInfo.playFlag).size()) return false;
+                                    if (index == vodInfo.playIndex) playFragment.play(false);
+                                    else chooseSeries(index, false);
+                                    return true;
+                                }
+                            });
+                    if (playFragment.getPlayer() != null) playFragment.getPlayer().pause();
+                }, playFragment.getPlayHeaders()), 360)
                 .show();
     }
 
@@ -843,6 +879,7 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     /** PlaySyncHost:选集切换同步(预览播放器→详情选集高亮/历史) */
     @Override
     public void onEpisodeSelected(int index) {
+        ControlManager.get().markEpisodeAdvancing(lanCastOwner);
         if (vodInfo == null || vodInfo.seriesMap == null) return;
         Object seriesList = vodInfo.seriesMap.get(vodInfo.playFlag);
         if (seriesList == null || index < 0) return;
@@ -865,10 +902,30 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
         insertVod(sourceKey, vodInfo);
     }
 
+    @Override
+    public boolean onPlaybackResolved(String title, String url) {
+        if (vodInfo == null || !ControlManager.get().updateEpisodeCast(lanCastOwner, title, url,
+                vodInfo.playIndex, currentCastEpisodeNames(),
+                playFragment == null ? null : playFragment.getPlayHeaders())) return false;
+        if (playFragment != null && playFragment.getPlayer() != null)
+            playFragment.getPlayer().pause();
+        return true;
+    }
+
+    private List<String> currentCastEpisodeNames() {
+        List<String> names = new ArrayList<>();
+        if (vodInfo == null || vodInfo.seriesMap == null) return names;
+        List<VodInfo.VodSeries> current = vodInfo.seriesMap.get(vodInfo.playFlag);
+        if (current != null) for (VodInfo.VodSeries episode : current)
+            names.add(episode == null || episode.name == null ? "" : episode.name);
+        return names;
+    }
+
     private void insertVod(String sourceKey, VodInfo vodInfo) {
         if (SystemConfig.isPrivateBrowsing()) {//无痕浏览
             return;
         }
+        com.github.tvbox.osc.util.HistorySourceBinding.stamp(vodInfo);
         try {
             vodInfo.playNote = vodInfo.seriesMap.get(vodInfo.playFlag).get(vodInfo.playIndex).name;
         } catch (Throwable th) {
@@ -885,6 +942,7 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
 
     @Override
     protected void onDestroy() {
+        ControlManager.get().clearEpisodeCast(lanCastOwner);
         sourceViewModel.setQuickSearchBatchListener(null); // 断开 quick 结果直调,防悬垂
         if (playFragment != null) playFragment.setPlaySyncHost(null); // 断开屏内直调
         // 页面销毁:解除后台播放服务对共享播放视图的借用。只摘引用、不停服务 ——
@@ -1073,14 +1131,17 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
      * 画中画模式(小窗):进入小窗。逻辑封装在 PipHelper,详情页/本地播放器复用。
      */
     public void enterPip() {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O
+                || pipHelper == null || playFragment == null || playFragment.getController() == null) return;
         pipHelper.enterPip();
         playFragment.getController().hideBottom();
     }
 
     @Override
     public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode) {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O) return;
         super.onPictureInPictureModeChanged(isInPictureInPictureMode);
-        pipHelper.onPictureInPictureModeChanged(isInPictureInPictureMode);
+        if (pipHelper != null) pipHelper.onPictureInPictureModeChanged(isInPictureInPictureMode);
     }
 
     @Override

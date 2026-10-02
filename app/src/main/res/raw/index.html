@@ -1,277 +1,100 @@
-<!DOCTYPE html>
-<html lang="zh-cmn-Hans">
-
+<!doctype html>
+<html lang="zh-CN">
 <head>
-	<meta charset="UTF-8">
-	<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=0,viewport-fit=cover">
-	<meta name="wechat-enable-text-zoom-em" content="true">
-	<title>TVBox</title>
-	<meta name="layoutmode" content="standard">
-	<link rel="stylesheet" type="text/css" href="style.css">
-	<link rel="stylesheet" type="text/css" href="ui.css">
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>MBox · 局域网</title>
+  <script>
+    try {
+      const saved = JSON.parse(sessionStorage.getItem('mboxTheme') || '{}');
+      for (const [key,value] of Object.entries(saved.colors || {}))
+        if (/^--[a-z-]+$/.test(key) && /^#[0-9a-fA-F]{6,8}$/.test(value))
+          document.documentElement.style.setProperty(key,value);
+      if (saved.dark === true || saved.dark === false)
+        document.documentElement.style.colorScheme = saved.dark ? 'dark' : 'light';
+    } catch (_) { /* 首次访问使用基础配色，配对后同步手机主题 */ }
+  </script>
+  <link rel="stylesheet" href="/style.css">
 </head>
-
 <body>
-	<div class="page">
-		<div class="page__bd" style="height: 100%;">
-			<div class="weui-tab">
-				<div id="panel1" role="tabpanel" aria-labelledby="tab1" class="weui-tab__panel">
-					<div class="weui-form">
-						<div class="weui-form__text-area">
-							<h2 class="weui-form__title">TVBox . 搜索</h2>
-						</div>
-						<div class="weui-form__control-area">
-							<div class="weui-cells__group weui-cells__group_form">
-								<div class="weui-cells">
-									<div class="weui-cell weui-cell_active weui-cell_vcode weui-cell_wrap">
-										<div class="weui-cell__bd weui-flex">
-											<input id="search_key_word"
-												class="weui-input weui-cell__control weui-cell__control_flex"
-												type="text" value="" placeholder="请输入搜索的关键字..." />
-											<button onclick="search(); return false;"
-												class="weui-cell__control weui-btn weui-btn_default weui-vcode-btn">搜索</button>
-										</div>
-									</div>
-								</div>
-							</div>
-						</div>
-					</div>
-				</div>
-				<div id="panel2" role="tabpanel" aria-labelledby="tab2" class="weui-tab__panel" style="display: none;">
-					<div class="weui-form">
-						<div class="weui-form__text-area">
-							<h2 class="weui-form__title">TVBox . 推送</h2>
-						</div>
-						<div class="weui-form__control-area">
-							<div class="weui-cells__group weui-cells__group_form">
-								<div class="weui-cells">
-									<div class="weui-cell weui-cell_active weui-cell_vcode weui-cell_wrap">
-										<div class="weui-cell__bd weui-flex">
-											<input id="push_url"
-												class="weui-input weui-cell__control weui-cell__control_flex"
-												type="text" value="" placeholder="请输入需要推送播放的地址..." />
-											<button onclick="push(); return false;"
-												class="weui-cell__control weui-btn weui-btn_default weui-vcode-btn">推送</button>
-										</div>
-									</div>
-								</div>
-							</div>
-						</div>
-					</div>
-				</div>
-				<div id="panel3" role="tabpanel" aria-labelledby="tab3" class="weui-tab__panel" style="display: none;">
-					<div class="weui-form" style="min-height: 0;">
-						<div class="weui-form__text-area">
-							<h2 class="weui-form__title">TVBox . 接口</h2>
-						</div>
-						<div class="weui-form__control-area" style="margin-bottom: 0px !important;">
-							<div class="weui-cells__group weui-cells__group_form">
-								<div class="weui-cells">
-									<div class="weui-cell weui-cell_active weui-cell_vcode weui-cell_wrap">
-										<div class="weui-cell__bd weui-flex">
-											<input id="diy_api_url"
-												class="weui-input weui-cell__control weui-cell__control_flex"
-												type="text" value="" placeholder="请输入自定义配置接口地址..." />
-											<button onclick="api(); return false;"
-												class="weui-cell__control weui-btn weui-btn_default weui-vcode-btn">确定</button>
-										</div>
-									</div>
-								</div>
-							</div>
-						</div>
-					</div>
-					<div class="weui-form" style="padding-top: 50px; min-height: 0;">
-						<div class="weui-form__text-area">
-							<h2 class="weui-form__title">本地文件</h2>
-						</div>
-						<input type="file" id="file_uploader" style="display:none;" onchange="uploadTip()" multiple />
-						<div class="weui-form__control-area" style="text-align: center;margin-bottom: 10px !important;">
-							<div class="button-sp-area" style="margin-top: 10px;">
-								<a href="javascript:void(0)" role="button"
-									class="weui-btn weui-btn_mini weui-btn_default weui-wa-hotarea"
-									href="javascript:void(0)" onclick="uploadFile()">上传文件</a>&nbsp;
-								<a href="javascript:void(0)" role="button"
-									class="weui-btn weui-btn_mini weui-btn_default weui-wa-hotarea"
-									href="javascript:void(0)" onclick="newFolder()">新建文件夹</a>&nbsp;
-								<a id="delCurFolder" href="javascript:void(0)" role="button"
-									class="weui-btn weui-btn_mini weui-btn_warn weui-wa-hotarea"
-									href="javascript:void(0)" onclick="delFolder()" style="display: none;">删除当前文件夹</a>
-							</div>
-						</div>
-						<div class="weui-cells" id="file_list">
-						</div>
-					</div>
-				</div>
-				<div role="tablist" class="weui-tabbar">
-					<div id="tab1" role="tab" aria-labelledby="t1_title" aria-selected="true" aria-controls="panel1"
-						class="weui-tabbar__item weui-bar__item_on">
-						<img style="width: 20px; height: 20px; margin: 5px 0 5px 0;"
-							src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAAuQAAALkB4qdB6AAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAAKfSURBVFiFxdfPi1ZVGMDxz31HCnOq0ZkK00THlxhpIToELdxILkQMRMN1bly1EAlxY/0BswqiFi7KnW3aBSJFKTg2iJY/CsIfEZqjmSJiipKdFvfR9/Jy7zv3bd55PXA4l3vO8zzf85zznPOcLKWkU8mybCE2YhPGsATDuIGr+Blf43BK6U5HZWUlpVRaMQ/78ACpRr2H3WhU6SyrWZkHsixbjc+xJpSfwUmcivZCeGMtxqO+EeLHsCOldL5rD2AAH+FhGP4Nb9eZCd7BHwVv7Kol16bkk1DwLz7FYDfuxBC+KCzLh7UBsLMguLUbwyUgOwoT2T4jABbjbgh9NhvjBYiDoe8vDM0EsD8GX8CCHgEskodpwkSHcYbxT7hrXS+MF5RvCoC/8VwVwHsx6JdeGi8YmA79W8r6G9gcEXmiVtx2X05Gu7mss4FmnwCaZZ0N+dneD4AlZZ0NDMb39TkCeKz3mSqA6fheO0cAa6I9XQVwJb7fnCOA8WhPVQFMPk0AeEsep7cxv8dnwItaN+trVQdRhvMx6OMeAxwIvd/OdBe8q3V7re+R8S1auUGzI0AIHAmB3/HCLI2/JA+/hL0dxxaEFssjIuEoVvxP42PyQy3JQ29eLYAQHsefIXwX75PnjTUMD2AP7mslNsfxfG2Agvu+LCj5PtazaheviD00VZCZLExkstOSdprRtsI6Pq43cEieO36Dm239l0QKJs+Sr8X/KRVZ0UxuHcEEfm0zVKz38SM+wLNt8qu08oETWNhuo/RdUFayLFup9TIakqdv53AxpfSog9zr+A6vBuiGlNKtJwNmE25dREYTl8MTP2Gk1hL0GGJUfsYknMXLfQUIiOXy11aSP2pfqb0HelWyLFsm3xOj+KHvAAGxFF/h8n+GU+2I7XnhZwAAAABJRU5ErkJggg=="
-							alt="" class="weui-tabbar__icon">
-						<p id="t1_title" aria-hidden="true" class="weui-tabbar__label">搜索</p>
-					</div>
-					<div id="tab2" role="tab" aria-labelledby="t2_title" aria-selected="false" aria-controls="panel2"
-						class="weui-tabbar__item">
-						<img style="width: 20px; height: 20px; margin: 5px 0 5px 0;"
-							src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAABHNCSVQICAgIfAhkiAAAAAlwSFlzAAAAuQAAALkB4qdB6AAAABl0RVh0U29mdHdhcmUAd3d3Lmlua3NjYXBlLm9yZ5vuPBoAAAJlSURBVFiF7ddNSNRBGMfxzy6B4aUsoxfMXiQwO1kEHewQXUI6FXWqIIzQgii69XILOnToFlYE3SMSkiCJolsW7CUIen+j6FJBiGWm02FHG9fddZdELw48/Hdmfs/zfGfmYZjNhBDMZsvOavY5AMyrRpzJZLagHRuj1eAFnqI7hJCrmiCEMKVhIa5gFKGM9aGhkpjjsStI3orPMcEPXMQeNKAeW3Ea36LmEzZNCwAW4FUM/BItZbR1uBm1X7F8OgBuxIDPUFfBbtXgYfS5/V8A2JycbXvFW8pajCS71o29qK8W4FQMcr/EfAOeIIfVBXM9RQp0AIeqAbgfHSc7sTKpjYB3WJPMz0MzduMs3ibam1hUEgDz0Ymh6NBWJPnrIit8n0IU+NTiPH4X7mqhsANfCgLXJ/ONSfJconmUQKwts6ttCUTHBACcSwL24WB6tliFN0nyRYl+QQLxAU1lIE5E3XcsGxs8GQcH0VnEaVVyjrmxMxwDiL9TiI9TQIzV11FYKn/DBewv4fCkMHkhQBGIp2UAuqLmGlyInZ4yDpfRmyYvBpBA3ML1MvGakgV5EDu7SjmUCTQJoEK/xdH3RxYb5Fu/mWvN8fssi+HYGZxBgG3x25+VLzBYNxOZM5lMLY7F7t0sHsfOvpkAwHEswb0Qwh1YIf+YGMSOKoupF71V6Lfjj/yxt4zfhHH1IU4crraqK0zeKv9QCTgyPp4ILvl3teZwBuunKXkHfsbYJybMFQh3+vf+m24bQNckuCK0C3EAV/Ecv6INRfsdbTixP9FGoo2a+ILuQWOx3cnEpLPWZv2f0RzAX4u0r6Ikm0C7AAAAAElFTkSuQmCC"
-							alt="" class="weui-tabbar__icon">
-						<p aria-hidden="true" id="t2_title" class="weui-tabbar__label">推送</p>
-					</div>
-					<div id="tab3" role="tab" aria-labelledby="t3_title" aria-selected="false" aria-controls="panel3"
-						class="weui-tabbar__item">
-						<img style="width: 20px; height: 20px; margin: 5px 0 5px 0;"
-							src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAMAAABEpIrGAAAAA3NCSVQICAjb4U/gAAAACXBIWXMAAAC5AAAAuQHip0HoAAAAGXRFWHRTb2Z0d2FyZQB3d3cuaW5rc2NhcGUub3Jnm+48GgAAANtQTFRF////AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAhQHXOQAAAEh0Uk5TAAECBAUGCQoNDxITGiAhKC4xMjM0Nzg8P0BDT1dmbHR4fX+MlpedoKOkp6issri5vL2/zs/S19zd4OHi5OXp7e/x8/f6+/z+bkNkuAAAATRJREFUOMuNk2kzAmAUhR8iUSHSokWobCFLtFBI9fz/X+RDzdQY9brfzl3mbufAghVfVF+KLLHoh6p+RJckHGkxmSzq0ZKEjF2ArplfgcPjHYBC2w5Ax3YBYOf4cBovjfw82dy71/ElwOVY7/c2Tz4dlQB2h6q9b3uVxLQiUen53VMd7gINWwflgT7G503jjzoop55sQN5JBuK12sbiWBu1WhzSE/PcectSu/WOjs31uWcrm92ao/WmHc70OTtzbNfHOq5vz2D2Wc9Yq3zpBQCxV+339TUGwIV+VdaAxIMtAKq+5SD3bhWAlg+zvc+9BogMzQHkHEYAbjyf9bryFGDf/hT33Qc49eq/CaEWgSGDawYPFTx18Fl5J+mV76bhU2oVYcKUC5I2TPuwcP4tvaB4/5T/D6drVhrBHvH6AAAAAElFTkSuQmCC"
-							alt="" class="weui-tabbar__icon">
-						<p id="t3_title" aria-hidden="true" class="weui-tabbar__label">配置</p>
-					</div>
-				</div>
-			</div>
-		</div>
-	</div>
-	<div id="fileInfoDialog" role="dialog" aria-modal="false" aria-hidden="true" style="display: none;">
-		<div role="button" class="weui-mask"></div>
-		<div class="weui-half-screen-dialog">
-			<div class="weui-half-screen-dialog__hd">
-				<div class="weui-half-screen-dialog__hd__main">
-					文件接口
-					<span class="weui-half-screen-dialog__tips" role="option">
-						点击使用时请打开应用内接口设置对话框
-					</span>
-				</div>
-			</div>
-			<div class="weui-half-screen-dialog__bd" id="fileInfo">
-				<div class="weui-form__control-area" style="margin-bottom: 0px !important;">
-					<div class="weui-cells__group weui-cells__group_form">
-						<div class="weui-cells">
-							<!-- <div class="weui-cell weui-cell_active weui-cell_vcode weui-cell_wrap">
-								<div class="weui-cell__hd"><label class="weui-label">测试地址</label></div>
-							</div>
-							<div class="weui-cell weui-cell_active weui-cell_vcode weui-cell_wrap">
-								<div class="weui-cell__bd weui-flex">
-									<input id="fileUrl0" class="weui-input weui-cell__control weui-cell__control_flex"
-										type="text" value="" readonly />
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand"><strong>MBox</strong><span>局域网</span></div>
+      <nav id="mainNav" class="main-nav" aria-label="页面" hidden>
+        <a href="/" data-route="home">首页</a>
+        <a href="/video.html" data-route="video">视频库</a>
+        <a href="/cast.html" data-route="cast">推送播放</a>
+        <a href="/files.html" data-route="files">本地文件</a>
+      </nav>
+      <span id="connection" class="pill">连接中</span>
+      <button id="logoutButton" class="ghost compact" type="button" hidden>退出连接</button>
+    </header>
 
-								</div>
-							</div> -->
-							<div class="weui-cell weui-cell_active weui-cell_vcode weui-cell_wrap">
-								<div class="weui-cell__hd"><label class="weui-label">本机地址</label></div>
-								<div class="weui-cell__bd weui-flex"><button onclick="fileToApi(1); return false;"
-										class="weui-cell__control weui-btn weui-btn_default weui-vcode-btn">使用</button>
-								</div>
-							</div>
-							<div class="weui-cell weui-cell_active weui-cell_vcode weui-cell_wrap">
-								<div class="weui-cell__bd weui-flex">
-									<input id="fileUrl1" class="weui-input weui-cell__control weui-cell__control_flex"
-										type="text" value="" readonly />
+    <section id="pairPanel" class="card pair-card" hidden>
+      <p class="eyebrow">连接手机</p><h1>输入手机上显示的配对码</h1>
+      <p class="muted">在 MBox「设置 → 局域网服务」中查看。被手机踢出或配对码更新后需要重新配对。</p>
+      <form id="pairForm" class="row"><input id="pairCode" type="text" inputmode="numeric" pattern="[0-9]{8}" maxlength="8" autocomplete="one-time-code" placeholder="8 位配对码" required><button class="primary" type="submit">连接</button></form>
+      <p id="pairError" class="error" role="alert"></p>
+    </section>
 
-								</div>
-							</div>
-							<div class="weui-cell weui-cell_active weui-cell_vcode weui-cell_wrap">
-								<div class="weui-cell__hd"><label class="weui-label">局域网地址</label></div>
-								<div class="weui-cell__bd weui-flex"><button onclick="fileToApi(2); return false;"
-										class="weui-cell__control weui-btn weui-btn_default weui-vcode-btn">使用</button>
-								</div>
-							</div>
-							<div class="weui-cell weui-cell_active weui-cell_vcode weui-cell_wrap">
-								<div class="weui-cell__bd weui-flex">
-									<input id="fileUrl2" class="weui-input weui-cell__control weui-cell__control_flex"
-										type="text" value="" readonly />
+    <div id="dashboard" hidden>
+      <section id="homePage" class="route-page" hidden>
+        <section class="card hero"><div><p class="eyebrow">欢迎使用</p><h1>手机内容，在电脑上打开</h1><p class="muted">视频库与 App「我的 → 本地视频」保持一致。已配对设备可在手机上的局域网控制台查看和踢出。</p></div></section>
+        <div class="grid">
+          <a class="card nav-card" href="/video.html" data-route="video"><p class="eyebrow">本地播放</p><h2>视频库</h2><p class="muted">浏览 App 本地视频的文件夹与视频，播放结束后自动播放同组下一集。</p><span>打开视频库 →</span></a>
+          <a class="card nav-card" href="/cast.html" data-route="cast"><p class="eyebrow">在线播放</p><h2>推送播放</h2><p class="muted">接收手机播放器推送的视频，在电脑上选集、继续播放。</p><span>打开推送播放 →</span></a>
+          <a class="card nav-card" href="/files.html" data-route="files"><p class="eyebrow">管理</p><h2>本地文件</h2><p class="muted">浏览、上传、下载和管理手机文件。</p><span>打开文件页 →</span></a>
+        </div>
+        <section class="card"><p class="eyebrow">数据迁移</p><h2>从手机取回数据</h2><p class="muted">按类型下载；另一台 MBox 可在手机「局域网配置导入」里连接并选择导入。</p><div id="dataTypes" class="data-types"></div></section>
+        <p class="footer">局域网服务只应在可信任的网络开启。使用完可在手机设置中关闭。</p>
+      </section>
 
-								</div>
-							</div>
-						</div>
-					</div>
-				</div>
-			</div>
-			<div class="weui-half-screen-dialog__ft" style="padding-bottom: 30px;">
-				<div class="weui-half-screen-dialog__btn-area">
-					<a href="javascript:void(0)" class="weui-btn weui-btn_default" onclick="hideFileInfo()">关闭</a>
-					<a href="javascript:void(0)" id="delFileBtn" class="weui-btn weui-btn_warn"
-						onclick="delFile()">删除文件</a>
-				</div>
-			</div>
-		</div>
-	</div>
+      <section id="videoPage" class="route-page" hidden>
+        <div class="video-layout">
+          <aside class="card video-sidebar">
+            <div class="section-head"><div><p class="eyebrow">我的 · 本地视频</p><h2>文件夹</h2></div><button id="refreshVideos" class="ghost compact">刷新</button></div>
+            <p id="videoCount" class="muted">读取手机视频清单中…</p>
+            <div id="videoFolders" class="video-folders"></div>
+          </aside>
+          <div class="video-main">
+            <section class="card player-card">
+              <div class="section-head"><div><p class="eyebrow">正在播放</p><h1 id="videoTitle">选择一个视频</h1></div><span id="playbackStatus" class="pill">等待播放</span></div>
+              <video id="video" controls playsinline preload="metadata"></video>
+              <p id="videoMessage" class="muted">从左侧选文件夹和视频。</p>
+              <label class="toggle"><input id="autoNext" type="checkbox" checked> 播放结束后自动播放当前文件夹下一集</label>
+            </section>
+            <section class="card">
+              <div class="section-head"><div><p class="eyebrow">视频列表</p><h2 id="videoPath">选择文件夹</h2></div><span id="videoFolderCount" class="muted"></span></div>
+              <div id="videoList" class="video-list"></div>
+            </section>
+          </div>
+        </div>
+      </section>
 
-	<div role="dialog" aria-hidden="true" aria-modal="true" id="uploadTip" style="display: none;">
-		<div class="weui-mask"></div>
-		<div class="weui-dialog">
-			<div class="weui-dialog__hd"><strong class="weui-dialog__title">确认上传?</strong></div>
-			<div class="weui-dialog__bd" id="uploadTipContent"></div>
-			<div class="weui-dialog__ft">
-				<a role="button" href="javascript:void(0)" onclick="doUpload(0)"
-					class="weui-dialog__btn weui-dialog__btn_default">取消</a>
-				<a role="button" href="javascript:void(0)" onclick="doUpload(1)"
-					class="weui-dialog__btn weui-dialog__btn_primary">确定</a>
-			</div>
-		</div>
-	</div>
+      <section id="castPage" class="route-page" hidden>
+        <div class="video-layout">
+          <aside class="card video-sidebar">
+            <div class="section-head"><div><p class="eyebrow">手机在线播放</p><h2>可选集</h2></div></div>
+            <p id="castEpisodeCount" class="muted">等待手机推送视频</p>
+            <div id="castEpisodes" class="video-list"></div>
+          </aside>
+          <div class="video-main">
+            <section class="card player-card">
+              <div class="section-head"><div><p class="eyebrow">推送播放</p><h1 id="castTitle">等待手机推送</h1></div><span id="castStatus" class="pill">等待播放</span></div>
+              <video id="castVideo" controls playsinline preload="metadata"></video>
+              <p id="castMessage" class="muted">在手机播放器设置中选择「推送到电脑播放」。</p>
+              <label class="toggle"><input id="castAutoNext" type="checkbox" checked> 播放结束后自动请求手机下一集</label>
+            </section>
+          </div>
+        </div>
+      </section>
 
-	<div role="dialog" aria-hidden="true" aria-modal="true" id="newFolder" style="display: none;">
-		<div class="weui-mask"></div>
-		<div class="weui-dialog">
-			<div class="weui-dialog__hd"><strong class="weui-dialog__title">新建文件夹</strong></div>
-			<div class="weui-dialog__bd">
-				<input id="newFolderContent" class="weui-input weui-cell__control weui-cell__control_flex" type="text"
-					value="" placeholder="请输入文件夹名称..." />
-			</div>
-			<div class="weui-dialog__ft">
-				<a role="button" href="javascript:void(0)" onclick="doNewFolder(0)"
-					class="weui-dialog__btn weui-dialog__btn_default">取消</a>
-				<a role="button" href="javascript:void(0)" onclick="doNewFolder(1)"
-					class="weui-dialog__btn weui-dialog__btn_primary">确定</a>
-			</div>
-		</div>
-	</div>
-
-	<div role="dialog" aria-hidden="true" aria-modal="true" id="delFolder" style="display: none;">
-		<div class="weui-mask"></div>
-		<div class="weui-dialog">
-			<div class="weui-dialog__hd"><strong class="weui-dialog__title">删除文件夹</strong></div>
-			<div class="weui-dialog__bd" id="delFolderContent"></div>
-			<div class="weui-dialog__ft">
-				<a role="button" href="javascript:void(0)" onclick="doDelFolder(0)"
-					class="weui-dialog__btn weui-dialog__btn_default">取消</a>
-				<a role="button" href="javascript:void(0)" onclick="doDelFolder(1)"
-					class="weui-dialog__btn weui-dialog__btn_primary">确定</a>
-			</div>
-		</div>
-	</div>
-
-	<div role="dialog" aria-hidden="true" aria-modal="true" id="delFile" style="display: none;">
-		<div class="weui-mask"></div>
-		<div class="weui-dialog">
-			<div class="weui-dialog__hd"><strong class="weui-dialog__title">删除文件</strong></div>
-			<div class="weui-dialog__bd" id="delFileContent"></div>
-			<div class="weui-dialog__ft">
-				<a role="button" href="javascript:void(0)" onclick="doDelFile(0)"
-					class="weui-dialog__btn weui-dialog__btn_default">取消</a>
-				<a role="button" href="javascript:void(0)" onclick="doDelFile(1)"
-					class="weui-dialog__btn weui-dialog__btn_primary">确定</a>
-			</div>
-		</div>
-	</div>
-
-	<div role="alert" id="warnToast" style="display: none;">
-		<div class="weui-mask_transparent"></div>
-		<div class="weui-toast">
-			<i class="weui-icon-warn weui-icon_toast"></i>
-			<p class="weui-toast__content" id="warnToastContent"></p>
-		</div>
-	</div>
-
-	<div role="alert" id="loadingToast" style="display: none;">
-		<div class="weui-mask_transparent"></div>
-		<div class="weui-toast">
-			<span class="weui-primary-loading weui-icon_toast">
-				<span class="weui-primary-loading__dot"></span>
-			</span>
-			<p class="weui-toast__content">加载中</p>
-		</div>
-	</div>
-	<script src="jquery.js"></script>
-	<script src="token.js"></script>
-	<script src="script.js"></script>
+      <section id="filesPage" class="route-page" hidden>
+        <section class="card"><div class="section-head"><div><p class="eyebrow">手机存储</p><h1>本地文件</h1></div><button id="refreshFiles" class="ghost">刷新</button></div><div class="row file-actions"><button id="upFolder" class="ghost">返回上级</button><button id="newFolder" class="ghost">新建文件夹</button><label class="upload ghost">上传文件<input id="uploadFiles" type="file" multiple hidden></label></div><p id="folderPath" class="muted path">/</p><div id="fileList" class="file-list"></div></section>
+      </section>
+    </div>
+    <div id="notice" class="notice" role="status" hidden></div>
+  </main>
+  <script src="/hls.js" defer></script>
+  <script src="/script.js" defer></script>
 </body>
-
 </html>

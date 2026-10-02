@@ -304,6 +304,32 @@
                         android:clickable="false"/>
                 </LinearLayout>
 
+                <LinearLayout
+                    android:id="@+id/llLanAddress"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/dp_60"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="40dp"
+                    android:foreground="?android:selectableItemBackground">
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="局域网服务管理"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="16sp" />
+                    <ImageView
+                        android:id="@+id/ivLanManageArrow"
+                        android:layout_width="13dp"
+                        android:layout_height="13dp"
+                        android:layout_gravity="center"
+                        android:alpha="0.75"
+                        android:contentDescription="进入局域网服务管理"
+                        android:src="@drawable/ic_seek_right"
+                        app:tint="@color/text_foreground" />
+                </LinearLayout>
+
                 <!-- 忽略证书错误开关:默认关闭(校验证书/主机名);个别自签名站点打不开时再开启(会降低 TLS 安全性) -->
                 <LinearLayout
                     android:id="@+id/llIgnoreSsl"

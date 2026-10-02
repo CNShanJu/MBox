@@ -808,6 +808,9 @@ public class VodController extends BaseController implements PlaybackSettingsCon
 
     // ------------------------------------------------------------------
     // PlaybackSettingsController:设置抽屉(在线全屏与本地共用)取控制器按钮/状态
+    @Override public boolean supportsLanPush() { return true; }
+
+    @Override public void requestLanPush() { if (listener != null) listener.cast(); }
     // ------------------------------------------------------------------
 
     @Override

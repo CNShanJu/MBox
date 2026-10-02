@@ -12,6 +12,7 @@ import com.github.tvbox.osc.player.PlayerTrackHelper
 import com.github.tvbox.osc.player.api.IjkCodecConfigProviders
 import com.github.tvbox.osc.player.api.PlayConfig
 import com.github.tvbox.osc.util.AppBubble
+import com.github.tvbox.osc.util.BackgroundPlaySettings
 import com.github.tvbox.osc.R
 import com.github.tvbox.osc.base.BaseVbActivity
 import com.github.tvbox.osc.bean.IJKCode
@@ -22,8 +23,6 @@ import com.github.tvbox.osc.util.ThrottlePolicy
 import com.github.tvbox.osc.ui.adapter.SelectDialogAdapter
 import com.github.tvbox.osc.ui.adapter.SelectDialogAdapter.SelectDialogInterface
 import com.github.tvbox.osc.ui.dialog.BackupDialog
-import com.github.tvbox.osc.ui.dialog.DialogCoordinator
-import com.github.tvbox.osc.ui.dialog.LanServerDialog
 import com.github.tvbox.osc.ui.dialog.SelectDialog
 import com.github.tvbox.osc.ui.dialog.TextTipDialog
 import com.github.tvbox.osc.ui.dialog.ThemePickerDialog
@@ -60,7 +59,6 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
     private var inited = false
 
     /** 局域网服务弹窗引用:view 模式弹窗不接管返回键,由本页 onBackPressed 先关它(见文件末尾) */
-    private var lanDialog: com.lxj.xpopup.core.BasePopupView? = null
 
     /** 主题颜色弹窗引用(编辑页返回后若它还开着,就地刷新列表) */
     private var themeDialog: com.github.tvbox.osc.ui.dialog.ThemePickerDialog? = null
@@ -111,14 +109,15 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
         }
 
         // 局域网服务开关(默认关闭):关闭时 HTTP 服务仅监听 127.0.0.1(订阅/本地播放/代理不受影响);
-        // 开启后局域网设备可访问 web 控制台与文件共享,管理型请求需携带进程令牌(见 RemoteServer)。
-        // 地址与说明一律不进设置行(横排"标题+开关"塞不下),全部放 LanServerDialog:
-        // ①开关由关变开时自动弹一次(此刻最需要知道"从哪个地址进来");
-        // ②标题长按随时再看(换网络后地址会变)。见 ui/dialog/LanServerDialog 与 R.string.setting_lan_server_tip。
+        // 开启后局域网设备经配对访问网页与文件；地址、设备管理、配置导入各有独立入口。
+        // 开关由关变开时进入局域网服务二级页，地址、设备与配置导入都在该页。
         val lanEnabled = SystemConfig.isLanServerEnabled()
         mBinding.switchLanServer.setChecked(lanEnabled)
+        mBinding.llLanAddress.setOnClickListener { openLanServicePage() }
+        com.github.tvbox.osc.theme.ThemeSweep.applyImageTint(
+            mBinding.ivLanManageArrow, R.color.text_foreground)
         mBinding.tvLanServerTitle.setOnLongClickListener {
-            showLanServerDialog()
+            openLanServicePage()
             true
         }
         mBinding.llLanServer.setOnClickListener { view: View? ->
@@ -134,8 +133,7 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
                 else -> "局域网服务已关闭(仅本机)"
             })
             if (newVal) {
-                // 开启后弹窗:把"访问地址 + 还需重启"一次说清,并给一键重启(否则用户只能自己去后台杀应用)
-                showLanServerDialog()
+                openLanServicePage()
             } else {
                 AppBubble.toast(if (lanState == ControlManager.LAN_PENDING_CLOSE)
                     "局域网服务已关闭，重启生效" else "局域网服务已关闭")
@@ -164,42 +162,22 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
         // 直播源已移到「订阅管理 - 直播源」页(订阅自带的跟着订阅走、用户自建的在那儿加),
         // 设置页不再提供入口,避免两处各配一份(2026-10-01)
 
-        val defaultBgPlayTypePos = PlayConfig.getBackgroundPlayType()
-        val bgPlayTypes = ArrayList<String>()
-        bgPlayTypes.add("关闭")
-        bgPlayTypes.add("开启")
-        bgPlayTypes.add("画中画")
-        mBinding.tvBackgroundPlayType.text = bgPlayTypes[defaultBgPlayTypePos]
+        mBinding.tvBackgroundPlayType.text = BackgroundPlaySettings.currentLabel()
         mBinding.llBackgroundPlay.setOnClickListener { view: View? ->
             FastClickCheckUtil.check(view)
+            val currentMode = BackgroundPlaySettings.currentMode()
             val dialog = SelectDialog<String>(this@SettingActivity)
             dialog.setTip("请选择")
             dialog.setAdapter(object : SelectDialogInterface<String?> {
                 override fun click(value: String?, pos: Int) {
-                    mBinding.tvBackgroundPlayType.text = value
-                    PlayConfig.setBackgroundPlayType(pos)
-                    // 后台播放=开启:Android 13+ 需通知权限,通知栏才有播放控制/关闭按钮
-                    if (pos == 1 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
-                        && !XXPermissions.isGranted(this@SettingActivity, Permission.NOTIFICATION_SERVICE)
-                    ) {
-                        XXPermissions.with(this@SettingActivity)
-                            .permission(Permission.NOTIFICATION_SERVICE)
-                            .request(object : OnPermissionCallback {
-                                override fun onGranted(permissions: List<String>, all: Boolean) {
-                                    AppBubble.toast("后台播放通知已开启")
-                                }
-
-                                override fun onDenied(permissions: List<String>, never: Boolean) {
-                                    AppBubble.toast("通知权限未开启，后台控制不可用")
-                                }
-                            })
-                    }
+                    BackgroundPlaySettings.select(this@SettingActivity, pos)
+                    mBinding.tvBackgroundPlayType.text = BackgroundPlaySettings.currentLabel()
                 }
 
                 override fun getDisplay(name: String?): String {
                     return name?:""
                 }
-            },SelectDialogAdapter.stringDiff, bgPlayTypes, defaultBgPlayTypePos)
+            },SelectDialogAdapter.stringDiff, BackgroundPlaySettings.MODES, currentMode)
             dialog.show()
         }
 
@@ -659,6 +637,7 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
                 if (oldAnim != LoadingAnim.getAnimName()) {
                     val bundle = Bundle()
                     bundle.putBoolean(IntentKey.CACHE_CONFIG_CHANGED, true)
+                    SystemConfig.markInternalRestart()
                     jumpActivity(MainActivity::class.java, bundle)
                 }
             }
@@ -667,16 +646,11 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
     }
 
     override fun onBackPressed() {
-        // 局域网服务弹窗(地址/状态)是 view 模式的底部弹窗,不会自己吃掉返回键 —— 先关它再谈退出本页
-        val lan = lanDialog
-        if (lan != null && lan.isShow) {
-            lan.dismiss()
-            return
-        }
         if (homeRec != SystemConfig.getHomeRec() || dnsOpt != SystemConfig.getDohUrl()
         ) { // 首页类型/dns/doh 有更改,需重载页面(直播源已移到订阅管理页,不在这里比)
             val bundle = Bundle()
             bundle.putBoolean(IntentKey.CACHE_CONFIG_CHANGED, true)
+            SystemConfig.markInternalRestart()
             jumpActivity(MainActivity::class.java, bundle)
             overridePendingTransition(R.anim.fade_in, R.anim.fade_out)
         } else {
@@ -686,6 +660,7 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
 
     override fun onResume() {
         super.onResume()
+        mBinding.tvBackgroundPlayType.text = BackgroundPlaySettings.currentLabel()
         // 背景图设置页返回后刷新取值(默认/自定义)
         if (inited) {
             updatePageBackgroundValue()
@@ -770,6 +745,7 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
      */
     private fun applyThemeAndRestart() {
         Utils.initTheme()
+        SystemConfig.markInternalRestart()
         AppUtils.relaunchApp(true)
     }
 
@@ -835,51 +811,8 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             .show()
     }
 
-    /**
-     * 局域网服务弹窗(地址 / 状态 / 一键重启):开关打开时自动弹一次,标题长按随时再看。
-     * 用 view 模式的底部弹窗(与其他底部弹窗同一套组装),返回键由本页 onBackPressed 负责关掉它。
-     */
-    private fun showLanServerDialog() {
-        val dialog = DialogCoordinator.bottom(
-            this,
-            LanServerDialog(this) { restartAppForLan() },
-            0
-        )
-        lanDialog = dialog
-        dialog.show()
+    private fun openLanServicePage() {
+        jumpActivity(LanServiceActivity::class.java)
     }
 
-    /**
-     * 让「局域网服务」生效:重启应用(不杀进程,CLEAR_TASK 重建任务栈 —— 与备份还原后的重启同一套做法)。
-     * <p>
-     * 先显式 {@code stopServer()}:重启走的是同一个进程,旧的服务实例(仅本机绑定)如果还留着,
-     * 新首页的 startServer 会判定"已存在"而直接返回,服务就一直是停的(订阅/本地播放/proxy 全失效)。
-     */
-    private fun restartAppForLan() {
-        biz("局域网服务:重启应用使其生效")
-        try {
-            ControlManager.get().stopServer()
-        } catch (t: Throwable) {
-            Log.w("TVBox-Setting", "重启前停止本机服务失败", t)
-        }
-        try {
-            val launch = packageManager.getLaunchIntentForPackage(packageName)
-            if (launch != null) {
-                launch.addFlags(
-                    Intent.FLAG_ACTIVITY_NEW_TASK
-                            or Intent.FLAG_ACTIVITY_CLEAR_TASK
-                            or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                )
-                startActivity(launch)
-                return
-            }
-        } catch (t: Throwable) {
-            Log.w("TVBox-Setting", "重启应用失败,改用兜底方式", t)
-        }
-        try {
-            AppUtils.relaunchApp(true)
-        } catch (t: Throwable) {
-            AppBubble.toast("重启失败，请手动重开应用")
-        }
-    }
 }

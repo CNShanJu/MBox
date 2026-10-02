@@ -20,15 +20,28 @@
         android:textStyle="bold"
         android:textSize="18sp"/>
 
-    <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/rv"
+    <TextView
+        android:id="@+id/cast_hint"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        tools:listitem="@layout/item_title"
+        android:layout_marginTop="12dp"
+        android:textColor="@color/text_sub_foreground"
+        android:textSize="14sp" />
+
+    <ScrollView
+        android:id="@+id/scrollCastTargets"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
         android:layout_marginTop="10dp"
         android:paddingTop="8dp"
         android:paddingBottom="8dp"
-        android:clipToPadding="false" />
+        android:clipToPadding="false">
+        <RadioGroup
+            android:id="@+id/cast_targets"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+    </ScrollView>
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"

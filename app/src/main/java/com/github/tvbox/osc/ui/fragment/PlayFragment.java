@@ -68,6 +68,9 @@ public class PlayFragment extends BaseLazyFragment {
         void onEpisodeSelected(int index);
 
         void onPlayerCfgChanged(org.json.JSONObject cfg);
+
+        /** 返回 true 表示地址已交给外部设备，本机播放器无需起播。 */
+        default boolean onPlaybackResolved(String title, String url) { return false; }
     }
 
     private PlaySyncHost mSyncHost;
@@ -396,7 +399,8 @@ public class PlayFragment extends BaseLazyFragment {
             ImmersionBar.with(mActivity)
                     .hideBar(BarHide.FLAG_SHOW_BAR)
                     .navigationBarColor(R.color.white)
-                    .fitsSystemWindows(true)
+                    // 详情页根布局已通过 WindowInsets 设置系统栏 padding；这里再内缩会让播放器下移两次。
+                    .fitsSystemWindows(false)
                     .init();
         }
 
@@ -681,6 +685,14 @@ public class PlayFragment extends BaseLazyFragment {
                 }
                 hideTip();
                 PlayerHelper.updateCfg(mVideoView, mVodPlayerCfg);
+                boolean castOnly = false;
+                if (mSyncHost != null && mVodInfo != null && mVodInfo.seriesMap != null
+                        && mVodInfo.seriesMap.get(mVodInfo.playFlag) != null
+                        && mVodInfo.playIndex < mVodInfo.seriesMap.get(mVodInfo.playFlag).size()) {
+                    VodInfo.VodSeries episode = mVodInfo.seriesMap.get(mVodInfo.playFlag).get(mVodInfo.playIndex);
+                    castOnly = mSyncHost.onPlaybackResolved(mVodInfo.name + " " + episode.name, finalUrl);
+                }
+                if (castOnly) return;
                 // 起播统一经 PlayerSession(设进度键+URL+start;内核隔离入口)
                 if (mPlaySession != null) {
                     mPlaySession.play(finalUrl, progressKey, headers);
