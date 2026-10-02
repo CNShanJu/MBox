@@ -242,6 +242,9 @@ public final class ShareArchive {
                     throw new SecurityException("归档条目逃出目标目录: " + name);
                 }
                 if (!seenPaths.add(targetCanonical)) throw new SecurityException("归档包含重复条目: " + name);
+                // 落盘一律用规范化后的路径:条目名里的 "a/.." 在 Linux 上会让下面的
+                // getParentFile().mkdirs() 因 dest/a 不存在而失败(ENOENT),把"重复条目"报成文件错误。
+                target = new File(targetCanonical);
                 if (entry.isDirectory()) {
                     if (!target.exists() && !target.mkdirs()) {
                         throw new IOException("无法创建目录: " + name);
