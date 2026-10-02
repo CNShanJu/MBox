@@ -34,17 +34,14 @@
             app:tint="@color/text_foreground" />
     </LinearLayout>
 
-    <!-- 说明区:高度 0dp + weight=1 = 吃掉标题行与按钮行之外的全部剩余高度。
-         这样卡片本身"撑不高":一旦总高被上限约束,说明区自动缩小并自己滚动,
-         标题与稍后/立即更新永远留在卡片内(不再靠事后改高度,那受 XPopup 异步定尺寸影响)。 -->
+    <!-- 说明区的高度由 UpdateNoteDialog 在首次测量前按可用窗口高度设定；
+         标题和按钮保持在滚动区外，长说明只在这里滚动。 -->
     <ScrollView
         android:id="@+id/note_scroll"
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
+        android:layout_height="wrap_content"
         android:layout_marginTop="@dimen/dp_8"
         android:clipToPadding="false"
-        android:minHeight="@dimen/dp_80"
         android:paddingTop="4dp"
         android:paddingBottom="4dp"
         android:scrollbars="none">

@@ -23,13 +23,22 @@ public final class UpdaterConfig {
     public static final String DEFAULT_GITHUB_OWNER = "CNShanJu";
     public static final String DEFAULT_GITHUB_REPO = "MBox";
 
-    /** 默认 GitHub 下载加速前缀(形如 https://gh-proxy.org/);空串=不使用代理,仅直连 */
-    public static final String DEFAULT_GITHUB_DOWNLOAD_PROXY = "https://gh-proxy.org/";
+    /** 默认 GitHub 下载加速前缀(形如 https://gh-proxy.com/);空串=不使用代理,仅直连 */
+    public static final String DEFAULT_GITHUB_DOWNLOAD_PROXY = "https://gh-proxy.com/";
+
+    /**
+     * 国内下载镜像(Gitee 发行版附件)地址前缀,拼上 {@code <tag>/<apk文件名>} 即附件直链。
+     * <p>
+     * 镜像仓库与 GitHub 仓库同名同 tag,APK 由发版流水线在 GitHub Release 之后同步上传;
+     * 空串=不启用镜像候选。
+     */
+    public static final String DEFAULT_GITEE_DOWNLOAD_BASE = "https://gitee.com/CnAyo/MBox/releases/download/";
 
     private static final String KEY_SOURCE = "update_source";
     private static final String KEY_GITHUB_OWNER = "update_github_owner";
     private static final String KEY_GITHUB_REPO = "update_github_repo";
     private static final String KEY_GITHUB_DOWNLOAD_PROXY = "update_github_download_proxy";
+    private static final String KEY_GITEE_DOWNLOAD_BASE = "update_gitee_download_base";
 
     private UpdaterConfig() {
     }
@@ -73,5 +82,11 @@ public final class UpdaterConfig {
     public static void setGithubDownloadProxy(String proxyPrefix) {
         PrefsDataStore.put(KEY_GITHUB_DOWNLOAD_PROXY,
                 proxyPrefix == null ? "" : proxyPrefix.trim());
+    }
+
+    /** 国内下载镜像地址前缀(默认 {@value #DEFAULT_GITEE_DOWNLOAD_BASE});空串=不启用镜像候选 */
+    public static String getGiteeDownloadBase() {
+        String v = PrefsDataStore.getString(KEY_GITEE_DOWNLOAD_BASE, DEFAULT_GITEE_DOWNLOAD_BASE);
+        return v == null ? "" : v.trim();
     }
 }

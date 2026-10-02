@@ -1,5 +1,6 @@
 package com.github.tvbox.osc.update;
 
+import android.app.Activity;
 import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
@@ -105,6 +106,10 @@ public final class UpdateCheck {
      */
     public static void autoCheckOnce(final Context context, final Runnable onFinished) {
         if (context == null) return;
+        if (SystemConfig.consumeInternalRestart()) {
+            if (onFinished != null) onFinished.run();
+            return;
+        }
         if (!SystemConfig.isAutoCheckUpdate()) {
             if (onFinished != null) onFinished.run();
             return;
@@ -124,7 +129,17 @@ public final class UpdateCheck {
                 com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM, newVersion == null
                         ? "更新: 启动自动检查,已是最新" : "更新: 启动自动检查,发现新版本 v" + newVersion.versionName);
                 if (onFinished != null) MAIN.post(onFinished);
-                return false;   // 启动检查没有宿主弹窗要收,直接弹
+                if (newVersion != null) {
+                    MAIN.post(() -> {
+                        if (context instanceof Activity) {
+                            Activity host = (Activity) context;
+                            if (host.isFinishing() || host.isDestroyed()
+                                    || com.blankj.utilcode.util.ActivityUtils.getTopActivity() != host) return;
+                        }
+                        if (SystemConfig.claimAutoUpdatePrompt(newVersion.versionName)) showNote(context, newVersion);
+                    });
+                }
+                return true;
             }
 
             @Override

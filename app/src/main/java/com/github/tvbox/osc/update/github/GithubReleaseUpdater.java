@@ -144,6 +144,7 @@ public class GithubReleaseUpdater implements Updater {
         }
 
         List<String> candidates = buildDownloadCandidates(
+                mirrorDownloadUrl(target.tag, target.apk.name),
                 String.format("https://github.com/%s/%s/releases/download/%s/%s",
                         UpdaterConfig.getGithubOwner(), UpdaterConfig.getGithubRepo(), target.tag, target.apk.name));
         if (candidates.isEmpty()) return null;
@@ -193,21 +194,38 @@ public class GithubReleaseUpdater implements Updater {
         }
     }
 
-    /** 构建下载候选地址:优先拼接 GitHub 加速代理,末尾保留直连作为兜底 */
-    private static List<String> buildDownloadCandidates(String directUrl) {
+    /** 构建下载候选地址:国内镜像优先,其次 GitHub 加速代理,末尾保留直连兜底 */
+    private static List<String> buildDownloadCandidates(String mirrorUrl, String directUrl) {
         List<String> list = new ArrayList<>();
         if (directUrl == null || directUrl.trim().isEmpty()) return list;
         String direct = directUrl.trim();
+        if (mirrorUrl != null && !mirrorUrl.trim().isEmpty()) {
+            list.add(mirrorUrl.trim());
+        }
         String proxy = UpdaterConfig.getGithubDownloadProxy();
         if (!proxy.isEmpty()) {
-            // 前缀必须以 / 结尾,否则拼出来是 `https://gh-proxy.orghttps://github.com/...`(非法 URL,
+            // 前缀必须以 / 结尾,否则拼出来是 `https://gh-proxy.comhttps://github.com/...`(非法 URL,
             // 该候选恒失败)。默认值自带斜杠,这里是防自定义值漏写。
             String prefix = proxy.endsWith("/") ? proxy : proxy + "/";
-            // 拼接形如 https://gh-proxy.org/https://github.com/...
+            // 拼接形如 https://gh-proxy.com/https://github.com/...
             list.add(prefix + direct);
         }
         list.add(direct);
         return list;
+    }
+
+    /**
+     * 国内镜像(Gitee 发行版)的附件直链:{@code <镜像前缀><tag>/<apk文件名>}。
+     * <p>
+     * 镜像的 tag/附件由发版流水线在 GitHub Release 之后补上传,可能还没同步好;此时该候选会失败,
+     * 由 {@link com.github.tvbox.osc.update.UpdateManager} 按 {@code apkSize} 校验判失败并自动换下一条,
+     * 不会拿错误页去安装。
+     */
+    private static String mirrorDownloadUrl(String tag, String apkName) {
+        String base = UpdaterConfig.getGiteeDownloadBase();
+        if (base.isEmpty()) return null;
+        String prefix = base.endsWith("/") ? base : base + "/";
+        return prefix + tag + "/" + apkName;
     }
 
     // ------------------------------------------------------------------
