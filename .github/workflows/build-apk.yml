@@ -144,7 +144,11 @@ jobs:
           OWNER="${GITEE_OWNER:-CnAyo}"
           REPO="${GITEE_REPO:-MBox}"
           if [ -z "$GITEE_TOKEN" ]; then
-            echo "::notice title=Gitee 镜像未同步::仓库未配置 GITEE_TOKEN,跳过同步;App 下载走加速代理"
+            # 用 ::error(UI 里是一枚红叉,进 Actions 摘要)而不是 ::notice —— 这个分支会**静默**跳过
+            # 整个镜像同步:步骤依旧显示 success,镜像页却一直缺该版本(v3.6.1 就因此长期只有手工上传的包)。
+            # 仍然不 exit 1:GitHub 才是权威产物,镜像掉队不该阻断本次发版。
+            echo "::error title=Gitee 镜像未同步::仓库未配置 Secrets GITEE_TOKEN,本次发版不会同步 APK 到 Gitee;App 国内下载会回落到加速代理。配置方法见 AGENTS.md「代码托管与镜像同步」"
+            echo "::warning title=如需手工补传::Gitee 网页新建发行版并上传 app/build/outputs/apk/release/*.apk,或配置令牌后重跑本工作流"
             exit 0
           fi
           API="https://gitee.com/api/v5/repos/$OWNER/$REPO"

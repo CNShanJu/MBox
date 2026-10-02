@@ -162,6 +162,19 @@ try {
     if ($LASTEXITCODE -ne 0) {
       Fail ' git fetch origin 失败(网络或凭据问题)。' @('确认能访问 https://github.com/CNShanJu/MBox.git。')
     }
+    # 抢先拦下"上游有本地没有的提交":这种发散直接 push 必然被拒,而且会造成
+    # GitHub 推成功、Gitee 推失败的半同步状态(镜像掉队还得多跑一次 -GiteeOnly)。
+    # 注意:GiteeOnly 模式不校验——只补推镜像时本地暂时落后也无妨。
+    $b = (Get-GitOutput rev-list --left-right --count "origin/$Branch...$Branch")
+    if ($LASTEXITCODE -eq 0 -and $b -match '^(\d+)\s+(\d+)$') {
+      $behind = [int]$Matches[1]
+      if ($behind -gt 0) {
+        Fail " 本地 $Branch 落后 origin/$Branch $behind 个提交,已拒绝推送。" @(
+          "先 git pull --rebase origin $Branch 把上游提交并进来,再重新执行。",
+          '直接推会被远端拒绝,并留下 GitHub/Gitee 一端的半同步状态。'
+        )
+      }
+    }
   }
 
   # ------------------------------------------------------------ 待推送内容

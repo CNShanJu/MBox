@@ -229,6 +229,18 @@ app / feature
    `.github/workflows/build-apk.yml` 的 `Sync release APK to Gitee mirror` 步要先按 tag 在镜像仓库找到发行版,
    镜像没有该 tag 时它只告警跳过 —— APK 附件就同步不过去。发版后到 Actions 确认该步没有 `::warning` 跳过。
 4. **镜像掉队要能发现**:任一端的 `main` 或 `v*` tag 明显落后时用 `-GiteeOnly` 补推,不要长期放任手工推。
+5. **CI 同步 APK 到 Gitee 依赖 Secrets,缺令牌会静默跳过**(强制检查):
+   `GITEE_TOKEN`(必填),可选 `GITEE_OWNER`/`GITEE_REPO` 覆盖默认坐标 `CnAyo/MBox`。
+   - 取值:登录 https://gitee.com → 头像「设置」→「私人令牌」→ 新建,勾选 **projects**(仓库读写)权限;
+   - 写入:https://github.com/CNShanJu/MBox/settings/secrets/actions → New repository secret,名 `GITEE_TOKEN`;
+   - **未配置时的表现(历史上就是这样长期漏掉的)**:该步会打印 `::error` 但**仍以 success 结束**,镜像页一直
+     没有该版本的附件,App 国内下载只能回落到加速代理或直连。v3.6.1 的 Gitee 发行版是**手工上传**的
+     (带 Gitee 自动生成的 `v3.6.1.zip`/`v3.6.1.tar.gz` 源码包;API 上传的发行版不会有这两项 —— 可据此判断
+     某版本到底是 CI 同步的还是手工传的)。
+   - **每次发版后的验收动作**:打开该 tag 的 Build APK 运行记录,确认 `Sync release APK to Gitee mirror`
+     步里出现 `Gitee 附件已上传: ...`,而不是 `Gitee 镜像未同步` 的 error/warning;再访问
+     `https://gitee.com/CnAyo/MBox/releases/tag/<tag>` 确认附件在且能下载。
+   - 补同步:配置令牌后重新运行该 tag 的 Build APK 工作流即可(该步按 tag 找发行版,重跑不重复建)。
 
 ### 构建内存纪律(强制)
 
