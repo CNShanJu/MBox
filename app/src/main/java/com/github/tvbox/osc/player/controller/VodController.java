@@ -778,19 +778,13 @@ public class VodController extends BaseController implements PlaybackSettingsCon
     }
 
     public int getScaleType() {
-        try {
-            return mPlayerConfig.getInt("sc");
-        } catch (JSONException e) {
-            return 0;
-        }
+        return mPlayerConfig == null ? PlayConfig.getScaleType()
+                : mPlayerConfig.optInt("sc", PlayConfig.getScaleType());
     }
 
     public int getPlayerType() {
-        try {
-            return mPlayerConfig.getInt("pl");
-        } catch (JSONException e) {
-            return 0;
-        }
+        return mPlayerConfig == null ? PlayConfig.getPlayType()
+                : mPlayerConfig.optInt("pl", PlayConfig.getPlayType());
     }
 
     @Override

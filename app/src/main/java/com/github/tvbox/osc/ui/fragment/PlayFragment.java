@@ -266,6 +266,11 @@ public class PlayFragment extends BaseLazyFragment {
 
             @Override
             public void showSetting() {
+                // 预览控件先于影片详情创建；setData() 尚未送达时没有可修改的播放配置。
+                if (mVodInfo == null || mVodPlayerCfg == null) {
+                    AppBubble.toast("播放信息加载中，请稍后再试");
+                    return;
+                }
                 // 按当前方向决定形态: 横屏右侧抽屉; 竖屏底部弹层(AppBottomPopupView 自带高度上限)
                 if (ScreenUtils.isLandscape()) {
                     // view 模式无法自动响应返回键,onBackPress 时手动 dismiss

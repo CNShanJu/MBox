@@ -567,7 +567,7 @@
         android:layout_height="wrap_content"
         android:layout_gravity="center"
         android:orientation="vertical"
-        app:hl_layoutBackground="@color/gray_darker_press_alpha"
+        app:hl_layoutBackground="@color/player_overlay_bg"
         app:hl_cornerRadius="@dimen/radius_dialog"
         android:visibility="gone"
         tools:visibility="visible">
@@ -625,7 +625,7 @@
         android:clickable="true"
         android:focusable="true"
         android:visibility="gone"
-        app:hl_layoutBackground="@color/gray_darker_press_alpha"
+        app:hl_layoutBackground="@color/player_overlay_bg"
         app:hl_cornerRadius="@dimen/radius_dialog">
 
         <ImageView
