@@ -1,11 +1,15 @@
 package com.github.tvbox.osc.update;
 
 import android.content.Context;
+import android.content.res.ColorStateList;
+import android.graphics.drawable.Drawable;
+import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.LayerDrawable;
+import android.graphics.drawable.ScaleDrawable;
+import android.view.Gravity;
 import android.widget.ProgressBar;
 
 import androidx.annotation.NonNull;
-import androidx.core.content.ContextCompat;
-
 import com.github.tvbox.osc.R;
 import com.github.tvbox.osc.ui.dialog.AppCenterPopupView;
 import com.github.tvbox.osc.util.AppBubble;
@@ -23,6 +27,7 @@ import org.jetbrains.annotations.NotNull;
 public class UpdateIndicatorDialog extends AppCenterPopupView implements UpdateManager.Listener {
 
     private android.widget.TextView tvVersion;
+    private android.widget.TextView tvDownloadRoute;
     private android.widget.TextView tvProgressText;
     private ProgressBar progressBar;
     private android.widget.TextView btnPauseResume;
@@ -41,8 +46,10 @@ public class UpdateIndicatorDialog extends AppCenterPopupView implements UpdateM
     protected void onCreate() {
         super.onCreate();
         tvVersion = findViewById(R.id.update_version);
+        tvDownloadRoute = findViewById(R.id.update_download_route);
         tvProgressText = findViewById(R.id.update_progress_text);
         progressBar = findViewById(R.id.update_progress);
+        initProgressDrawable();
         btnPauseResume = findViewById(R.id.btn_pause_resume);
         btnInstall = findViewById(R.id.btn_install);
         final android.widget.TextView btnDismiss = findViewById(R.id.btn_dismiss);
@@ -93,6 +100,26 @@ public class UpdateIndicatorDialog extends AppCenterPopupView implements UpdateM
         refresh();
     }
 
+    /** 轨道按文字主色淡化，填充用 ScaleDrawable 保留任意进度下的圆角右端。 */
+    private void initProgressDrawable() {
+        float radius = 3f * getResources().getDisplayMetrics().density;
+        GradientDrawable track = roundedBar(UpdateProgressColors.trackColor(getContext()), radius);
+        GradientDrawable fill = roundedBar(UpdateProgressColors.themeColor(getContext(),
+                R.color.download_active), radius);
+        Drawable scaledFill = new ScaleDrawable(fill, Gravity.START, 1f, -1f);
+        LayerDrawable layers = new LayerDrawable(new Drawable[]{track, scaledFill});
+        layers.setId(0, android.R.id.background);
+        layers.setId(1, android.R.id.progress);
+        progressBar.setProgressDrawable(layers);
+    }
+
+    private static GradientDrawable roundedBar(int color, float radius) {
+        GradientDrawable drawable = new GradientDrawable();
+        drawable.setColor(color);
+        drawable.setCornerRadius(radius);
+        return drawable;
+    }
+
     private void refresh() {
         try {
             UpdateManager m = UpdateManager.get();
@@ -106,6 +133,24 @@ public class UpdateIndicatorDialog extends AppCenterPopupView implements UpdateM
             progressBar.setProgress(Math.max(0, Math.min(100, percent)));
 
             UpdateManager.State s = m.getState();
+            if (info == null) {
+                tvDownloadRoute.setVisibility(android.view.View.GONE);
+            } else {
+                String url = m.getCurrentDownloadUrl();
+                String route;
+                if (url != null && !url.isEmpty()) {
+                    String prefix = s == UpdateManager.State.FAILED ? "最后尝试链路：" : "当前下载链路：";
+                    route = prefix + UpdateDownloadRoute.describe(url);
+                } else if (s == UpdateManager.State.COMPLETED) {
+                    route = "当前下载链路：本地缓存（无需下载）";
+                } else if (s == UpdateManager.State.DOWNLOADING) {
+                    route = "当前下载链路：连接中…";
+                } else {
+                    route = "当前下载链路：尚未连接";
+                }
+                tvDownloadRoute.setText(route);
+                tvDownloadRoute.setVisibility(android.view.View.VISIBLE);
+            }
             String stateText;
             // 状态行配色与「视频下载」同一套语义色(下载中=download_active、完成=download_done、失败=红)
             int stateColor;
@@ -146,13 +191,13 @@ public class UpdateIndicatorDialog extends AppCenterPopupView implements UpdateM
                     break;
             }
             tvProgressText.setText(stateText);
-            int color = ContextCompat.getColor(getContext(), stateColor);
+            int color = UpdateProgressColors.themeColor(getContext(), stateColor);
             tvProgressText.setTextColor(color);
             // 进度条与状态行**同色**(与更新气泡的"进度环/图标/百分比同色"一个口径):
             // 下载中=download_active、完成=download_done 绿、失败=红。
-            // 以前这里只给文字上色,进度条写死蓝色(bg_update_progress),下载完成后
+            // 以前这里只给文字上色,进度条写死蓝色,下载完成后
             // 就出现"一条蓝杠 + 绿字",用户口径:"看着不协调"。
-            progressBar.setProgressTintList(android.content.res.ColorStateList.valueOf(color));
+            progressBar.setProgressTintList(ColorStateList.valueOf(color));
         } catch (Throwable ignored) {
         }
     }

@@ -57,6 +57,8 @@ public final class UpdateManager {
     private volatile long total;
     private volatile String errMsg;
     private volatile File targetFile;
+    /** 当前实际发起请求的候选入口；缓存命中或尚未开始网络请求时为 null。 */
+    private volatile String currentDownloadUrl;
     private volatile boolean pausedFlag;
     private volatile boolean cancelFlag;
     private volatile okhttp3.Call currentCall;
@@ -82,6 +84,7 @@ public final class UpdateManager {
     public long getDownloaded() { return downloaded; }
     public long getTotal() { return total; }
     public String getError() { return errMsg; }
+    public String getCurrentDownloadUrl() { return currentDownloadUrl; }
     /** 下载完成的 APK 文件(无则 null) */
     public File getApkFile() {
         File f = targetFile;
@@ -112,6 +115,7 @@ public final class UpdateManager {
             this.downloaded = 0;
             this.total = info == null ? -1 : info.apkSize;
             this.targetFile = info == null ? null : apkFile(context, info);
+            this.currentDownloadUrl = null;
 
             // 已下载完整?直接复用(对应"检查本地已下载对应版本 apk,存在即使用")
             if (isCachedComplete(context, targetFile, info)) {
@@ -144,6 +148,7 @@ public final class UpdateManager {
         if (state != State.PAUSED) return;
         LOG.i(TAG, "继续下载(从断点续传)");
         pausedFlag = false;
+        currentDownloadUrl = null;
         state = State.DOWNLOADING;
         notifyListeners();
         startDownload();
@@ -165,6 +170,7 @@ public final class UpdateManager {
             downloaded = 0;
             total = -1;
             errMsg = null;
+            currentDownloadUrl = null;
             notifyListeners();
         }
     }
@@ -250,6 +256,9 @@ public final class UpdateManager {
                 // 已写字节保留(断点续传),若服务端支持 Range 则用 downloaded 偏移续下。
                 for (String url : ui.downloadUrls) {
                     if (cancelFlag || pausedFlag) break;
+                    // 只有走到这里的 URL 才是当前下载链路；每次回退都立即刷新面板。
+                    currentDownloadUrl = url;
+                    notifyListeners();
                     DownloadResult dr = downloadFromCandidate(client, url, dest, ui);
                     if (dr == DownloadResult.COMPLETE) {
                         completes = true;

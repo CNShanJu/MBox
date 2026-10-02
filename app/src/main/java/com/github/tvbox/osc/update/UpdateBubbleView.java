@@ -44,7 +44,6 @@ public class UpdateBubbleView extends View {
 
     // 默认兜底色(资源缺失/主题解析失败时回落)
     private static final int DEF_BG = 0xFF4C6EF5;         // 盘面:品牌蓝兜底
-    private static final int DEF_TRACK = 0xFFE6E8F0;      // 进度底环兜底
     private static final int DEF_ACTIVE = 0xFF037AFF;     // 下载中兜底(与主题 download_active 同值)
     private static final int DEF_DONE = 0xFF08CA2C;       // 完成兜底(与主题 download_done 同值)
 
@@ -66,7 +65,7 @@ public class UpdateBubbleView extends View {
      */
     private static final float CONTENT_INSET_DP = 4f;
 
-    // 主题兼容色(首页「直播」悬浮钮同源:bg_float 盘面 / track 用 switch_track_off)
+    // 主题兼容色(首页「直播」悬浮钮同源:bg_float 盘面 / 进度轨道取文字主色 20% 透明度)
     private int mDiscColor;
     private int mTrackColor;
     /** 下载中/暂停:与「视频下载」同一语义色(download_active) */
@@ -127,8 +126,8 @@ public class UpdateBubbleView extends View {
      */
     void refreshThemeColors(Context context) {
         mDiscColor = themeColor(context, R.color.bg_float, DEF_BG);
-        // 轨道与弹窗进度条同色(switch_track_off):两处都是"下载进度",轨道不该各用各的
-        mTrackColor = themeColor(context, R.color.switch_track_off, DEF_TRACK);
+        // 与管理面板进度条使用同一中性轨道；开关关闭色会带 success 的半透明绿色。
+        mTrackColor = UpdateProgressColors.trackColor(context);
         // 状态色与「视频下载」同源:下载中/暂停=download_active、完成=download_done、失败=swipe_red
         mActiveColor = themeColor(context, R.color.download_active, DEF_ACTIVE);
         mDoneColor = themeColor(context, R.color.download_done, DEF_DONE);
@@ -153,7 +152,7 @@ public class UpdateBubbleView extends View {
     /** 取主题资源色;缺失/异常回落兜底色(保证不崩,且浅色/深色主题自适应) */
     private int themeColor(Context context, int resId, int fallback) {
         try {
-            return ContextCompat.getColor(context, resId);
+            return UpdateProgressColors.themeColor(context, resId);
         } catch (Throwable t) {
             return fallback;
         }
