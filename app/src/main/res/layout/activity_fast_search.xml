@@ -45,31 +45,31 @@
         />
 
         <ImageView
-            android:id="@+id/iv_filter"
-            android:layout_width="17dp"
-            android:layout_height="17dp"
-            android:padding="1dp"
-            android:src="@drawable/ic_filter_list"
+            android:id="@+id/iv_search"
+            android:layout_width="16dp"
+            android:layout_height="16dp"
+            android:src="@drawable/ic_search"
             app:tint="@color/text_foreground"
             android:layout_marginRight="4dp"/>
 
         <View
             android:layout_width="1dp"
-            android:layout_height="16sp"
+            android:layout_height="8dp"
             android:background="@color/text_foreground"/>
 
         <ImageView
-                android:id="@+id/iv_search"
+                android:id="@+id/iv_filter"
                 android:layout_width="16dp"
                 android:layout_height="16dp"
-                android:src="@drawable/ic_search"
+                android:padding="1dp"
+                android:src="@drawable/ic_filter_list"
                 app:tint="@color/text_foreground"
                 android:layout_marginLeft="5dp"
         />
 
         <View
             android:layout_width="1dp"
-            android:layout_height="16sp"
+            android:layout_height="8dp"
             android:layout_marginLeft="4dp"
             android:background="@color/text_foreground"/>
 
