@@ -14,6 +14,9 @@ public interface HistoryRepository {
     /** 保存/更新一条播放历史 */
     void save(String sourceKey, VodInfo vodInfo);
 
+    /** 保存播放历史而不等待数据库写入；实现须在返回前冻结可变数据。 */
+    void saveAsync(String sourceKey, VodInfo vodInfo);
+
     /** 删除某条历史(sourceKey+vodId) */
     void delete(String sourceKey, String vodId);
 

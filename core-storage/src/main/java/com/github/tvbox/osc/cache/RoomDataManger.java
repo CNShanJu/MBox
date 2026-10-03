@@ -12,6 +12,8 @@ import com.google.gson.reflect.TypeToken;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.nio.charset.StandardCharsets;
 
 /**
  * @author pj567
@@ -39,21 +41,75 @@ public class RoomDataManger {
 
     /** 静态单例:历史记录反复创建 GsonBuilder/TypeToken 会引入大量短生命周期对象,集中复用 */
     private static final Gson VOD_INFO_GSON = new GsonBuilder().addSerializationExclusionStrategy(vodInfoStrategy).create();
+    /** 历史直达播放所需的剧集快照。限制单条大小，避免超长剧集列表撑大历史库和 Intent。 */
+    private static final Gson VOD_INFO_WITH_SERIES_GSON = new Gson();
+    private static final int MAX_HISTORY_SNAPSHOT_BYTES = 64 * 1024;
+    private static final int MAX_HISTORY_SNAPSHOT_EPISODES = 1200;
     private static final TypeToken<VodInfo> VOD_INFO_TYPE = new TypeToken<VodInfo>() {
     };
 
     public static void insertVodRecord(String sourceKey, VodInfo vodInfo) {
-        AppDataManager.runOnDb(() -> {
-            VodRecord record = AppDataManager.get().getVodRecordDao().getVodRecord(sourceKey, vodInfo.id);
-            if (record == null) {
-                record = new VodRecord();
+        String vodId = vodInfo.id;
+        long updateTime = System.currentTimeMillis();
+        String dataJson = historyJson(vodInfo);
+        AppDataManager.runOnDb(() -> writeVodRecord(sourceKey, vodId, updateTime, dataJson));
+    }
+
+    /** 先冻结可变 VodInfo，再把 DAO 写入排到 Room 单线程；调用方不等待磁盘。 */
+    public static void insertVodRecordAsync(String sourceKey, VodInfo vodInfo) {
+        String vodId = vodInfo.id;
+        long updateTime = System.currentTimeMillis();
+        String dataJson = historyJson(vodInfo);
+        AppDataManager.executeOnDb(() -> {
+            try {
+                writeVodRecord(sourceKey, vodId, updateTime, dataJson);
+            } catch (Throwable th) {
+                android.util.Log.e("RoomDataManger", "异步保存播放历史失败", th);
             }
-            record.sourceKey = sourceKey;
-            record.vodId = vodInfo.id;
-            record.updateTime = System.currentTimeMillis();
-            record.dataJson = VOD_INFO_GSON.toJson(vodInfo);
-            AppDataManager.get().getVodRecordDao().insert(record);
         });
+    }
+
+    private static String historyJson(VodInfo vodInfo) {
+        String snapshot = null;
+        if (hasBoundedSeries(vodInfo)) {
+            try {
+                snapshot = VOD_INFO_WITH_SERIES_GSON.toJson(vodInfo);
+            } catch (RuntimeException ignored) {
+                // 单个源的剧集对象异常时仍保留基本历史，按旧路径请求详情。
+            }
+        }
+        return snapshot != null
+                && snapshot.getBytes(StandardCharsets.UTF_8).length <= MAX_HISTORY_SNAPSHOT_BYTES
+                ? snapshot : VOD_INFO_GSON.toJson(vodInfo);
+    }
+
+    private static void writeVodRecord(String sourceKey, String vodId, long updateTime, String dataJson) {
+        VodRecord record = AppDataManager.get().getVodRecordDao().getVodRecord(sourceKey, vodId);
+        if (record == null) record = new VodRecord();
+        record.sourceKey = sourceKey;
+        record.vodId = vodId;
+        record.updateTime = updateTime;
+        record.dataJson = dataJson;
+        AppDataManager.get().getVodRecordDao().insert(record);
+    }
+
+    private static boolean hasBoundedSeries(VodInfo info) {
+        if (info.seriesMap == null || info.seriesMap.isEmpty()) return false;
+        int count = 0;
+        int chars = 0;
+        for (Map.Entry<String, List<VodInfo.VodSeries>> line : info.seriesMap.entrySet()) {
+            List<VodInfo.VodSeries> episodes = line.getValue();
+            if (episodes == null) continue;
+            count += episodes.size();
+            if (count > MAX_HISTORY_SNAPSHOT_EPISODES) return false;
+            for (VodInfo.VodSeries episode : episodes) {
+                if (episode == null) continue;
+                chars += episode.name == null ? 0 : episode.name.length();
+                chars += episode.url == null ? 0 : episode.url.length();
+                if (chars > MAX_HISTORY_SNAPSHOT_BYTES) return false;
+            }
+        }
+        return count > 0;
     }
 
     public static VodInfo getVodInfo(String sourceKey, String vodId) {
@@ -64,6 +120,7 @@ public class RoomDataManger {
                     VodInfo vodInfo = VOD_INFO_GSON.fromJson(record.dataJson, VOD_INFO_TYPE.getType());
                     if (vodInfo.name == null)
                         return null;
+                    vodInfo.sourceKey = record.sourceKey;
                     return vodInfo;
                 }
             } catch (Exception e) {

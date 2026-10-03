@@ -33,6 +33,11 @@ public class HistoryRepositoryTest {
         }
 
         @Override
+        public void saveAsync(String sourceKey, VodInfo vodInfo) {
+            save(sourceKey, vodInfo);
+        }
+
+        @Override
         public void delete(String sourceKey, String vodId) {
             store.remove(key(sourceKey, vodId));
         }

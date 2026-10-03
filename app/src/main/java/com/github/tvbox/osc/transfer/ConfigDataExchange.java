@@ -15,7 +15,10 @@ import com.github.tvbox.osc.storage.theme.ThemeStore;
 import com.github.tvbox.osc.util.LiveConfig;
 import com.github.tvbox.osc.util.SubscriptionConfig;
 import com.github.tvbox.osc.util.SubscriptionExporter;
+import com.google.gson.ExclusionStrategy;
+import com.google.gson.FieldAttributes;
 import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.reflect.TypeToken;
@@ -37,6 +40,16 @@ import java.util.Set;
 /** 配置数据格式与本机合并规则；LAN、在线配置和缓存分享共用，传输方式由调用方负责。 */
 public final class ConfigDataExchange {
     private static final Gson GSON = new Gson();
+    /** 传输历史沿用原有轻量格式；本机起播快照不随备份导出。 */
+    private static final Gson HISTORY_EXPORT_GSON = new GsonBuilder()
+            .addSerializationExclusionStrategy(new ExclusionStrategy() {
+                @Override public boolean shouldSkipField(FieldAttributes field) {
+                    return field.getDeclaringClass() == VodInfo.class
+                            && ("seriesMap".equals(field.getName())
+                            || "seriesFlags".equals(field.getName()));
+                }
+                @Override public boolean shouldSkipClass(Class<?> clazz) { return false; }
+            }).create();
     private static final int MAX_HISTORY = 1000;
 
     private static final Type SETTINGS_TYPE = new TypeToken<LinkedHashMap<String, Object>>() { }.getType();
@@ -108,7 +121,7 @@ public final class ConfigDataExchange {
             }
             case "history": {
                 List<VodInfo> history = RoomDataManger.getAllVodRecord(MAX_HISTORY);
-                result.add("videos", GSON.toJsonTree(history));
+                result.add("videos", HISTORY_EXPORT_GSON.toJsonTree(history));
                 result.add("searches", GSON.toJsonTree(SubscriptionConfig.getSearchHistory()));
                 break;
             }

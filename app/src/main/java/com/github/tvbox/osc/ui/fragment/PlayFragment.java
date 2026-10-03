@@ -90,6 +90,9 @@ public class PlayFragment extends BaseLazyFragment {
     private SourceViewModel sourceViewModel;
     /**
      * 解析/嗅探引擎(解析编排 + 无头 WebView 嗅探 + json/聚合解析;见 util/player/PlayParseCoordinator)
+    /** BaseLazyFragment 会在可见时才初始化播放器；详情快照可能更早到达。 */
+    private boolean playbackReady;
+    private Runnable pendingReadyAction;
      */
     private com.github.tvbox.osc.util.player.PlayParseCoordinator mParseEngine;
     /** 字幕协调器(字幕装载/音轨与内置字幕切换/设置弹窗;见 util/player/SubtitleCoordinator) */
@@ -164,6 +167,17 @@ public class PlayFragment extends BaseLazyFragment {
         mController.setEnableInNormal(true);
         mController.setGestureEnabled(true);
         ProgressManager progressManager = new ProgressManager() {
+        playbackReady = true;
+        Runnable action = pendingReadyAction;
+        pendingReadyAction = null;
+        if (action != null) action.run();
+    }
+
+    /** 只在控制器、解析器和 ViewModel 全部就绪后执行最新的起播请求。 */
+    public void runWhenPlaybackReady(Runnable action) {
+        if (action == null) return;
+        if (playbackReady && isAdded() && getView() != null) action.run();
+        else pendingReadyAction = action;
             @Override
             public void saveProgress(String url, long progress) {
                 mPlayHistory.save(url, progress);

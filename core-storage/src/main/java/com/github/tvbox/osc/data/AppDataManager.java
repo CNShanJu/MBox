@@ -124,6 +124,11 @@ public class AppDataManager {
         }
     }
 
+    /** 不等待结果地按提交顺序执行数据库写入；供 UI 发起的历史保存使用。 */
+    public static void executeOnDb(Runnable action) {
+        DB_EXECUTOR.execute(action);
+    }
+
     /** 在 Room 专用线程上同步执行并返回结果(阻塞调用线程,保证串行)。禁止在任务内再次调用本方法(会死锁) */
     public static <T> T runOnDb(Callable<T> action) {
         Future<T> future = DB_EXECUTOR.submit(action);

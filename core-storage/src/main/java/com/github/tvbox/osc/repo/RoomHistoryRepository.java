@@ -26,6 +26,11 @@ public final class RoomHistoryRepository implements HistoryRepository {
     }
 
     @Override
+    public void saveAsync(String sourceKey, VodInfo vodInfo) {
+        RoomDataManger.insertVodRecordAsync(sourceKey, vodInfo);
+    }
+
+    @Override
     public void delete(String sourceKey, String vodId) {
         AppDataManager.runOnDb(() -> {
             VodRecord record = AppDataManager.get().getVodRecordDao().getVodRecord(sourceKey, vodId);
