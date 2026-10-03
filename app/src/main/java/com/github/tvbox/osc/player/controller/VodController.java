@@ -248,7 +248,9 @@ public class VodController extends BaseController implements PlaybackSettingsCon
 
         mLockView.setOnClickListener(v -> {
             isLock = !isLock;
+            setLocked(isLock);
             if (isLock){// 上了锁
+                clearDoubleTapSeekFeedback();
                 mLockView.setImageResource(R.drawable.ic_lock);
                 hideBottom();
                 mHandler.removeCallbacks(lockRunnable);
@@ -885,6 +887,7 @@ public class VodController extends BaseController implements PlaybackSettingsCon
      */
     public void changedLandscape(boolean b) {
         mFullWindows = b;
+        if (!b) clearDoubleTapSeekFeedback();
         mPlayTitle1.setSelected(true);
         if (b) {
             // 全屏:放大按钮显示"缩小"图标
@@ -1044,6 +1047,7 @@ public class VodController extends BaseController implements PlaybackSettingsCon
     @Override
     protected void onPlayStateChanged(int playState) {
         super.onPlayStateChanged(playState);
+        if (isLock && !isLocked()) setLocked(true);
         com.github.tvbox.osc.service.PlayService.onPlaybackNotify(null);
         videoPlayState = playState;
         switch (playState) {
@@ -1203,6 +1207,16 @@ public class VodController extends BaseController implements PlaybackSettingsCon
         return true;
     }
 
+    /** 全屏与详情页预览使用同一曲边双击区域，中央保持暂停/播放。 */
+    @Override
+    public boolean onDoubleTap(MotionEvent e) {
+        if (isLock || isLocked() || !isInPlaybackState()) return true;
+        // 已展开控件的触摸区域不响应跳转，画面左右侧才交给双击手势。
+        if (mProgressRoot.getVisibility() == VISIBLE) return true;
+        return handleDoubleTapSeek(e, mBottomRoot, mTopRoot1, mTopRoot2, mLockView)
+                || super.onDoubleTap(e);
+    }
+
     @Override
     public boolean onBackPressed() {
         if (super.onBackPressed()) {
@@ -1217,6 +1231,7 @@ public class VodController extends BaseController implements PlaybackSettingsCon
 
     @Override
     protected void onDetachedFromWindow() {
+        clearDoubleTapSeekFeedback();
         super.onDetachedFromWindow();
         mHandler.removeCallbacks(myRunnable2);
         // 两个 handler 的剩余消息必须一起清干净:1004(设速度)在"非播放态"分支会每 100ms 自我重投,

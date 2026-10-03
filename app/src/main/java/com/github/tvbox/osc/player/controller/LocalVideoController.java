@@ -229,7 +229,9 @@ public class LocalVideoController extends BaseController implements PlaybackSett
             public void onClick(View view) {
                 isLock = !isLock;
                 if (isLock) {// 上了锁
+                setLocked(isLock);
                     mLockView.setImageResource(R.drawable.ic_lock);
+                    clearDoubleTapSeekFeedback();
                     hideBottom();
                     mHandler.removeCallbacks(lockRunnable);
                     mHandler.postDelayed(lockRunnable, dismissTimeLock);
@@ -1092,6 +1094,7 @@ public class LocalVideoController extends BaseController implements PlaybackSett
             case VideoView.STATE_IDLE:
                 break;
             case VideoView.STATE_PLAYING:
+        if (isLock && !isLocked()) setLocked(true);
                 initLandscapePortraitBtnInfo();
                 startProgress();
                 mIvPlayStatus.setImageResource(R.drawable.ic_pause);
@@ -1240,6 +1243,15 @@ public class LocalVideoController extends BaseController implements PlaybackSett
         if (super.onBackPressed()) {
             return true;
         }
+    @Override
+    public boolean onDoubleTap(MotionEvent e) {
+        if (mControlWrapper == null) return super.onDoubleTap(e);
+        if (isLock || isLocked() || !isInPlaybackState()) return true;
+        if (mProgressRoot.getVisibility() == VISIBLE) return true;
+        return handleDoubleTapSeek(e, mBottomRoot, mTopRoot1, mTopRoot2, mLockView)
+                || super.onDoubleTap(e);
+    }
+
         if (isBottomVisible()) {
             hideBottom();
             return true;
@@ -1254,6 +1266,7 @@ public class LocalVideoController extends BaseController implements PlaybackSett
         // 与 VodController 同一处缺陷:1004(设速度)在"非播放态"分支会每 100ms 自我重投,
         // MessageQueue 里的消息持有 Handler → 持有 View → 持有 Activity;这里一并清干净
         // (myHandle 在 initView 里才创建,视图被提前移除时为 null,故判空)
+        clearDoubleTapSeekFeedback();
         if (myHandle != null) myHandle.removeCallbacksAndMessages(null);
         if (mHandler != null) mHandler.removeCallbacksAndMessages(null);
     }

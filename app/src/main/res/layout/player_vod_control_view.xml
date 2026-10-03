@@ -8,6 +8,16 @@
     android:id="@+id/rootView"
     tools:background="@color/black">
 
+    <!-- 绘制在字幕和控制键下方；只显示左右双击区域与触点涟漪，不接收触摸。 -->
+    <com.github.tvbox.osc.player.controller.DoubleTapSeekFeedbackView
+        android:id="@+id/double_tap_seek_feedback"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:clickable="false"
+        android:focusable="false"
+        android:importantForAccessibility="no"
+        android:visibility="gone" />
+
     <LinearLayout
         android:id="@+id/tv_top_l_container"
         android:layout_width="wrap_content"

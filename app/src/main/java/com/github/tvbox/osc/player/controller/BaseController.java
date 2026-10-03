@@ -2,6 +2,7 @@ package com.github.tvbox.osc.player.controller;
 
 import android.app.Activity;
 import android.content.Context;
+import android.graphics.Rect;
 import android.media.AudioManager;
 import android.os.Handler;
 import android.os.Message;
@@ -120,6 +121,12 @@ public abstract class BaseController extends BaseVideoController implements Gest
         }
     };
 
+    private final DoubleTapSeekPolicy mDoubleTapSeek = new DoubleTapSeekPolicy();
+    private DoubleTapSeekFeedbackView mDoubleTapSeekFeedback;
+    private final Runnable mHideDoubleTapSeekFeedback = () -> {
+        if (mDoubleTapSeekFeedback != null) mDoubleTapSeekFeedback.hide();
+        mDoubleTapSeek.reset();
+    };
     @Override
     protected void initView() {
         super.initView();
@@ -132,6 +139,7 @@ public abstract class BaseController extends BaseVideoController implements Gest
         mCenterPlaybackStatus = findViewById(R.id.center_playback_status);
         mCenterPlaybackIcon = findViewById(R.id.center_playback_icon);
         if (mCenterPlaybackStatus != null) {
+        mDoubleTapSeekFeedback = findViewById(R.id.double_tap_seek_feedback);
             mCenterPlaybackStatus.setOnClickListener(v -> {
                 if (mControlWrapper != null && isInPlaybackState() && !isLocked() && !mSeeking) {
                     togglePlay();
@@ -273,6 +281,10 @@ public abstract class BaseController extends BaseVideoController implements Gest
             case VideoView.STATE_BUFFERED:
                 if (mWasPaused && !mSeeking) showCenterPlaybackStatus(false);
                 break;
+        if (playState == VideoView.STATE_IDLE || playState == VideoView.STATE_PREPARING
+                || playState == VideoView.STATE_ERROR || playState == VideoView.STATE_PLAYBACK_COMPLETED) {
+            clearDoubleTapSeekFeedback();
+        }
             case VideoView.STATE_IDLE:
             case VideoView.STATE_PREPARING:
             case VideoView.STATE_PREPARED:
@@ -431,6 +443,43 @@ public abstract class BaseController extends BaseVideoController implements Gest
                 //半屏宽度
                 float halfScreen = getWidth() / 2f;
                 if (e1.getX() > halfScreen) {
+    /** 按播放器自身尺寸命中左右曲边区域；中央返回 false，由原有双击暂停逻辑接管。 */
+    protected final boolean handleDoubleTapSeek(MotionEvent event, View... controls) {
+        for (View control : controls) {
+            if (isOverVisibleControl(event, control)) return true;
+        }
+        int direction = DoubleTapSeekPolicy.direction(event.getX(), event.getY(), getWidth(), getHeight());
+        if (direction == 0) {
+            clearDoubleTapSeekFeedback();
+            return false;
+        }
+        DoubleTapSeekPolicy.Result seek = mDoubleTapSeek.seek(direction,
+                mControlWrapper.getCurrentPosition(), mControlWrapper.getDuration(), event.getEventTime());
+        if (seek == null) return true;
+        if (seek.moved) mControlWrapper.seekTo(seek.targetMs);
+        showDoubleTapSeekFeedback(seek, event);
+        return true;
+    }
+
+    private boolean isOverVisibleControl(MotionEvent event, View view) {
+        if (view == null || !view.isShown()) return false;
+        Rect bounds = new Rect();
+        return view.getGlobalVisibleRect(bounds)
+                && bounds.contains((int) event.getRawX(), (int) event.getRawY());
+    }
+
+    private void showDoubleTapSeekFeedback(DoubleTapSeekPolicy.Result seek, MotionEvent event) {
+        if (mDoubleTapSeekFeedback == null) return;
+        mDoubleTapSeekFeedback.show(seek, event.getX(), event.getY());
+        mHandler.removeCallbacks(mHideDoubleTapSeekFeedback);
+        mHandler.postDelayed(mHideDoubleTapSeekFeedback, 1000);
+    }
+
+    protected final void clearDoubleTapSeekFeedback() {
+        mHandler.removeCallbacks(mHideDoubleTapSeekFeedback);
+        mHideDoubleTapSeekFeedback.run();
+    }
+
                     mChangeVolume = true;
                 } else {
                     mChangeBrightness = true;
@@ -603,3 +652,6 @@ public abstract class BaseController extends BaseVideoController implements Gest
         return false;
     }
 }
+        if (e.getActionMasked() == MotionEvent.ACTION_DOWN && mDoubleTapSeekFeedback != null) {
+            mDoubleTapSeekFeedback.updateTouch(e.getX(), e.getY());
+        }
