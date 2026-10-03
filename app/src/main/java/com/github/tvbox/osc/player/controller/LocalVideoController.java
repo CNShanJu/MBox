@@ -77,6 +77,7 @@ public class LocalVideoController extends BaseController implements PlaybackSett
                     }
                     case 1002: { // 显示底部菜单
                         mBottomRoot.setVisibility(VISIBLE);
+                        if (mAdaptiveProgressLayout != null) mAdaptiveProgressLayout.requestUpdate();
                         mTopRoot1.setVisibility(VISIBLE);
                         mTopRoot2.setVisibility(VISIBLE);
                         if (!isLock) {// 未上锁,锁按钮随操作栏显示
@@ -123,6 +124,7 @@ public class LocalVideoController extends BaseController implements PlaybackSett
     TextView mProgressText;
     ImageView mProgressIcon;
     LinearLayout mBottomRoot;
+    private AdaptiveVodProgressLayout mAdaptiveProgressLayout;
     LinearLayout mTopRoot1;
     View mTopRoot2;
     TextView mPlayTitle1;
@@ -270,6 +272,8 @@ public class LocalVideoController extends BaseController implements PlaybackSett
         });
         View chooseSeries = findViewById(R.id.choose_series);
         chooseSeries.setVisibility(VISIBLE);
+        mAdaptiveProgressLayout = new AdaptiveVodProgressLayout(this);
+        mAdaptiveProgressLayout.setAdaptive(true);
         chooseSeries.setOnClickListener(new OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -1254,6 +1258,7 @@ public class LocalVideoController extends BaseController implements PlaybackSett
     @Override
     protected void onDetachedFromWindow() {
         clearDoubleTapSeekFeedback();
+        if (mAdaptiveProgressLayout != null) mAdaptiveProgressLayout.cancelPendingUpdate();
         super.onDetachedFromWindow();
         mHandler.removeCallbacks(myRunnable2);
         // 与 VodController 同一处缺陷:1004(设速度)在"非播放态"分支会每 100ms 自我重投,

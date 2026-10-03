@@ -58,6 +58,7 @@ public class VodController extends BaseController implements PlaybackSettingsCon
     public volatile boolean hasPlayedOnce = false;
     /** 是否全屏(由 changedLandscape 记录,用于视频加载后校正横竖屏) */
     private boolean mFullWindows = false;
+    private AdaptiveVodProgressLayout mAdaptiveProgressLayout;
     /** 用户是否锁定竖屏: 锁定后刷新/重播不得按片源宽高自动转回横屏 */
     private boolean mPortraitLock = false;
 
@@ -79,6 +80,7 @@ public class VodController extends BaseController implements PlaybackSettingsCon
                     }
                     case 1002: { // 显示底部菜单
                         toggleViewShowWithAlpha(mBottomRoot, true);
+                        if (mAdaptiveProgressLayout != null) mAdaptiveProgressLayout.requestUpdate();
                         toggleViewShowWithAlpha(mTopRoot1, true);
                         toggleViewShowWithAlpha(mTopRoot2, true);
                         if (!isLock){// 未上锁,随底部显示
@@ -248,6 +250,8 @@ public class VodController extends BaseController implements PlaybackSettingsCon
         mLockView = findViewById(R.id.iv_lock);
         mScreenRotateView = findViewById(R.id.iv_screen_rotate);
         positionSystemTime(mPlayPauseTime, mLockView, mBottomRoot);
+        mAdaptiveProgressLayout = new AdaptiveVodProgressLayout(this);
+        mAdaptiveProgressLayout.setAdaptive(false);
 
         initSubtitleInfo();
 
@@ -921,6 +925,7 @@ public class VodController extends BaseController implements PlaybackSettingsCon
             mChooseSeries.setVisibility(GONE);
             mChooseDownload.setVisibility(GONE);
         }
+        mAdaptiveProgressLayout.setAdaptive(b);
     }
 
     public interface VodControlListener {
@@ -1248,6 +1253,7 @@ public class VodController extends BaseController implements PlaybackSettingsCon
     @Override
     protected void onDetachedFromWindow() {
         clearDoubleTapSeekFeedback();
+        if (mAdaptiveProgressLayout != null) mAdaptiveProgressLayout.cancelPendingUpdate();
         super.onDetachedFromWindow();
         mHandler.removeCallbacks(myRunnable2);
         // 两个 handler 的剩余消息必须一起清干净:1004(设速度)在"非播放态"分支会每 100ms 自我重投,
