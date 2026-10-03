@@ -34,6 +34,8 @@ public final class DoubleTapSeekFeedbackView extends View {
     private final Drawable rightIcon;
     private int direction;
     private String label;
+    private float touchX;
+    private float touchY;
     private long shownAt;
 
     public DoubleTapSeekFeedbackView(Context context, @Nullable AttributeSet attrs) {
@@ -51,12 +53,21 @@ public final class DoubleTapSeekFeedbackView extends View {
         setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
     }
 
-    void show(DoubleTapSeekPolicy.Result seek) {
+    void show(DoubleTapSeekPolicy.Result seek, float x, float y) {
         direction = seek.direction;
         label = seek.moved ? (seek.taps * 10) + "s"
                 : (direction < 0 ? "已到开头" : "已到结尾");
+        touchX = x;
+        touchY = y;
         shownAt = SystemClock.uptimeMillis();
         setVisibility(VISIBLE);
+        invalidate();
+    }
+
+    void updateTouch(float x, float y) {
+        if (getVisibility() != VISIBLE) return;
+        touchX = x;
+        touchY = y;
         invalidate();
     }
 
@@ -105,12 +116,14 @@ public final class DoubleTapSeekFeedbackView extends View {
         float progress = age / (float) PULSE_MS;
         float eased = progress * progress * (3f - 2f * progress);
         float radiusX = DoubleTapSeekPolicy.sideRadiusX(getWidth(), getHeight());
-        float radiusY = DoubleTapSeekPolicy.sideRadiusY(getWidth(), getHeight());
-        float centerX = direction < 0 ? radiusX / 2f : getWidth() - radiusX / 2f;
+        float left = direction < 0 ? 0f : getWidth() - radiusX;
+        float right = direction < 0 ? radiusX : getWidth();
+        float farthestX = Math.max(Math.abs(touchX - left), Math.abs(touchX - right));
+        float farthestY = Math.max(touchY, getHeight() - touchY);
         float startRadius = dp(24f);
-        float endRadius = (float) Math.hypot(radiusX / 2f, radiusY) + dp(8f);
+        float endRadius = (float) Math.hypot(farthestX, farthestY) + dp(8f);
         pulsePaint.setAlpha(Math.round(40f * (1f - eased)));
-        canvas.drawCircle(centerX, getHeight() / 2f,
+        canvas.drawCircle(touchX, touchY,
                 startRadius + (endRadius - startRadius) * eased, pulsePaint);
     }
 
