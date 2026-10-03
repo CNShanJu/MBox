@@ -4,13 +4,12 @@
     android:layout_height="match_parent"
     android:background="@color/bg_body">
 
-    <!-- 开屏图:静态 ImageView 居中显示,避免 windowBackground 随系统启动窗口产生缩放动画。
-         直接复用图标资源 @drawable/app_icon,更换主体/素材时只改图标即可,开屏自动同步 -->
-    <ImageView
-        android:layout_width="240dp"
-        android:layout_height="240dp"
+    <com.airbnb.lottie.LottieAnimationView
+        android:id="@+id/splash_animation"
+        android:layout_width="320dp"
+        android:layout_height="320dp"
         android:layout_gravity="center"
-        android:scaleType="fitCenter"
-        android:src="@drawable/app_icon" />
+        android:contentDescription="@string/app_name"
+        android:scaleType="fitCenter" />
 
 </FrameLayout>
