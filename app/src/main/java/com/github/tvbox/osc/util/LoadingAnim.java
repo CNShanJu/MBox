@@ -26,12 +26,13 @@ import java.util.Map;
  * assets/loading/
  *   anim_loading/           旧默认动画
  *     anim_loading.json     Lottie 动画文件
- *     config.json           { "mbox_tipsname": "默认", "size_other": 30, "size_refresh": 36 }
+ *     config.json           { "mbox_tipsname": "默认", "size_other": 30, "size_refresh": 36, "speed": 1.0 }
  *   glowing_fish_loader/    Glowing Fish(当前默认)
  *     glowing_fish_loader.json
- *     config.json           { "mbox_tipsname": "鱼", "size_other": 100, "msg_gap": -12 }
+ *     config.json           { "mbox_tipsname": "鱼", "size_other": 100, "msg_gap": -12, "speed": 1.0 }
  * </pre>
- * 展示名(mbox_tipsname)、页面显示尺寸(size_*,dp)、与状态文字的间距(msg_gap,dp,可为负)统一从 config.json 读取,
+ * 展示名(mbox_tipsname)、页面显示尺寸(size_*,dp)、状态文字间距(msg_gap,dp)和播放速度(speed 倍率)
+ * 统一从 config.json 读取,
  * 不再读 lottie 文件。选择值(HawkConfig.LOADING_ANIM)存动画文件夹名;旧版存的文件名/数字自动兼容。
  */
 public class LoadingAnim {
@@ -50,6 +51,8 @@ public class LoadingAnim {
     private static final String KEY_REFRESH = "size_refresh";
     /** 配置键:加载动画与其下方状态文字的间距(dp),可为负值(负值=把文字提进动画盒子底部的固有留白) */
     private static final String KEY_MSG_GAP = "msg_gap";
+    /** 配置键:动画播放速度倍率(1=原速,0.5=半速,2=双倍速) */
+    private static final String KEY_SPEED = "speed";
 
     /** 兼容旧版:Glowing Fish 的旧选择值 1 映射到文件夹名 */
     private static final String LEGACY_GLOWING_FISH_NAME = "glowing_fish_loader";
@@ -60,6 +63,8 @@ public class LoadingAnim {
     private static final int DEFAULT_REFRESH_SIZE_DP = 40;
     /** 状态文字间距的兜底值(dp);不配 msg_gap 的动画用这个安全值(正数=动画下方自然留一点缝) */
     private static final int DEFAULT_MSG_GAP_DP = 2;
+    /** 旧 config.json 没有 speed 时保持原速 */
+    private static final float DEFAULT_SPEED = 1f;
 
     /** 配置读取缓存:文件夹名 -> 配置 JSON */
     private static final Map<String, JSONObject> configCache = new HashMap<>();
@@ -130,6 +135,20 @@ public class LoadingAnim {
             return cfg.optInt(KEY_MSG_GAP, DEFAULT_MSG_GAP_DP);
         }
         return DEFAULT_MSG_GAP_DP;
+    }
+
+    /** 当前动画的播放速度倍率,由 config.json 的 speed 控制 */
+    public static float getPlaybackSpeed() {
+        return getPlaybackSpeed(getAnimName());
+    }
+
+    /** 指定动画的播放速度倍率(设置页长按预览也使用对应选项的配置) */
+    public static float getPlaybackSpeed(String animName) {
+        JSONObject cfg = readConfig(animName);
+        double speed = cfg != null ? cfg.optDouble(KEY_SPEED, DEFAULT_SPEED) : DEFAULT_SPEED;
+        float playbackSpeed = (float) speed;
+        return playbackSpeed > 0 && !Float.isInfinite(playbackSpeed)
+                ? playbackSpeed : DEFAULT_SPEED;
     }
 
     /** 可用加载动画列表:loading/ 下的子目录(每个目录 = 一个动画),按目录名排序 */
@@ -227,7 +246,7 @@ public class LoadingAnim {
                 lav.setAnimation(DIR_NAME + "/" + animName + "/" + animName + ".json");
                 lav.setRepeatMode(LottieDrawable.RESTART); // 从头循环,不是往返播放(reverse)
                 lav.setRepeatCount(LottieDrawable.INFINITE);
-                lav.setSpeed(1f); // 原速播放(代码设置动画时 XML 的 lottie_speed 不生效,需显式指定)
+                lav.setSpeed(getPlaybackSpeed(animName)); // 代码设置动画时 XML 的 lottie_speed 不生效
                 // 动画含高斯模糊等超出画布内容时关闭按画布裁剪,避免光晕被边界切掉
                 lav.setClipToCompositionBounds(false);
                 android.view.ViewGroup.LayoutParams lp = lav.getLayoutParams();

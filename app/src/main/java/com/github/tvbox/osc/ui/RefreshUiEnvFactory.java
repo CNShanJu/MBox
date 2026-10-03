@@ -11,7 +11,7 @@ import com.github.tvbox.osc.util.LoadingAnim;
  *
  * kit 的 {@link PullRefreshEnv} 只声明契约,不直连全局配置/单例;
  * 本类在 app 层用 LoadingAnim(读 SystemConfig/动画配置)、AppBubble(toast)
- * 组装默认实现,供各列表页 attach 时注入。
+ * 组装默认实现(动画路径、尺寸、速度),供各列表页 attach 时注入。
  */
 public final class RefreshUiEnvFactory {
 
@@ -30,6 +30,11 @@ public final class RefreshUiEnvFactory {
             @Override
             public int refreshIndicatorSizeDp() {
                 return LoadingAnim.getRefreshSizeDp(); // config.json size_refresh
+            }
+
+            @Override
+            public float loadingAnimSpeed() {
+                return LoadingAnim.getPlaybackSpeed(); // config.json speed
             }
 
             @Override

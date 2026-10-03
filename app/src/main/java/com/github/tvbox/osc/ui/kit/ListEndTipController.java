@@ -114,7 +114,7 @@ public final class ListEndTipController {
             lav.setAnimation(animFile); // 与全局加载态同一动画文件
             lav.setRepeatMode(LottieDrawable.RESTART);
             lav.setRepeatCount(LottieDrawable.INFINITE);
-            lav.setSpeed(1f);
+            lav.setSpeed(mEnv.loadingAnimSpeed());
             lav.setClipToCompositionBounds(false);
         } catch (Throwable ignored) {
         }

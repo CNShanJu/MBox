@@ -500,7 +500,7 @@ public class RubberBandSwipeRefreshLayout extends FrameLayout {
             lav.setAnimation(animFile); // 与全局加载态同一动画文件
             lav.setRepeatMode(LottieDrawable.RESTART);
             lav.setRepeatCount(LottieDrawable.INFINITE);
-            lav.setSpeed(1f);
+            lav.setSpeed(mEnv.loadingAnimSpeed());
             lav.setClipToCompositionBounds(false); // 光晕等超出画布内容不被裁剪
         } catch (Throwable ignored) {
         }

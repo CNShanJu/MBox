@@ -23,6 +23,7 @@ import com.github.tvbox.osc.util.ThrottlePolicy
 import com.github.tvbox.osc.ui.adapter.SelectDialogAdapter
 import com.github.tvbox.osc.ui.adapter.SelectDialogAdapter.SelectDialogInterface
 import com.github.tvbox.osc.ui.dialog.BackupDialog
+import com.github.tvbox.osc.ui.dialog.LoadingAnimPreviewDialog
 import com.github.tvbox.osc.ui.dialog.SelectDialog
 import com.github.tvbox.osc.ui.dialog.TextTipDialog
 import com.github.tvbox.osc.ui.dialog.ThemePickerDialog
@@ -568,7 +569,7 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             // 切换前的动画名:弹窗关闭后若有变化,与主题切换一致,重启主页立即生效
             val oldAnim = LoadingAnim.getAnimName()
             val dialog = SelectDialog<String>(this@SettingActivity)
-            dialog.setTip("选择加载动画")
+            dialog.setTip("选择加载动画（长按预览）")
             dialog.setAdapter(object : SelectDialogInterface<String?> {
                 override fun click(value: String?, pos: Int) {
                     // 存动画文件夹名:默认存空串(回退默认),其余存文件夹名
@@ -581,6 +582,11 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
                     return name ?: ""
                 }
             }, SelectDialogAdapter.stringDiff, display, defaultPos)
+            dialog.setOnItemLongClickListener { _, pos, _ ->
+                if (pos !in files.indices) return@setOnItemLongClickListener false
+                LoadingAnimPreviewDialog.show(this@SettingActivity, files[pos], display[pos])
+                true
+            }
             // 与主题颜色切换同一套"重启"逻辑:值有变化时带缓存配置重载主页,立即生效,不再提示"下次启动生效"
             dialog.setOnDismissListener { dialog1: DialogInterface? ->
                 if (oldAnim != LoadingAnim.getAnimName()) {

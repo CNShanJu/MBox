@@ -6,7 +6,7 @@ import androidx.annotation.Nullable;
  * 页面为"下拉刷新/到底了"套件注入的环境依赖(避免 kit 直连全局配置/业务单例):
  *
  * <ul>
- *   <li>加载动画资产路径与尺寸 —— 由 app 侧用 {@code LoadingAnim}(读 SystemConfig)组装后传入;</li>
+ *   <li>加载动画资产路径、尺寸与速度 —— 由 app 侧用 {@code LoadingAnim}(读 SystemConfig)组装后传入;</li>
  *   <li>toast 提示 —— 由 app 侧接 AppBubble,kit 只发消息不持有单例。</li>
  * </ul>
  *
@@ -20,6 +20,9 @@ public interface PullRefreshEnv {
 
     /** 下拉刷新指示器的显示尺寸(dp) */
     int refreshIndicatorSizeDp();
+
+    /** 加载动画播放速度倍率;手指下拉时的逐帧拖动仍跟随手势 */
+    float loadingAnimSpeed();
 
     /** 短提示(toast);可为空实现:不弹 */
     void toast(String msg);
@@ -35,6 +38,11 @@ public interface PullRefreshEnv {
         @Override
         public int refreshIndicatorSizeDp() {
             return 40;
+        }
+
+        @Override
+        public float loadingAnimSpeed() {
+            return 1f;
         }
 
         @Override
