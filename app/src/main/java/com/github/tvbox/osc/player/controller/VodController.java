@@ -32,7 +32,6 @@ import com.github.tvbox.osc.ui.dialog.DialogCoordinator;
 import com.github.tvbox.osc.ui.widget.MyBatteryView;
 import com.github.tvbox.osc.util.FastClickCheckUtil;
 import com.github.tvbox.osc.util.PlayerHelper;
-import com.github.tvbox.osc.util.ScreenUtils;
 import com.github.tvbox.osc.util.SubtitleHelper;
 import com.github.tvbox.osc.util.Utils;
 import com.owen.tvrecyclerview.widget.TvRecyclerView;
@@ -84,8 +83,8 @@ public class VodController extends BaseController implements PlaybackSettingsCon
                         toggleViewShowWithAlpha(mTopRoot2, true);
                         if (!isLock){// 未上锁,随底部显示
                             toggleViewShowWithAlpha(mLockView, true);
+                            toggleViewShowWithAlpha(mScreenRotateView, true);
                             if (mFullWindows) {
-                                toggleViewShowWithAlpha(mScreenRotateView, true);
                                 toggleViewShowWithAlpha(mPlayPauseTime, true);
                             }
                         }
@@ -155,7 +154,6 @@ public class VodController extends BaseController implements PlaybackSettingsCon
     public SimpleSubtitleView mSubtitleView;
     public TextView mZimuBtn;
     public TextView mAudioTrackBtn;
-    public TextView mLandscapePortraitBtn;
     private ImageView mIvPlayStatus;
     private ImageView mIvFullscreen;
     private View mChooseSeries;
@@ -243,7 +241,6 @@ public class VodController extends BaseController implements PlaybackSettingsCon
         mSubtitleView = findViewById(R.id.subtitle_view);
         mZimuBtn = findViewById(R.id.zimu_select);
         mAudioTrackBtn = findViewById(R.id.audio_track_select);
-        mLandscapePortraitBtn = findViewById(R.id.landscape_portrait);
         mIvPlayStatus = findViewById(R.id.play_status);
         mIvFullscreen = findViewById(R.id.iv_fullscreen);
         mChooseSeries = findViewById(R.id.choose_series);
@@ -629,7 +626,6 @@ public class VodController extends BaseController implements PlaybackSettingsCon
             }
             hideBottom();
         };
-        mLandscapePortraitBtn.setOnClickListener(rotateScreenClick);
         mScreenRotateView.setOnClickListener(rotateScreenClick);
         mNextBtn.setNextFocusLeftId(R.id.play_time_start);
         mChooseSeries.setOnClickListener(view -> {
@@ -701,18 +697,6 @@ public class VodController extends BaseController implements PlaybackSettingsCon
         }
     }
 
-    public void initLandscapePortraitBtnInfo() {
-        if (mControlWrapper != null && mActivity != null) {
-            int width = mControlWrapper.getVideoSize()[0];
-            int height = mControlWrapper.getVideoSize()[1];
-            double screenSqrt = ScreenUtils.getSqrt(mActivity);
-            if (screenSqrt < 10.0 && width < height) {
-                mLandscapePortraitBtn.setVisibility(View.VISIBLE);
-                mLandscapePortraitBtn.setText("竖屏");
-            }
-        }
-    }
-
     /**
      * 横竖屏切换: 记录是否"用户锁竖屏"(防止刷新/重播按片源宽高自动转回横屏)
      */
@@ -723,10 +707,6 @@ public class VodController extends BaseController implements PlaybackSettingsCon
         }else {
             mActivity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT);
             mPortraitLock = true;
-        }
-        // 同步按钮文案: 竖屏(全窗/预览)下提示可切横屏, 反之显示"竖屏"
-        if (mLandscapePortraitBtn != null) {
-            mLandscapePortraitBtn.setText(mPortraitLock ? "横屏" : "竖屏");
         }
     }
 
@@ -892,16 +872,6 @@ public class VodController extends BaseController implements PlaybackSettingsCon
         return mAudioTrackBtn;
     }
 
-    @Override
-    public TextView settingsLandscapeBtn() {
-        return mLandscapePortraitBtn;
-    }
-
-    @Override
-    public String settingsLandscapeActionLabel() {
-        return mFullWindows ? "横竖屏" : "全屏播放";
-    }
-
     public void setTitle(String playTitleInfo) {
         mPlayTitle1.setText(playTitleInfo);
     }
@@ -921,13 +891,18 @@ public class VodController extends BaseController implements PlaybackSettingsCon
         mFullWindows = b;
         if (!b) clearDoubleTapSeekFeedback();
         mPlayTitle1.setSelected(true);
-        if (b && !isLock && isBottomVisible()) {
+        if (!isLock && isBottomVisible()) {
             toggleViewShowWithAlpha(mScreenRotateView, true);
-            toggleViewShowWithAlpha(mPlayPauseTime, true);
         } else {
             mScreenRotateView.animate().cancel();
-            mPlayPauseTime.animate().cancel();
             mScreenRotateView.setVisibility(GONE);
+        }
+        mScreenRotateView.setContentDescription(getContext().getString(b
+                ? R.string.player_rotate_screen : R.string.player_enter_fullscreen));
+        if (b && !isLock && isBottomVisible()) {
+            toggleViewShowWithAlpha(mPlayPauseTime, true);
+        } else {
+            mPlayPauseTime.animate().cancel();
             mPlayPauseTime.setVisibility(GONE);
         }
         if (b) {
@@ -1095,7 +1070,6 @@ public class VodController extends BaseController implements PlaybackSettingsCon
                 break;
             case VideoView.STATE_PLAYING:
                 hasPlayedOnce = true;
-                initLandscapePortraitBtnInfo();
                 startProgress();
                 mIvPlayStatus.setImageResource(R.drawable.ic_pause);
                 // 全屏下视频加载出真实尺寸后校正横竖屏(进全屏时尺寸可能未知,未能切横屏)

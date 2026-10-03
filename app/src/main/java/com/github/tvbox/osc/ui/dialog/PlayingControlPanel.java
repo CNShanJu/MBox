@@ -25,7 +25,7 @@ import java.util.Arrays;
  * 播放设置内容协调器（合并 PlayingControlDialog / PlayingControlRightDialog 的重复 UI 逻辑）。
  * <p>
  * 两个弹窗共用同一布局 {@code dialog_playing_control}，差异仅剩"壳"（底部 {@link AppBottomPopupView}
- * vs 抽屉 {@link AppDrawerPopupView}）；全部按钮绑定/倍速/缩放/播放器/解码/字幕/音轨/横竖屏/片头尾
+ * vs 抽屉 {@link AppDrawerPopupView}）；全部按钮绑定/倍速/缩放/播放器/解码/字幕/音轨/片头尾
  * 逻辑统一在本协调器，弹窗只做薄壳 + 委托。
  */
 final class PlayingControlPanel {
@@ -75,9 +75,6 @@ final class PlayingControlPanel {
                 ? View.VISIBLE : View.GONE);
         updateVideoPurifyUi(mController.isVideoPurifyEnabled());
         mBinding.backgroundPlay.setText(BackgroundPlaySettings.currentLabel());
-        // 详情页预览态先进入视频全屏；全屏和本地播放仍切换横竖屏。
-        mBinding.landscapePortrait.setVisibility(View.VISIBLE);
-        mBinding.landscapePortrait.setText(mController.settingsLandscapeActionLabel());
         mBinding.lanPush.setVisibility(mController.supportsLanPush()
                 && ControlManager.get().lanState() == ControlManager.LAN_ACTIVE
                 ? View.VISIBLE : View.GONE);
@@ -85,7 +82,7 @@ final class PlayingControlPanel {
         updateSpeedUi();
         // 「点击型」小组件按钮的点击特效(按下整键透明度 80% 再恢复):倍速那几个是"选择型",
         // 靠选中态换色反馈,不套这个特效(用户口径:"一种是选择按钮一种是点击按钮")
-        for (int id : new int[]{R.id.scale, R.id.player, R.id.decode, R.id.render_mode, R.id.background_play, R.id.landscape_portrait,
+        for (int id : new int[]{R.id.scale, R.id.player, R.id.decode, R.id.render_mode, R.id.background_play,
                 R.id.subtitle, R.id.voice, R.id.replay, R.id.refresh, R.id.start_end_reset, R.id.lan_push}) {
             com.github.tvbox.osc.ui.kit.WidgetPressEffect.attach(mBinding.getRoot().findViewById(id));
         }
@@ -150,9 +147,6 @@ final class PlayingControlPanel {
         mBinding.lanPush.setOnClickListener(view -> dismissWith(mController::requestLanPush));
         mBinding.subtitle.setOnClickListener(view -> dismissWith(() -> changeAndUpdateText(null, mController.settingsZimuBtn())));
         mBinding.voice.setOnClickListener(view -> dismissWith(() -> changeAndUpdateText(null, mController.settingsAudioBtn())));
-        // 预览态进入全屏，全屏及本地播放切换横竖屏。
-        mBinding.landscapePortrait.setOnClickListener(view -> dismissThenRotate(
-                () -> changeAndUpdateText(null, mController.settingsLandscapeBtn())));
     }
 
     private void updateSkipText(boolean start) {
@@ -315,17 +309,4 @@ final class PlayingControlPanel {
         }
     }
 
-    /** XPopup 的 dismissWith 回调先于从 decor 移除弹窗；转屏要等移除完成。 */
-    private void dismissThenRotate(Runnable after) {
-        if (mHost == null || mActivity == null) {
-            dismissWith(after);
-            return;
-        }
-        mHost.dismissWith(() -> {
-            View decor = mActivity.getWindow().getDecorView();
-            decor.post(() -> {
-                if (!mActivity.isFinishing() && !mActivity.isDestroyed()) after.run();
-            });
-        });
-    }
 }

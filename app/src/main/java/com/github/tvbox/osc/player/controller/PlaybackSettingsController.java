@@ -33,11 +33,6 @@ public interface PlaybackSettingsController {
 
     TextView settingsAudioBtn();
 
-    TextView settingsLandscapeBtn();
-
-    /** 播放详情页预览态的同一入口先进入视频全屏。 */
-    default String settingsLandscapeActionLabel() { return "横竖屏"; }
-
     /** 设置倍速;speed 为空表示循环切换 */
     void setSpeed(String speed);
 

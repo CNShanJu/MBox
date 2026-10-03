@@ -37,7 +37,6 @@ import com.github.tvbox.osc.ui.dialog.DialogCoordinator;
 import com.github.tvbox.osc.ui.widget.MyBatteryView;
 import com.github.tvbox.osc.util.FastClickCheckUtil;
 import com.github.tvbox.osc.util.PlayerHelper;
-import com.github.tvbox.osc.util.ScreenUtils;
 import com.github.tvbox.osc.util.SubtitleHelper;
 import com.github.tvbox.osc.util.Utils;
 import com.owen.tvrecyclerview.widget.TvRecyclerView;
@@ -146,7 +145,6 @@ public class LocalVideoController extends BaseController implements PlaybackSett
     public SimpleSubtitleView mSubtitleView;
     TextView mZimuBtn;
     TextView mAudioTrackBtn;
-    public TextView mLandscapePortraitBtn;
     private ImageView mIvPlayStatus;
     public MyBatteryView mMyBatteryView;
     private ImageView mLockView;
@@ -224,7 +222,6 @@ public class LocalVideoController extends BaseController implements PlaybackSett
         mSubtitleView = findViewById(R.id.subtitle_view);
         mZimuBtn = findViewById(R.id.zimu_select);
         mAudioTrackBtn = findViewById(R.id.audio_track_select);
-        mLandscapePortraitBtn = findViewById(R.id.landscape_portrait);
         mIvPlayStatus = findViewById(R.id.play_status);
         initSubtitleInfo();
 
@@ -681,7 +678,6 @@ public class LocalVideoController extends BaseController implements PlaybackSett
                 hideBottom();
             }
         };
-        mLandscapePortraitBtn.setOnClickListener(rotateScreenClick);
         mScreenRotateView.setOnClickListener(rotateScreenClick);
         mNextBtn.setNextFocusLeftId(R.id.play_time_start);
     }
@@ -704,25 +700,11 @@ public class LocalVideoController extends BaseController implements PlaybackSett
         }
     }
 
-    public void initLandscapePortraitBtnInfo() {
-        if (mControlWrapper != null && mActivity != null) {
-            int width = mControlWrapper.getVideoSize()[0];
-            int height = mControlWrapper.getVideoSize()[1];
-            double screenSqrt = ScreenUtils.getSqrt(mActivity);
-            if (screenSqrt < 10.0 && width < height) {
-                mLandscapePortraitBtn.setVisibility(View.VISIBLE);
-                mLandscapePortraitBtn.setText("竖屏");
-            }
-        }
-    }
-
     void setLandscapePortrait() {
         int requestedOrientation = mActivity.getRequestedOrientation();
         if (requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE || requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE || requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE) {
-            mLandscapePortraitBtn.setText("横屏");
             mActivity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT);
         } else if (requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_PORTRAIT || requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT || requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT) {
-            mLandscapePortraitBtn.setText("竖屏");
             mActivity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
         }
     }
@@ -837,11 +819,6 @@ public class LocalVideoController extends BaseController implements PlaybackSett
     @Override
     public TextView settingsAudioBtn() {
         return mAudioTrackBtn;
-    }
-
-    @Override
-    public TextView settingsLandscapeBtn() {
-        return mLandscapePortraitBtn;
     }
 
     /** 设置倍速;speed 为空表示循环切换(与在线播放一致) */
@@ -1109,7 +1086,6 @@ public class LocalVideoController extends BaseController implements PlaybackSett
             case VideoView.STATE_IDLE:
                 break;
             case VideoView.STATE_PLAYING:
-                initLandscapePortraitBtnInfo();
                 startProgress();
                 mIvPlayStatus.setImageResource(R.drawable.ic_pause);
                 break;

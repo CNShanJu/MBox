@@ -103,7 +103,7 @@
         android:clickable="true"
         android:focusable="true"
         android:paddingHorizontal="6dp"
-        android:contentDescription="@string/player_rotate_screen"
+        android:contentDescription="@string/player_enter_fullscreen"
         android:src="@drawable/ic_screen_rotate"
         android:visibility="gone"
         tools:visibility="visible" />
@@ -552,21 +552,6 @@
                     android:paddingHorizontal="10dp"
                     android:paddingVertical="4dp"
                     android:text="音轨"
-                />
-
-                <TextView
-                    android:id="@+id/landscape_portrait"
-                    android:singleLine="true"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginEnd="@dimen/dp_5"
-                    android:layout_marginRight="@dimen/dp_5"
-                    android:textColor="@color/white"
-                    android:focusable="true"
-                    android:paddingHorizontal="10dp"
-                    android:paddingVertical="4dp"
-                    android:text="横竖屏"
-                    android:visibility="gone"
                 />
 
             </LinearLayout>
