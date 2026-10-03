@@ -12,6 +12,7 @@ import android.widget.ProgressBar;
 import androidx.annotation.NonNull;
 import com.github.tvbox.osc.R;
 import com.github.tvbox.osc.ui.dialog.AppCenterPopupView;
+import com.github.tvbox.osc.ui.dialog.ConfirmDialog;
 import com.github.tvbox.osc.util.AppBubble;
 import com.github.tvbox.osc.util.Utils;
 import com.lxj.xpopup.core.BasePopupView;
@@ -73,8 +74,11 @@ public class UpdateIndicatorDialog extends AppCenterPopupView implements UpdateM
         });
 
         btnDismiss.setOnClickListener(v -> {
-            UpdateManager.get().cancel();
-            dismiss();
+            ConfirmDialog.showDanger(getContext(), "放弃更新",
+                    "确定停止更新并删除已下载的安装包吗？", "放弃更新", () -> {
+                        UpdateManager.get().cancel();
+                        dismiss();
+                    });
         });
 
         btnInstall.setOnClickListener(v -> {
