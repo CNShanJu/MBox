@@ -54,7 +54,7 @@ class LanServiceActivity : BaseVbActivity<ActivityLanServiceBinding>() {
             FastClickCheckUtil.check(view)
             if (SystemConfig.isLanServerEnabled()) {
                 ConfirmDialog.show(this, "关闭局域网服务",
-                    "关闭会清除已配对设备；正在运行的服务需重启应用后才会停止局域网访问。",
+                    "关闭会清除已配对设备，并立即停止局域网访问；本机回环服务会继续运行。",
                     "确认关闭") { updateLanServerEnabled(false) }
             } else {
                 updateLanServerEnabled(true)
@@ -91,7 +91,7 @@ class LanServiceActivity : BaseVbActivity<ActivityLanServiceBinding>() {
             }
         }
         mBinding.btnLanRestart.setOnClickListener { restartAppForLan() }
-        mBinding.btnLanHelp.setOnClickListener {
+        mBinding.ivLanHelp.setOnClickListener {
             XPopup.Builder(this).asCustom(TextTipDialog(this,
                 getString(R.string.lan_server_title), getString(R.string.setting_lan_server_tip))).show()
         }
@@ -161,6 +161,9 @@ class LanServiceActivity : BaseVbActivity<ActivityLanServiceBinding>() {
         val manager = ControlManager.get()
         val state = manager.lanState()
         mBinding.switchLanServer.setChecked(SystemConfig.isLanServerEnabled())
+        val showServiceCards = state == ControlManager.LAN_ACTIVE
+        mBinding.panelLanAccess.visibility = if (showServiceCards) View.VISIBLE else View.GONE
+        mBinding.panelLanConsole.visibility = if (showServiceCards) View.VISIBLE else View.GONE
         mBinding.tvLanState.text = when (state) {
             ControlManager.LAN_ACTIVE -> getString(R.string.lan_server_state_active)
             ControlManager.LAN_PENDING_RESTART -> getString(R.string.lan_server_state_pending)
@@ -228,11 +231,15 @@ class LanServiceActivity : BaseVbActivity<ActivityLanServiceBinding>() {
     private fun dp(value: Int) = (value * resources.displayMetrics.density + 0.5f).toInt()
 
     private fun updateLanServerEnabled(enabled: Boolean) {
-        SystemConfig.setLanServerEnabled(enabled)
+        if (!enabled) {
+            LanServerService.disable(this)
+        } else {
+            SystemConfig.setLanServerEnabled(true)
+        }
         renderStatus()
         if (!enabled) {
             AppBubble.toast(if (ControlManager.get().lanState() == ControlManager.LAN_PENDING_CLOSE)
-                "局域网服务已关闭，重启生效" else "局域网服务已关闭")
+                "局域网监听未能停止，请重启应用" else "局域网服务已关闭")
         }
     }
 

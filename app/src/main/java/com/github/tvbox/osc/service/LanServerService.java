@@ -46,6 +46,15 @@ public final class LanServerService extends Service {
                 new Intent(context.getApplicationContext(), LanServerService.class));
     }
 
+    /** 关闭对外监听并保留应用自身所需的回环服务。 */
+    public static void disable(Context context) {
+        SystemConfig.setLanServerEnabled(false);
+        ControlManager manager = ControlManager.get();
+        manager.stopServer();
+        stop(context);
+        manager.startServer();
+    }
+
     @Override public void onCreate() {
         super.onCreate();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

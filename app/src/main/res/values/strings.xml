@@ -56,20 +56,20 @@
         \n电脑或另一台设备需要输入手机上显示的配对码；服务重启后配对码会更新。
         \n开启后会显示常驻通知，手机退到后台或锁屏仍可访问；为保持连接会增加耗电，使用完建议关闭。
         \n关闭时服务只监听 127.0.0.1，仅本机可访问 —— 订阅、本地播放、代理都不受影响。
-        \n开关改动需要重启应用后生效；换网络后本机 IP 会变，回这里看一眼新地址即可。
+        \n开启服务需要重启应用；关闭会立即停止局域网访问。换网络后本机 IP 会变，回这里看一眼新地址即可。
              </string>
 
     <!-- 局域网服务二级页:地址、状态、配对码。 -->
     <string name="lan_server_title">局域网服务</string>
     <string name="lan_server_state_active">已开启 · 局域网设备现在就能访问</string>
     <string name="lan_server_state_pending">已开启 · 重启应用后才生效</string>
-    <string name="lan_server_state_pending_close">已关闭 · 重启应用后才会停止局域网访问</string>
+    <string name="lan_server_state_pending_close">关闭异常 · 局域网监听仍在运行</string>
     <string name="lan_server_state_off">未开启 · 仅本机可访问</string>
     <string name="lan_server_lead">同一 Wi-Fi 下，在其他设备的浏览器打开地址：</string>
     <!-- 其余三种状态下地址"现在能不能用"不一样,文案必须跟着变(否则等于把没生效的地址说成能用) -->
     <string name="lan_server_lead_pending">重启应用后，可在其他设备的浏览器打开地址：</string>
     <string name="lan_server_lead_off">开启服务并重启后，可在其他设备打开地址：</string>
-    <string name="lan_server_lead_pending_close">重启应用前，下面的地址仍可访问：</string>
+    <string name="lan_server_lead_pending_close">请重启应用；在停止前，下面的地址仍可访问：</string>
     <string name="lan_server_addr_empty">没取到局域网 IP —— 请确认本机已连接 Wi-Fi（或已开热点）后回到这里重看。</string>
 
     <!-- 公共空态(view_empty)默认文案:LoadSir 的空态视图全 App 复用,代码侧要能把它设回默认值 -->

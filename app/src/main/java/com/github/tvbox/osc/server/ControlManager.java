@@ -30,9 +30,8 @@ public class ControlManager {
     /** 局域网服务状态:已开启且当前实例已绑定所有网卡,局域网设备可访问 */
     public static final int LAN_ACTIVE = 2;
     /**
-     * 局域网服务状态:开关已关,但当前运行的实例<b>still</b>绑着所有网卡 —— 要重启才收回对外访问。
-     * <p>为什么要单独一种:关掉开关不会立刻关端口(同一个进程里服务还在跑),此时若显示"仅本机可访问"
-     * 就是把暴露面说小了;如实说明"重启后才会停止"才对得上用户按下开关的预期。
+     * 局域网服务状态:开关已关,但当前实例仍绑着所有网卡(例如配置被外部改动或关闭流程异常)。
+     * 正常的设置页关闭操作会立即停服务并重建本机回环;此状态是残留暴露面的诊断兜底。
      */
     public static final int LAN_PENDING_CLOSE = 3;
 
@@ -76,7 +75,7 @@ public class ControlManager {
     /**
      * 局域网服务当前状态({@link #LAN_OFF} / {@link #LAN_PENDING_RESTART} / {@link #LAN_ACTIVE} /
      * {@link #LAN_PENDING_CLOSE}):按"开关 × 当前实例的真实绑定"如实回答,设置页据此说明
-     * "开了但还要重启 / 已经能访问了 / 关了但端口还开着(要重启才收回)"。
+     * "开了但还要重启 / 已经能访问了 / 异常残留的对外监听"。
      */
     public int lanState() {
         boolean enabled = SystemConfig.isLanServerEnabled();
@@ -216,9 +215,16 @@ public class ControlManager {
             // 再也起不来(回环订阅/播放/proxy 全失效),是个潜伏已久的坑。
             try {
                 running.stop();
-            } catch (Throwable ignored) {
+            } catch (Throwable error) {
+                Log.e("TVBox-Server", "停止旧服务失败", error);
+            }
+            if (running.isStarting()) {
+                // 旧监听可能仍对外开放，保留实例和绑定状态供设置页如实显示。
+                Log.e("TVBox-Server", "旧服务仍在监听，暂不重建本机服务");
+                return;
             }
             mServer = null;
+            lanBound = false;
         }
         // 默认仅绑定本机回环:本 App 的订阅/本地播放/代理全部走 127.0.0.1,无需对局域网开放端口。
         // 需要局域网文件共享/远程管理(web 控制台)时,显式开启 HawkConfig.LAN_SERVER_ENABLE 后重启生效。
@@ -288,13 +294,20 @@ public class ControlManager {
     public void stopServer() {
         RemoteServer s = mServer;
         boolean wasLanBound = lanBound;
-        mServer = null;
-        lanBound = false;
         if (s != null && s.isStarting()) {
             try {
                 s.stop();
-            } catch (Throwable ignored) {
+            } catch (Throwable error) {
+                Log.e("TVBox-Server", "停止服务失败", error);
             }
+            if (s.isStarting()) {
+                // 关闭失败时不能把残留的对外监听伪装成“仅本机可访问”。
+                return;
+            }
+        }
+        if (mServer == s) {
+            mServer = null;
+            lanBound = false;
         }
         if (wasLanBound) LogStore.log(Category.SYSTEM, "局域网服务已停止");
     }
