@@ -264,6 +264,8 @@ app / feature
    - **正式流程:发版后在本机补传**(国内链路秒级稳定),用 `scripts/sync-gitee-release.ps1`:
      `-VerifyOnly` 只验令牌与作用域(不写任何东西),或 `-Tag vX.Y.Z -ApkPath <apk>` 建发行版 + 传附件,
      脚本末尾自动调验收脚本复核。**令牌不要写在命令行参数里**(会进 PowerShell 历史),用 `-TokenFile` 或交互式输入,用完删掉。
+   - **日常免手工:挂守护脚本**(2026-10-04 起,已实测):`scripts/watch-gitee-releases.ps1` 轮询最近几个 tag,发现 Gitee 缺 `.apk` 附件就自动从 GitHub 下载正式包 → 补传 → 复核(幂等,可重复执行)。推荐挂成 30 分钟一次的计划任务(仅当前用户登录时运行,令牌用 `-TokenFile` 指定):`schtasks /create /tn "MBox-Gitee-Release-Watch" /sc minute /mo 30 /tr "powershell -NoProfile -ExecutionPolicy Bypass -File <仓库>\scripts\watch-gitee-releases.ps1 -TokenFile <令牌文件> -Count 3" /f`。`-DryRun` 只报告"要做什么"(不下载、不写 Gitee);日志默认 `%TEMP%\MBox-gitee-watch.log`;退出码 0=全部齐备 / 1=有版本待补。**它只省掉手工补传,不等于免验收** —— 发版后仍要跑下面的验收脚本。
+   - **Gitee 接口的两个编码坑(2026-10-04 亲历,别再误判)**:①发行版正文本身是好的,但 Gitee 的 JSON 响应**不带 charset**,Windows PowerShell 里用 `Invoke-RestMethod`/`Get-Content` 读会按本机代码页或 Latin-1 解码,显示出"乱码" **是解码假象** —— 抽查正文请显式按 UTF-8 读(`[System.IO.File]::ReadAllText($f, [System.Text.UTF8Encoding]::new($false))`)再比对;②修改发行版(`PATCH /releases/{id}`)**只认表单参数**,发 JSON body 会回 `tag_name is missing / body is invalid`,要传 `body` 时用 `--data-urlencode "body@<md文件>"`。
    - **每次发版后的验收动作(强制,一条命令)**:不要只看 GitHub Actions 是绿的 —— 缺令牌/上传失败时那步照样 success。
 
      ```powershell
