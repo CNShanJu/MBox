@@ -4,6 +4,8 @@ import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
+import android.view.Window;
+import android.view.WindowManager;
 
 import androidx.annotation.NonNull;
 
@@ -17,14 +19,26 @@ import com.github.tvbox.osc.transfer.ConfigImportSources;
 import com.github.tvbox.osc.util.HeavyTaskUtil;
 
 /** 只负责输入地址与配对码；连接状态由 ConfigImportSession 持有。 */
-public final class LanImportDialog extends AppBottomPopupView {
+public final class LanImportDialog extends AppCenterPopupView {
+    public interface ScanRequest {
+        void onScanRequested(String address, String code);
+    }
+
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Runnable onConnected;
+    private final ScanRequest scanRequest;
+    private final String initialAddress;
+    private final String initialCode;
     private int epoch;
 
-    public LanImportDialog(@NonNull Context context, @NonNull Runnable onConnected) {
+    public LanImportDialog(@NonNull Context context, @NonNull String initialAddress,
+                           @NonNull String initialCode, @NonNull Runnable onConnected,
+                           @NonNull ScanRequest scanRequest) {
         super(context);
+        this.initialAddress = initialAddress;
+        this.initialCode = initialCode;
         this.onConnected = onConnected;
+        this.scanRequest = scanRequest;
     }
 
     @Override protected int getImplLayoutId() { return R.layout.dialog_lan_import; }
@@ -34,7 +48,30 @@ public final class LanImportDialog extends AppBottomPopupView {
         DialogLanImportBinding b = DialogLanImportBinding.bind(getPopupImplView());
         ThemeDrawables.applyBackground(b.etLanPeerAddress, R.drawable.bg_lan_import_field);
         ThemeDrawables.applyBackground(b.etLanPeerCode, R.drawable.bg_lan_import_field);
+        b.etLanPeerAddress.setText(initialAddress);
+        b.etLanPeerCode.setText(initialCode);
+        b.btnLanScan.setOnClickListener(v -> {
+            String address = b.etLanPeerAddress.getText().toString().trim();
+            String code = b.etLanPeerCode.getText().toString().trim();
+            dismiss();
+            scanRequest.onScanRequested(address, code);
+        });
+        b.btnLanCancel.setOnClickListener(v -> dismiss());
         b.btnLanConnect.setOnClickListener(v -> connect(b));
+    }
+
+    @Override public void focusAndProcessBackPress() {
+        super.focusAndProcessBackPress();
+        // 连接表单必须随输入法缩进可见区域，否则键盘会盖住地址和配对码。
+        Window window = getHostWindow();
+        if (window != null) {
+            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+        }
+    }
+
+    @Override protected void onDismiss() {
+        ++epoch;
+        super.onDismiss();
     }
 
     private void connect(DialogLanImportBinding b) {

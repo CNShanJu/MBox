@@ -1,11 +1,13 @@
 package com.github.tvbox.osc.ui.activity
 
+import android.app.Activity
 import android.content.Intent
 import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import com.blankj.utilcode.util.AppUtils
 import com.blankj.utilcode.util.ClipboardUtils
@@ -13,38 +15,46 @@ import com.github.tvbox.osc.R
 import com.github.tvbox.osc.base.BaseVbActivity
 import com.github.tvbox.osc.databinding.ActivityLanServiceBinding
 import com.github.tvbox.osc.server.ControlManager
-import com.github.tvbox.osc.server.RemoteServer
 import com.github.tvbox.osc.service.LanServerService
 import com.github.tvbox.osc.transfer.ConfigImportSession
 import com.github.tvbox.osc.ui.dialog.ConfirmDialog
 import com.github.tvbox.osc.ui.dialog.DialogCoordinator
 import com.github.tvbox.osc.ui.dialog.LanImportDialog
+import com.github.tvbox.osc.ui.dialog.LanPairQrDialog
 import com.github.tvbox.osc.ui.dialog.TextTipDialog
 import com.github.tvbox.osc.util.AppBubble
+import com.github.tvbox.osc.util.LanPairQr
 import com.lxj.xpopup.XPopup
-import java.text.DateFormat
-import java.util.Date
 
-/** 局域网设置的二级页：地址、设备控制台和解析导入都在这里。 */
+/** 局域网设置的二级页：访问地址、配置导入导出和设备控制台入口。 */
 class LanServiceActivity : BaseVbActivity<ActivityLanServiceBinding>() {
     companion object {
         const val EXTRA_FROM_NOTIFICATION = "from_lan_notification"
     }
     private val importSession = ConfigImportSession.get()
     private val importListener = ConfigImportSession.Listener { renderImportConnection() }
+    private var scanDraftAddress = ""
+    private var scanDraftCode = ""
+    private val scanLanQr = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val raw = if (result.resultCode == Activity.RESULT_OK)
+            result.data?.getStringExtra(LanQrScanActivity.EXTRA_QR_RESULT) else null
+        val pair = raw?.let(LanPairQr::decode)
+        if (raw != null && pair == null) AppBubble.toast("二维码不是有效的 MBox 连接信息")
+        openConnectDialog(pair?.address ?: scanDraftAddress, pair?.code ?: scanDraftCode)
+    }
 
     override fun init() {
         // 前台服务可在无 Activity 的进程里被系统恢复；通知直达本页属于正常入口。
         if (intent?.getBooleanExtra(EXTRA_FROM_NOTIFICATION, false) == true) {
             com.github.tvbox.osc.base.App.getInstance().isNormalStart = true
         }
-        mBinding.btnRefreshDevices.setOnClickListener { refreshDevices() }
+        mBinding.panelLanConsole.setOnClickListener { openConsole() }
+        mBinding.btnOpenLanConsole.setOnClickListener { openConsole() }
         mBinding.btnRotatePairingCode.setOnClickListener {
             ConfirmDialog.show(this, "更新配对码",
                 "更新后，已配对设备会断开连接，需要输入新配对码重新连接。", "确认更新") {
                 if (ControlManager.get().rotatePairingCode().isNotEmpty()) {
                     renderStatus()
-                    refreshDevices()
                     AppBubble.toast("配对码已更新")
                 }
             }
@@ -53,11 +63,10 @@ class LanServiceActivity : BaseVbActivity<ActivityLanServiceBinding>() {
             if (importSession.hasConnection()) {
                 openImportPage()
             } else {
-                DialogCoordinator.bottom(this, LanImportDialog(this) {
-                    if (!isFinishing && !isDestroyed) openImportPage()
-                }, 0).show()
+                openConnectDialog()
             }
         }
+        mBinding.btnShowLanQr.setOnClickListener { showLanQr() }
         mBinding.btnLanExport.setOnClickListener {
             val urls = ControlManager.get().lanAccessUrls
             val code = ControlManager.get().pairingCode
@@ -79,8 +88,6 @@ class LanServiceActivity : BaseVbActivity<ActivityLanServiceBinding>() {
     override fun onResume() {
         super.onResume()
         renderStatus()
-        // 每次进入页面读取一次；之后仅由用户点击「刷新」或踢出设备时更新。
-        refreshDevices()
         renderImportConnection()
     }
 
@@ -96,6 +103,33 @@ class LanServiceActivity : BaseVbActivity<ActivityLanServiceBinding>() {
 
     private fun openImportPage() {
         startActivity(Intent(this, LanImportActivity::class.java))
+    }
+
+    private fun openConsole() {
+        startActivity(Intent(this, LanDevicesActivity::class.java))
+    }
+
+    private fun openConnectDialog(address: String = "", code: String = "") {
+        if (isFinishing || isDestroyed) return
+        val dialog = LanImportDialog(this, address, code,
+            Runnable { if (!isFinishing && !isDestroyed) openImportPage() },
+            LanImportDialog.ScanRequest { draftAddress, draftCode ->
+                scanDraftAddress = draftAddress
+                scanDraftCode = draftCode
+                scanLanQr.launch(Intent(this, LanQrScanActivity::class.java))
+            })
+        DialogCoordinator.center(this, dialog).show()
+    }
+
+    private fun showLanQr() {
+        val manager = ControlManager.get()
+        val addresses = manager.lanAccessUrls
+        val code = manager.pairingCode
+        if (!manager.isLanServing || addresses.isEmpty() || code.isEmpty()) {
+            AppBubble.toast("请先开启局域网服务并重启应用")
+            return
+        }
+        DialogCoordinator.center(this, LanPairQrDialog(this, addresses.toList(), code)).show()
     }
 
     private fun renderImportConnection() {
@@ -156,6 +190,8 @@ class LanServiceActivity : BaseVbActivity<ActivityLanServiceBinding>() {
         mBinding.btnRotatePairingCode.visibility = if (code.isEmpty()) View.GONE else View.VISIBLE
         mBinding.tvLanPairingCode.text = code
         mBinding.btnCopyPairingCode.visibility = if (code.isEmpty()) View.GONE else View.VISIBLE
+        mBinding.btnShowLanQr.visibility = if (manager.isLanServing && code.isNotEmpty()
+            && urls.isNotEmpty()) View.VISIBLE else View.GONE
         mBinding.btnCopyPairingCode.setOnClickListener {
             if (code.isNotEmpty()) {
                 ClipboardUtils.copyText(code)
@@ -164,50 +200,9 @@ class LanServiceActivity : BaseVbActivity<ActivityLanServiceBinding>() {
         }
         mBinding.btnLanRestart.visibility = if (state == ControlManager.LAN_PENDING_RESTART
             || state == ControlManager.LAN_PENDING_CLOSE) View.VISIBLE else View.GONE
-        val serving = manager.isLanServing
-        mBinding.panelLanDevices.visibility = if (serving) View.VISIBLE else View.GONE
-    }
-
-    private fun refreshDevices() {
-        if (!ControlManager.get().isLanServing) return
-        val devices = ControlManager.get().pairedDevices()
-        mBinding.tvDeviceCount.text = "已配对 ${devices.size} 台设备"
-        mBinding.llDevices.removeAllViews()
-        if (devices.isEmpty()) {
-            mBinding.llDevices.addView(label("暂无设备，配对后会显示在这里。", false))
-            return
-        }
-        devices.forEach { device -> addDevice(device) }
-    }
-
-    private fun addDevice(device: RemoteServer.LanDevice) {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, dp(12), 0, dp(14))
-        }
-        val type = if (device.kind == "browser") "浏览器" else "MBox"
-        row.addView(label("${device.name} · $type", true))
-        val idle = ((System.currentTimeMillis() - device.lastSeen) / 1000).coerceAtLeast(0)
-        val time = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
-            .format(Date(device.connectedAt))
-        val status = if (idle <= 60) "在线" else "暂时离线"
-        val playing = device.currentTitle()
-        row.addView(label("地址 ${device.ip}\n连接于 $time · $status · 最近活动 $idle 秒前" +
-            if (playing.isEmpty()) "" else "\n已推送 $playing", false))
-        val kick = label("踢出并撤销配对", true).apply {
-            setTextColor(ContextCompat.getColor(this@LanServiceActivity, R.color.text_danger))
-            setPadding(0, dp(9), 0, 0)
-            setOnClickListener {
-                ConfirmDialog.showDanger(this@LanServiceActivity, "踢出设备",
-                    "确定断开“${device.name}”（${device.ip}）吗？它需要重新输入配对码才能访问。",
-                    "踢出") {
-                    ControlManager.get().kickDevice(device.id)
-                    refreshDevices()
-                }
-            }
-        }
-        row.addView(kick)
-        mBinding.llDevices.addView(row)
+        mBinding.tvLanConsoleSummary.text = if (manager.isLanServing)
+            "已配对 ${manager.pairedDevices().size} 台设备，查看连接与管理配对。"
+        else "开启局域网服务后，可在这里查看和管理已配对设备。"
     }
 
     private fun label(text: String, primary: Boolean) = TextView(this).apply {

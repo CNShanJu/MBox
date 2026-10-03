@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="320dp"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_dialog"
+    android:gravity="center_horizontal"
+    android:orientation="vertical"
+    android:padding="20dp">
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="扫描连接本机"
+        android:textColor="@color/text_foreground"
+        android:textSize="18sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="5dp"
+        android:text="在另一台 MBox 的「连接服务器」中扫码。二维码包含本机地址和配对码。"
+        android:textColor="@color/text_sub_foreground"
+        android:textSize="12sp" />
+
+    <ImageView
+        android:id="@+id/ivLanQr"
+        android:layout_width="240dp"
+        android:layout_height="240dp"
+        android:layout_marginTop="12dp"
+        android:contentDescription="本机地址与配对码的二维码"
+        android:scaleType="fitCenter" />
+
+    <TextView
+        android:id="@+id/tvLanQrError"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:text="二维码生成失败，请复制地址和配对码。"
+        android:textColor="@color/text_danger"
+        android:textSize="12sp"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/tvLanQrAddress"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:gravity="center"
+        android:textColor="@color/text_foreground"
+        android:textIsSelectable="true"
+        android:textSize="13sp" />
+
+    <TextView
+        android:id="@+id/tvLanQrCode"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:gravity="center"
+        android:textColor="@color/text_sub_foreground"
+        android:textSize="12sp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="14dp"
+        android:orientation="horizontal">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnNextLanAddress"
+            style="@style/BtnSecondary"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_weight="1"
+            android:text="切换地址"
+            android:visibility="gone" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnCloseLanQr"
+            style="@style/BtnPrimary"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_marginStart="10dp"
+            android:layout_weight="1"
+            android:text="关闭" />
+    </LinearLayout>
+</LinearLayout>

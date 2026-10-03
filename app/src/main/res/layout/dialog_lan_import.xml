@@ -1,11 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent"
+    android:layout_width="320dp"
     android:layout_height="wrap_content"
+    android:background="@drawable/bg_dialog"
     android:orientation="vertical"
     android:paddingHorizontal="20dp"
     android:paddingTop="20dp"
-    android:paddingBottom="24dp">
+    android:paddingBottom="20dp">
 
     <TextView
         android:layout_width="match_parent"
@@ -23,13 +24,29 @@
         android:textColor="@color/text_sub_foreground"
         android:textSize="13sp" />
 
-    <TextView
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="18dp"
-        android:text="服务器地址"
-        android:textColor="@color/text_foreground"
-        android:textSize="14sp" />
+        android:layout_marginTop="14dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="服务器地址"
+            android:textColor="@color/text_foreground"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/btnLanScan"
+            style="@style/TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="38dp"
+            android:text="扫码填写"
+            android:textColor="@color/text_highlight" />
+    </LinearLayout>
 
     <EditText
         android:id="@+id/etLanPeerAddress"
@@ -75,11 +92,27 @@
         android:textSize="13sp"
         android:visibility="gone" />
 
-    <com.google.android.material.button.MaterialButton
-        android:id="@+id/btnLanConnect"
-        style="@style/BtnPrimary"
+    <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="42dp"
-        android:layout_marginTop="18dp"
-        android:text="连接服务器" />
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:orientation="horizontal">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnLanCancel"
+            style="@style/BtnSecondary"
+            android:layout_width="0dp"
+            android:layout_height="42dp"
+            android:layout_weight="1"
+            android:text="取消" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnLanConnect"
+            style="@style/BtnPrimary"
+            android:layout_width="0dp"
+            android:layout_height="42dp"
+            android:layout_marginStart="10dp"
+            android:layout_weight="1"
+            android:text="连接服务器" />
+    </LinearLayout>
 </LinearLayout>

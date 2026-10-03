@@ -89,6 +89,15 @@
                         android:textStyle="bold" />
 
                     <TextView
+                        android:id="@+id/btnShowLanQr"
+                        style="@style/TextButton"
+                        android:layout_width="wrap_content"
+                        android:layout_height="38dp"
+                        android:text="二维码"
+                        android:textColor="@color/text_highlight"
+                        android:visibility="gone" />
+
+                    <TextView
                         android:id="@+id/btnCopyPairingCode"
                         style="@style/TextButton"
                         android:layout_width="wrap_content"
@@ -138,14 +147,13 @@
             </LinearLayout>
 
             <LinearLayout
-                android:id="@+id/panelLanDevices"
+                android:id="@+id/panelLanConsole"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
                 android:background="@drawable/bg_large_round_float"
                 android:orientation="vertical"
-                android:padding="16dp"
-                android:visibility="gone">
+                android:padding="16dp">
 
                 <LinearLayout
                     android:layout_width="match_parent"
@@ -163,28 +171,21 @@
                         android:textStyle="bold" />
 
                     <TextView
-                        android:id="@+id/btnRefreshDevices"
+                        android:id="@+id/btnOpenLanConsole"
                         style="@style/TextButton"
                         android:layout_width="wrap_content"
                         android:layout_height="40dp"
-                        android:text="刷新"
+                        android:text="查看"
                         android:textColor="@color/text_highlight" />
                 </LinearLayout>
 
                 <TextView
-                    android:id="@+id/tvDeviceCount"
+                    android:id="@+id/tvLanConsoleSummary"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="5dp"
                     android:textColor="@color/text_sub_foreground"
                     android:textSize="13sp" />
-
-                <LinearLayout
-                    android:id="@+id/llDevices"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:orientation="vertical" />
             </LinearLayout>
 
             <LinearLayout
