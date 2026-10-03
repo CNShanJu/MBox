@@ -172,8 +172,8 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     /**
      * 按系统栏 insets 给根布局让位(替代 fitsSystemWindows 的整帧内缩,原因见 {@link #init()} 上方注释)。
      * <p>
-     * 用 insets 监听而不是一次性算状态栏高度:全屏预览/横屏隐藏系统栏时 insets 归 0,padding 自动归零;
-     * 刘海屏的 displayCutout 一并算进去,横屏侧边被裁的区域也不会被内容压住。
+     * 用 insets 监听而不是一次性算状态栏高度:普通预览随系统栏留白;
+     * 全屏清掉上下留白,横向仍保留刘海屏的 displayCutout 安全区。
      * <p>
      * 根布局(activity_detail 的根 FrameLayout)自身不带 padding,这里整体接管;页面背景层是它的兄弟
      * (在 content 里更靠下),不受 padding 影响,所以仍铺满整屏。
@@ -183,9 +183,15 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
         ViewCompat.setOnApplyWindowInsetsListener(root, (v, insets) -> {
             Insets bars = insets.getInsets(
                     WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
-            if (v.getPaddingLeft() != bars.left || v.getPaddingTop() != bars.top
-                    || v.getPaddingRight() != bars.right || v.getPaddingBottom() != bars.bottom) {
-                v.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+            Insets cutout = insets.getInsets(WindowInsetsCompat.Type.displayCutout());
+            // 全屏播放器盖满整帧；转竖屏时系统栏 inset 可能短暂保留旧值。
+            int left = fullWindows ? cutout.left : bars.left;
+            int top = fullWindows ? 0 : bars.top;
+            int right = fullWindows ? cutout.right : bars.right;
+            int bottom = fullWindows ? 0 : bars.bottom;
+            if (v.getPaddingLeft() != left || v.getPaddingTop() != top
+                    || v.getPaddingRight() != right || v.getPaddingBottom() != bottom) {
+                v.setPadding(left, top, right, bottom);
             }
             return insets;
         });
@@ -1153,6 +1159,10 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
             windowsFull = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
         }
         fullWindows = !fullWindows;
+        if (fullWindows) {
+            // 先清掉预览态留下的状态栏 padding，避免竖屏全屏顶部露出页面背景。
+            mBinding.getRoot().setPadding(0, 0, 0, 0);
+        }
 
         //交由fragment处理播放器全屏逻辑
         playFragment.changedLandscape(fullWindows);
@@ -1176,6 +1186,7 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
                     | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY));
             getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
         }
+        if (!fullWindows) ViewCompat.requestApplyInsets(mBinding.getRoot());
     }
 
     void toggleSubtitleTextSize() {
@@ -1297,6 +1308,7 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     private void restoreFullscreenBars() {
         if (!fullWindows || (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O
                 && isInPictureInPictureMode())) return;
+        mBinding.getRoot().setPadding(0, 0, 0, 0);
         ImmersionBar.with(this)
                 .hideBar(BarHide.FLAG_HIDE_BAR)
                 .navigationBarColor(R.color.black)
@@ -1310,6 +1322,7 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
                 | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
         getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN,
                 WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        ViewCompat.requestApplyInsets(mBinding.getRoot());
     }
 
     /**
