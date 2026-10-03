@@ -290,12 +290,12 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:fontFamily="monospace"
-                android:gravity="end|center_vertical"
+                android:gravity="start|center_vertical"
                 android:paddingEnd="@dimen/dp_10"
                 android:paddingRight="@dimen/dp_10"
                 android:text="00:00"
                 android:textColor="@color/color_FFFFFF"
-                android:layout_marginLeft="4dp" />
+                android:layout_marginStart="2dp" />
 
             <SeekBar
                 android:id="@+id/seekBar"
