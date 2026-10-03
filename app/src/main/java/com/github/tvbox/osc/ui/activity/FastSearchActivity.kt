@@ -1038,7 +1038,7 @@ tv.text = s
         params.topMargin = 20
         params.bottomMargin = 20
         // 选中背景按文字视图的实测高度绘制；垂直内边距用 dp，避免高密度屏上缩成一条。
-        val verticalPadding = resources.getDimensionPixelSize(R.dimen.dp_12)
+        val verticalPadding = resources.getDimensionPixelSize(R.dimen.dp_6)
         textView.setPadding(20, verticalPadding, 20, verticalPadding)
         textView.layoutParams = params
         return textView
