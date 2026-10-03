@@ -93,13 +93,13 @@
         android:visibility="invisible"
         tools:visibility="visible" />
 
-    <!-- 图标的实际左边缘与标题文字对齐，按钮尺寸与锁定键一致。 -->
+    <!-- 图标可见左边缘与返回、暂停等左侧图标对齐，按钮尺寸与锁定键一致。 -->
     <ImageView
         android:id="@+id/iv_screen_rotate"
         android:layout_width="36dp"
         android:layout_height="40dp"
         android:layout_gravity="start|center_vertical"
-        android:layout_marginStart="36dp"
+        android:layout_marginStart="9dp"
         android:clickable="true"
         android:focusable="true"
         android:paddingHorizontal="6dp"
@@ -295,7 +295,7 @@
                 android:paddingRight="@dimen/dp_10"
                 android:text="00:00"
                 android:textColor="@color/color_FFFFFF"
-                android:layout_marginStart="2dp" />
+                android:layout_marginStart="4dp" />
 
             <SeekBar
                 android:id="@+id/seekBar"
@@ -325,7 +325,7 @@
                 android:paddingLeft="@dimen/dp_10"
                 android:text="00:00"
                 android:textColor="@color/color_FFFFFF"
-                android:layout_marginRight="4dp" />
+                android:layout_marginEnd="4dp" />
 
             <androidx.appcompat.widget.AppCompatImageView
                 android:id="@+id/play_next"
@@ -333,7 +333,6 @@
                 android:layout_height="34dp"
                 android:scaleType="centerCrop"
                 android:padding="4dp"
-                android:layout_marginLeft="4dp"
                 android:src="@drawable/ic_play_next"
                 android:visibility="gone"
                 tools:visibility="visible" />
