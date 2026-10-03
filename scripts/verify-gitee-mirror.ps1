@@ -4,7 +4,7 @@
 
 .DESCRIPTION
   为什么要单独有个脚本:`.github/workflows/build-apk.yml` 的 `Sync release APK to Gitee mirror` 步
-  在**缺 GITEE_TOKEN 时会静默跳过**(已改为打印 ::error,但步骤仍算 success),
+  在缺少 **GITEE_MBOX_TOKEN** 或附件上传失败时只提示错误/告警,步骤仍算 success,
   光看 GitHub Actions 是绿的就以为镜像好了 —— v3.6.1/v3.6.2 就是这样漏掉的,镜像页一直没有附件。
   本脚本直接问 Gitee「这个 tag 有没有附件」,不看流水线的脸色。
 
@@ -152,9 +152,9 @@ foreach ($t in $Tag) {
   if (-not $rel) {
     Write-Bad "Gitee 上没有 $t 的发行版"
     Write-Host "        页面: https://gitee.com/$GiteeOwner/$GiteeRepo/releases/tag/$t" -ForegroundColor DarkGray
-    Write-Host '        常见原因:缺 GITEE_MBOX_TOKEN 导致 CI 静默跳过;或该版本人工创建发行版时忘了建。' -ForegroundColor DarkGray
+    Write-Host '        常见原因:Gitee Pull 镜像尚未同步该 tag,或 GITEE_MBOX_TOKEN 缺失/失效导致 CI 未建发行版。' -ForegroundColor DarkGray
     Write-Host '        注意:重跑旧 tag 的 Build APK 不会采用最新工作流(用的是该次运行所属提交里的文件),' -ForegroundColor DarkGray
-    Write-Host '        改过 workflow 后要补传,请发新 tag,或用 scripts/sync-gitee-release.ps1 本地补。' -ForegroundColor DarkGray
+    Write-Host '        补齐旧版本请在本机用 scripts/sync-gitee-release.ps1 建发行版并上传正式包。' -ForegroundColor DarkGray
     $failed += $t
     continue
   }
@@ -179,15 +179,21 @@ foreach ($t in $Tag) {
   $realSize = 0
   if (-not $NoDownload) {
     if (-not $url) {
-      Write-Warn2 ' 接口没给 browser_download_url,无法探测体积,跳过体积与下载校验'
+      Write-Bad '接口没给 browser_download_url,无法验证匿名下载与体积'
+      $failed += $t
+      continue
     } else {
       $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("mbox-probe-" + [guid]::NewGuid().ToString('N') + ".bin")
+      $probeFailed = $false
       try {
         $meta = & curl.exe -sS -L -o $tmp -w '%{http_code}|%{size_download}|%{content_type}' --max-time 180 `
           -r "0-$($ProbeBytes - 1)" $url 2>$null
+        $curlExitCode = $LASTEXITCODE
         $parts = "$meta" -split '\|'
-        $code = $parts[0]; $got = [int64]$parts[1]; $ctype = $parts[2]
-        if ("$code" -match '^(200|206)$' -and $got -gt 0) {
+        $code = $parts[0]
+        $got = if ($parts.Count -gt 1 -and $parts[1] -match '^\d+$') { [int64]$parts[1] } else { 0 }
+        $ctype = if ($parts.Count -gt 2) { $parts[2] } else { '' }
+        if ($curlExitCode -eq 0 -and "$code" -match '^(200|206)$' -and $got -gt 0) {
           $rangeNote = if ("$code" -eq '206') { '支持分段(可续传)' } else { '忽略 Range,恒返整包' }
           Write-Ok "匿名可下:HTTP $code,实取 $([math]::Round($got / 1KB)) KB —— $rangeNote"
           if ($ctype -and $ctype -notmatch 'octet-stream|android|zip') {
@@ -197,19 +203,36 @@ foreach ($t in $Tag) {
             # 忽略 Range 时 size_download 就是整包体积,可当真实体积用
             $realSize = $got
           } else {
-            $cl = & curl.exe -sSI -L --max-time 120 $url 2>$null |
-              Select-String -Pattern '^content-length:\s*(\d+)' | Select-Object -First 1
-            if ($cl -and $cl.Matches[0].Groups[1].Value) { $realSize = [int64]$cl.Matches[0].Groups[1].Value }
+            # -L 会依次输出重定向和最终响应的头,只取最后一个 HTTP 响应的长度。
+            $headers = @(& curl.exe -sSI -L --max-time 120 $url 2>$null)
+            $headExitCode = $LASTEXITCODE
+            $finalHttpCode = 0
+            $finalLength = 0
+            foreach ($line in $headers) {
+              if ($line -match '^HTTP/\S+\s+(\d{3})\b') {
+                $finalHttpCode = [int]$Matches[1]
+                $finalLength = 0
+              } elseif ($line -match '^content-length:\s*(\d+)\s*$') {
+                $finalLength = [int64]$Matches[1]
+              }
+            }
+            if ($headExitCode -eq 0 -and $finalHttpCode -match '^(200|206)$') {
+              $realSize = $finalLength
+            }
           }
         } else {
-          Write-Bad "匿名下载失败:HTTP $code,取到 $got 字节"
-          $failed += $t
-          continue
+          Write-Bad "匿名下载失败:HTTP $code,curl退出码 $curlExitCode,取到 $got 字节"
+          $probeFailed = $true
         }
       } catch {
-        Write-Warn2 " 下载探测异常:$($_.Exception.Message)"
+        Write-Bad "下载探测异常:$($_.Exception.Message)"
+        $probeFailed = $true
       } finally {
         Remove-Item -Force $tmp -ErrorAction SilentlyContinue
+      }
+      if ($probeFailed) {
+        $failed += $t
+        continue
       }
     }
   }
@@ -220,38 +243,42 @@ foreach ($t in $Tag) {
   } elseif ($realSize -gt 0) {
     Write-Ok "附件体积 $([math]::Round($realSize / 1MB, 2)) MB"
   } else {
-    Write-Warn2 ' 没拿到 Content-Length,体积未测'
+    Write-Bad '没拿到最终附件的 Content-Length,无法验证体积'
+    $failed += $t
+    continue
   }
 
+  if ($NoDownload) { continue }
+
   # 4. 与 GitHub 权威产物对账(体积一致才算内容一致)
+  $sizeMatchesGithub = $false
   try {
     $gh = Invoke-RestMethod -Uri "https://api.github.com/repos/CNShanJu/$GiteeRepo/releases/tags/$t" `
       -Headers @{ 'User-Agent' = 'mbox-mirror-verify' } -TimeoutSec 60 -ErrorAction Stop
     $ghAssets = @($gh.assets)
-    if ($realSize -le 0) {
-      Write-Warn2 ' 未拿到镜像体积,无法与 GitHub 对账'
-    } else {
-      $match = @($ghAssets | Where-Object { $_.name -eq $apk.name })
-      if ($match.Count -eq 0) {
-        # 名字可能带时间戳,退化为"体积是否命中 GitHub 侧任一附件"
-        $bySize = @($ghAssets | Where-Object { [int64]$_.size -eq $realSize })
-        if ($bySize.Count -gt 0) {
-          Write-Ok "体积与 GitHub 附件一致($([math]::Round($realSize / 1MB, 2)) MB)"
-        } else {
-          Write-Warn2 "GitHub 侧找不到同名或同体积的附件,无法对账(附件名: $(($ghAssets | ForEach-Object { $_.name }) -join ', '))"
-        }
+    $match = @($ghAssets | Where-Object { $_.name -eq $apk.name })
+    if ($match.Count -eq 0) {
+      # 名字可能带时间戳,退化为"体积是否命中 GitHub 侧任一附件"
+      $bySize = @($ghAssets | Where-Object { [int64]$_.size -eq $realSize })
+      if ($bySize.Count -gt 0) {
+        Write-Ok "体积与 GitHub 附件一致($([math]::Round($realSize / 1MB, 2)) MB)"
+        $sizeMatchesGithub = $true
       } else {
-        $ghSize = [int64]$match[0].size
-        if ($ghSize -eq $realSize) {
-          Write-Ok "与 GitHub 正式包逐字节同体积($([math]::Round($ghSize / 1MB, 2)) MB)"
-        } else {
-          Write-Warn2 "与 GitHub 同名附件体积不一致:镜像 $realSize 字节 / GitHub $ghSize 字节"
-        }
+        Write-Bad "GitHub 侧找不到同名或同体积的附件,无法对账(附件名: $(($ghAssets | ForEach-Object { $_.name }) -join ', '))"
+      }
+    } else {
+      $ghSize = [int64]$match[0].size
+      if ($ghSize -eq $realSize) {
+        Write-Ok "与 GitHub 正式包逐字节同体积($([math]::Round($ghSize / 1MB, 2)) MB)"
+        $sizeMatchesGithub = $true
+      } else {
+        Write-Bad "与 GitHub 同名附件体积不一致:镜像 $realSize 字节 / GitHub $ghSize 字节"
       }
     }
   } catch {
-    Write-Warn2 ' 查不到 GitHub 侧同名发行版,跳过对账(不影响镜像本身可用性)'
+    Write-Bad "查不到 GitHub 侧同名发行版,无法对账:$($_.Exception.Message)"
   }
+  if (-not $sizeMatchesGithub) { $failed += $t }
 }
 
 # ---------------------------------------------------------------------- 汇总
@@ -263,7 +290,9 @@ if ($failed.Count -eq 0) {
   exit 0
 } else {
   Write-Bad "$($failed.Count)/$($Tag.Count) 个 tag 的镜像未就绪:$($failed -join ', ')"
-  Write-Host '        补救:配好 GITEE_TOKEN 后重跑对应 tag 的 Build APK 工作流' -ForegroundColor DarkGray
-  Write-Host '        https://github.com/CNShanJu/MBox/actions  (Run workflow / Re-run all jobs)' -ForegroundColor DarkGray
+  Write-Host '        补救:确认 Gitee 已同步目标 tag,再从本机补传正式 APK:' -ForegroundColor DarkGray
+  Write-Host '        powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sync-gitee-release.ps1 -Tag vX.Y.Z -ApkPath "<APK路径>"' -ForegroundColor DarkGray
+  Write-Host '        GitHub Secret 名为 GITEE_MBOX_TOKEN;本机令牌可交互输入或使用 -TokenFile。' -ForegroundColor DarkGray
+  Write-Host '        补传后重跑 scripts/verify-gitee-mirror.ps1 验收。' -ForegroundColor DarkGray
   exit 1
 }

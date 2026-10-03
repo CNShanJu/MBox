@@ -45,23 +45,33 @@ jobs:
 
       # 正式签名经 GitHub Secrets 注入(mbox-release.jks 的 base64 内容 + 口令,
       # 对应 build.gradle 的环境变量读取:KEYSTORE_FILE/KEYSTORE_PASSWORD/KEY_ALIAS/KEY_PASSWORD)。
-      # 未配置 Secrets 时跳过注入:产物自动退回 debug 签名,仅供 CI 自测,勿对外分发。
+      # 非 tag 构建缺密钥时退回 debug 签名供 CI 自测；版本 tag 缺任一密钥则中止发布。
       # 仓库内不存放任何正式签名文件(见 .gitignore:*.jks / keystore.properties)。
       - name: Configure release signing (Secrets)
         id: signing
         env:
           KEYSTORE_B64: ${{ secrets.KEYSTORE_BASE64 }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          if [ -n "$KEYSTORE_B64" ]; then
+          if [ -n "$KEYSTORE_B64" ] && [ -n "$RELEASE_STORE_PASSWORD" ] &&
+             [ -n "$RELEASE_KEY_ALIAS" ] && [ -n "$RELEASE_KEY_PASSWORD" ]; then
             echo "$KEYSTORE_B64" | base64 -d > mbox-release.jks
             echo "KEYSTORE_FILE=../mbox-release.jks" >> "$GITHUB_ENV"
-            echo "KEYSTORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}" >> "$GITHUB_ENV"
-            echo "KEY_ALIAS=${{ secrets.KEY_ALIAS }}" >> "$GITHUB_ENV"
-            echo "KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}" >> "$GITHUB_ENV"
+            echo "KEYSTORE_PASSWORD=$RELEASE_STORE_PASSWORD" >> "$GITHUB_ENV"
+            echo "KEY_ALIAS=$RELEASE_KEY_ALIAS" >> "$GITHUB_ENV"
+            echo "KEY_PASSWORD=$RELEASE_KEY_PASSWORD" >> "$GITHUB_ENV"
             echo "signing=configured" >> "$GITHUB_OUTPUT"
           else
             echo "signing=fallback-debug" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Require release signing for tag
+        if: startsWith(github.ref, 'refs/tags/v') && steps.signing.outputs.signing != 'configured'
+        run: |
+          echo "::error title=正式签名缺失::版本 tag 禁止发布 debug 签名 APK；请配置完整的 KEYSTORE_BASE64、KEYSTORE_PASSWORD、KEY_ALIAS、KEY_PASSWORD。"
+          exit 1
 
       - name: Verify (unit tests + module/red-line gate)
         run: |
@@ -161,10 +171,11 @@ jobs:
           fi
           NAME=$(basename "$APK")
 
-          # 发行版先按 tag 找(重跑流水线时不重复建),没有再建
-          RID=$(curl -sS --max-time 60 -G "$API/releases/tags/$TAG" \
+          # Gitee 的 /releases/tags/<tag> 会返回字段全空的对象；从列表按 tag 精确查找。
+          RID=$(curl -sS --max-time 60 -G "$API/releases" \
                   --data-urlencode "access_token=$GITEE_TOKEN" \
-                | jq -r '.id // empty' || true)
+                  --data-urlencode "per_page=100" \
+                | jq -r --arg tag "$TAG" '[.[]? | select(.tag_name == $tag) | .id][0] // empty' || true)
           if [ -z "$RID" ]; then
             # 镜像正文只给用户可读说明:RELEASE_NOTES.md 带 <!-- dev --> 围栏,
             # GitHub 渲染会隐藏 HTML 注释,Gitee 不保证,照抄会把围栏字样露在镜像页上。
@@ -207,13 +218,13 @@ jobs:
           CURL_RC=""
           for ATTEMPT in 1 2; do
             RESFILE=$(mktemp 2>/dev/null || echo "/tmp/gitee-attach.out")
+            CURL_RC=0
             CODE=$(curl -sS --max-time 900 --connect-timeout 30 \
                      -H "Expect:" -H "Connection: close" \
                      -o "$RESFILE" -w '%{http_code}' \
                      -F "access_token=$GITEE_TOKEN" \
                      -F "file=@$APK;filename=$NAME;type=application/vnd.android.package-archive" \
-                     "$API/releases/$RID/attach_files" 2>upload_err.txt) || true
-            CURL_RC=$?
+                     "$API/releases/$RID/attach_files" 2>upload_err.txt) || CURL_RC=$?
             RES=$(cat "$RESFILE" 2>/dev/null || true)
             rm -f "$RESFILE"
             if [ "$CODE" = "201" ] || [ "$CODE" = "200" ]; then

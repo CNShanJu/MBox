@@ -70,8 +70,8 @@ Write-Host ("已写入:{0}" -f $Path) -ForegroundColor Green
 Write-Host ("令牌长度:{0}(不显示内容)" -f $plain.Length) -ForegroundColor Green
 Write-Host ''
 Write-Host '接下来可以跑(把 <路径> 换成上面的路径):' -ForegroundColor DarkGray
-Write-Host '  powershell -NoProfile -ExecutionPolicy Bypass -File scripts\setup-gitee-mirror.ps1 -ListOnly -TokenFile "<路径>"' -ForegroundColor DarkGray
-Write-Host '  powershell -NoProfile -ExecutionPolicy Bypass -File scripts\sync-gitee-release.ps1 -TokenFile "<路径>" -Tag v3.6.4 -ApkPath ".tmp-gitee-upload\MBox_v3.6.4_release_20261002.apk"' -ForegroundColor DarkGray
+Write-Host '  powershell -NoProfile -ExecutionPolicy Bypass -File scripts\setup-gitee-mirror.ps1 -TokenFile "<路径>"' -ForegroundColor DarkGray
+Write-Host '  powershell -NoProfile -ExecutionPolicy Bypass -File scripts\sync-gitee-release.ps1 -TokenFile "<路径>" -Tag vX.Y.Z -ApkPath "<APK路径>"' -ForegroundColor DarkGray
 Write-Host ''
 Write-Host '用完删除(建议):' -ForegroundColor Yellow
 Write-Host ("  Remove-Item -Force '{0}'" -f $Path) -ForegroundColor Yellow

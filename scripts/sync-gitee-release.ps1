@@ -3,8 +3,8 @@
   用 Gitee 令牌本地驱动镜像同步:先验令牌,再按 tag 建发行版并上传正式包。
 
 .DESCRIPTION
-  为什么有这个脚本:配置 GitHub Secrets 里的 GITEE_TOKEN 之后,只有"等下一次发版"或"重跑 tag 的
-  Build APK"才能知道配得对不对;而且 CI 那步在令牌无效时只打印 ::error 不失败,排查要翻日志。
+  为什么有这个脚本:配置 GitHub Secrets 里的 GITEE_MBOX_TOKEN 之后,CI 上传大附件仍可能因链路失败;
+  CI 那步在令牌无效时也只打印 ::error 不失败,排查要翻日志。本机补传以此脚本为准。
   本脚本在本地把同一套 Gitee 开放接口走一遍,立刻给结论:
 
     1. 验令牌      GET /user 是否 200,并打印令牌作用域(确认勾了 projects/仓库读写)
@@ -122,7 +122,7 @@ if ($VerifyOnly) {
   Write-Host ''
   Write-Step '结论'
   Write-Ok '令牌可用(-VerifyOnly,未做任何写操作)'
-  Write-Host '        接着把它写进 GitHub Secrets 名为 GITEE_TOKEN 即可让 CI 自动同步。' -ForegroundColor DarkGray
+  Write-Host '        接着把它写进 GitHub Secrets 名为 GITEE_MBOX_TOKEN；发版后仍需本机补传并验收附件。' -ForegroundColor DarkGray
   exit 0
 }
 
