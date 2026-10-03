@@ -1,8 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 公共空数据组件:图标 + "暂无数据" 文字,任意页面 include 复用(覆盖根 id 以区分多实例) -->
+<!-- 公共空数据组件:图标 + "暂无数据" 文字,任意页面 include 复用(覆盖根 id 以区分多实例)。
+     显式透明,让断网空态等场景露出 Activity 底部的用户背景图。 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="@android:color/transparent"
     android:gravity="center"
     android:orientation="vertical">
 

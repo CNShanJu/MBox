@@ -3,13 +3,14 @@
      BtnPrimary/BtnSecondary —— 底色/文字色/圆角/描边都取自 theme_colors.json 的 btn_* 与 theme_radii.json),
      **不要**在这里手写 android:background + textColor:Material 按钮会套主题 backgroundTint,手写背景会被盖掉
      (实测:次按钮文字与底色同色 → "看不见字")。
-     根部**不设不透明背景**:BaseActivity 的页面背景层(PageBackgroundView)是插在内容容器最底层的,
-     自带底色会把用户自定义背景图盖掉(其它页面同理,底色由背景层/窗口主题给)。
+     根部显式透明:BaseActivity 的页面背景层(PageBackgroundView)插在内容容器最底层,
+     避免样式给 ScrollView 补上背景色后遮住用户背景图。
      可滚动组件按 AGENTS §六保留内边距并 clipToPadding=false(TV/横屏小高度下内容不贴边、不裁死)。 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="@android:color/transparent"
     android:clipToPadding="false"
     android:fillViewport="true"
     android:paddingLeft="24dp"
