@@ -873,9 +873,10 @@ public class LiveActivity extends BaseActivity implements LiveLineSelectHost, Li
     }
 
     public void showCastDialog() {
-        if (currentLiveChannelItem!=null){
-            DialogCoordinator.centerMaxWidth(this, new CastListDialog(this,new CastVideo(currentLiveChannelItem.getChannelName(),currentLiveChannelItem.getUrl())), 360)
-                    .show();
+        if (currentLiveChannelItem != null) {
+            CastListDialog castDialog = new CastListDialog(this,
+                    new CastVideo(currentLiveChannelItem.getChannelName(), currentLiveChannelItem.getUrl()));
+            DialogCoordinator.centerInHostView(this, castDialog).show();
         }
     }
 

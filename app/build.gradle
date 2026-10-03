@@ -328,7 +328,7 @@ dependencies {
     //崩溃
     //单元测试(JVM,纯逻辑)
     testImplementation 'junit:junit:4.13.2'
-    //dlna投屏(已移除:com.github.devin1014.DLNA-Cast:dlna-dmc:V1.0.0 已从 JitPack 消失,功能暂用桩实现,见 _backup_dlna/)
+    // DLNA 发送端使用应用内 SSDP/UPnP 实现，避免已失效的 JitPack 依赖。
     // Lifecycles(显式依赖,替代已废弃合并包 lifecycle-extensions:ViewModel/LiveData/协程作用域)
     implementation 'androidx.lifecycle:lifecycle-viewmodel:2.6.2'
     implementation 'androidx.lifecycle:lifecycle-livedata:2.6.2'

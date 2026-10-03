@@ -17,6 +17,7 @@ import com.github.tvbox.osc.bean.VideoInfo;
 import com.github.tvbox.osc.bean.VodInfo;
 import com.github.tvbox.osc.constant.CacheConst;
 import com.github.tvbox.osc.databinding.ActivityLocalPlayBinding;
+import com.github.tvbox.osc.bean.CastVideo;
 import com.github.tvbox.osc.player.MyVideoView;
 import com.github.tvbox.osc.player.PlayerSession;
 import com.github.tvbox.osc.player.api.PlayConfig;
@@ -24,6 +25,7 @@ import com.github.tvbox.osc.player.controller.LocalVideoController;
 import com.github.tvbox.osc.ui.dialog.AllLocalSeriesDialog;
 import com.github.tvbox.osc.ui.dialog.DialogCoordinator;
 import com.github.tvbox.osc.ui.dialog.PlayingControlRightDialog;
+import com.github.tvbox.osc.ui.dialog.CastListDialog;
 import com.github.tvbox.osc.util.BroadcastUtils;
 import com.github.tvbox.osc.util.PipHelper;
 import com.github.tvbox.osc.util.PlayerHelper;
@@ -309,7 +311,7 @@ public class LocalPlayActivity extends BaseVbActivity<ActivityLocalPlayBinding> 
 
             @Override
             public void cast() {
-                // 本地视频由电脑端视频库浏览，无需从手机播放器推送。
+                showCastDialog();
             }
 
             @Override
@@ -328,6 +330,23 @@ public class LocalPlayActivity extends BaseVbActivity<ActivityLocalPlayBinding> 
         if (mSubtitleCoordinator == null) return;
         VodInfo vodInfo = new VodInfo();
         VideoInfo info = mVideoList.get(mPosition);
+    private void showCastDialog() {
+        if (mPosition < 0 || mPosition >= mVideoList.size()) return;
+        VideoInfo video = mVideoList.get(mPosition);
+        File file = new File(video.getPath());
+        if (!file.isFile()) {
+            AppBubble.toast("当前本地视频文件不存在");
+            return;
+        }
+        CastListDialog dialog = new CastListDialog(this,
+                new CastVideo(video.getDisplayName(), Uri.fromFile(file).toString(),
+                        mVideoView == null ? 0 : mVideoView.getCurrentPosition()),
+                deviceId -> {
+                    if (mVideoView != null) mVideoView.pause();
+                });
+        DialogCoordinator.centerInHostView(this, dialog).show();
+    }
+
         vodInfo.name = info.getDisplayName();
         mSubtitleCoordinator.openSubtitleDialog(vodInfo);
     }

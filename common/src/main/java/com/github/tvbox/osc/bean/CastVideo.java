@@ -1,19 +1,20 @@
 package com.github.tvbox.osc.bean;
 
-/**
- * 投屏数据类(桩实现)
- * <p>
- * DLNA 投屏功能暂不可用:原依赖 com.github.devin1014.DLNA-Cast:dlna-dmc:V1.0.0
- * 已从 JitPack 消失,原始实现备份于项目根目录 _backup_dlna/ 下。
- */
+/** 投屏媒体的标题与播放地址。 */
 public class CastVideo {
 
     private final String name;
     private final String url;
+    private final long positionMs;
 
     public CastVideo(String name, String url) {
+        this(name, url, 0);
+    }
+
+    public CastVideo(String name, String url, long positionMs) {
         this.name = name;
         this.url = url;
+        this.positionMs = Math.max(0, positionMs);
     }
 
     public String getName() {
@@ -22,6 +23,10 @@ public class CastVideo {
 
     public String getUri() {
         return url;
+    }
+
+    public long getPositionMs() {
+        return positionMs;
     }
 
     public String getId() {

@@ -15,6 +15,8 @@
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- 存储访问以 MANAGE_EXTERNAL_STORAGE(全文件访问)为主;保留旧版读写在 Android 9- 使用 -->
+    <!-- SSDP 发现电视时短暂接收 Wi-Fi 组播响应。 -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
@@ -146,9 +148,6 @@
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:exported="false"/>
 
-        <!-- DLNA 投屏服务已停用:依赖 com.github.devin1014.DLNA-Cast 从 JitPack 消失,待找到替代库后恢复 -->
-        <!-- <service android:name="com.android.cast.dlna.dmc.DLNACastService"/> -->
-
         <!-- 广播接收器不对三方 App 开放(exported=false):CustomWebReceiver 无外部契约,
              避免任意应用向本应用注入刷新指令 -->
         <receiver
@@ -189,6 +188,11 @@
  <!-- immersionbar沉浸状态兰适配华为（huawei）刘海屏 -->
         <meta-data
             android:name="android.notch_support"
+        <service
+            android:name=".cast.CastMediaService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
             android:value="true" /> <!-- immersionbar沉浸状态兰适配小米（xiaomi）刘海屏 -->
         <meta-data
             android:name="notch.config"

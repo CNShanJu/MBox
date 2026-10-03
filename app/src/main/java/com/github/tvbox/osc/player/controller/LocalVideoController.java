@@ -280,7 +280,12 @@ public class LocalVideoController extends BaseController implements PlaybackSett
                 listener.showSetting();
             }
         });
-        findViewById(R.id.cast).setVisibility(GONE);
+        findViewById(R.id.cast).setOnClickListener(view -> {
+            if (isInPlaybackState()) {
+                listener.cast();
+                hideBottom();
+            }
+        });
         pip.setOnClickListener(new OnClickListener() {
             @Override
             public void onClick(View view) {

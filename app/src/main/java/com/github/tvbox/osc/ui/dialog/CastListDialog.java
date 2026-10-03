@@ -13,20 +13,67 @@ import androidx.core.widget.CompoundButtonCompat;
 
 import com.github.tvbox.osc.R;
 import com.github.tvbox.osc.bean.CastVideo;
+import com.github.tvbox.osc.cast.CastMediaRelay;
+import com.github.tvbox.osc.cast.DlnaController;
 import com.github.tvbox.osc.server.ControlManager;
 import com.github.tvbox.osc.server.RemoteServer;
 import com.github.tvbox.osc.util.AppBubble;
+import com.github.tvbox.osc.util.HeavyTaskUtil;
+import com.lxj.xpopup.core.BasePopupView;
 
+import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
 
-/** 选择一台已配对的浏览器，定向推送当前播放地址。 */
+/** 发现同网段 DLNA 电视，或选择已配对的电脑浏览器。 */
 public class CastListDialog extends AppCenterPopupView {
-    public interface OnCastStarted { void onCastStarted(String deviceId); }
+    /** 浏览器返回设备 id，DLNA 电视返回 null。 */
+    public interface OnCastStarted { void onCastStarted(String browserDeviceId); }
+
+    private final CastMediaRelay mediaRelay = new CastMediaRelay();
+    private final AtomicLong castRequests = new AtomicLong();
+
     private final CastVideo castVideo;
     private final OnCastStarted started;
     private final Map<String, String> headers;
+    private final String headerOrigin;
+    private final List<DlnaController.Device> televisions = new ArrayList<>();
+    private final List<RemoteServer.LanDevice> browsers = new ArrayList<>();
+    private DlnaController dlna;
+    private RadioGroup targets;
+    private TextView hint;
+    private TextView confirm;
+    private TextView refresh;
+    private TextView manualConnect;
+    private BasePopupView manualAddressPopup;
+    private String lastManualAddress = "";
+    private boolean searching;
+    private boolean waitingForAnnouncements;
+    private boolean casting;
+    private boolean commandSubmitted;
+    private volatile boolean closed;
+    private String searchError;
+
+    private static final class Target {
+        final String key;
+        final DlnaController.Device television;
+        final String browserId;
+
+        Target(DlnaController.Device television) {
+            this.key = "dlna:" + television.id;
+            this.television = television;
+            this.browserId = null;
+        }
+
+        Target(RemoteServer.LanDevice browser) {
+            this.key = "browser:" + browser.id;
+            this.television = null;
+            this.browserId = browser.id;
+        }
+    }
 
     public CastListDialog(@NonNull Context context, CastVideo castVideo) {
         this(context, castVideo, null);
@@ -38,44 +85,38 @@ public class CastListDialog extends AppCenterPopupView {
 
     public CastListDialog(@NonNull Context context, CastVideo castVideo, OnCastStarted started,
                           Map<String, String> headers) {
+        this(context, castVideo, started, headers, null);
+    }
+
+    public CastListDialog(@NonNull Context context, CastVideo castVideo, OnCastStarted started,
+                          Map<String, String> headers, String headerOrigin) {
         super(context);
         this.castVideo = castVideo;
         this.started = started;
-        this.headers = headers == null ? null : new java.util.HashMap<>(headers);
+        this.headers = headers == null ? null : new HashMap<>(headers);
+        this.headerOrigin = headerOrigin;
     }
 
     @Override protected int getImplLayoutId() { return R.layout.dialog_cast; }
 
     @Override protected void onCreate() {
         super.onCreate();
-        ((TextView) findViewById(R.id.title)).setText("推送到电脑播放");
-        TextView hint = findViewById(R.id.cast_hint);
-        RadioGroup targets = findViewById(R.id.cast_targets);
-        TextView confirm = findViewById(R.id.btn_confirm);
-        boolean active = ControlManager.get().lanState() == ControlManager.LAN_ACTIVE;
-        List<RemoteServer.LanDevice> browsers = new ArrayList<>();
-        if (active) {
-            for (RemoteServer.LanDevice device : ControlManager.get().connectedDevices()) {
-                if ("browser".equals(device.kind)) browsers.add(device);
-            }
-        }
-        hint.setText(!active ? "先在设置里开启局域网服务并重启应用。"
-                : browsers.isEmpty() ? "没有已配对的电脑。先在电脑打开服务地址并输入配对码。"
-                : "选择接收视频的电脑。下一集会继续推送到同一台设备。");
-        for (RemoteServer.LanDevice device : browsers) {
-            RadioButton option = new RadioButton(getContext());
-            option.setId(View.generateViewId());
-            option.setTag(device.id);
-            option.setText(device.name + " · " + device.ip);
-            option.setTextColor(ContextCompat.getColor(getContext(), R.color.text_foreground));
-            CompoundButtonCompat.setButtonTintList(option, ColorStateList.valueOf(
-                    ContextCompat.getColor(getContext(), R.color.text_foreground)));
-            option.setPadding(8, 12, 8, 12);
-            targets.addView(option);
-            if (browsers.size() == 1) option.setChecked(true);
-        }
+        ((TextView) findViewById(R.id.title)).setText("投屏到电视或电脑");
+        hint = findViewById(R.id.cast_hint);
+        targets = findViewById(R.id.cast_targets);
+        confirm = findViewById(R.id.btn_confirm);
+        refresh = findViewById(R.id.cast_refresh);
+        manualConnect = findViewById(R.id.cast_manual_connect);
+        dlna = new DlnaController(getContext().getApplicationContext());
+        targets.setOnCheckedChangeListener((group, checkedId) -> updateButtons());
+        refresh.setOnClickListener(v -> search());
+        manualConnect.setOnClickListener(v -> openManualAddress());
+        confirm.setOnClickListener(v -> onConfirm());
+        findViewById(R.id.btn_cancel).setOnClickListener(v -> dismiss());
+
         View scroll = findViewById(R.id.scrollCastTargets);
         scroll.post(() -> {
+            if (closed) return;
             int cap = getResources().getDisplayMetrics().heightPixels / 3;
             if (scroll.getHeight() > cap) {
                 android.view.ViewGroup.LayoutParams lp = scroll.getLayoutParams();
@@ -83,24 +124,247 @@ public class CastListDialog extends AppCenterPopupView {
                 scroll.setLayoutParams(lp);
             }
         });
-        confirm.setVisibility(active && !browsers.isEmpty() ? View.VISIBLE : View.GONE);
-        confirm.setEnabled(targets.getCheckedRadioButtonId() != -1);
-        targets.setOnCheckedChangeListener((group, checkedId) -> confirm.setEnabled(checkedId != -1));
-        confirm.setText("推送到选中设备");
-        confirm.setOnClickListener(v -> {
-            View option = targets.findViewById(targets.getCheckedRadioButtonId());
-            String id = option == null ? null : (String) option.getTag();
-            if (id != null && castVideo != null
-                    && ControlManager.get().pushToBrowser(id, castVideo.getName(), castVideo.getUri(), headers)) {
-                if (started != null) started.onCastStarted(id);
-                else ControlManager.get().clearEpisodeCast();
-                AppBubble.toast("已发送播放请求，请在电脑查看播放状态");
-                dismiss();
-            } else {
-                AppBubble.toast(ControlManager.get().pushFailureMessage(id,
-                        castVideo == null ? null : castVideo.getUri()));
+        updateBrowsers();
+        renderTargets();
+        search();
+    }
+
+    private void updateBrowsers() {
+        browsers.clear();
+        String uri = castVideo == null ? null : castVideo.getUri();
+        if (uri == null || !(uri.startsWith("http://") || uri.startsWith("https://"))) return;
+        if (ControlManager.get().lanState() != ControlManager.LAN_ACTIVE) return;
+        for (RemoteServer.LanDevice device : ControlManager.get().connectedDevices()) {
+            if ("browser".equals(device.kind)) browsers.add(device);
+        }
+    }
+
+    private void search() {
+        if (closed || casting) return;
+        searching = true;
+        waitingForAnnouncements = false;
+        searchError = null;
+        televisions.clear();
+        updateBrowsers();
+        renderTargets();
+        dlna.search(new DlnaController.SearchCallback() {
+            @Override public void onDevices(List<DlnaController.Device> found) {
+                if (closed) return;
+                televisions.clear();
+                if (found != null) televisions.addAll(found);
+                renderTargets();
+            }
+
+            @Override public void onFinished(String error) {
+                if (closed) return;
+                searching = false;
+                searchError = error;
+                updateHint();
+                updateButtons();
+            }
+
+            @Override public void onWaitingForAnnouncements() {
+                if (closed) return;
+                waitingForAnnouncements = true;
+                updateHint();
+            }
+
+            @Override public void onAnnouncementWaitFinished() {
+                if (closed) return;
+                waitingForAnnouncements = false;
+                updateHint();
             }
         });
-        findViewById(R.id.btn_cancel).setOnClickListener(v -> dismiss());
+    }
+
+    private void openManualAddress() {
+        if (closed || casting) return;
+        if (manualAddressPopup != null) manualAddressPopup.dismiss();
+        manualAddressPopup = CastManualAddressDialog.show(getContext(), lastManualAddress,
+                address -> {
+                    manualAddressPopup = null;
+                    if (closed) return;
+                    lastManualAddress = address;
+                    connectManual(address);
+                });
+    }
+
+    private void connectManual(String address) {
+        if (closed || casting) return;
+        searching = true;
+        waitingForAnnouncements = false;
+        searchError = null;
+        televisions.clear();
+        updateBrowsers();
+        renderTargets();
+        dlna.connectManual(address, new DlnaController.SearchCallback() {
+            @Override public void onDevices(List<DlnaController.Device> found) {
+                if (closed) return;
+                televisions.clear();
+                if (found != null) televisions.addAll(found);
+                renderTargets();
+            }
+
+            @Override public void onFinished(String error) {
+                if (closed) return;
+                searching = false;
+                searchError = error;
+                updateHint();
+                updateButtons();
+            }
+        });
+    }
+
+    private void renderTargets() {
+        String selected = null;
+        View checked = targets.findViewById(targets.getCheckedRadioButtonId());
+        if (checked != null && checked.getTag() instanceof Target)
+            selected = ((Target) checked.getTag()).key;
+        targets.removeAllViews();
+        for (DlnaController.Device device : televisions)
+            addTarget(new Target(device), "电视 · " + device.name, selected);
+        for (RemoteServer.LanDevice device : browsers)
+            addTarget(new Target(device), "电脑 · " + device.name + " · " + device.ip, selected);
+        if (selected == null && targets.getChildCount() == 1)
+            ((RadioButton) targets.getChildAt(0)).setChecked(true);
+        updateHint();
+        updateButtons();
+    }
+
+    private void addTarget(Target target, String label, String selected) {
+        RadioButton option = new RadioButton(getContext());
+        option.setId(View.generateViewId());
+        option.setTag(target);
+        option.setText(label);
+        int color = ContextCompat.getColor(getContext(), R.color.text_foreground);
+        option.setTextColor(color);
+        CompoundButtonCompat.setButtonTintList(option, ColorStateList.valueOf(color));
+        option.setPadding(8, 12, 8, 12);
+        targets.addView(option);
+        if (target.key.equals(selected)) option.setChecked(true);
+    }
+
+    private void updateHint() {
+        if (casting) {
+            hint.setText("正在向电视发送播放请求…");
+        } else if (searching) {
+            hint.setText("正在查找同一局域网内的 DLNA 接收端…");
+        } else if (!televisions.isEmpty()) {
+            hint.setText("选择电视即可投屏，无需在电视上输入配对码。电脑网页推送仍需单独配对。");
+        } else if (waitingForAnnouncements) {
+            hint.setText("仍在等待 DLNA 设备公告（最多约 1 分钟），也可点“直连”输入接收端地址。");
+        } else if (!browsers.isEmpty()) {
+            hint.setText("未找到 DLNA 电视。仍可选择已配对的电脑浏览器播放。");
+        } else if (searchError != null && !searchError.isEmpty()) {
+            hint.setText(searchError);
+        } else {
+            String uri = castVideo == null ? null : castVideo.getUri();
+            hint.setText(uri != null && (uri.startsWith("file:") || uri.startsWith("content:"))
+                    ? "未找到 DLNA 电视。可输入接收端 IP:端口直连，无需配对码。"
+                    : "未找到 DLNA 电视。可输入接收端 IP:端口直连；电脑网页推送需另行配对。");
+        }
+    }
+
+    private void updateButtons() {
+        refresh.setEnabled(!searching && !casting);
+        manualConnect.setEnabled(!casting);
+        confirm.setEnabled(!casting && targets.getCheckedRadioButtonId() != -1);
+        confirm.setText(casting ? "投屏中…" : "投 屏");
+    }
+
+    private void onConfirm() {
+        View selected = targets.findViewById(targets.getCheckedRadioButtonId());
+        Target target = selected == null ? null : (Target) selected.getTag();
+        if (target == null || castVideo == null) return;
+        if (target.television != null) {
+            castToTelevision(target.television);
+            return;
+        }
+        String id = target.browserId;
+        if (ControlManager.get().pushToBrowser(id, castVideo.getName(), castVideo.getUri(), headers)) {
+            if (started != null) started.onCastStarted(id);
+            else ControlManager.get().clearEpisodeCast();
+            AppBubble.toast("已发送播放请求，请在电脑查看播放状态");
+            dismiss();
+        } else {
+            AppBubble.toast(ControlManager.get().pushFailureMessage(id, castVideo.getUri()));
+        }
+    }
+
+    private void castToTelevision(DlnaController.Device device) {
+        casting = true;
+        commandSubmitted = false;
+        updateHint();
+        updateButtons();
+        String sourceUrl = castVideo.getUri();
+        long request = castRequests.incrementAndGet();
+        HeavyTaskUtil.getSerialExecutorService().execute(() -> {
+            if (closed || request != castRequests.get()) return;
+            final String televisionUrl;
+            try {
+                televisionUrl = mediaRelay.prepare(getContext().getApplicationContext(), sourceUrl,
+                        headers, headerOrigin, device.localAddress);
+            } catch (IOException error) {
+                String reason = error.getMessage();
+                String message = reason != null && reason.startsWith("Media source returned HTTP ")
+                        ? "播放源返回 " + reason.substring("Media source returned ".length()) + "，无法投屏"
+                        : "Media source returned a non-video document".equals(reason)
+                        ? "播放源返回的不是视频内容，无法投屏"
+                        : "Media format could not be identified for casting".equals(reason)
+                        ? "无法识别播放源格式，请更换线路后重试"
+                        : "当前媒体无法提供给电视，请检查局域网连接或更换播放源";
+                post(() -> showCastFailure(message));
+                return;
+            }
+            if (closed || request != castRequests.get()) {
+                mediaRelay.stop();
+                return;
+            }
+            post(() -> {
+                if (closed || request != castRequests.get()) return;
+                commandSubmitted = true;
+                dlna.cast(device, castVideo.getName(), televisionUrl,
+                        castVideo.getPositionMs(), (success, message) -> {
+                    if (closed || request != castRequests.get()) {
+                        if (!success) mediaRelay.stop();
+                        return;
+                    }
+                    if (success) {
+                        if (started != null) started.onCastStarted(null);
+                        AppBubble.toast("已发送到电视，请在电视上查看播放状态");
+                        casting = false;
+                        dismiss();
+                    } else {
+                        mediaRelay.stop();
+                        showCastFailure(message == null || message.isEmpty() ? "电视未接受播放请求" : message);
+                    }
+                });
+            });
+        });
+    }
+
+    private void showCastFailure(String message) {
+        if (closed) return;
+        casting = false;
+        updateHint();
+        updateButtons();
+        AppBubble.toast(message);
+    }
+
+    @Override protected void onDismiss() {
+        closed = true;
+        if (manualAddressPopup != null) {
+            manualAddressPopup.dismiss();
+            manualAddressPopup = null;
+        }
+        if (casting) {
+            castRequests.incrementAndGet();
+            // Once SOAP is submitted, the TV may still accept Play after this dialog closes.
+            // Its result callback will revoke the relay on failure; success keeps media alive.
+            if (!commandSubmitted)
+                HeavyTaskUtil.getSerialExecutorService().execute(mediaRelay::stop);
+        }
+        if (dlna != null) dlna.close();
+        super.onDismiss();
     }
 }

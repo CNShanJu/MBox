@@ -2,6 +2,8 @@ package com.github.tvbox.osc.ui.dialog;
 
 import android.app.Activity;
 import android.content.Context;
+import android.view.View;
+import android.view.ViewGroup;
 
 import com.blankj.utilcode.util.ConvertUtils;
 import com.blankj.utilcode.util.ScreenUtils;
@@ -9,6 +11,7 @@ import com.github.tvbox.osc.base.BaseActivity;
 import com.github.tvbox.osc.util.Utils;
 import com.lxj.xpopup.XPopup;
 import com.lxj.xpopup.core.BasePopupView;
+import com.lxj.xpopup.core.ImageViewerPopupView;
 import com.lxj.xpopup.enums.PopupPosition;
 import com.lxj.xpopup.interfaces.XPopupCallback;
 
@@ -47,6 +50,53 @@ public final class DialogCoordinator {
         return builder(ctx)
                 .isDarkTheme(Utils.isDarkTheme())
                 .asCustom(content);
+    }
+
+    /**
+     * 播放、详情与直播页的居中弹窗：附着在宿主视图，不新建 Dialog Window。
+     * 独立窗口会重设状态栏颜色/图标或重新显示全屏时隐藏的系统栏；view 模式沿用宿主状态。
+     */
+    public static BasePopupView centerInHostView(Context ctx, BasePopupView content) {
+        return centerInHostView(ctx, content, null);
+    }
+
+    /** 宿主视图居中弹窗 + 生命周期回调（需拦截返回键的输入框等使用）。 */
+    public static BasePopupView centerInHostView(Context ctx, BasePopupView content,
+                                                 XPopupCallback callback) {
+        XPopup.Builder builder = builder(ctx)
+                .isViewMode(true)
+                .hasNavigationBar(false)
+                .isDarkTheme(Utils.isDarkTheme());
+        if (callback != null) {
+            builder = builder.setPopupCallback(callback);
+        }
+        return builder.asCustom(content);
+    }
+
+    /** Gesture Back can reach the Activity instead of XPopup's view-mode key listener. */
+    public static boolean dismissSimpleHostPopupOnBack(Activity activity) {
+        if (activity == null || activity.getWindow() == null) return false;
+        View decor = activity.getWindow().getDecorView();
+        if (!(decor instanceof ViewGroup)) return false;
+        ViewGroup host = (ViewGroup) decor;
+        for (int index = host.getChildCount() - 1; index >= 0; index--) {
+            View child = host.getChildAt(index);
+            if (!(child instanceof BasePopupView)) continue;
+            BasePopupView popup = (BasePopupView) child;
+            if (!popup.isShow() || popup.popupInfo == null || !popup.popupInfo.isViewMode) continue;
+            // These overlays only dismiss on Back. Other popups may navigate within their
+            // contents (subtitle file browser, subtitle search page) and keep their own handler.
+            if (popup instanceof CastListDialog || popup instanceof CastManualAddressDialog
+                    || popup instanceof ConfirmDialog || popup instanceof ImageViewerPopupView
+                    || popup instanceof VideoDetailDialog || popup instanceof QuickSearchDialog
+                    || popup instanceof DownloadSeriesDialog
+                    || popup instanceof DownloadSeriesRightDialog) {
+                popup.dismissOrHideSoftInput();
+                return true;
+            }
+            return false;
+        }
+        return false;
     }
 
     /** 居中弹窗，限最大宽度（px；转 dp 语义见调用处注释） */

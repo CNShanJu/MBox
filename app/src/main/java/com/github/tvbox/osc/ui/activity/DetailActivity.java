@@ -561,37 +561,42 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
                 || vodInfo.seriesMap.get(vodInfo.playFlag) == null
                 || vodInfo.playIndex < 0
                 || vodInfo.playIndex >= vodInfo.seriesMap.get(vodInfo.playFlag).size()) return;
-        String playingUrl = playFragment.getFinalUrl();
+        String playingUrl = playFragment.getCastUrl();
         if (TextUtils.isEmpty(playingUrl)) {
             AppBubble.toast("当前播放地址仍在解析，请稍后重试");
             return;
         }
         VodInfo.VodSeries vodSeries = vodInfo.seriesMap.get(vodInfo.playFlag).get(vodInfo.playIndex);
         List<String> castEpisodes = currentCastEpisodeNames();
-        DialogCoordinator.centerMaxWidth(this, new CastListDialog(this, new CastVideo(vodSeries.name
-                , playingUrl), deviceId -> {
-                    ControlManager.get().setEpisodeCast(lanCastOwner, deviceId, castEpisodes,
-                            vodInfo.playIndex, new RemoteServer.NextEpisodeHandler() {
-                                @Override public boolean playNext() {
-                                    if (vodInfo == null || playFragment == null || vodInfo.seriesMap == null
-                                            || vodInfo.seriesMap.get(vodInfo.playFlag) == null
-                                            || vodInfo.playIndex + 1 >= vodInfo.seriesMap.get(vodInfo.playFlag).size()) return false;
-                                    playFragment.playNext(false);
-                                    return true;
-                                }
+        CastListDialog castDialog = new CastListDialog(this, new CastVideo(vodSeries.name,
+                playingUrl, playFragment.getPlayer() == null ? 0
+                : playFragment.getPlayer().getCurrentPosition()), deviceId -> {
+                    if (deviceId != null) {
+                        ControlManager.get().setEpisodeCast(lanCastOwner, deviceId, castEpisodes,
+                                vodInfo.playIndex, new RemoteServer.NextEpisodeHandler() {
+                                    @Override public boolean playNext() {
+                                        if (vodInfo == null || playFragment == null || vodInfo.seriesMap == null
+                                                || vodInfo.seriesMap.get(vodInfo.playFlag) == null
+                                                || vodInfo.playIndex + 1 >= vodInfo.seriesMap.get(vodInfo.playFlag).size()) return false;
+                                        playFragment.playNext(false);
+                                        return true;
+                                    }
 
-                                @Override public boolean selectEpisode(int index) {
-                                    if (vodInfo == null || playFragment == null || vodInfo.seriesMap == null
-                                            || vodInfo.seriesMap.get(vodInfo.playFlag) == null
-                                            || index < 0 || index >= vodInfo.seriesMap.get(vodInfo.playFlag).size()) return false;
-                                    if (index == vodInfo.playIndex) playFragment.play(false);
-                                    else chooseSeries(index, false);
-                                    return true;
-                                }
-                            });
+                                    @Override public boolean selectEpisode(int index) {
+                                        if (vodInfo == null || playFragment == null || vodInfo.seriesMap == null
+                                                || vodInfo.seriesMap.get(vodInfo.playFlag) == null
+                                                || index < 0 || index >= vodInfo.seriesMap.get(vodInfo.playFlag).size()) return false;
+                                        if (index == vodInfo.playIndex) playFragment.play(false);
+                                        else chooseSeries(index, false);
+                                        return true;
+                                    }
+                                });
+                    } else {
+                        ControlManager.get().clearEpisodeCast(lanCastOwner);
+                    }
                     if (playFragment.getPlayer() != null) playFragment.getPlayer().pause();
-                }, playFragment.getPlayHeaders()), 360)
-                .show();
+                }, playFragment.getPlayHeaders(), playFragment.getFinalUrl());
+        DialogCoordinator.centerInHostView(this, castDialog).show();
     }
 
     public void showAllSeriesDialog() {
