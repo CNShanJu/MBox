@@ -1,27 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
-    xmlns:tools="http://schemas.android.com/tools"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:orientation="vertical">
+              xmlns:app="http://schemas.android.com/apk/res-auto"
+              xmlns:tools="http://schemas.android.com/tools"
+              android:layout_width="match_parent"
+              android:layout_height="match_parent"
+              android:orientation="vertical">
 
     <LinearLayout
-        android:id="@+id/my_surface_card"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="40dp"
-        android:padding="20dp">
+            android:id="@+id/my_surface_card"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="40dp"
+            android:padding="20dp">
 
         <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="bottom"
-            android:layout_marginLeft="20dp"
-            android:layout_marginBottom="4dp"
-            android:text="@string/app_name"
-            android:textColor="@color/text_foreground"
-            android:textSize="22sp" />
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom"
+                android:layout_marginLeft="20dp"
+                android:layout_marginBottom="4dp"
+                android:text="@string/app_name"
+                android:textColor="@color/text_foreground"
+                android:textSize="22sp"/>
     </LinearLayout>
 
     <!-- 中间选项区:高度固定=吃满标题与底部版本号之间的剩余空间;选项行超出时在卡片内部滚动,
@@ -30,422 +30,423 @@
          各页内容块是**同一个面**,改一处全站同步(见 res/values/colors.xml 里那段说明)。
          注意别再写成 bg_card —— 那是"卡片底色",给弹窗列表行/海报占位这类小块用的。 -->
     <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:orientation="vertical"
-        android:layout_marginHorizontal="20dp"
-        android:background="@drawable/bg_large_round_float">
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:layout_marginHorizontal="20dp"
+            android:background="@drawable/bg_large_round_float">
 
         <!-- 选项行超出时在卡片内部滚动;拖到顶/底可越界跟手回弹(iOS 橡皮筋,见 RubberBandScrollView)。
-             clipToPadding=true:滚动内容不越过 padding,首末行滚到顶/底时文字不会贴着圆角卡片上下边。 -->
+             保留上下内边距并关闭裁剪，让首末行滚动时仍与圆角卡片边缘留空。 -->
         <com.github.tvbox.osc.ui.kit.RubberBandScrollView
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:scrollbars="none"
-            android:clipToPadding="true"
-            android:paddingVertical="20dp">
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:scrollbars="none"
+                android:clipToPadding="false"
+                android:paddingVertical="20dp">
 
             <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical">
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
 
-            <LinearLayout
-                android:id="@+id/llSubscription"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:paddingVertical="16dp"
-                android:paddingHorizontal="24dp"
-                android:foreground="?android:selectableItemBackground"
+                <LinearLayout
+                        android:id="@+id/llSubscription"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:paddingVertical="16dp"
+                        android:paddingHorizontal="24dp"
+                        android:foreground="?android:selectableItemBackground"
                 >
 
-                <ImageView
-                    android:layout_width="28dp"
-                    android:layout_height="28dp"
-                    android:layout_gravity="center"
-                    android:src="@drawable/ic_database_48" />
+                    <ImageView
+                            android:layout_width="28dp"
+                            android:layout_height="28dp"
+                            android:layout_gravity="center"
+                            android:src="@drawable/ic_database_48"/>
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="center"
-                    android:layout_marginLeft="20dp"
-                    android:focusable="false"
-                    android:focusableInTouchMode="false"
-                    android:gravity="center"
-                    android:text="订阅管理"
-                    android:textAlignment="gravity"
-                    android:textColor="@color/text_foreground"
-                    android:textSize="16sp" />
+                    <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_gravity="center"
+                            android:layout_marginLeft="20dp"
+                            android:focusable="false"
+                            android:focusableInTouchMode="false"
+                            android:gravity="center"
+                            android:text="订阅管理"
+                            android:textAlignment="gravity"
+                            android:textColor="@color/text_foreground"
+                            android:textSize="16sp"/>
 
-                <Space
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1" />
+                    <Space
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"/>
 
-                <ImageView
-                    android:layout_width="13dp"
-                    android:layout_height="13dp"
-                    android:layout_gravity="center"
-                    android:alpha="0.75"
-                    android:src="@drawable/ic_seek_right"
-                    app:tint="@color/text_foreground" />
-
-            </LinearLayout>
-
-
-            <LinearLayout
-                android:id="@+id/tvHistory"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:paddingVertical="16dp"
-                android:paddingHorizontal="24dp"
-                android:foreground="?android:selectableItemBackground">
-
-                <ImageView
-                    android:layout_width="28dp"
-                    android:layout_height="28dp"
-                    android:layout_gravity="center"
-                    android:src="@drawable/ic_history_48" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="center"
-                    android:layout_marginLeft="20dp"
-                    android:focusable="false"
-                    android:focusableInTouchMode="false"
-                    android:gravity="center"
-                    android:text="观看历史"
-                    android:textAlignment="gravity"
-                    android:textColor="@color/text_foreground"
-                    android:textSize="16sp" />
-
-                <Space
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1" />
-
-                <ImageView
-                    android:layout_width="13dp"
-                    android:layout_height="13dp"
-                    android:layout_gravity="center"
-                    android:alpha="0.75"
-                    android:src="@drawable/ic_seek_right"
-                    app:tint="@color/text_foreground" />
-
-            </LinearLayout>
-
-            <LinearLayout
-                android:id="@+id/tvDownload"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:paddingVertical="16dp"
-                android:paddingHorizontal="24dp"
-                android:foreground="?android:selectableItemBackground">
-
-                <ImageView
-                    android:layout_width="28dp"
-                    android:layout_height="28dp"
-                    android:layout_gravity="center"
-                    android:src="@drawable/ic_download" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="center"
-                    android:layout_marginLeft="20dp"
-                    android:focusable="false"
-                    android:focusableInTouchMode="false"
-                    android:gravity="center"
-                    android:text="下载"
-                    android:textAlignment="gravity"
-                    android:textColor="@color/text_foreground"
-                    android:textSize="16sp" />
-
-                <Space
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1" />
-
-                <ImageView
-                    android:layout_width="13dp"
-                    android:layout_height="13dp"
-                    android:layout_gravity="center"
-                    android:alpha="0.75"
-                    android:src="@drawable/ic_seek_right"
-                    app:tint="@color/text_foreground" />
-
-            </LinearLayout>
-
-            <LinearLayout
-                android:id="@+id/tvFavorite"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:paddingVertical="16dp"
-                android:paddingHorizontal="24dp"
-                android:foreground="?android:selectableItemBackground">
-
-                <ImageView
-                    android:layout_width="26dp"
-                    android:layout_height="26dp"
-                    android:layout_gravity="center"
-                    android:src="@drawable/ic_collect_48" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="center"
-                    android:layout_marginLeft="20dp"
-                    android:focusable="false"
-                    android:focusableInTouchMode="false"
-                    android:gravity="center"
-                    android:text="收藏"
-                    android:textAlignment="gravity"
-                    android:textColor="@color/text_foreground"
-                    android:textSize="16sp" />
-
-                <Space
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1" />
-
-                <ImageView
-                    android:layout_width="13dp"
-                    android:layout_height="13dp"
-                    android:layout_gravity="center"
-                    android:alpha="0.75"
-                    android:src="@drawable/ic_seek_right"
-                    app:tint="@color/text_foreground" />
-
-            </LinearLayout>
-
-            <LinearLayout
-                android:id="@+id/tvLive"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:paddingVertical="16dp"
-                android:paddingHorizontal="24dp"
-                android:foreground="?android:selectableItemBackground">
-
-                <ImageView
-                    android:layout_width="26dp"
-                    android:layout_height="26dp"
-                    android:layout_gravity="center"
-                    android:src="@drawable/ic_live" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="center"
-                    android:layout_marginLeft="20dp"
-                    android:focusable="false"
-                    android:focusableInTouchMode="false"
-                    android:gravity="center"
-                    android:text="直播"
-                    android:textAlignment="gravity"
-                    android:textColor="@color/text_foreground"
-                    android:textSize="16sp" />
-
-                <Space
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1" />
-
-                <ImageView
-                    android:layout_width="13dp"
-                    android:layout_height="13dp"
-                    android:layout_gravity="center"
-                    android:alpha="0.75"
-                    android:src="@drawable/ic_seek_right"
-                    app:tint="@color/text_foreground" />
-
-            </LinearLayout>
-
-            <LinearLayout
-                android:id="@+id/tvLocal"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:paddingVertical="16dp"
-                android:paddingHorizontal="24dp"
-                android:foreground="?android:selectableItemBackground">
-
-                <ImageView
-                    android:layout_width="28dp"
-                    android:layout_height="28dp"
-                    android:layout_gravity="center"
-                    android:src="@drawable/ic_local_video_48" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="center"
-                    android:layout_marginLeft="20dp"
-                    android:focusable="false"
-                    android:focusableInTouchMode="false"
-                    android:gravity="center"
-                    android:text="本地视频"
-                    android:textAlignment="gravity"
-                    android:textColor="@color/text_foreground"
-                    android:textSize="16sp" />
-
-                <Space
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1" />
-
-                <ImageView
-                    android:layout_width="13dp"
-                    android:layout_height="13dp"
-                    android:layout_gravity="center"
-                    android:alpha="0.75"
-                    android:src="@drawable/ic_seek_right"
-                    app:tint="@color/text_foreground" />
-
-            </LinearLayout>
-
-            <LinearLayout
-                android:id="@+id/addrPlay"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:paddingVertical="16dp"
-                android:paddingHorizontal="24dp"
-                android:foreground="?android:selectableItemBackground"
-                >
-
-                <ImageView
-                    android:layout_width="28dp"
-                    android:layout_height="28dp"
-                    android:layout_gravity="center"
-                    android:src="@drawable/ic_copyright_48" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="center"
-                    android:layout_marginLeft="20dp"
-                    android:focusable="false"
-                    android:focusableInTouchMode="false"
-                    android:gravity="center"
-                    android:text="播放链接"
-                    android:textAlignment="gravity"
-                    android:textColor="@color/text_foreground"
-                    android:textSize="16sp" />
-
-                <Space
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1" />
-
-                <ImageView
-                    android:layout_width="13dp"
-                    android:layout_height="13dp"
-                    android:layout_gravity="center"
-                    android:alpha="0.75"
-                    android:src="@drawable/ic_seek_right"
-                    app:tint="@color/text_foreground" />
-
-            </LinearLayout>
-
-            <LinearLayout
-                android:id="@+id/llAbout"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:paddingVertical="16dp"
-                android:paddingHorizontal="24dp"
-                android:foreground="?android:selectableItemBackground">
-
-                <ImageView
-                    android:layout_width="28dp"
-                    android:layout_height="28dp"
-                    android:layout_gravity="center"
-                    android:src="@drawable/ic_about_48" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="center"
-                    android:layout_marginLeft="20dp"
-                    android:focusable="false"
-                    android:focusableInTouchMode="false"
-                    android:gravity="center"
-                    android:text="关于"
-                    android:textAlignment="gravity"
-                    android:textColor="@color/text_foreground"
-                    android:textSize="16sp" />
-
-                <Space
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1" />
-
-                <ImageView
-                    android:layout_width="13dp"
-                    android:layout_height="13dp"
-                    android:layout_gravity="center"
-                    android:alpha="0.75"
-                    android:src="@drawable/ic_seek_right"
-                    app:tint="@color/text_foreground" />
-
-            </LinearLayout>
-
-            <LinearLayout
-                android:id="@+id/tvSetting"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:paddingVertical="16dp"
-                android:paddingHorizontal="24dp"
-                android:foreground="?android:selectableItemBackground">
-
-                <ImageView
-                    android:layout_width="28dp"
-                    android:layout_height="28dp"
-                    android:layout_gravity="center"
-                    android:src="@drawable/ic_settings" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="center"
-                    android:layout_marginLeft="20dp"
-                    android:focusable="false"
-                    android:focusableInTouchMode="false"
-                    android:gravity="center"
-                    android:text="设置"
-                    android:textAlignment="gravity"
-                    android:textColor="@color/text_foreground"
-                    android:textSize="16sp" />
-
-                <Space
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1" />
-
-                <ImageView
-                    android:layout_width="13dp"
-                    android:layout_height="13dp"
-                    android:layout_gravity="center"
-                    android:alpha="0.75"
-                    android:src="@drawable/ic_seek_right"
-                    app:tint="@color/text_foreground" />
-
-            </LinearLayout>
+                    <ImageView
+                            android:layout_width="13dp"
+                            android:layout_height="13dp"
+                            android:layout_gravity="center"
+                            android:alpha="0.75"
+                            android:src="@drawable/ic_seek_right"
+                            app:tint="@color/text_foreground"/>
 
                 </LinearLayout>
-            </com.github.tvbox.osc.ui.kit.RubberBandScrollView>
-        </LinearLayout>
 
-        <TextView
+
+                <LinearLayout
+                        android:id="@+id/tvHistory"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:paddingVertical="16dp"
+                        android:paddingHorizontal="24dp"
+                        android:foreground="?android:selectableItemBackground">
+
+                    <ImageView
+                            android:layout_width="28dp"
+                            android:layout_height="28dp"
+                            android:layout_gravity="center"
+                            android:src="@drawable/ic_history_48"/>
+
+                    <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_gravity="center"
+                            android:layout_marginLeft="20dp"
+                            android:focusable="false"
+                            android:focusableInTouchMode="false"
+                            android:gravity="center"
+                            android:text="观看历史"
+                            android:textAlignment="gravity"
+                            android:textColor="@color/text_foreground"
+                            android:textSize="16sp"/>
+
+                    <Space
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"/>
+
+                    <ImageView
+                            android:layout_width="13dp"
+                            android:layout_height="13dp"
+                            android:layout_gravity="center"
+                            android:alpha="0.75"
+                            android:src="@drawable/ic_seek_right"
+                            app:tint="@color/text_foreground"/>
+
+                </LinearLayout>
+
+                <LinearLayout
+                        android:id="@+id/tvDownload"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:paddingVertical="16dp"
+                        android:paddingHorizontal="24dp"
+                        android:foreground="?android:selectableItemBackground">
+
+                    <ImageView
+                            android:layout_width="26dp"
+                            android:layout_height="26dp"
+                            android:layout_gravity="center"
+                            android:src="@drawable/ic_my_download_48"/>
+
+                    <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_gravity="center"
+                            android:layout_marginLeft="20dp"
+                            android:focusable="false"
+                            android:focusableInTouchMode="false"
+                            android:gravity="center"
+                            android:text="下载"
+                            android:textAlignment="gravity"
+                            android:textColor="@color/text_foreground"
+                            android:textSize="16sp"/>
+
+                    <Space
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"/>
+
+                    <ImageView
+                            android:layout_width="13dp"
+                            android:layout_height="13dp"
+                            android:layout_gravity="center"
+                            android:alpha="0.75"
+                            android:src="@drawable/ic_seek_right"
+                            app:tint="@color/text_foreground"/>
+
+                </LinearLayout>
+
+                <LinearLayout
+                        android:id="@+id/tvLive"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:paddingVertical="16dp"
+                        android:paddingHorizontal="24dp"
+                        android:foreground="?android:selectableItemBackground">
+
+                    <ImageView
+                            android:layout_width="26dp"
+                            android:layout_height="26dp"
+                            android:layout_gravity="center"
+                            android:src="@drawable/ic_live"/>
+
+                    <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_gravity="center"
+                            android:layout_marginLeft="20dp"
+                            android:focusable="false"
+                            android:focusableInTouchMode="false"
+                            android:gravity="center"
+                            android:text="直播"
+                            android:textAlignment="gravity"
+                            android:textColor="@color/text_foreground"
+                            android:textSize="16sp"/>
+
+                    <Space
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"/>
+
+                    <ImageView
+                            android:layout_width="13dp"
+                            android:layout_height="13dp"
+                            android:layout_gravity="center"
+                            android:alpha="0.75"
+                            android:src="@drawable/ic_seek_right"
+                            app:tint="@color/text_foreground"/>
+
+                </LinearLayout>
+
+                <LinearLayout
+                        android:id="@+id/tvLocal"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:paddingVertical="16dp"
+                        android:paddingHorizontal="24dp"
+                        android:foreground="?android:selectableItemBackground">
+
+                    <ImageView
+                            android:layout_width="28dp"
+                            android:layout_height="28dp"
+                            android:layout_gravity="center"
+                            android:src="@drawable/ic_local_video_48"/>
+
+                    <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_gravity="center"
+                            android:layout_marginLeft="20dp"
+                            android:focusable="false"
+                            android:focusableInTouchMode="false"
+                            android:gravity="center"
+                            android:text="本地视频"
+                            android:textAlignment="gravity"
+                            android:textColor="@color/text_foreground"
+                            android:textSize="16sp"/>
+
+                    <Space
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"/>
+
+                    <ImageView
+                            android:layout_width="13dp"
+                            android:layout_height="13dp"
+                            android:layout_gravity="center"
+                            android:alpha="0.75"
+                            android:src="@drawable/ic_seek_right"
+                            app:tint="@color/text_foreground"/>
+
+                </LinearLayout>
+
+                <LinearLayout
+                        android:id="@+id/addrPlay"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:paddingVertical="16dp"
+                        android:paddingHorizontal="24dp"
+                        android:foreground="?android:selectableItemBackground"
+                >
+
+                    <ImageView
+                            android:layout_width="28dp"
+                            android:layout_height="28dp"
+                            android:layout_gravity="center"
+                            android:src="@drawable/ic_copyright_48"/>
+
+                    <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_gravity="center"
+                            android:layout_marginLeft="20dp"
+                            android:focusable="false"
+                            android:focusableInTouchMode="false"
+                            android:gravity="center"
+                            android:text="播放链接"
+                            android:textAlignment="gravity"
+                            android:textColor="@color/text_foreground"
+                            android:textSize="16sp"/>
+
+                    <Space
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"/>
+
+                    <ImageView
+                            android:layout_width="13dp"
+                            android:layout_height="13dp"
+                            android:layout_gravity="center"
+                            android:alpha="0.75"
+                            android:src="@drawable/ic_seek_right"
+                            app:tint="@color/text_foreground"/>
+
+                </LinearLayout>
+
+                <LinearLayout
+                        android:id="@+id/llAbout"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:paddingVertical="16dp"
+                        android:paddingHorizontal="24dp"
+                        android:foreground="?android:selectableItemBackground">
+
+                    <ImageView
+                            android:layout_width="28dp"
+                            android:layout_height="28dp"
+                            android:layout_gravity="center"
+                            android:src="@drawable/ic_about_48"/>
+
+                    <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_gravity="center"
+                            android:layout_marginLeft="20dp"
+                            android:focusable="false"
+                            android:focusableInTouchMode="false"
+                            android:gravity="center"
+                            android:text="关于"
+                            android:textAlignment="gravity"
+                            android:textColor="@color/text_foreground"
+                            android:textSize="16sp"/>
+
+                    <Space
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"/>
+
+                    <ImageView
+                            android:layout_width="13dp"
+                            android:layout_height="13dp"
+                            android:layout_gravity="center"
+                            android:alpha="0.75"
+                            android:src="@drawable/ic_seek_right"
+                            app:tint="@color/text_foreground"/>
+
+                </LinearLayout>
+
+                <LinearLayout
+                        android:id="@+id/llCheckUpdate"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:paddingVertical="16dp"
+                        android:paddingHorizontal="24dp"
+                        android:foreground="?android:selectableItemBackground">
+
+                    <ImageView
+                            android:layout_width="28dp"
+                            android:layout_height="28dp"
+                            android:layout_gravity="center"
+                            android:src="@drawable/ic_my_update_48"/>
+
+                    <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_gravity="center"
+                            android:layout_marginLeft="20dp"
+                            android:focusable="false"
+                            android:focusableInTouchMode="false"
+                            android:gravity="center"
+                            android:text="检查更新"
+                            android:textAlignment="gravity"
+                            android:textColor="@color/text_foreground"
+                            android:textSize="16sp"/>
+
+                    <Space
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"/>
+
+                    <ImageView
+                            android:layout_width="13dp"
+                            android:layout_height="13dp"
+                            android:layout_gravity="center"
+                            android:alpha="0.75"
+                            android:src="@drawable/ic_seek_right"
+                            app:tint="@color/text_foreground"/>
+
+                </LinearLayout>
+
+                <LinearLayout
+                        android:id="@+id/tvSetting"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:paddingVertical="16dp"
+                        android:paddingHorizontal="24dp"
+                        android:foreground="?android:selectableItemBackground">
+
+                    <ImageView
+                            android:layout_width="28dp"
+                            android:layout_height="28dp"
+                            android:layout_gravity="center"
+                            android:src="@drawable/ic_settings"/>
+
+                    <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_gravity="center"
+                            android:layout_marginLeft="20dp"
+                            android:focusable="false"
+                            android:focusableInTouchMode="false"
+                            android:gravity="center"
+                            android:text="设置"
+                            android:textAlignment="gravity"
+                            android:textColor="@color/text_foreground"
+                            android:textSize="16sp"/>
+
+                    <Space
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"/>
+
+                    <ImageView
+                            android:layout_width="13dp"
+                            android:layout_height="13dp"
+                            android:layout_gravity="center"
+                            android:alpha="0.75"
+                            android:src="@drawable/ic_seek_right"
+                            app:tint="@color/text_foreground"/>
+
+                </LinearLayout>
+
+
+            </LinearLayout>
+        </com.github.tvbox.osc.ui.kit.RubberBandScrollView>
+    </LinearLayout>
+
+    <TextView
             android:id="@+id/tv_version"
             android:textSize="13sp"
             tools:text="v3.0.0"
@@ -456,6 +457,6 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:textColor="@color/text_sub_foreground"
-            />
+    />
 </LinearLayout>
 

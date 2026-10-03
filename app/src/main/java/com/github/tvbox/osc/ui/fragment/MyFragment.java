@@ -8,15 +8,12 @@ import com.blankj.utilcode.util.AppUtils;
 import com.blankj.utilcode.util.ClipboardUtils;
 import com.github.tvbox.osc.util.AppBubble;
 import com.github.tvbox.osc.R;
-import com.github.tvbox.osc.base.BaseLazyFragment;
 import com.github.tvbox.osc.base.BaseVbFragment;
 import com.github.tvbox.osc.databinding.FragmentMyBinding;
-import com.github.tvbox.osc.ui.activity.CollectActivity;
 import com.github.tvbox.osc.ui.activity.DetailActivity;
 import com.github.tvbox.osc.ui.activity.DownloadActivity;
 import com.github.tvbox.osc.ui.activity.HistoryActivity;
 import com.github.tvbox.osc.ui.activity.LiveActivity;
-import com.github.tvbox.osc.ui.activity.LocalPlayActivity;
 import com.github.tvbox.osc.ui.activity.MovieFoldersActivity;
 import com.github.tvbox.osc.ui.activity.SettingActivity;
 import com.github.tvbox.osc.ui.activity.SubscriptionActivity;
@@ -24,8 +21,8 @@ import com.github.tvbox.osc.ui.dialog.AboutDialog;
 import com.github.tvbox.osc.ui.dialog.DialogCoordinator;
 import com.github.tvbox.osc.ui.dialog.DialogStyle;
 import com.github.tvbox.osc.ui.dialog.PopupKeyboardPolicy;
-import com.github.tvbox.osc.util.FastClickCheckUtil;
-import com.github.tvbox.osc.util.Utils;
+import com.github.tvbox.osc.update.UpdateCheck;
+import com.github.tvbox.osc.update.UpdateInfo;
 import com.hjq.permissions.OnPermissionCallback;
 import com.hjq.permissions.Permission;
 import com.hjq.permissions.XXPermissions;
@@ -43,6 +40,7 @@ import java.util.List;
  */
 public class MyFragment extends BaseVbFragment<FragmentMyBinding> {
 
+    private boolean updateCheckInProgress;
 
     @Override
     protected void init() {
@@ -77,8 +75,6 @@ public class MyFragment extends BaseVbFragment<FragmentMyBinding> {
 
         mBinding.tvDownload.setOnClickListener(v -> jumpActivity(DownloadActivity.class));
 
-        mBinding.tvFavorite.setOnClickListener(v -> jumpActivity(CollectActivity.class));
-
         mBinding.tvLocal.setOnClickListener(v -> {
             if (!XXPermissions.isGranted(mContext, Permission.MANAGE_EXTERNAL_STORAGE)) {
                 showPermissionTipPopup();
@@ -89,12 +85,41 @@ public class MyFragment extends BaseVbFragment<FragmentMyBinding> {
 
         mBinding.llSubscription.setOnClickListener(v -> jumpActivity(SubscriptionActivity.class));
 
+        mBinding.llCheckUpdate.setOnClickListener(v -> checkUpdate());
+
         mBinding.llAbout.setOnClickListener(v -> {
             // AboutDialog 是 AppBottomPopupView(底部抽屉):必须走 DialogCoordinator.bottom —— 它带的
             // isViewMode(true) + hasNavigationBar(false) 才是"和其它抽屉同款"的弹法(贴底、不留导航栏缝、
             // 手势条不闪)。原来走 center(...)(它只是 asCustom,不改位置但**少了这两个参数**),
             // 结果是同一个抽屉面板在不同入口下弹出位置/底边观感不一致(用户口径:"关于的抽屉圆角和别的抽屉不一致")。
             DialogCoordinator.bottom(mActivity, new AboutDialog(mActivity), 0).show();
+        });
+    }
+
+    private void checkUpdate() {
+        if (updateCheckInProgress) return;
+        updateCheckInProgress = true;
+        UpdateCheck.check(mActivity, new UpdateCheck.Listener() {
+            @Override
+            public void onChecking() {
+            }
+
+            @Override
+            public boolean onResult(UpdateInfo newVersion) {
+                updateCheckInProgress = false;
+                if (!isResumed() || !getUserVisibleHint()) return true;
+                if (newVersion == null) {
+                    AppBubble.toast("已是最新版本");
+                    return true;
+                }
+                return false; // 复用现有更新说明弹窗，由 UpdateCheck 显示。
+            }
+
+            @Override
+            public void onFailed(String message) {
+                updateCheckInProgress = false;
+                if (isResumed() && getUserVisibleHint()) AppBubble.toast(message);
+            }
         });
     }
 

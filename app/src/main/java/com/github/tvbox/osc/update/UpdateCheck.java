@@ -13,14 +13,14 @@ import com.github.tvbox.osc.util.AppBubble;
  * 更新检查的共用入口:把"检查 → 发现新版本弹更新说明 → 用户点立即更新开始下载"这段固定动作收在一处,
  * 供两处复用——
  * <ul>
- *   <li>「我的-关于-检查更新」按钮({@link com.github.tvbox.osc.ui.dialog.AboutDialog}):{@link #check(Context, Listener)}</li>
+ *   <li>「我的-检查更新」入口:{@link #check(Context, Listener)}</li>
  *   <li>启动自动检查(首页"上次看到"气泡消失后):{@link #autoCheckOnce(Context, Runnable)}</li>
  * </ul>
  * 无新版本/检查失败时按 {@code silent} 决定是否提示,避免启动时弹无意义的提示打扰用户。
  */
 public final class UpdateCheck {
 
-    /** 检查结果回调(供"关于"页把状态显示在底部弹窗里,可为 null) */
+    /** 检查结果回调(供手动检查入口提示结果,可为 null) */
     public interface Listener {
         void onChecking();
 
