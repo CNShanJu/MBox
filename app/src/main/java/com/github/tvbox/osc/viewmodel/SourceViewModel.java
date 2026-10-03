@@ -856,6 +856,16 @@ public class SourceViewModel extends ViewModel {
                 });
     }
     // playerContent
+    private void postPlayFailure(String progressKey, String url) {
+        JSONObject failure = new JSONObject();
+        try {
+            failure.put("proKey", progressKey);
+            failure.put("key", url);
+            failure.put("playError", true);
+        } catch (Throwable ignored) { }
+        playResult.postValue(failure);
+    }
+
     public void getPlay(String sourceKey, String playFlag, String progressKey, String url, String subtitleKey) {
         SourceBean sourceBean = sourceConfig.getSource(sourceKey);
         int type = sourceBean.getType();
@@ -875,7 +885,7 @@ public class SourceViewModel extends ViewModel {
                         playResult.postValue(result);
                     } catch (Throwable th) {
                         th.printStackTrace();
-                        playResult.postValue(null);
+                        postPlayFailure(progressKey, url);
                     }
                 }
             });
@@ -898,12 +908,12 @@ public class SourceViewModel extends ViewModel {
                 playResult.postValue(result);
             } catch (Throwable th) {
                 th.printStackTrace();
-                playResult.postValue(null);
+                postPlayFailure(progressKey, url);
             }
         } else if (type == 4) {
             Map<String, String> playParams = com.github.tvbox.osc.spiderapi.HttpSourceParams.play(type, url, playFlag);
             if (playParams == null) {
-                playResult.postValue(null);
+                postPlayFailure(progressKey, url);
                 return;
             }
             HttpClient.get(sourceBean.getApi(), playParams, null, "play", new HCallBack() {
@@ -920,17 +930,17 @@ public class SourceViewModel extends ViewModel {
                             playResult.postValue(result);
                         } catch (Throwable th) {
                             th.printStackTrace();
-                            playResult.postValue(null);
+                            postPlayFailure(progressKey, url);
                         }
                     }
 
                     @Override
                     public void onError(Throwable e) {
-                        playResult.postValue(null);
+                        postPlayFailure(progressKey, url);
                     }
                 });
         }else {
-            playResult.postValue(null);
+            postPlayFailure(progressKey, url);
         }
     }
 

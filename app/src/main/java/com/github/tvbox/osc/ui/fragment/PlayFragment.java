@@ -56,8 +56,10 @@ import org.json.JSONObject;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 
 import xyz.doikki.videoplayer.player.ProgressManager;
 
@@ -88,11 +90,11 @@ public class PlayFragment extends BaseLazyFragment {
     private View mPlayLoading;
     private VodController mController;
     private SourceViewModel sourceViewModel;
-    /**
-     * 解析/嗅探引擎(解析编排 + 无头 WebView 嗅探 + json/聚合解析;见 util/player/PlayParseCoordinator)
     /** BaseLazyFragment 会在可见时才初始化播放器；详情快照可能更早到达。 */
     private boolean playbackReady;
     private Runnable pendingReadyAction;
+    /**
+     * 解析/嗅探引擎(解析编排 + 无头 WebView 嗅探 + json/聚合解析;见 util/player/PlayParseCoordinator)
      */
     private com.github.tvbox.osc.util.player.PlayParseCoordinator mParseEngine;
     /** 字幕协调器(字幕装载/音轨与内置字幕切换/设置弹窗;见 util/player/SubtitleCoordinator) */
@@ -103,10 +105,34 @@ public class PlayFragment extends BaseLazyFragment {
     private String playbackSessionKey;
 
     private final long videoDuration = -1;
-    /**
-     * 记录当前播放url
-     */
-    private String mCurrentUrl;
+    /** 选集与地址解析共用代数，晚到的旧回调不能覆盖当前播放。 */
+    private final AtomicLong mPlaybackGeneration = new AtomicLong();
+    private volatile PlaybackSnapshot mResolvedPlayback;
+    private String mRequestedPlayUrl;
+    private String mPlayResultToken;
+
+    private static final class PlaybackSnapshot {
+        final long generation;
+        final String url;
+        final String sourceUrl;
+        final Map<String, String> headers;
+
+        PlaybackSnapshot(long generation, String url, String sourceUrl, Map<String, String> headers) {
+            this.generation = generation;
+            this.url = url;
+            this.sourceUrl = sourceUrl;
+            this.headers = headers == null ? null : new HashMap<>(headers);
+        }
+    }
+
+    private boolean isCurrentPlayback(long generation) {
+        return generation == mPlaybackGeneration.get();
+    }
+
+    private PlaybackSnapshot currentPlaybackSnapshot() {
+        PlaybackSnapshot snapshot = mResolvedPlayback;
+        return snapshot != null && isCurrentPlayback(snapshot.generation) ? snapshot : null;
+    }
     private boolean mFullWindows;
     /**
      * 非全屏下的设置弹窗
@@ -141,6 +167,17 @@ public class PlayFragment extends BaseLazyFragment {
         initView();
         initViewModel();
         initData();
+        playbackReady = true;
+        Runnable action = pendingReadyAction;
+        pendingReadyAction = null;
+        if (action != null) action.run();
+    }
+
+    /** 只在控制器、解析器和 ViewModel 全部就绪后执行最新的起播请求。 */
+    public void runWhenPlaybackReady(Runnable action) {
+        if (action == null) return;
+        if (playbackReady && isAdded() && getView() != null) action.run();
+        else pendingReadyAction = action;
     }
 
     public long getSavedProgress(String url) {
@@ -167,17 +204,6 @@ public class PlayFragment extends BaseLazyFragment {
         mController.setEnableInNormal(true);
         mController.setGestureEnabled(true);
         ProgressManager progressManager = new ProgressManager() {
-        playbackReady = true;
-        Runnable action = pendingReadyAction;
-        pendingReadyAction = null;
-        if (action != null) action.run();
-    }
-
-    /** 只在控制器、解析器和 ViewModel 全部就绪后执行最新的起播请求。 */
-    public void runWhenPlaybackReady(Runnable action) {
-        if (action == null) return;
-        if (playbackReady && isAdded() && getView() != null) action.run();
-        else pendingReadyAction = action;
             @Override
             public void saveProgress(String url, long progress) {
                 mPlayHistory.save(url, progress);
@@ -502,21 +528,25 @@ public class PlayFragment extends BaseLazyFragment {
     }
 
     void playUrl(String url, HashMap<String, String> headers) {
-        mCurrentUrl = url;
+        final long generation = mPlaybackGeneration.incrementAndGet();
+        mResolvedPlayback = null;
+        final HashMap<String, String> requestHeaders = headers == null ? null : new HashMap<>(headers);
         if (!PlayConfig.isVideoPurify()) {
-            startPlayUrl(url, headers);
+            logManifestProbe("入口", "净化关闭，直接播放", null, null);
+            startPlayUrl(url, requestHeaders, generation, url);
             return;
         }
         if (!url.contains("://127.0.0.1/") && !url.contains(".m3u8")) {
-            startPlayUrl(url, headers);
+            logManifestProbe("入口", "非 HLS 候选，直接播放", null, null);
+            startPlayUrl(url, requestHeaders, generation, url);
             return;
         }
         HttpClient.cancel("m3u8-1");
         HttpClient.cancel("m3u8-2");
         // remove ads in m3u8
         Map<String, String> hheaders = new HashMap<>();
-        if (headers != null) {
-            for (Map.Entry<String, String> s : headers.entrySet()) {
+        if (requestHeaders != null) {
+            for (Map.Entry<String, String> s : requestHeaders.entrySet()) {
                 hheaders.put(s.getKey(), s.getValue());
             }
         }
@@ -524,12 +554,15 @@ public class PlayFragment extends BaseLazyFragment {
         HttpClient.get(url, hheaders, "m3u8-1", new HCallBack() {
             @Override
             public void onSuccess(String content) {
+                if (!isCurrentPlayback(generation)) return;
                 // 先剥 BOM:带 BOM 的清单原来会被下面的 startsWith 判否 → 静默放弃广告过滤
                 content = com.github.tvbox.osc.util.M3u8Purifier.stripBom(content);
                 if (!content.startsWith("#EXTM3U")) {
-                    startPlayUrl(url, headers);
+                    logManifestProbe("首级", "非 HLS 清单，直接播放", null, null);
+                    startPlayUrl(url, requestHeaders, generation, url);
                     return;
                 }
+                PlaylistShape firstShape = PlaylistShape.inspect(content);
 
                 String[] lines = null;
                 if (content.contains("\r\n"))
@@ -575,45 +608,111 @@ public class PlayFragment extends BaseLazyFragment {
                 if ("".equals(forwardurl)) {
                     int ilast = url.lastIndexOf('/');
 
-                    RemoteServer.m3u8Content = com.github.tvbox.osc.util.M3u8Purifier
+                    String purified = com.github.tvbox.osc.util.M3u8Purifier
                             .removeMinorityUrl(url.substring(0, ilast + 1), content);
+                    RemoteServer.m3u8Content = purified;
+                    logManifestProbe("首级", "直接处理", firstShape, PlaylistShape.inspect(purified));
                     if (RemoteServer.m3u8Content == null)
-                        startPlayUrl(url, headers);
+                        startPlayUrl(url, requestHeaders, generation, url);
                     else {
                         // 广告过滤静默执行,不弹任何提示
-                        startPlayUrl(purifyUrl(), headers);
+                        startPlayUrl(purifyUrl(), requestHeaders, generation, url);
                     }
                     return;
                 }
+                logManifestProbe("首级", "转向下级清单", firstShape, null);
                 final String finalforwardurl = forwardurl;
                 HttpClient.get(forwardurl, hheaders, "m3u8-2", new HCallBack() {
                     @Override
                     public void onSuccess(String content) {
+                        if (!isCurrentPlayback(generation)) return;
                         content = com.github.tvbox.osc.util.M3u8Purifier.stripBom(content);
+                        PlaylistShape lowerShape = PlaylistShape.inspect(content);
                         int ilast = finalforwardurl.lastIndexOf('/');
-                        RemoteServer.m3u8Content = com.github.tvbox.osc.util.M3u8Purifier
+                        String purified = com.github.tvbox.osc.util.M3u8Purifier
                                 .removeMinorityUrl(finalforwardurl.substring(0, ilast + 1), content);
+                        RemoteServer.m3u8Content = purified;
+                        logManifestProbe("下级", lowerShape == null ? "非 HLS 清单，直接播放" : "直接处理",
+                                lowerShape, PlaylistShape.inspect(purified));
 
                         if (RemoteServer.m3u8Content == null)
-                            startPlayUrl(finalforwardurl, headers);
+                            startPlayUrl(finalforwardurl, requestHeaders, generation, url);
                         else {
                             // 广告过滤静默执行,不弹任何提示
-                            startPlayUrl(purifyUrl(), headers);
+                            startPlayUrl(purifyUrl(), requestHeaders, generation, url);
                         }
                     }
 
                     @Override
                     public void onError(Throwable e) {
-                        startPlayUrl(url, headers);
+                        if (!isCurrentPlayback(generation)) return;
+                        logManifestProbe("下级", "请求失败，播放原地址", null, null);
+                        startPlayUrl(url, requestHeaders, generation, url);
                     }
                 });
             }
 
             @Override
             public void onError(Throwable e) {
-                startPlayUrl(url, headers);
+                if (!isCurrentPlayback(generation)) return;
+                logManifestProbe("首级", "请求失败，播放原地址", null, null);
+                startPlayUrl(url, requestHeaders, generation, url);
             }
         });
+    }
+
+    /** 仅记录清单结构和净化结果；清单文本、播放地址和请求头可能含鉴权信息，不能入日志。 */
+    private static void logManifestProbe(String stage, String decision, PlaylistShape before, PlaylistShape after) {
+        if (!com.github.tvbox.osc.log.LogStore.get().isEnabled()) return;
+        StringBuilder detail = new StringBuilder("播放清单探针: ").append(stage).append('，').append(decision);
+        if (before != null) detail.append("，净化前=").append(before.summary());
+        if (after != null) {
+            detail.append("，净化后=").append(after.summary());
+            if (before != null) detail.append("，移除地址数=").append(Math.max(0, before.uriCount - after.uriCount));
+        } else if (before != null && "直接处理".equals(decision)) {
+            detail.append("，净化未生效");
+        }
+        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.PLAYER, detail.toString());
+    }
+
+    /** 统计 HLS 标签与非注释地址行，不读取变体地址、分片地址或标签内的 URI 属性。 */
+    private static final class PlaylistShape {
+        final int variantCount;
+        final int segmentCount;
+        final int uriCount;
+
+        private PlaylistShape(int variantCount, int segmentCount, int uriCount) {
+            this.variantCount = variantCount;
+            this.segmentCount = segmentCount;
+            this.uriCount = uriCount;
+        }
+
+        static PlaylistShape inspect(String content) {
+            if (!com.github.tvbox.osc.log.LogStore.get().isEnabled()) return null;
+            if (content == null || !content.startsWith("#EXTM3U")) return null;
+            int variants = 0;
+            int segments = 0;
+            int uris = 0;
+            int start = 0;
+            while (start < content.length()) {
+                int end = content.indexOf('\n', start);
+                if (end < 0) end = content.length();
+                int cursor = start;
+                while (cursor < end && Character.isWhitespace(content.charAt(cursor))) cursor++;
+                if (cursor < end) {
+                    if (content.startsWith("#EXT-X-STREAM-INF:", cursor)) variants++;
+                    else if (content.startsWith("#EXTINF:", cursor)) segments++;
+                    else if (content.charAt(cursor) != '#') uris++;
+                }
+                start = end + 1;
+            }
+            return new PlaylistShape(variants, segments, uris);
+        }
+
+        String summary() {
+            return (variantCount > 0 ? "主清单" : segmentCount > 0 ? "媒体清单" : "未知清单")
+                    + "(变体=" + variantCount + "，分片=" + segmentCount + "，地址=" + uriCount + ')';
+        }
     }
 
     /**
@@ -651,14 +750,17 @@ public class PlayFragment extends BaseLazyFragment {
         });
     }
 
-    void startPlayUrl(String url, HashMap<String, String> headers) {
+    void startPlayUrl(String url, HashMap<String, String> headers, long generation, String sourceUrl) {
+        if (!isCurrentPlayback(generation)) return;
         if (autoRetryCount > 0 && url.contains(".m3u8")) {
             url = "http://home.jundie.top:666/unBom.php?m3u8=" + url;// 尝试去bom头再次播放
         }
         String finalUrl = url;
+        HashMap<String, String> playbackHeaders = headers == null ? null : new HashMap<>(headers);
         if (mActivity == null || !isAdded())
             return;
         requireActivity().runOnUiThread(() -> {
+            if (!isCurrentPlayback(generation) || !isAdded()) return;
             if (mParseEngine != null)
                 mParseEngine.stopParse();
             if (mPlaySession != null)
@@ -679,7 +781,7 @@ public class PlayFragment extends BaseLazyFragment {
                         android.app.Activity host = getActivity();
                         if (host == null) return;
                         callResult = PlayerHelper.runExternalPlayer(playerType, host, finalUrl, playTitle,
-                                playSubtitle, headers, progress);
+                                playSubtitle, playbackHeaders, progress);
                         setTip("调用外部播放器" + PlayerHelper.getPlayerName(playerType) + (callResult ? "成功" : "失败"),
                                 callResult, !callResult);
                         return;
@@ -688,7 +790,16 @@ public class PlayFragment extends BaseLazyFragment {
                     e.printStackTrace();
                 }
                 hideTip();
+                String lowerUrl = finalUrl.toLowerCase(Locale.ROOT);
+                String contentHint = lowerUrl.contains(".m3u8") ? "HLS候选"
+                        : lowerUrl.contains(".mpd") ? "DASH候选" : "其他";
+                com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.PLAYER,
+                        "播放入口探针: 内核=" + mVodPlayerCfg.optInt("pl", PlayConfig.getPlayType())
+                                + "，渲染=" + PlayerHelper.getRenderName(mVodPlayerCfg.optInt("pr", PlayConfig.getRenderType()))
+                                + "，类型=" + contentHint);
                 PlayerHelper.updateCfg(mVideoView, mVodPlayerCfg);
+                // 与真正起播的地址和请求头成对发布，宿主同步回调会立刻读取该快照。
+                mResolvedPlayback = new PlaybackSnapshot(generation, finalUrl, sourceUrl, playbackHeaders);
                 boolean castOnly = false;
                 if (mSyncHost != null && mVodInfo != null && mVodInfo.seriesMap != null
                         && mVodInfo.seriesMap.get(mVodInfo.playFlag) != null
@@ -699,7 +810,7 @@ public class PlayFragment extends BaseLazyFragment {
                 if (castOnly) return;
                 // 起播统一经 PlayerSession(设进度键+URL+start;内核隔离入口)
                 if (mPlaySession != null) {
-                    mPlaySession.play(finalUrl, progressKey, headers);
+                    mPlaySession.play(finalUrl, progressKey, playbackHeaders);
                 }
                 mController.resetSpeed();
                 bindPlaybackSession(finalUrl); // playback 会话原型:观察当前内核状态/进度(仅日志,不驱动)
@@ -796,6 +907,13 @@ public class PlayFragment extends BaseLazyFragment {
         @Override
         public void onChanged(JSONObject info) {
             if (info != null) {
+                // ViewModel 的旧集结果可能晚到；它携带请求键，先校验再进入解析链。
+                if (!TextUtils.equals(mPlayResultToken, info.optString("proKey"))
+                        || !TextUtils.equals(mRequestedPlayUrl, info.optString("key"))) return;
+                if (info.optBoolean("playError")) {
+                    errorWithRetry("获取播放信息错误", true);
+                    return;
+                }
                 try {
                     boolean parse = info.optString("parse", "1").equals("1");
                     boolean jx = info.optString("jx", "0").equals("1");
@@ -841,9 +959,6 @@ public class PlayFragment extends BaseLazyFragment {
                     LogUtils.e(th.toString());
                     errorWithRetry("获取播放信息错误", true);
                 }
-            } else {
-                errorWithRetry("获取播放信息错误", true);
-                // AppBubble.toast("获取播放信息错误");
             }
         }
     };
@@ -940,6 +1055,12 @@ public class PlayFragment extends BaseLazyFragment {
 
     @Override
     public void onDestroyView() {
+        playbackReady = false;
+        pendingReadyAction = null;
+        mPlaybackGeneration.incrementAndGet();
+        mResolvedPlayback = null;
+        mRequestedPlayUrl = null;
+        mPlayResultToken = null;
         super.onDestroyView();
         // 手动注销
         sourceViewModel.playResult.removeObserver(mObserverPlayResult);
@@ -1037,6 +1158,10 @@ public class PlayFragment extends BaseLazyFragment {
     public void play(boolean reset) {
         if (mVodInfo == null)
             return;
+        long requestGeneration = mPlaybackGeneration.incrementAndGet();
+        mResolvedPlayback = null;
+        mRequestedPlayUrl = null;
+        mPlayResultToken = null;
         VodInfo.VodSeries vs = mVodInfo.seriesMap.get(mVodInfo.playFlag).get(mVodInfo.playIndex);
         if (mSyncHost != null)
             mSyncHost.onEpisodeSelected(mVodInfo.playIndex);
@@ -1056,6 +1181,9 @@ public class PlayFragment extends BaseLazyFragment {
         // 播放请求上下文收敛:键单一来源 PlayRequest;playResult 回调不再经 proKey/subtKey 回写
         progressKey = playRequest.progressKey();
         subtitleCacheKey = playRequest.subtitleCacheKey();
+        mRequestedPlayUrl = playRequest.url();
+        // SourceViewModel 原样回传 proKey；加入代数后，同一集重试的旧响应也会被过滤。
+        mPlayResultToken = progressKey + "|resolve:" + requestGeneration;
         // 重新播放清除现有进度
         if (reset) {
             mPlayHistory.delete(progressKey);
@@ -1074,6 +1202,7 @@ public class PlayFragment extends BaseLazyFragment {
         if (Thunder.play(vs.url, new Thunder.ThunderCallback() {
             @Override
             public void status(int code, String info) {
+                if (!isCurrentPlayback(requestGeneration)) return;
                 if (code < 0) {
                     setTip(info, false, true);
                 } else {
@@ -1087,6 +1216,7 @@ public class PlayFragment extends BaseLazyFragment {
 
             @Override
             public void play(String url) {
+                if (!isCurrentPlayback(requestGeneration)) return;
                 playUrl(url, null);
             }
         })) {
@@ -1094,21 +1224,32 @@ public class PlayFragment extends BaseLazyFragment {
             return;
         }
         sourceViewModel.getPlay(playRequest.sourceKey(), mVodInfo.playFlag,
-                playRequest.progressKey(), playRequest.url(), playRequest.subtitleCacheKey());
+                mPlayResultToken, playRequest.url(), playRequest.subtitleCacheKey());
     }
 
     private String playSubtitle;
     private String subtitleCacheKey;
     private String progressKey;
 
-    /** 记录当前播放url(供 DetailActivity/下载回退取址) */
+    /** 当前集解析出的原始地址，供下载任务保存；不返回临时净化播放地址。 */
     public String getFinalUrl() {
-        return TextUtils.isEmpty(mCurrentUrl) || !RegexUtils.isURL(mCurrentUrl) ? "" : mCurrentUrl;
+        PlaybackSnapshot snapshot = currentPlaybackSnapshot();
+        return snapshot == null || TextUtils.isEmpty(snapshot.sourceUrl) || !RegexUtils.isURL(snapshot.sourceUrl)
+                ? "" : snapshot.sourceUrl;
     }
 
-    /** 当前播放所用请求头:经解析引擎(嗅探 WebView 收集 UA/Referer 等)取,下载回退播放地址必须携带 */
+    /** 当前播放器实际使用的地址，供投屏使用；净化 HLS 时可能是临时本机地址。 */
+    public String getCastUrl() {
+        PlaybackSnapshot snapshot = currentPlaybackSnapshot();
+        return snapshot == null || TextUtils.isEmpty(snapshot.url) || !RegexUtils.isURL(snapshot.url)
+                ? "" : snapshot.url;
+    }
+
+    /** 与当前集地址同轮解析、同次起播的请求头快照。 */
     public Map<String, String> getPlayHeaders() {
-        return mParseEngine != null ? mParseEngine.getPlayHeaders() : null;
+        PlaybackSnapshot snapshot = currentPlaybackSnapshot();
+        return snapshot == null || TextUtils.isEmpty(snapshot.sourceUrl) || !RegexUtils.isURL(snapshot.sourceUrl)
+                || snapshot.headers == null ? null : new HashMap<>(snapshot.headers);
     }
 
     public MyVideoView getPlayer() {
