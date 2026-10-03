@@ -93,6 +93,36 @@
         android:visibility="invisible"
         tools:visibility="visible" />
 
+    <!-- 图标的实际左边缘与标题文字对齐，按钮尺寸与锁定键一致。 -->
+    <ImageView
+        android:id="@+id/iv_screen_rotate"
+        android:layout_width="36dp"
+        android:layout_height="40dp"
+        android:layout_gravity="start|center_vertical"
+        android:layout_marginStart="36dp"
+        android:clickable="true"
+        android:focusable="true"
+        android:paddingHorizontal="6dp"
+        android:contentDescription="@string/player_rotate_screen"
+        android:src="@drawable/ic_screen_rotate"
+        android:visibility="gone"
+        tools:visibility="visible" />
+
+    <!-- 顶部原有时间移到锁定键和底部控制栏之间，纵向位置由控制器按实际布局计算。 -->
+    <TextView
+        android:id="@+id/tv_sys_time"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="end|center_vertical"
+        android:layout_marginEnd="16dp"
+        android:gravity="end"
+        android:singleLine="true"
+        android:textColor="#FFFFFF"
+        android:textSize="14sp"
+        android:visibility="gone"
+        tools:text="12:00"
+        tools:visibility="visible" />
+
     <LinearLayout
         android:id="@+id/tv_top_r_container"
         android:layout_width="wrap_content"
@@ -117,24 +147,12 @@
                 android:id="@+id/tv_play_load_net_speed_right_top"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_below="@+id/tv_sys_time"
                 android:layout_gravity="right"
                 android:ellipsize="end"
                 android:maxLines="1"
                 android:paddingRight="10dp"
                 android:tag="vod_control_pause_time"
                 android:text="0Kb/s"
-                android:textColor="@color/white" />
-            <TextView
-                android:id="@+id/tv_sys_time"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_gravity="right"
-                android:ellipsize="end"
-                android:maxLines="1"
-                android:paddingRight="14dp"
-                android:tag="vod_control_pause_time"
-                android:text="12:00"
                 android:textColor="@color/white" />
         </LinearLayout>
 

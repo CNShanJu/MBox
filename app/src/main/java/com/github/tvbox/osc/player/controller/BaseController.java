@@ -461,6 +461,24 @@ public abstract class BaseController extends BaseVideoController implements Gest
         return true;
     }
 
+    /** 让全屏系统时间始终居于锁定键和底部控制栏之间。 */
+    protected final void positionSystemTime(View time, View lock, View bottom) {
+        View root = (View) time.getParent();
+        View.OnLayoutChangeListener updatePosition = (view, left, top, right, bottomEdge,
+                oldLeft, oldTop, oldRight, oldBottom) -> {
+            if (time.getHeight() == 0 || lock.getHeight() == 0 || bottom.getVisibility() != VISIBLE) {
+                return;
+            }
+            float targetCenterY = (lock.getBottom() + bottom.getTop()) / 2f;
+            float currentCenterY = (time.getTop() + time.getBottom()) / 2f;
+            time.setTranslationY(targetCenterY - currentCenterY);
+        };
+        root.addOnLayoutChangeListener(updatePosition);
+        lock.addOnLayoutChangeListener(updatePosition);
+        bottom.addOnLayoutChangeListener(updatePosition);
+        time.addOnLayoutChangeListener(updatePosition);
+    }
+
     private boolean isOverVisibleControl(MotionEvent event, View view) {
         if (view == null || !view.isShown()) return false;
         Rect bounds = new Rect();

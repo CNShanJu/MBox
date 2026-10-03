@@ -82,6 +82,8 @@ public class LocalVideoController extends BaseController implements PlaybackSett
                         mTopRoot2.setVisibility(VISIBLE);
                         if (!isLock) {// 未上锁,锁按钮随操作栏显示
                             mLockView.setVisibility(VISIBLE);
+                            mScreenRotateView.setVisibility(VISIBLE);
+                            mPlayPauseTime.setVisibility(VISIBLE);
                         }
                         mNextBtn.requestFocus();
                         break;
@@ -90,6 +92,8 @@ public class LocalVideoController extends BaseController implements PlaybackSett
                         mBottomRoot.setVisibility(GONE);
                         mTopRoot1.setVisibility(GONE);
                         mTopRoot2.setVisibility(GONE);
+                        mScreenRotateView.setVisibility(GONE);
+                        mPlayPauseTime.setVisibility(GONE);
                         if (!isLock) {// 未上锁,锁按钮随操作栏隐藏
                             mLockView.setVisibility(GONE);
                         }
@@ -146,6 +150,7 @@ public class LocalVideoController extends BaseController implements PlaybackSett
     private ImageView mIvPlayStatus;
     public MyBatteryView mMyBatteryView;
     private ImageView mLockView;
+    private ImageView mScreenRotateView;
     private boolean isLock = false;
     int dismissTimeLock = 2000;//闲置多少毫秒隐藏已上锁按钮
     private final Runnable lockRunnable = new Runnable() {
@@ -225,6 +230,8 @@ public class LocalVideoController extends BaseController implements PlaybackSett
 
         // 锁定按钮:上锁后隐藏操作栏并拦截触摸,点按屏幕短暂显示锁按钮
         mLockView = findViewById(R.id.iv_lock);
+        mScreenRotateView = findViewById(R.id.iv_screen_rotate);
+        positionSystemTime(mPlayPauseTime, mLockView, mBottomRoot);
         mLockView.setOnClickListener(new OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -666,14 +673,16 @@ public class LocalVideoController extends BaseController implements PlaybackSett
                 hideBottom();
             }
         });
-        mLandscapePortraitBtn.setOnClickListener(new OnClickListener() {
+        OnClickListener rotateScreenClick = new OnClickListener() {
             @Override
             public void onClick(View view) {
                 FastClickCheckUtil.check(view);
                 setLandscapePortrait();
                 hideBottom();
             }
-        });
+        };
+        mLandscapePortraitBtn.setOnClickListener(rotateScreenClick);
+        mScreenRotateView.setOnClickListener(rotateScreenClick);
         mNextBtn.setNextFocusLeftId(R.id.play_time_start);
     }
 
@@ -1248,7 +1257,8 @@ public class LocalVideoController extends BaseController implements PlaybackSett
         if (mControlWrapper == null) return super.onDoubleTap(e);
         if (isLock || isLocked() || !isInPlaybackState()) return true;
         if (mProgressRoot.getVisibility() == VISIBLE) return true;
-        return handleDoubleTapSeek(e, mBottomRoot, mTopRoot1, mTopRoot2, mLockView)
+        return handleDoubleTapSeek(e, mBottomRoot, mTopRoot1, mTopRoot2,
+                mLockView, mScreenRotateView, mPlayPauseTime)
                 || super.onDoubleTap(e);
     }
 

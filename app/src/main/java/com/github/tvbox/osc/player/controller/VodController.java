@@ -84,6 +84,10 @@ public class VodController extends BaseController implements PlaybackSettingsCon
                         toggleViewShowWithAlpha(mTopRoot2, true);
                         if (!isLock){// 未上锁,随底部显示
                             toggleViewShowWithAlpha(mLockView, true);
+                            if (mFullWindows) {
+                                toggleViewShowWithAlpha(mScreenRotateView, true);
+                                toggleViewShowWithAlpha(mPlayPauseTime, true);
+                            }
                         }
                         mNextBtn.requestFocus();
                         break;
@@ -92,6 +96,8 @@ public class VodController extends BaseController implements PlaybackSettingsCon
                         toggleViewShowWithAlpha(mBottomRoot, false);
                         toggleViewShowWithAlpha(mTopRoot1, false);
                         toggleViewShowWithAlpha(mTopRoot2, false);
+                        toggleViewShowWithAlpha(mScreenRotateView, false);
+                        toggleViewShowWithAlpha(mPlayPauseTime, false);
                         if (!isLock){// 未上锁,随底部显示
                             toggleViewShowWithAlpha(mLockView, false);
                         }
@@ -159,6 +165,7 @@ public class VodController extends BaseController implements PlaybackSettingsCon
     public TextView mPlayRetry;
     public TextView mPlayRefresh;
     ImageView mLockView;
+    private ImageView mScreenRotateView;
     Handler myHandle;
     Runnable myRunnable;
     int dismissTimeOperationBar = 5000;//闲置多少毫秒隐藏操作栏(上中下)  默认6秒
@@ -242,6 +249,8 @@ public class VodController extends BaseController implements PlaybackSettingsCon
         mChooseSeries = findViewById(R.id.choose_series);
         mChooseDownload = findViewById(R.id.choose_download);
         mLockView = findViewById(R.id.iv_lock);
+        mScreenRotateView = findViewById(R.id.iv_screen_rotate);
+        positionSystemTime(mPlayPauseTime, mLockView, mBottomRoot);
 
         initSubtitleInfo();
 
@@ -611,7 +620,7 @@ public class VodController extends BaseController implements PlaybackSettingsCon
             listener.selectAudioTrack();
             hideBottom();
         });
-        mLandscapePortraitBtn.setOnClickListener(view -> {
+        OnClickListener rotateScreenClick = view -> {
             FastClickCheckUtil.check(view);
             if (mFullWindows) {
                 setLandscapePortrait();
@@ -619,7 +628,9 @@ public class VodController extends BaseController implements PlaybackSettingsCon
                 listener.toggleFullScreen();
             }
             hideBottom();
-        });
+        };
+        mLandscapePortraitBtn.setOnClickListener(rotateScreenClick);
+        mScreenRotateView.setOnClickListener(rotateScreenClick);
         mNextBtn.setNextFocusLeftId(R.id.play_time_start);
         mChooseSeries.setOnClickListener(view -> {
             FastClickCheckUtil.check(view);
@@ -910,6 +921,15 @@ public class VodController extends BaseController implements PlaybackSettingsCon
         mFullWindows = b;
         if (!b) clearDoubleTapSeekFeedback();
         mPlayTitle1.setSelected(true);
+        if (b && !isLock && isBottomVisible()) {
+            toggleViewShowWithAlpha(mScreenRotateView, true);
+            toggleViewShowWithAlpha(mPlayPauseTime, true);
+        } else {
+            mScreenRotateView.animate().cancel();
+            mPlayPauseTime.animate().cancel();
+            mScreenRotateView.setVisibility(GONE);
+            mPlayPauseTime.setVisibility(GONE);
+        }
         if (b) {
             // 全屏:放大按钮显示"缩小"图标
             mIvFullscreen.setImageResource(R.drawable.ic_zoom_out);
@@ -1233,7 +1253,8 @@ public class VodController extends BaseController implements PlaybackSettingsCon
         if (isLock || isLocked() || !isInPlaybackState()) return true;
         // 已展开控件的触摸区域不响应跳转，画面左右侧才交给双击手势。
         if (mProgressRoot.getVisibility() == VISIBLE) return true;
-        return handleDoubleTapSeek(e, mBottomRoot, mTopRoot1, mTopRoot2, mLockView)
+        return handleDoubleTapSeek(e, mBottomRoot, mTopRoot1, mTopRoot2,
+                mLockView, mScreenRotateView, mPlayPauseTime)
                 || super.onDoubleTap(e);
     }
 
