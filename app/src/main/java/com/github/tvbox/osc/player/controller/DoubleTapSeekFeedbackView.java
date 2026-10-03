@@ -23,19 +23,17 @@ import com.github.tvbox.osc.R;
 /** 只绘制双击反馈，不接管触摸；曲边遮罩与命中区使用同一轮廓。 */
 public final class DoubleTapSeekFeedbackView extends View {
     private static final long SHOW_MS = 1000L;
-    private static final long RIPPLE_MS = 560L;
+    private static final long PULSE_MS = 360L;
     private final Path zonePath = new Path();
     private final RectF zoneOval = new RectF();
     private final Paint shadePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint ripplePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint pulsePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Rect labelBounds = new Rect();
     private final Drawable leftIcon;
     private final Drawable rightIcon;
     private int direction;
     private String label;
-    private float touchX;
-    private float touchY;
     private long shownAt;
 
     public DoubleTapSeekFeedbackView(Context context, @Nullable AttributeSet attrs) {
@@ -43,7 +41,7 @@ public final class DoubleTapSeekFeedbackView extends View {
         leftIcon = AppCompatResources.getDrawable(context, R.drawable.ic_seek_left);
         rightIcon = AppCompatResources.getDrawable(context, R.drawable.ic_seek_right);
         shadePaint.setColor(ContextCompat.getColor(context, R.color.player_overlay_bg));
-        ripplePaint.setStyle(Paint.Style.STROKE);
+        pulsePaint.setColor(Color.BLACK);
         textPaint.setColor(Color.WHITE);
         textPaint.setTextAlign(Paint.Align.LEFT);
         textPaint.setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL));
@@ -53,21 +51,12 @@ public final class DoubleTapSeekFeedbackView extends View {
         setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
     }
 
-    void show(DoubleTapSeekPolicy.Result seek, float x, float y) {
+    void show(DoubleTapSeekPolicy.Result seek) {
         direction = seek.direction;
         label = seek.moved ? (seek.taps * 10) + "s"
                 : (direction < 0 ? "已到开头" : "已到结尾");
-        touchX = x;
-        touchY = y;
         shownAt = SystemClock.uptimeMillis();
         setVisibility(VISIBLE);
-        invalidate();
-    }
-
-    void updateTouch(float x, float y) {
-        if (getVisibility() != VISIBLE) return;
-        touchX = x;
-        touchY = y;
         invalidate();
     }
 
@@ -92,11 +81,10 @@ public final class DoubleTapSeekFeedbackView extends View {
         int saved = canvas.save();
         canvas.clipPath(zonePath);
         canvas.drawPath(zonePath, shadePaint);
-        drawRipple(canvas, age, 0L);
-        drawRipple(canvas, age, 110L);
+        drawBackgroundPulse(canvas, age);
         drawLabel(canvas);
         canvas.restoreToCount(saved);
-        if (age < RIPPLE_MS + 110L) postInvalidateOnAnimation();
+        if (age < PULSE_MS) postInvalidateOnAnimation();
     }
 
     private void buildZonePath() {
@@ -111,13 +99,19 @@ public final class DoubleTapSeekFeedbackView extends View {
         zonePath.addOval(zoneOval, Path.Direction.CW);
     }
 
-    private void drawRipple(Canvas canvas, long age, long delay) {
-        if (age < delay || age >= delay + RIPPLE_MS) return;
-        float progress = (age - delay) / (float) RIPPLE_MS;
-        ripplePaint.setColor(Color.WHITE);
-        ripplePaint.setAlpha(Math.round(145f * (1f - progress)));
-        ripplePaint.setStrokeWidth(dp(2f));
-        canvas.drawCircle(touchX, touchY, dp(10f + 72f * progress), ripplePaint);
+    private void drawBackgroundPulse(Canvas canvas, long age) {
+        if (age >= PULSE_MS) return;
+        // 连击时重启一层填充扩散，只在曲边背景内生效，不画触点上的独立圆环。
+        float progress = age / (float) PULSE_MS;
+        float easeOut = 1f - (1f - progress) * (1f - progress);
+        float radiusX = DoubleTapSeekPolicy.sideRadiusX(getWidth(), getHeight());
+        float radiusY = DoubleTapSeekPolicy.sideRadiusY(getWidth(), getHeight());
+        float centerX = direction < 0 ? radiusX / 2f : getWidth() - radiusX / 2f;
+        float startRadius = dp(24f);
+        float endRadius = (float) Math.hypot(radiusX / 2f, radiusY) + dp(8f);
+        pulsePaint.setAlpha(Math.round(48f * (1f - progress * progress)));
+        canvas.drawCircle(centerX, getHeight() / 2f,
+                startRadius + (endRadius - startRadius) * easeOut, pulsePaint);
     }
 
     private void drawLabel(Canvas canvas) {

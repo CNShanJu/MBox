@@ -8,7 +8,7 @@
     android:id="@+id/rootView"
     tools:background="@color/black">
 
-    <!-- 绘制在字幕和控制键下方；只显示左右双击区域与触点涟漪，不接收触摸。 -->
+    <!-- 绘制在字幕和控制键下方；连击只让左右曲边背景内填充扩散，不接收触摸。 -->
     <com.github.tvbox.osc.player.controller.DoubleTapSeekFeedbackView
         android:id="@+id/double_tap_seek_feedback"
         android:layout_width="match_parent"

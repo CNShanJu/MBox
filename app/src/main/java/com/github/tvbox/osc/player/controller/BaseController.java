@@ -457,7 +457,7 @@ public abstract class BaseController extends BaseVideoController implements Gest
                 mControlWrapper.getCurrentPosition(), mControlWrapper.getDuration(), event.getEventTime());
         if (seek == null) return true;
         if (seek.moved) mControlWrapper.seekTo(seek.targetMs);
-        showDoubleTapSeekFeedback(seek, event);
+        showDoubleTapSeekFeedback(seek);
         return true;
     }
 
@@ -468,9 +468,9 @@ public abstract class BaseController extends BaseVideoController implements Gest
                 && bounds.contains((int) event.getRawX(), (int) event.getRawY());
     }
 
-    private void showDoubleTapSeekFeedback(DoubleTapSeekPolicy.Result seek, MotionEvent event) {
+    private void showDoubleTapSeekFeedback(DoubleTapSeekPolicy.Result seek) {
         if (mDoubleTapSeekFeedback == null) return;
-        mDoubleTapSeekFeedback.show(seek, event.getX(), event.getY());
+        mDoubleTapSeekFeedback.show(seek);
         mHandler.removeCallbacks(mHideDoubleTapSeekFeedback);
         mHandler.postDelayed(mHideDoubleTapSeekFeedback, 1000);
     }
@@ -658,12 +658,8 @@ public abstract class BaseController extends BaseVideoController implements Gest
 
     @Override
     public boolean onDoubleTapEvent(MotionEvent e) {
-        if (e.getActionMasked() == MotionEvent.ACTION_DOWN && mDoubleTapSeekFeedback != null) {
-            mDoubleTapSeekFeedback.updateTouch(e.getX(), e.getY());
-        }
         return false;
     }
-
 
     @Override
     public boolean onSingleTapUp(MotionEvent e) {
