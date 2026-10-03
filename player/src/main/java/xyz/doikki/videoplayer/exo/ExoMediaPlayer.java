@@ -7,6 +7,8 @@ import android.view.Surface;
 import android.view.SurfaceHolder;
 
 import androidx.annotation.NonNull;
+import androidx.media3.common.C;
+import androidx.media3.common.Format;
 import androidx.media3.common.util.UnstableApi;
 
 import androidx.media3.exoplayer.DefaultLoadControl;
@@ -17,12 +19,17 @@ import androidx.media3.common.PlaybackException;
 import androidx.media3.common.PlaybackParameters;
 import androidx.media3.common.Player;
 import androidx.media3.exoplayer.SeekParameters;
+import androidx.media3.exoplayer.analytics.AnalyticsListener;
 import androidx.media3.common.Tracks;
+import androidx.media3.exoplayer.source.MediaLoadData;
 import androidx.media3.exoplayer.source.MediaSource;
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector;
 import androidx.media3.common.VideoSize;
 
 import java.util.Map;
+
+import com.github.tvbox.osc.log.Category;
+import com.github.tvbox.osc.log.LogStore;
 
 import xyz.doikki.videoplayer.player.AbstractPlayer;
 import xyz.doikki.videoplayer.player.PlaybackErrorReporter;
@@ -47,6 +54,24 @@ public class ExoMediaPlayer extends AbstractPlayer implements Player.Listener {
     private String path;
     private String sourceSummary = "未知来源";
     private Map<String, String> headers;
+    private String lastVideoFormatProbe;
+    private String lastRenderedVideoProbe;
+    private String lastAvailableTracksProbe;
+    /** 实际加载的视频格式可随 HLS 自适应切换，去重后记入唯一的业务日志通道。 */
+    private final AnalyticsListener qualityProbe = new AnalyticsListener() {
+        @Override
+        public void onDownstreamFormatChanged(EventTime eventTime, MediaLoadData mediaLoadData) {
+            if (mediaLoadData.trackType != C.TRACK_TYPE_VIDEO || mediaLoadData.trackFormat == null) return;
+            Format format = mediaLoadData.trackFormat;
+            String signature = format.width + "x" + format.height + "," + format.bitrate;
+            if (signature.equals(lastVideoFormatProbe)) return;
+            lastVideoFormatProbe = signature;
+            String size = format.width > 0 && format.height > 0
+                    ? format.width + "x" + format.height : "未知";
+            String bitrate = format.bitrate > 0 ? format.bitrate + "bps" : "未知";
+            LogStore.log(Category.PLAYER, "Media3 已加载视频格式: " + size + "，码率=" + bitrate);
+        }
+    };
 
     public ExoMediaPlayer(Context context) {
         mAppContext = context.getApplicationContext();
@@ -90,6 +115,7 @@ public class ExoMediaPlayer extends AbstractPlayer implements Player.Listener {
         setOptions();
 
         mMediaPlayer.addListener(this);
+        mMediaPlayer.addAnalyticsListener(qualityProbe);
     }
 
     public DefaultTrackSelector getTrackSelector() {
@@ -101,9 +127,23 @@ public class ExoMediaPlayer extends AbstractPlayer implements Player.Listener {
         this.path = path;
         this.sourceSummary = PlaybackErrorReporter.source(path);
         this.headers = headers;
+        lastVideoFormatProbe = null;
+        lastRenderedVideoProbe = null;
+        lastAvailableTracksProbe = null;
         mMediaSource = null;
         mMediaSource = mMediaSourceHelper.getMediaSource(path, headers, false, errorCode);
+        LogStore.log(Category.PLAYER, "Media3 播放输入: 类型=" + mMediaSource.getClass().getSimpleName()
+                + "，净化代理=" + (path != null && path.startsWith("http://127.0.0.1:")
+                && path.contains("/purify.m3u8")) + "，自定义 UA=" + hasUserAgent(headers));
         errorCode = -1;
+    }
+
+    private static boolean hasUserAgent(Map<String, String> headers) {
+        if (headers == null) return false;
+        for (String key : headers.keySet()) {
+            if ("User-Agent".equalsIgnoreCase(key)) return true;
+        }
+        return false;
     }
 
     @Override
@@ -165,6 +205,9 @@ public class ExoMediaPlayer extends AbstractPlayer implements Player.Listener {
             mMediaPlayer.setVideoSurface(null);
             mIsPreparing = false;
         }
+        lastVideoFormatProbe = null;
+        lastRenderedVideoProbe = null;
+        lastAvailableTracksProbe = null;
     }
 
     @Override
@@ -194,6 +237,7 @@ public class ExoMediaPlayer extends AbstractPlayer implements Player.Listener {
     public void release() {
         if (mMediaPlayer != null) {
             mMediaPlayer.removeListener(this);
+            mMediaPlayer.removeAnalyticsListener(qualityProbe);
             mMediaPlayer.release();
             mMediaPlayer = null;
         }
@@ -202,6 +246,9 @@ public class ExoMediaPlayer extends AbstractPlayer implements Player.Listener {
         smoothSpeed = -1;
         mIsPreparing = false;
         mSpeedPlaybackParameters = null;
+        lastVideoFormatProbe = null;
+        lastRenderedVideoProbe = null;
+        lastAvailableTracksProbe = null;
     }
 
     @Override
@@ -320,6 +367,23 @@ public class ExoMediaPlayer extends AbstractPlayer implements Player.Listener {
     public void onTracksChanged(Tracks tracks) {
         if (trackNameProvider == null)
             trackNameProvider = new ExoTrackNameProvider(mAppContext.getResources());
+        int groups = 0;
+        int formats = 0;
+        int selected = 0;
+        for (Tracks.Group group : tracks.getGroups()) {
+            if (group.getType() != C.TRACK_TYPE_VIDEO) continue;
+            groups++;
+            formats += group.length;
+            for (int i = 0; i < group.length; i++) {
+                if (group.isTrackSelected(i)) selected++;
+            }
+        }
+        String signature = groups + "," + formats + "," + selected;
+        if (!signature.equals(lastAvailableTracksProbe)) {
+            lastAvailableTracksProbe = signature;
+            LogStore.log(Category.PLAYER, "Media3 视频轨: 组=" + groups + "，检测到格式=" + formats
+                    + "，选择集格式=" + selected);
+        }
     }
 
     @Override
@@ -410,6 +474,27 @@ public class ExoMediaPlayer extends AbstractPlayer implements Player.Listener {
 
     @Override
     public void onVideoSizeChanged(@NonNull VideoSize videoSize) {
+        if (videoSize.width > 0 && videoSize.height > 0) {
+            int bitrate = Format.NO_VALUE;
+            if (mMediaPlayer != null) {
+                for (Tracks.Group group : mMediaPlayer.getCurrentTracks().getGroups()) {
+                    if (group.getType() != C.TRACK_TYPE_VIDEO) continue;
+                    for (int i = 0; i < group.length; i++) {
+                        if (group.isTrackSelected(i)) {
+                            bitrate = group.getTrackFormat(i).bitrate;
+                            break;
+                        }
+                    }
+                    if (bitrate > 0) break;
+                }
+            }
+            String signature = videoSize.width + "x" + videoSize.height + "," + bitrate;
+            if (!signature.equals(lastRenderedVideoProbe)) {
+                lastRenderedVideoProbe = signature;
+                LogStore.log(Category.PLAYER, "Media3 实际视频尺寸: " + videoSize.width + "x" + videoSize.height
+                        + "，选中轨声明码率=" + (bitrate > 0 ? bitrate + "bps" : "未知"));
+            }
+        }
         if (mPlayerEventListener != null) {
             mPlayerEventListener.onVideoSizeChanged(videoSize.width, videoSize.height);
             if (videoSize.unappliedRotationDegrees > 0) {
