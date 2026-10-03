@@ -181,6 +181,8 @@ public class OkGoHelper {
     private static volatile OkHttpClient mediaRelayClient = null;
     /** 图片专用客户端(带磁盘缓存):仅给 Picasso 等图片加载用,与 API/搜索流量隔离 */
     private static volatile OkHttpClient imageClient = null;
+    /** DoH 切换只换客户端；在途旧客户端与新客户端必须共用这一份磁盘缓存索引。 */
+    private static volatile Cache imageDiskCache = null;
 
     /** 图片磁盘缓存上限(字节)。海报多为几十~几百 KB,100MB 可长期覆盖各页面海报回看 */
     private static final long IMAGE_CACHE_MAX_BYTES = 100L * 1024 * 1024;
@@ -341,6 +343,14 @@ public class OkGoHelper {
         return c;
     }
 
+    /** 清理所有图片客户端共用的磁盘缓存；必须由后台线程调用。 */
+    public static void evictImageDiskCache() throws IOException {
+        getImageClient(); // 首次清理时懒建缓存；已有 DoH 旧客户端仍引用同一 Cache。
+        Cache cache = imageDiskCache;
+        if (cache == null) throw new IOException("图片磁盘缓存不可用");
+        cache.evictAll();
+    }
+
     private static OkHttpClient buildImageClient() {
         if (appContext == null) return defaultClient;
         try {
@@ -350,8 +360,13 @@ public class OkGoHelper {
             }
             // 从"静默"根起手:图片是后台链路,一个海报加载失败不该把用户弹到"网络不可用"整屏页
             // (原来从 defaultClient.newBuilder() 派生,顺带继承了"失败即上报"的守卫拦截器)
+            Cache cache = imageDiskCache;
+            if (cache == null) {
+                cache = new Cache(dir, IMAGE_CACHE_MAX_BYTES);
+                imageDiskCache = cache;
+            }
             return newBaseBuilder(false)
-                    .cache(new Cache(dir, IMAGE_CACHE_MAX_BYTES))
+                    .cache(cache)
                     // 兜底缓存头:仅本客户端(图片)生效——OkHttp 依据响应缓存头决定是否落盘,
                     // 很多图床不带缓存头,补一个公共 max-age 使其可被磁盘缓存
                     .addNetworkInterceptor(chain -> {

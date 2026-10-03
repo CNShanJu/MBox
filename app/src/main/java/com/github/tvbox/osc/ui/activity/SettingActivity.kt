@@ -4,7 +4,8 @@ import android.content.DialogInterface
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
-import android.util.Log
+import android.os.Handler
+import android.os.Looper
 import android.view.View
 import androidx.recyclerview.widget.DiffUtil
 import com.github.tvbox.osc.log.LogConfig
@@ -29,8 +30,9 @@ import com.github.tvbox.osc.ui.dialog.TextTipDialog
 import com.github.tvbox.osc.ui.dialog.ThemePickerDialog
 import com.github.tvbox.osc.storage.theme.ThemeStore
 import com.github.tvbox.osc.util.FastClickCheckUtil
-import com.github.tvbox.osc.util.FileUtils
 import com.github.tvbox.osc.util.HeavyTaskUtil
+import com.github.tvbox.osc.util.cache.CacheCatalog
+import com.github.tvbox.osc.util.cache.CacheSizeText
 import com.github.tvbox.osc.util.HistoryHelper
 import com.github.tvbox.osc.util.LoadingAnim
 import com.github.tvbox.osc.util.OkGoHelper
@@ -43,7 +45,7 @@ import com.hjq.permissions.Permission
 import com.hjq.permissions.XXPermissions
 import com.lxj.xpopup.XPopup
 import okhttp3.HttpUrl
-import java.io.File
+import java.lang.ref.WeakReference
 
 /**
  * @author pj567
@@ -57,6 +59,7 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
 
     /** init() 是否已跑完(onResume 刷新显示前要确认控件已就绪) */
     private var inited = false
+    private var cacheSizeEpoch = 0
 
     /** 主题颜色弹窗引用(编辑页返回后若它还开着,就地刷新列表) */
     private var themeDialog: com.github.tvbox.osc.ui.dialog.ThemePickerDialog? = null
@@ -418,9 +421,8 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             dialog.show()
         }
         mBinding.llClearCache.setOnClickListener { view: View ->
-            com.github.tvbox.osc.ui.dialog.ConfirmDialog.showDanger(this, "提示", "确定清空缓存吗？", "清空", {
-                onClickClearCache(view)
-            })
+            FastClickCheckUtil.check(view)
+            jumpActivity(CacheManagementActivity::class.java)
         }
         // 启动时自动检查更新(默认开):开关只记配置,触发时机见 HomeFragment(上次看到气泡消失后)
         mBinding.switchAutoCheckUpdate.setChecked(SystemConfig.isAutoCheckUpdate())
@@ -615,6 +617,7 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
 
     override fun onResume() {
         super.onResume()
+        refreshCacheSize()
         mBinding.tvBackgroundPlayType.text = BackgroundPlaySettings.currentLabel()
         // 背景图设置页返回后刷新取值(默认/自定义)
         if (inited) {
@@ -732,24 +735,25 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             if (active != null && ThemeStore.isUserTheme(active.id)) View.GONE else View.VISIBLE
     }
 
-    private fun onClickClearCache(v: View) {
-        FastClickCheckUtil.check(v)
-        // 走共享大任务线程池(AGENTS §六.6:UI 不得自建线程池);删缓存要清的是两处 ——
-        // 内部 cacheDir + 外部 getExternalCacheDir()(Exo 的 exo-video-cache 在这里),
-        // 原来只删内部 getCachePath(),清完体积几乎没变;FileUtils.clearAllCache() 就是两处的统一口径。
-        // 删完再 toast(原来在裸 Thread 启动后立刻弹"缓存已清空",其实还没删完)
+    private fun refreshCacheSize() {
+        val epoch = ++cacheSizeEpoch
+        mBinding.tvCacheSize.text = "计算中…"
+        val catalog = CacheCatalog(applicationContext)
+        val pageRef = WeakReference(this)
         HeavyTaskUtil.getBigTaskExecutorService().execute {
-            val ok = try {
-                FileUtils.clearAllCache()
-                true
-            } catch (t: Throwable) {
-                Log.e("TVBox-Setting", "清空缓存失败", t)
-                false
-            }
-            mBinding.root.post {
-                AppBubble.toast(if (ok) "缓存已清空" else "清空失败，请重试")
+            val size = runCatching { catalog.scan().totalBytes }
+            Handler(Looper.getMainLooper()).post {
+                val page = pageRef.get() ?: return@post
+                if (epoch == page.cacheSizeEpoch && !page.isFinishing && !page.isDestroyed) {
+                    page.mBinding.tvCacheSize.text = size.fold(CacheSizeText::format) { "读取失败" }
+                }
             }
         }
+    }
+
+    override fun onDestroy() {
+        cacheSizeEpoch++
+        super.onDestroy()
     }
 
     private fun getHomeRecName(type: Int): String {

@@ -956,15 +956,21 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="清空缓存"
-                        android:textColor="@color/text_danger"
+                        android:text="缓存管理"
+                        android:textColor="@color/text_foreground"
                         android:textSize="16sp"
                         />
 
-                    <Space
+                    <TextView
+                        android:id="@+id/tvCacheSize"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1" />
+                        android:layout_weight="1"
+                        android:layout_marginEnd="8dp"
+                        android:gravity="end"
+                        android:text="计算中…"
+                        android:textColor="@color/text_sub_foreground"
+                        android:textSize="13sp" />
 
                     <ImageView
                         android:layout_width="13dp"
@@ -972,7 +978,7 @@
                         android:layout_gravity="center"
                         android:alpha="0.75"
                         android:src="@drawable/ic_seek_right"
-                        app:tint="@color/text_danger"/>
+                        app:tint="@color/text_foreground"/>
                 </LinearLayout>
 
                 <!-- 启动时自动检查更新(默认开):首页"上次看到"气泡消失后检查一次,有新版本弹更新说明弹窗 -->
