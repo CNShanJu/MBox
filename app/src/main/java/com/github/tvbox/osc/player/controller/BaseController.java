@@ -20,9 +20,15 @@ import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.core.graphics.Insets;
+import androidx.core.view.DisplayCutoutCompat;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 
 import com.github.tvbox.osc.R;
 import com.github.tvbox.osc.util.LoadingAnim;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 
 import xyz.doikki.videoplayer.controller.BaseVideoController;
@@ -123,6 +129,10 @@ public abstract class BaseController extends BaseVideoController implements Gest
     };
     private final DoubleTapSeekPolicy mDoubleTapSeek = new DoubleTapSeekPolicy();
     private DoubleTapSeekFeedbackView mDoubleTapSeekFeedback;
+    private List<SideMargin> mSideMargins;
+    private boolean mFullscreenControlSafeArea;
+    private int mCutoutSideInset;
+    private int mLiveBaseSidePadding;
     private final Runnable mHideDoubleTapSeekFeedback = () -> {
         if (mDoubleTapSeekFeedback != null) mDoubleTapSeekFeedback.hide();
         mDoubleTapSeek.reset();
@@ -131,6 +141,8 @@ public abstract class BaseController extends BaseVideoController implements Gest
     @Override
     protected void initView() {
         super.initView();
+        // BaseVideoController 在其构造器里调用 initView，此时本类字段初始化尚未执行。
+        mSideMargins = new ArrayList<>();
         mAudioManager = (AudioManager) getContext().getSystemService(Context.AUDIO_SERVICE);
         mGestureDetector = new GestureDetector(getContext(), this);
         setOnTouchListener(this);
@@ -149,16 +161,116 @@ public abstract class BaseController extends BaseVideoController implements Gest
         }
         // 播放器加载动画跟随设置页"加载动画"选项(默认/Glowing Fish)
         LoadingAnim.apply(mLoading);
-        // 直播全屏控制器根统一固定 30dp 边距:标题栏/右侧菜单/底部控制条等 doikki 组件
-        // 全部内缩相同距离、位置恒定,不读取挖孔安全区(固定值,无视摄像头)。
-        if (getLayoutId() == R.layout.player_live_control_view) {
-            int side = Math.round(30f * getResources().getDisplayMetrics().density);
-            setPadding(side, 0, side, 0);
+        if (getLayoutId() == R.layout.player_vod_control_view) {
+            // 点播和本地共用布局：只移动边缘控件，保持双击反馈层铺满画面、触点坐标不变。
+            addSideMargin(R.id.tv_top_l_container, true, false);
+            addSideMargin(R.id.tv_top_r_container, false, true);
+            addSideMargin(R.id.iv_screen_rotate, true, false);
+            addSideMargin(R.id.iv_lock, false, true);
+            addSideMargin(R.id.tv_sys_time, false, true);
+            addSideMargin(R.id.subtitle_view, true, true);
+            addSideMargin(R.id.bottom_container, true, true);
+        } else if (getLayoutId() == R.layout.player_live_control_view) {
+            // 直播原有的 30dp 留白保留为下限，摄像头更靠内时两侧同步加大。
+            mLiveBaseSidePadding = Math.round(30f * getResources().getDisplayMetrics().density);
+            setPadding(mLiveBaseSidePadding, 0, mLiveBaseSidePadding, 0);
+        }
+        if (!mSideMargins.isEmpty() || mLiveBaseSidePadding > 0) {
+            ViewCompat.setOnApplyWindowInsetsListener(this, (view, insets) -> {
+                Insets cutoutInsets = insets.getInsets(WindowInsetsCompat.Type.displayCutout());
+                int left = cutoutInsets.left;
+                int right = cutoutInsets.right;
+                DisplayCutoutCompat cutout = insets.getDisplayCutout();
+                if (cutout != null) {
+                    left = Math.max(left, cutout.getSafeInsetLeft());
+                    right = Math.max(right, cutout.getSafeInsetRight());
+                }
+                mCutoutSideInset = Math.max(left, right);
+                applyControlSideSafeArea();
+                return insets;
+            });
         }
         // 初始也走状态机:控制器刚 inflate、尚未收到播放状态回调时,把初始态视作 STATE_IDLE
         // 收敛一次——loading/网速的显隐唯一由 refreshLoadingUi 决定,不依赖布局默认值,
         // 也不存在"手动隐藏"的第二条路径。
         refreshLoadingUi(VideoView.STATE_IDLE);
+    }
+
+    private static final class SideMargin {
+        final View view;
+        final int originalLeft;
+        final int originalRight;
+        final boolean relativeMargins;
+        final boolean insetLeft;
+        final boolean insetRight;
+
+        SideMargin(View view, ViewGroup.MarginLayoutParams margins, boolean insetLeft, boolean insetRight) {
+            this.view = view;
+            relativeMargins = margins.isMarginRelative();
+            originalLeft = relativeMargins && insetLeft ? margins.getMarginStart() : margins.leftMargin;
+            originalRight = relativeMargins && insetRight ? margins.getMarginEnd() : margins.rightMargin;
+            this.insetLeft = insetLeft;
+            this.insetRight = insetRight;
+        }
+    }
+
+    private void addSideMargin(int id, boolean left, boolean right) {
+        View view = findViewById(id);
+        if (view != null && view.getLayoutParams() instanceof ViewGroup.MarginLayoutParams) {
+            mSideMargins.add(new SideMargin(view, (ViewGroup.MarginLayoutParams) view.getLayoutParams(), left, right));
+        }
+    }
+
+    /** 全屏整套控制栏在摄像头安全区内左右对称；预览态保留原布局。 */
+    protected final void setFullscreenControlSafeArea(boolean fullscreen) {
+        mFullscreenControlSafeArea = fullscreen;
+        applyControlSideSafeArea();
+        if (ViewCompat.isAttachedToWindow(this)) ViewCompat.requestApplyInsets(this);
+    }
+
+    private void applyControlSideSafeArea() {
+        int side = mFullscreenControlSafeArea ? mCutoutSideInset : 0;
+        for (SideMargin target : mSideMargins) {
+            ViewGroup.MarginLayoutParams margins = (ViewGroup.MarginLayoutParams) target.view.getLayoutParams();
+            int left = target.originalLeft + (target.insetLeft ? side : 0);
+            int right = target.originalRight + (target.insetRight ? side : 0);
+            boolean changed = margins.leftMargin != left || margins.rightMargin != right;
+            if (target.relativeMargins && target.insetLeft && margins.getMarginStart() != left) {
+                margins.setMarginStart(left);
+                changed = true;
+            }
+            if (target.relativeMargins && target.insetRight && margins.getMarginEnd() != right) {
+                margins.setMarginEnd(right);
+                changed = true;
+            }
+            if (changed) {
+                margins.leftMargin = left;
+                margins.rightMargin = right;
+                target.view.setLayoutParams(margins);
+            }
+        }
+        if (mLiveBaseSidePadding > 0) {
+            int liveSide = Math.max(mLiveBaseSidePadding,
+                    mCutoutSideInset + Math.round(10f * getResources().getDisplayMetrics().density));
+            if (getPaddingLeft() != liveSide || getPaddingRight() != liveSide) {
+                setPadding(liveSide, getPaddingTop(), liveSide, getPaddingBottom());
+            }
+        }
+    }
+
+    @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        if (!mSideMargins.isEmpty() || mLiveBaseSidePadding > 0) ViewCompat.requestApplyInsets(this);
+    }
+
+    @Override
+    protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight) {
+        super.onSizeChanged(width, height, oldWidth, oldHeight);
+        if ((width != oldWidth || height != oldHeight)
+                && (!mSideMargins.isEmpty() || mLiveBaseSidePadding > 0)) {
+            ViewCompat.requestApplyInsets(this);
+        }
     }
 
     /** loading 显隐(资源解析/起播准备/播中缓存都转圈) */

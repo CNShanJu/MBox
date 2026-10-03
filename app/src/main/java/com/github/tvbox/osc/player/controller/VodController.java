@@ -889,6 +889,7 @@ public class VodController extends BaseController implements PlaybackSettingsCon
      */
     public void changedLandscape(boolean b) {
         mFullWindows = b;
+        setFullscreenControlSafeArea(b);
         if (!b) clearDoubleTapSeekFeedback();
         mPlayTitle1.setSelected(true);
         if (!isLock && isBottomVisible()) {

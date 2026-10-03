@@ -173,7 +173,7 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
      * 按系统栏 insets 给根布局让位(替代 fitsSystemWindows 的整帧内缩,原因见 {@link #init()} 上方注释)。
      * <p>
      * 用 insets 监听而不是一次性算状态栏高度:普通预览随系统栏留白;
-     * 全屏清掉上下留白,横向仍保留刘海屏的 displayCutout 安全区。
+     * 全屏让画面铺满窗口；播放器控制层独立读取挖孔安全区，并对称内缩整套控件。
      * <p>
      * 根布局(activity_detail 的根 FrameLayout)自身不带 padding,这里整体接管;页面背景层是它的兄弟
      * (在 content 里更靠下),不受 padding 影响,所以仍铺满整屏。
@@ -183,11 +183,10 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
         ViewCompat.setOnApplyWindowInsetsListener(root, (v, insets) -> {
             Insets bars = insets.getInsets(
                     WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
-            Insets cutout = insets.getInsets(WindowInsetsCompat.Type.displayCutout());
-            // 全屏播放器盖满整帧；转竖屏时系统栏 inset 可能短暂保留旧值。
-            int left = fullWindows ? cutout.left : bars.left;
+            // 全屏播放器盖满整帧，摄像头留白只施加给控制层；转竖屏时系统栏 inset 可能短暂保留旧值。
+            int left = fullWindows ? 0 : bars.left;
             int top = fullWindows ? 0 : bars.top;
-            int right = fullWindows ? cutout.right : bars.right;
+            int right = fullWindows ? 0 : bars.right;
             int bottom = fullWindows ? 0 : bars.bottom;
             if (v.getPaddingLeft() != left || v.getPaddingTop() != top
                     || v.getPaddingRight() != right || v.getPaddingBottom() != bottom) {
