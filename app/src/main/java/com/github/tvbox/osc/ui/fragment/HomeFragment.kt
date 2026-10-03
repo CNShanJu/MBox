@@ -72,7 +72,7 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
 
     companion object {
         /** "上次看到"气泡的展示时长:自动检查更新要等它消失后再做 */
-        private const val BUBBLE_SHOW_MS = 4000L
+        private const val BUBBLE_SHOW_MS = 6000L
         /** 气泡消失后再多等一点,避开消失动画 */
         private const val CHECK_AFTER_BUBBLE_MS = BUBBLE_SHOW_MS + 600L
         /** 没有气泡(无痕浏览/本机无历史)时的默认延时:给首页留出首屏渲染时间 */
@@ -485,6 +485,8 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
         // 回来时已经错过 → 这里按当前网络状态补一次收尾或补一次加载。真机反馈:断网冷启动进无网络页、
         // 点"返回"回首页,lading 一直转、恢复网络也不动 —— 就是这条时序没接上。
         bindNetworkState()
+        // onPause 会撤掉待执行的自动检查；气泡停留期间离开再返回时补排一次。
+        if (!autoCheckStarted) scheduleAutoUpdateCheck()
     }
 
     override fun onPause() {
@@ -687,7 +689,7 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
                     .isDestroyOnDismiss(true)
                     .isCenterHorizontal(true)
                     .isTouchThrough(true)
-                    // 距屏幕底部约155dp(转px),不同密度设备位置一致;配合 maxLines=1 气泡高度固定不截断
+                    // 单行气泡高度约 44dp，底部距屏幕底约 155dp。
                     .offsetY(ScreenUtils.getAppScreenHeight() - ConvertUtils.dp2px(155f + 44f))
                     .asCustom(bubble)
                     .show()
@@ -708,7 +710,7 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
     }
 
     /**
-     * 启动自动检查更新:等首页"上次看到"气泡消失(4s)后再检查,有新版本由 {@link UpdateCheck}
+     * 启动自动检查更新:等首页"上次看到"气泡消失后再检查,有新版本由 {@link UpdateCheck}
      * 弹出更新说明弹窗(与「我的-关于-检查更新」同一套动作)。
      * <p>
      * 受"自动检查更新"开关控制(设置页,默认开);无痕浏览/本机无历史时气泡不弹,这里按默认延时照常检查
