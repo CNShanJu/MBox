@@ -23,7 +23,7 @@ import com.github.tvbox.osc.R;
 /** 只绘制双击反馈，不接管触摸；曲边遮罩与命中区使用同一轮廓。 */
 public final class DoubleTapSeekFeedbackView extends View {
     private static final long SHOW_MS = 1000L;
-    private static final long PULSE_MS = 360L;
+    private static final long PULSE_MS = 560L;
     private final Path zonePath = new Path();
     private final RectF zoneOval = new RectF();
     private final Paint shadePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -103,15 +103,15 @@ public final class DoubleTapSeekFeedbackView extends View {
         if (age >= PULSE_MS) return;
         // 连击时重启一层填充扩散，只在曲边背景内生效，不画触点上的独立圆环。
         float progress = age / (float) PULSE_MS;
-        float easeOut = 1f - (1f - progress) * (1f - progress);
+        float eased = progress * progress * (3f - 2f * progress);
         float radiusX = DoubleTapSeekPolicy.sideRadiusX(getWidth(), getHeight());
         float radiusY = DoubleTapSeekPolicy.sideRadiusY(getWidth(), getHeight());
         float centerX = direction < 0 ? radiusX / 2f : getWidth() - radiusX / 2f;
         float startRadius = dp(24f);
         float endRadius = (float) Math.hypot(radiusX / 2f, radiusY) + dp(8f);
-        pulsePaint.setAlpha(Math.round(48f * (1f - progress * progress)));
+        pulsePaint.setAlpha(Math.round(40f * (1f - eased)));
         canvas.drawCircle(centerX, getHeight() / 2f,
-                startRadius + (endRadius - startRadius) * easeOut, pulsePaint);
+                startRadius + (endRadius - startRadius) * eased, pulsePaint);
     }
 
     private void drawLabel(Canvas canvas) {
