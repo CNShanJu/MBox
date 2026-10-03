@@ -35,6 +35,9 @@ public interface PlaybackSettingsController {
 
     TextView settingsLandscapeBtn();
 
+    /** 播放详情页预览态的同一入口先进入视频全屏。 */
+    default String settingsLandscapeActionLabel() { return "横竖屏"; }
+
     /** 设置倍速;speed 为空表示循环切换 */
     void setSpeed(String speed);
 
@@ -49,6 +52,15 @@ public interface PlaybackSettingsController {
     int getRenderType();
 
     void setRenderType(int renderType);
+
+    /** 仅在线播放可对 HLS 清单执行广告过滤；本地播放隐藏此项。 */
+    default boolean supportsVideoPurify() { return false; }
+
+    /** 当前广告过滤配置，由控制器提供给设置面板。 */
+    default boolean isVideoPurifyEnabled() { return false; }
+
+    /** 持久化配置并重播当前视频，使新配置立即用于本次取流。 */
+    default void setVideoPurifyEnabled(boolean enabled) { }
 
     /** 片头/片尾时间调整,type = "st" / "et" */
     void increaseTime(String type);

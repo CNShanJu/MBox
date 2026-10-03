@@ -71,9 +71,13 @@ final class PlayingControlPanel {
         mBinding.player.setText(mController.settingsPlayerBtn().getText());
         mBinding.decode.setText(mController.settingsIjkBtn().getText());
         mBinding.renderMode.setText(PlayerHelper.getRenderName(mController.getRenderType()));
+        mBinding.videoPurifySection.setVisibility(mController.supportsVideoPurify()
+                ? View.VISIBLE : View.GONE);
+        updateVideoPurifyUi(mController.isVideoPurifyEnabled());
         mBinding.backgroundPlay.setText(BackgroundPlaySettings.currentLabel());
-        // 播放设置弹窗常显"横竖屏",便于切回横屏
+        // 详情页预览态先进入视频全屏；全屏和本地播放仍切换横竖屏。
         mBinding.landscapePortrait.setVisibility(View.VISIBLE);
+        mBinding.landscapePortrait.setText(mController.settingsLandscapeActionLabel());
         mBinding.lanPush.setVisibility(mController.supportsLanPush()
                 && ControlManager.get().lanState() == ControlManager.LAN_ACTIVE
                 ? View.VISIBLE : View.GONE);
@@ -131,6 +135,12 @@ final class PlayingControlPanel {
         mBinding.player.setOnClickListener(view -> showPlayerDialog());
         mBinding.decode.setOnClickListener(view -> changeAndUpdateText(mBinding.decode, mController.settingsIjkBtn()));
         mBinding.renderMode.setOnClickListener(view -> showRenderDialog());
+        mBinding.videoPurifyRow.setOnClickListener(view -> {
+            boolean enabled = !mController.isVideoPurifyEnabled();
+            updateVideoPurifyUi(enabled);
+            mBinding.videoPurifyRow.setEnabled(false);
+            dismissWith(() -> mController.setVideoPurifyEnabled(enabled));
+        });
         mBinding.backgroundPlay.setOnClickListener(view -> showBackgroundPlayDialog());
 
         // 其他
@@ -140,8 +150,9 @@ final class PlayingControlPanel {
         mBinding.lanPush.setOnClickListener(view -> dismissWith(mController::requestLanPush));
         mBinding.subtitle.setOnClickListener(view -> dismissWith(() -> changeAndUpdateText(null, mController.settingsZimuBtn())));
         mBinding.voice.setOnClickListener(view -> dismissWith(() -> changeAndUpdateText(null, mController.settingsAudioBtn())));
-        // 横竖屏:点击切换并同步文案
-        mBinding.landscapePortrait.setOnClickListener(view -> dismissWith(() -> changeAndUpdateText(null, mController.settingsLandscapeBtn())));
+        // 预览态进入全屏，全屏及本地播放切换横竖屏。
+        mBinding.landscapePortrait.setOnClickListener(view -> dismissThenRotate(
+                () -> changeAndUpdateText(null, mController.settingsLandscapeBtn())));
     }
 
     private void updateSkipText(boolean start) {
@@ -219,7 +230,12 @@ final class PlayingControlPanel {
                 return PlayerHelper.getPlayerName(val);
             }
         }, INT_DIFF, players, players.indexOf(cur));
-        dialog.show();
+        DialogCoordinator.centerInHostView(mActivity, dialog).show();
+    }
+
+    private void updateVideoPurifyUi(boolean enabled) {
+        mBinding.switchVideoPurify.setChecked(enabled);
+        mBinding.videoPurifyRow.setContentDescription("广告过滤，" + (enabled ? "已开启" : "已关闭"));
     }
 
     /** 渲染方式:当前视频独立选择 TextureView / SurfaceView。 */

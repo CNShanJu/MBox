@@ -612,7 +612,11 @@ public class VodController extends BaseController implements PlaybackSettingsCon
         });
         mLandscapePortraitBtn.setOnClickListener(view -> {
             FastClickCheckUtil.check(view);
-            setLandscapePortrait();
+            if (mFullWindows) {
+                setLandscapePortrait();
+            } else {
+                listener.toggleFullScreen();
+            }
             hideBottom();
         });
         mNextBtn.setNextFocusLeftId(R.id.play_time_start);
@@ -813,6 +817,17 @@ public class VodController extends BaseController implements PlaybackSettingsCon
     @Override public boolean supportsLanPush() { return true; }
 
     @Override public void requestLanPush() { if (listener != null) listener.cast(); }
+
+    @Override public boolean supportsVideoPurify() { return true; }
+
+    @Override public boolean isVideoPurifyEnabled() { return PlayConfig.isVideoPurify(); }
+
+    @Override
+    public void setVideoPurifyEnabled(boolean enabled) {
+        if (PlayConfig.isVideoPurify() == enabled) return;
+        PlayConfig.setVideoPurify(enabled);
+        if (listener != null) listener.replay(false);
+    }
     // ------------------------------------------------------------------
 
     @Override
@@ -868,6 +883,11 @@ public class VodController extends BaseController implements PlaybackSettingsCon
     @Override
     public TextView settingsLandscapeBtn() {
         return mLandscapePortraitBtn;
+    }
+
+    @Override
+    public String settingsLandscapeActionLabel() {
+        return mFullWindows ? "横竖屏" : "全屏播放";
     }
 
     public void setTitle(String playTitleInfo) {
