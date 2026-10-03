@@ -82,7 +82,7 @@ public final class PlayerKernels {
         }
     }
 
-    /** 渲染视图工厂:0 texture(默认) 1 surface */
+    /** 渲染视图工厂:0 texture 1 surface(新安装默认，由 PlayConfig 指定) */
     public static RenderViewFactory renderFactory(int renderType) {
         if (renderType == 1) {
             return com.github.tvbox.osc.player.render.SurfaceRenderViewFactory.create();

@@ -55,9 +55,9 @@ public final class PlayConfig {
         return PrefsDataStore.getInt(KEY_PLAY_TYPE, 0);
     }
 
-    /** 渲染方式：0 texture 1 surface，默认 0 */
+    /** 渲染方式：0 texture 1 surface，默认 1；已保存的用户选择保持不变 */
     public static int getRenderType() {
-        return PrefsDataStore.getInt(KEY_PLAY_RENDER, 0);
+        return PrefsDataStore.getInt(KEY_PLAY_RENDER, 1);
     }
 
     /** 画面缩放（0-5），默认 0 */
