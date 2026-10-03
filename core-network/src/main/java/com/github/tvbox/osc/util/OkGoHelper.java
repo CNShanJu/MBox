@@ -12,6 +12,8 @@ import com.github.tvbox.osc.config.SystemConfig;
 import com.github.tvbox.osc.util.urlhttp.BrotliInterceptor;
 
 import java.io.File;
+import java.io.IOException;
+import java.net.Proxy;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Iterator;
@@ -22,6 +24,7 @@ import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLSocketFactory;
 
 import okhttp3.Cache;
+import okhttp3.ConnectionPool;
 import okhttp3.ConnectionSpec;
 import okhttp3.Dns;
 import okhttp3.HttpUrl;
@@ -300,6 +303,18 @@ public class OkGoHelper {
     /** 局域网视频中转共享客户端:禁用响应体日志,避免视频下载完毕后才开始向浏览器输出。 */
     public static OkHttpClient getMediaRelayClient() {
         return mediaRelayClient;
+    }
+
+    /**
+     * One cast session's DNS-pinned media client. A fresh pool prevents a connection made by
+     * another client from bypassing this session's DNS policy; direct routes ensure the policy
+     * checks the media host itself instead of only a system HTTP proxy.
+     */
+    public static OkHttpClient newScopedMediaRelayClient(Dns pinnedDns) {
+        OkHttpClient current = mediaRelayClient;
+        if (current == null || pinnedDns == null) throw new IllegalStateException("Media client unavailable");
+        return current.newBuilder().dns(pinnedDns).connectionPool(new ConnectionPool())
+                .proxy(Proxy.NO_PROXY).build();
     }
 
     /**
