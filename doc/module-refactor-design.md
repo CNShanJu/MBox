@@ -3,7 +3,7 @@
 > **实施进度（2026-09-25）**：下载模块重构已落地——DownloadFacade 门面 + internal 包（Manager/Scheduler/Executor/Store/Policy/Archive/Config/Core）+ 任务对象化（BaseDownloadTask/NormalFile/M3u8）+ 前台服务 + 通知。
 > 本文件保留作为原始设计参考（当时设计的"六模块"划分），实际实现以代码为准。六模块中的 spider/log/state/ui-common/player 已按 改进.txt 分层落地，下载模块见 `doc/项目目录结构.md` 第九节。
 >
-> **模块现状（2026-09）**：全仓 9 个模块 `:app`/`:common`/`:core-storage`/`:player`/`:thirdparty`/`:log`/`:core-network`/`:spider`/`:download`。本文件中提到的 `:core-model`/`:core-utils`/`:state` 已合并进 `:common`，`:spider-api`→`:spider`，`:player-api`→`:player`，`:crash`/`:TabLayout`/`:ViewPager1Delegate`/`:quickjs`→`:thirdparty`，`:ui-common`→`:app`（主题 JSON 在 `app/src/main/assets/theme/`）。下文历史记录保留当年模块名。
+> **当前模块（2026-10-03）**：全仓 10 个模块，`:app`、`:common`、`:core-network`、`:core-storage`、`:log`、`:player`、`:spider`、`:download`、`:share`、`:thirdparty`。下文的六模块方案是原始设计；当前依赖边界以 `settings.gradle` 和 `checkModuleDependencies` 为准。
 
 > **目标**：把 `DownloadManager.java`（1778 行单体）重构为**六个项目级模块 + 纵向分层架构**，
 > 同时修复已确认的 5 个线上 bug，建立"可排查"的日志体系，并为播放内核升级（Media3）铺路。
@@ -149,7 +149,7 @@
 | ③ | LogStore | L3 | 统一日志采集/存储/筛选（零业务依赖，最底层） | `register(category,枚举)→CategoryLogger` |
 | ④ | SpiderModule | L2 | 爬虫全能力统一门面（内容爬取/播放解析/源代理） | `SpiderApi` |
 | ⑤ | ui-common（现并入 `:app`） | L4 | 公共 UI 资源 + 命名规范（零业务依赖） | 资源模块（现为 app 内资源，主题 JSON 在 `app/src/main/assets/theme/`） |
-| ⑥ | PlayerModule | L2 | 项目自有播放层（引擎无关，Media3 升级铺路） | `PlayerApi` |
+| ⑥ | PlayerModule | L2 | 项目自有播放层（引擎无关；类型 2 已使用 Media3 1.4.1） | `PlayerApi` |
 
 ### 2.3 分层原则
 
@@ -390,10 +390,10 @@ void enterWindow(); void backgroundPlay(boolean);
 ```
 
 **统一方法契约（引擎无关——为升级 Media3 铺路）**：
-- **PlayerApi 只暴露项目自有类型**（`PlayState / PlayOptions / PlayListener / PlayError`），**任何内核类型（ExoPlayer2 / IJK / 未来 Media3）不得跨出适配层**；
+- **PlayerApi 只暴露项目自有类型**（`PlayState / PlayOptions / PlayListener / PlayError`），IJK/Media3 内核类型不得跨出适配层；
 - 调用方（PlayFragment / 小窗 / 后台播放 / 预览）只依赖 PlayerApi，感知不到内核是谁；
 - 每个内核一个**适配器**（PlayerApiAdapter）：现有 18 个播放器类收敛为适配器（Exo2Adapter / IjkAdapter / MxAdapter / KodiAdapter / VlcAdapter / ReexAdapter / RemoteTvBoxAdapter...），统一实现 PlayerApi；
-- **Media3 升级路径**：新增 `Media3Adapter`（或替换 Exo2 内核）→ 注册进 PlayerFactory（内核选择由 PlayConfig 控制）→ **PlayerApi 接口与所有调用方零改动**；升级影响面 = 适配层 + 内核依赖，业务层无感；
+- **Media3 当前实现**：类型 2 已从旧 ExoPlayer 迁至 Media3 1.4.1；保留原播放类型编号、设置与 `EXOmPlayer` 兼容类名，音轨/字幕与网络取流改用 Media3 API。`PlayerApi` 契约仍供新调用方使用，app 直接使用 `MyVideoView` 的残留待播放器主线收口；真机行为待人工回归。
 - 内核特有能力（track 选择、自定义渲染）需要时经 PlayerApi **显式暴露**，禁止调用方强转内核类型——保证引擎可替换。
 
 **内部结构**：适配层（各内核 PlayerApiAdapter + PlayerHelper 内核选择）→ 控制器层（Vod/Live/Local 迁入）→ 播放页 UI（`PlayFragment` 薄层化）；`PlayService`（后台播放）、`LivePlayerManager` 迁入。
@@ -468,7 +468,7 @@ Download-Facade（对外门面）
 // 模块内持有数据 + 模块内持久化(模块自己的 key/存储), 对外只暴露:
 boolean isXxx();                 // ① 查询
 void setXxx(boolean v);          // ② 操作: 内部校验 + 持久化 + 广播变更(发通知)
-void subscribe(ConfigListener l);// ③ 变更通知(模块内 Listener 集合或 EventBus)
+void subscribe(ConfigListener l);// ③ 变更通知(模块内 Listener 集合)
 // 备份: Map<String,Object> exportConfig(); void importConfig(Map);  // 模块自导出/自导入
 ```
 
@@ -530,7 +530,7 @@ UI(用户操作) ──────────方法调用(指令)────�
 **UI 不触碰清单（禁止项）**：
 - ❌ 直连 Hawk / Room / 文件系统——数据读写一律经模块门面；
 - ❌ 直接调用爬虫加载器（JsLoader / JarLoader / `ApiConfig.getSpider()`）——走 SpiderApi；
-- ❌ 直接操作播放器内核（ExoPlayer2 / IJK / Media3）——走 PlayerApi；
+- ❌ 新代码直接操作播放器内核（IJK / Media3）——走 PlayerApi；
 - ❌ 直接碰下载内部组件（Scheduler / Recorder / Policy / BaseDownloadTask）——走 DownloadFacade；
 - ❌ 在页面里拼装 / 计算业务数据（解析地址、聚合状态、格式转换）——模块门面返回展示模型；
 - ❌ 持有业务状态副本（进度 / 列表）——订阅门面事件，展示即最新。
@@ -975,7 +975,7 @@ File getSaveDir();  boolean hasStoragePermission();  void requestStoragePermissi
 | ③ LogStore + LogConfig | ✅ 已落地 | log 独立包、register/CategoryLogger、Room + logcat `--uid`、LogConfig 配置门面、设置页日志开关改造、LogActivity 双 Tab（业务日志筛选） |
 | ② SystemStateMonitor | ✅ 已落地 | state 独立包、网络/前后台/锁屏/横竖屏/电量/磁盘/权限维度、订阅 API |
 | ④ SpiderModule | ✅ 已落地 | SpiderApi 全能力门面、SpiderExecutor 串行收口、PlayUrlResolver 迁入、下载 reResolve 不再依赖 UI 线程池 |
-| ⑥ PlayerModule（契约层） | ✅ 已落地 | PlayerApi 引擎无关契约 + PlayerFactory（Media3 升级铺路） |
+| ⑥ PlayerModule（契约层） | ✅ 已落地 | PlayerApi 引擎无关契约 + PlayerFactory；类型 2 已迁至 Media3 1.4.1，真机待人工回归 |
 | ⑥ 适配器层 + PlayFragment 薄层化 | ✅ 代码侧完成，⏳ 真机回归 | 18 个播放器类收敛为 PlayerApiAdapter、消除 `instanceof EXOmPlayer` 强转；PlayFragment 全部 6 处内核强转收敛进 PlayerTrackHelper（轨道切换/字幕回调/中文轨道选择），内核 import 清零 |
 | ① 5.1 纯拆分 | ✅ 已落地 | DownloadManager 门面 + Store/Scheduler/Executor/Policy/Cleaner 5 组件 |
 | ① 5.2 修 5 Bug | ✅ 已落地 | Bug5 .nomedia+孤儿回收 / Bug1 网络暂停恢复 / Bug2 CANCELLED+碎片复用+原子写 / Bug4 权限硬门槛+撤销暂停 / 启动对账 |
@@ -985,9 +985,9 @@ File getSaveDir();  boolean hasStoragePermission();  void requestStoragePermissi
 | ① 4.7 日志粒度收尾 | ✅ 已落地 | 校验/开始（含完整缺失清单）、补片轮次（开始目标/单项成功失败/轮末 补K成功K1失败K2剩余J）、补片 FAILED 全量清单、合并（开始含 size/重试含上次原因/完成含耗时/失败含第k次+碎片保留） |
 | 3.6 配置门面 PlayConfig | ✅ 已落地 | `:player`（原 player-api，现契约与实现同模块）内自持 内核/渲染/缩放/步进/解码/缓存/后台播放/净化/倍速/字幕 12 项；设置页播放区 + 播放内核消费方 12 文件收敛；沿用旧 Hawk key 兼容历史设置 |
 | 3.6 配置门面 SystemConfig | ✅ 已落地 | common 内自持 DNS/主题/动画/首页/历史/直播源/无痕 7 项；设置页系统区 + 系统键消费方 9 文件收敛；设置页 44 处 Hawk 直连清零（四门面 下载/日志/播放/系统） |
-| 3.7 P2 :ui-common | ✅ 已落地 | 公共 UI 资源独立成模块：主题生成任务 + styles/colors/attrs/dimens + values-night + 通用 drawable 99 个 + anim 4 个；app 仅留页面级资源；主题 JSON 统一在 ui-common/assets/theme；assembleDebug 通过（行为零变化）。（现状：该模块已并入 `:app`——主题 JSON 现位于 `app/src/main/assets/theme/`，生成任务在 `app/build.gradle`，公共资源在 `app/src/main/res/`） |
+| 3.7 P2 :ui-common | ✅ 已并入 :app | 主题 JSON 位于 `app/src/main/assets/theme/`，生成任务在 `app/build.gradle`，公共 styles/colors/dimens/drawable/anim 位于 `app/src/main/res/`；当前不再有独立 `:ui-common` 模块。 |
 | P1 资源命名规范 | ✅ 脚本 + 两批治理 | check-res-naming.ps1 校验（含 :ui-common）；icon_*→ic_*、layout 归位；剩余第三方库风格改名 ⏳ 收益递减 |
-| P2 :ui-common | ✅ 已落地 | 公共 UI 资源独立成模块（主题生成任务/styles/colors/dimens/通用 drawable/anim），app 仅留页面级资源（现状：该模块已并入 `:app`，资源与主题 JSON 均在 app 内） |
+| P2 :ui-common | ✅ 已并入 `:app` | 主题生成任务及公共 styles/colors/dimens/drawable/anim 均在 `:app`；当前没有独立 `:ui-common` 模块。 |
 | 可选增强 | ✅ 已落地 | 限速 setSpeedLimit（5.4）/ DownloadNotifier 完成通知（5.3）/ 前台服务保活（下载中防杀 + 通知栏状态，API 34 dataSync 类型） |
 | 分片级并发下载 | ⏳ 未来扩展 | 8.2 扩展点：分片队列 + 小线程池；依赖 activeResponses 任务级连接表改多连接管理，改动非局部，留待真机验证后再做 |
 
@@ -1025,7 +1025,7 @@ File getSaveDir();  boolean hasStoragePermission();  void requestStoragePermissi
 |---|---|---|
 | 新下载协议 | 4.6（BaseDownloadTask + Registry） | 新子类 + 注册特征，框架零改动 |
 | 新爬虫源 / 新解析协议 | 3.3（SpiderModule） | 新 Spider 实现 / 新 ResolveResult 解析，下载/播放零改动 |
-| 新播放内核 / Media3 | 3.4（PlayerModule） | 适配层加适配器（PlayerApi 契约不变）；**Media3 升级 = 新增 Media3Adapter** |
+| 新播放内核 / Media3 | 3.4（PlayerModule） | Media3 1.4.1 已接入类型 2；后续新增内核仍经 PlayerApi/PlayerFactory 契约接入 |
 | 新 UI 资源 / 新页面 | 3.7（ui-common，现归 `:app`） | 按命名前缀规范 + 归属模块 res；app 内资源/组件零改动 |
 | 新日志小类型 | 3.1（LogStore） | 各模块枚举类加一项（code+label），LogStore 零改动 |
 | 新配置项 | 3.6（配置门面模式） | 模块内自持数据 + get/set/subscribe + exportConfig/importConfig；设置页分区加一行 |

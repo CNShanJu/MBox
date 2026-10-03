@@ -1,395 +1,69 @@
-当前项目已经完成“按功能拆模块”的第一步，但核心问题是：模块存在，调用边界没有真正建立。app 仍直接操作播放器、爬虫、下载器、Room 和 Hawk，所以模块职责仍然互相渗透。
+项目已完成模块合并、公开契约接线和源码边界门禁；app 的部分播放器直用仍待收口。本文记录当前状态、持续约束与后续改造顺序，详细规则以 AGENTS.md 为准。
 
-不建议立即新增六七个模块全面重写。应先建立依赖规则，再按收益拆物理模块。
+不立即新增多个模块全面重写；继续守住现有依赖规则，再按收益拆分大页面与物理模块。
 
 现状（与 AGENTS.md §二 同步维护）：全仓 **10 个 Gradle 模块** —— :app、:common、:core-network、:core-storage、:log、:player、:spider、:download、:share、:thirdparty。
-本文件下文提到的模块名有些已合并（下文历史/建议部分保留原样）：
-- :core-model + :core-utils + :state → :common（纯模型/算法工具/系统状态，包名不变）
-- :spider-api → :spider、:player-api → :player（契约与实现同模块，契约包名不变）
-- :crash + :TabLayout + :ViewPager1Delegate + :quickjs → :thirdparty（纯第三方归堆，不依赖任何本仓模块）
-- :ui-common → :app（主题 JSON 在 app/src/main/assets/theme/，generateThemeColors 任务在 app/build.gradle）
 契约与实现合到同一模块后，边界不再靠拆 Gradle 模块保证，而是靠 **checkModuleDependencies 源码层门禁**：app/UI 禁止直连 :spider 的 ApiConfig/JsLoader/PlayUrlResolver，禁止 getCSP()/Hawk/EventBus/DownloadManager.get()/自建线程池与 OkHttpClient。
-播放器现状（2026-10-01，与 AGENTS.md §二/§七 同步）：旧 ExoPlayer 已迁至 Media3 1.4.1（匹配 compileSdk 34），类型 2 沿用旧配置；EXOmPlayer/xyz.doikki.videoplayer.exo 为兼容类名，实现只用 androidx.media3。禁止重新引入 com.google.android.exoplayer 依赖或旧包 import；Media3 各组件必须同版本，UI 不得 import androidx.media3。取流复用组合根注入的客户端，每个媒体源独立持有请求头快照；音轨/字幕选择用 Tracks/TrackSelectionOverride，字幕回调用 CueGroup。真机行为待用户人工回归。下文 Exo→Media3 的建议视为代码已完成，历史说明保留。
+播放器现状（2026-10-01，与 AGENTS.md §二/§七 同步）：旧 ExoPlayer 已迁至 Media3 1.4.1（匹配 compileSdk 34），类型 2 沿用旧配置；EXOmPlayer/xyz.doikki.videoplayer.exo 为兼容类名，实现只用 androidx.media3。禁止重新引入 com.google.android.exoplayer 依赖或旧包 import；Media3 各组件必须同版本，UI 不得 import androidx.media3。取流复用组合根注入的客户端，每个媒体源独立持有请求头快照；音轨/字幕选择用 Tracks/TrackSelectionOverride，字幕回调用 CueGroup。真机行为待用户人工回归。
 主题文字色只配主色与高亮色（2026-10-02，与 AGENTS.md §七 同步）：`brand` 管正文、标题与普通选中文字；`text_accent` 保留为同值派生资源，不再是主题文件/编辑器的独立配置项。`text_highlight` 单独控制链接与搜索来源；旧主题文件里的 `text_accent` 值读取与导入时静默忽略，旧版对调过的高亮值仍需正确迁移；自动升级键名本身不提示，确实丢失其他配置时仍需提示。
 播放器区样式不随主题（2026-10-02 更新，与 AGENTS.md §七 同步）：播放器底恒为黑，压在**视频画面**上的元素（控制条/OSD、暂停与滑动进度浮层、字幕与 seek 进度图标、播放器菜单浮层）一律用**固定配色**（白/半透明黑/固定字面量；进度与暂停提示底固定为 15% 白色半透明），禁止接 `text_foreground`/`text_sub`/`btn_select_*`/`bg_float` 等主题色；反之，**带主题面板底**的浮层与页面元素照旧走主题（直播页 EPG 信息条与频道/分组卡片、直播设置与线路抽屉、播放设置面板里的小组件按钮）。判断口径：**画在黑画面/视频上 → 固定配色；有自己的（主题）面板底 → 跟主题。**
 空心组件边框线 = 它自己的文字颜色（2026-10-02，与 AGENTS.md §七 同步）：凡“无填充、只有描边”的组件（空心按钮 `BtnSecondary`、小组件键 `WidgetBtn`/`PageBgChip`、危险入口红字键 `BtnDangerGhost`、`bg_r_*_stroke_primary` 描边小件），描边色必须与该组件自己的文字色同源——普通键 = 文字主色（`btn_plain_text`/`text_foreground`）、危险入口 = 危险红 `#E5484D`、禁用态 = `text_disable`；**禁止**再挂“空心按钮边框线颜色”`btn_cancel_bg`（该键此后只服务没有自带文字的纯描边容器与输入框）。主按钮与实心选中态的填充、描边同取独立配置且不透明的 `btn_confirm_bg`（派生为 `btn_select_bg` / `btn_select_stroke`），底上的文字取 `btn_confirm_text`（派生为 `btn_select_text`）；文字主色 `brand` 仍控制正文与空心按钮的文字/描边。兼容迁移仅针对 schema ≤ 3 的旧主题：缺 `btn_confirm_bg` 或该值带透明度时静默沿用该主题的 `brand`，旧不透明值保留；用户保存时按 schema 4 落盘；当前读取只迁移内存，存量文件不会自动改写。后续移除旧格式分支前，必须先在后台原子升级尚未保存的旧主题文件并验证重读结果，迁移失败的文件继续兼容；分享/备份中的旧主题包也仍会经过导入解析，须继续迁移或明确提示该旧格式不再支持，不能只凭本机文件已升级就删分支。schema 4 缺键或显式透明值按同类型内置主题补齐；真正的空心操作统一用 `BtnSecondary`。日志筛选、背景预设与直播选中条共用实心选中规则。
 空心按钮按下仍为空心（2026-10-01，与 AGENTS.md §七 同步）：`BtnSecondary`、`BtnDangerGhost` 与未选中的 `WidgetBtn` 在 `state_pressed` 下保持透明填充，描边与文字继续同色；点击反馈不能把空心键临时刷成实心。`BtnPrimary` 按下/短时禁用时保留原来的填充与文字对比，不得切到浅色半透明底导致白字难辨；只有真正的选中件才允许持续显示实心选中态。
 点击型组件不得带“选中外观”（2026-10-01，与 AGENTS.md §七 同步）：`FlowTagLayout` 的 `app:max_select` 只给真·可选件；只做“点一下就触发动作”的 chip（搜索页历史/热词/相关搜索）一律不写 `max_select` —— 写了以后点击会 `setSelected(true)`，而 chip 的底 `selector_widget_btn` 带“选中 = 实心填充”状态，点过的词会变成一块选中色。新增点击型 chip 用无状态底（只有描边/无底），别挂带 `state_selected` 的选择器。
-搜索页数据源（2026-10-01，adb 抓本地 NewBox `com.github.tvbox.osd` 对齐）：最近热搜 = `https://api.web.360kan.com/v1/rank?cat=3`（取 `data[].title` 前 10 条，两列带序号网格展示）；相关搜索（输入联想）= `https://suggest.video.iqiyi.com/?if=mobile&key=<关键词>`（取 `data[].name`，内联 chip）。解析与 URL 编码收在 `util/SearchApiParsers`（纯逻辑带 JVM 单测）；原腾讯热词接口与浮层联想组件 `SearchSuggestionsDialog` 已下线。
+搜索页数据源：最近热搜 = `https://api.web.360kan.com/v1/rank?cat=3`（取 `data[].title` 前 10 条，两列带序号网格展示）；相关搜索 = `https://suggest.video.iqiyi.com/?if=mobile&key=<关键词>`（取 `data[].name`，内联 chip）。解析与 URL 编码收在 `util/SearchApiParsers`（纯逻辑带 JVM 单测）。
 
 一、目标架构
-建议最终分成四层：
 
-┌─────────────────────────────────────────────┐
-│ app：Application、导航、依赖组装、页面入口   │
-├─────────────────────────────────────────────┤
-│ feature：home/detail/live/download/settings │
-├─────────────────────────────────────────────┤
-│ playback / spider / download / remote       │
-│ 各业务能力，只通过公开接口协作               │
-├─────────────────────────────────────────────┤
-│ model / network / storage / ui / state/log  │
-└─────────────────────────────────────────────┘
-强制依赖方向：
+依赖只允许自上而下：app/feature → 业务公开契约 → player/spider/download/share 等业务实现 → network/storage/state/log → 纯模型。业务实现放 internal 包，基础模块不得反向依赖业务或 UI；同一领域模型只定义一次，跨模块不共享可变对象。权威边界和源码门禁见 AGENTS.md 第一、二、六节。
 
-app / feature
-    ↓
-业务 API：PlayerApi、SpiderService、DownloadFacade
-    ↓
-业务实现：player、spider、download
-    ↓
-基础设施：network、storage、state、log
-    ↓
-纯模型：model
-禁止基础模块反向依赖业务或 UI。
+二、已落地的模块边界与剩余工作
 
-
-二、模块调整建议
-1. 新增 :core-model
-存放跨模块共享的纯模型：
-
-VodInfo
-Movie
-SourceBean
-ParseBean
-Subscription
-剧集、播放地址、下载状态等 DTO
-当前 VodInfo 位于 download，却被 app 大量使用，还依赖 ApiConfig，这是明显的职责倒置。
-
-要求：
-
-不依赖 Android
-不依赖 Hawk、Room、ApiConfig
-不执行网络和数据库操作
-尽量使用不可变对象
-UI 模型与持久化 Entity 不直接共用
-不要让模型出现类似 getSource()、save()、download() 的基础设施行为。
-
-2. 新增 :core-network
-收敛：
-
-OkGoHelper
-HttpClient
-spider 内的 com.github.catvod.net.OkHttp
-ExoPlayer、Picasso、下载使用的客户端创建逻辑
-对外只暴露客户端提供接口：
-
-interface NetworkProvider {
-    OkHttpClient general();
-    OkHttpClient spider();
-    OkHttpClient download();
-    OkHttpClient playback();
-}
-这些客户端可以有不同超时，但应共享：
-
-ConnectionPool
-DNS/DoH 策略
-TLS 策略
-Cookie
-User-Agent
-日志及缓存策略
-业务模块不得自行 new OkHttpClient.Builder()。
-
-3. 新增 :core-storage
-迁入：
-
-AppDataBase
-AppDataManager
-RoomDataManger
-历史、收藏、缓存 DAO
-Hawk 的类型安全封装
-数据备份和迁移
-对外提供 Repository，不暴露 DAO：
-
-interface HistoryRepository {
-    void save(HistorySnapshot history);
-    List<HistorySummary> query(int limit);
-    void delete(String sourceKey, String vodId);
-}
-storage 只能依赖 core-model（现 :common 的纯模型），不能调用 ApiConfig。源是否仍存在，应由业务层判断。
-
-4. 拆出 :spider-api
-当前 download 直接依赖整个 spider：
-
-
-build.gradle
-Lines 29-33
-implementation project(':common')
-implementation project(':log')
-implementation project(':state')
-implementation project(':spider')
-应改成：
-
-download → spider-api
-app → spider-impl
-接口示例：
-
-interface SpiderService {
-    SourcePage home(String sourceKey);
-    SourcePage category(CategoryRequest request);
-    VodDetail detail(DetailRequest request);
-    SearchResult search(SearchRequest request);
-    PlayResult resolve(PlayRequest request);
-}
-QuickJS、JarLoader、ApiConfig、具体 Spider 实现全部留在 spider，调用者不能拿到具体 Spider 对象。
-
-5. 完成 player-api 接线
-player-api 已经存在，但 app 仍直接使用 MyVideoView、IJK、ExoPlayer。
-
-目标结构：
-
-player-api
-├── PlayerSession
-├── PlayerState
-├── PlayerOptions
-├── PlayerEvent
-└── PlayerFactory
-player
-├── ExoPlayerAdapter
-├── IjkPlayerAdapter
-├── Media3PlayerAdapter（以后）
-└── PlayerSessionImpl
-UI 只能使用：
-
-session.play(options);
-session.pause();
-session.seekTo(position);
-session.observe(listener);
-session.release();
-这样迁移 Media3 时只更换 adapter，不改 PlayFragment。
-
-建议把 app 中这些内容逐步迁入 playback 模块：
-
-app/.../player
-subtitle
-PlayService
-PlayerHelper
-LivePlayerManager
-6. 保留 :download，但只公开 Facade
-DownloadManager、Scheduler、Executor、Archive 都应设为模块内部实现。
-
-UI 只允许调用：
-
-DownloadFacade.enqueue(request);
-DownloadFacade.pause(taskId);
-DownloadFacade.resume(taskId);
-DownloadFacade.delete(taskId);
-DownloadFacade.observe(listener);
-DownloadRequest 应包含已经准备好的业务数据，不让下载模块读取 Activity、ViewModel 或 Hawk。
-
-不必立即新增 download-api。只有未来需要让其他独立产物依赖下载契约，或编译隔离确实有收益时再拆。
-
-7. 将 ui-common 演化为两个明确部分
-现有 ui-common 主要是主题和资源，定位合理。
-
-建议：
-
-ui-common
-├── theme / color / style / drawable
-└── 不包含业务逻辑
-ui-kit（可先作为 app 内独立 package）
-├── AppTitleBar
-├── AppSwitch
-├── RatioShadowLayout
-├── 通用加载、空态组件
-└── RecyclerView decoration
-UI 组件必须满足：
-
-不依赖 Activity 具体类型
-不读取 Hawk、ApiConfig
-不发送 EventBus 业务事件
-状态和事件通过属性、接口或 ViewModel 传入
-文案、颜色、尺寸可配置
-先在 app 中建立 ui-kit package，确认复用后再拆 Gradle 模块，避免过度模块化。
-
-8. common 最终应缩小或淘汰
-当前 common 包含网络、配置、事件、日志工具和杂项：
-
-
-项目目录结构.md
-Lines 220-230
-common/src/main/java/com/github/tvbox/osc/
-├── event/
-└── util/
-    ├── HawkConfig
-    ├── SystemConfig
-    ├── OkGoHelper
-    ├── HttpClient
-    ├── AES / MD5 / AdBlocker
-    ├── AppLog / LOG
-这是典型“公共垃圾桶”风险。
-
-迁移方向：
-
-网络 → core-network
-配置 → core-storage 或 core-config
-共享 DTO → core-model
-UI 工具 → ui-kit
-纯算法 → core-utils
-EventBus → 各业务模块自己的事件接口
-最终 common 只保留少量真正无状态、无 Android 依赖的工具，或者直接删除。
-
+当前 10 个 Gradle 模块见第八节。原 core-model/core-utils/state 已合到 common（bean 纯模型、算法工具、系统状态）；spider-api/player-api 已回并 spider/player；原 crash/TabLayout/ViewPager1Delegate/quickjs 归入 thirdparty；ui-common 归入 app。契约与实现同模块后，通过 checkModuleDependencies 守源码边界。
+core-network 收口网络客户端；core-storage 对外只暴露 Repository 和类型安全 Config，不暴露 DAO；download 只公开 DownloadFacade；share 以可插拔平台提供分享传输，局域网 HTTP 服务由 app 通过 LanShareHost 桥接。app/UI 访问爬虫必须走契约，不直连 ApiConfig、JsLoader 或 PlayUrlResolver。
+播放器仍有 app 直用 MyVideoView、IJK、Media3 等残留，后续经 PlayerSession 和内核能力接口收口。旧 ExoPlayer 依赖已移除，Media3 版本统一为 1.4.1；真机播放行为由用户人工回归。
 
 三、页面与业务逻辑拆分
-PlayFragment
-建议拆成：
 
-PlayFragment             仅绑定 View 和生命周期
-PlayViewModel            页面状态
-PlayCoordinator          换源、解析、重试流程
-PlayerSession            播放控制
-SubtitleCoordinator      字幕搜索与装载
-PlayHistoryRepository    进度持久化
-Fragment 不应该直接持有 Spider、ExoPlayer、IJK 或 DAO。
+PlayFragment 的目标是只负责 View 和生命周期；页面逻辑拆分为 PlayViewModel、PlayCoordinator、PlayerSession、SubtitleCoordinator 和 PlayHistoryRepository。PlayRequest、PlaySessionKeys、PlayedVodKey、SubtitleCoordinator、PlayHistoryRepository、PlayParseCoordinator 已抽出，剩余换源、解析与重试流程需结合真机回归逐步拆分。
+DetailActivity 逐步拆为 DetailViewModel、DetailRepository、EpisodeSelectionState、DetailDownloadCoordinator 和 QuickSearchCoordinator；Activity 只处理导航、弹窗与视图事件。SourceViewModel 仅依赖 SpiderService 等契约，支持 FakeSpiderService 的 JVM 测试。
 
-DetailActivity
-拆出：
+四、依赖注入
 
-DetailViewModel
-DetailRepository
-EpisodeSelectionState
-DetailDownloadCoordinator
-QuickSearchCoordinator
-Activity 只处理导航、弹窗和视图事件。
+先由 app 的 AppCompositionRoot 统一装配 network、storage、spider、download、players。新代码通过构造函数注入接口，ViewModel 通过 Factory 获取依赖；静态 get() 暂作兼容入口，旧调用逐步迁移。是否引入 Hilt 取决于手动组合根的实际复杂度。
 
-SourceViewModel
-目前仍直接调用 ApiConfig.get().getCSP()。应改为仅依赖：
+五、状态与事件
 
-SourceViewModel(SpiderService spiderService)
-这样可以使用 FakeSpiderService 做 JVM 单元测试。
+页面状态使用 ViewModel + LiveData，逐步 Kotlin 化后可采用 StateFlow；一次性页面事件使用明确的 Event 类型。下载与播放的跨页状态由 Facade 或 PlaybackSessions 订阅，系统网络与电量由 SystemStateMonitor 单点管理。EventBus 已全仓移除且依赖不在 classpath；禁止重新引入，跨页/模块事件用直调、Facade 订阅或明确监听器。
 
+六、验收与安全红线
 
-四、依赖注入策略
-暂时不建议直接全面引入 Hilt。项目 Java 代码较多，而且已有大量静态单例，一次迁移风险很高。
+app/UI 不得新增 getCSP()、DownloadManager.get()、Hawk 裸读、具体爬虫实现直连、具体播放器内核 import 或自建线程池。业务后台任务由模块级共享执行器管理，并带取消或过期自检。Room 查询不得在主线程执行；网络客户端由 core-network 统一装配，不全局绕过 TLS 校验。
+用户主动删除、清除、清空数据先弹确认框；取消后不得更改数据。可滚动组件保留内边距并设置 clipToPadding=false。图片加载统一使用 PicassoLoad 和 PosterPlaceholderDrawable，运行时占位置于 ImageView 背景层。
+局域网服务按需启动；用户确认关闭后须立即停止对外监听、清除已配对设备并恢复仅本机回环。异常残留对外监听时须如实提示。路径拼接和解压均须防目录穿越，敏感网络操作须鉴权。其余主题、播放器样式、性能、构建与发布红线以 AGENTS.md 为准。
+开屏只并行预取首页数据，用动画缓冲较长的数据加载；可见期间不装配或绘制首页 Fragment/组件，首页壳（ViewPager、底栏）也延迟 inflate，不能只设 GONE 掩盖已创建的组件。遮罩关闭后才创建首页 Fragment、装配子页面并绘制首帧，让用户看到组件出现。
+数据先就绪可提前撤下动画；动画只播一次，先播完则停留最后帧 300ms 后直接进入首页，不继续等数据，也不设 20 秒内容兜底（素材解析或播放异常的兜底保留）。慢请求在入场后由首页接收同一轮结果，不得重复发起首屏请求。默认热播、订阅分类和关闭主页推荐时的首分类可在开屏预取，大块 XML/JSON 解析不能占用动画主线程；气泡、提示及自动检查等可见窗口须等首页首帧后再派发。节日素材选择集中在 SplashContentSelector，图片或视频类型按需扩展（与 AGENTS.md §七 同步）。
+现状残留：`ApiConfig.loadConfig/loadJar` 仍有主线程配置解析、Jar 校验与加载，可能影响开屏流畅度。后续须先将全局源配置改为原子快照发布，再安全地把这些工作移到后台；不能只把现有可变状态直接丢进线程池。首页分类与列表解析已使用共享执行器（与 AGENTS.md §二 同步）。
 
-先建立 app 层组合根：
+七、下一步顺序
 
-final class AppCompositionRoot {
-    NetworkProvider network;
-    StorageFacade storage;
-    SpiderService spider;
-    DownloadFacade download;
-    PlayerFactory players;
-}
-迁移步骤：
+1. 在真机回归条件具备时收口播放器内核能力，拆 PlayFragment 与 DetailActivity。
+2. 依赖边界稳定后再评估 playback shell 和 feature-* 模块，不为搬目录而拆模块。
+3. 按需推进 Java→Kotlin、StateFlow 和 Hilt；Media3、EventBus 移除、Hawk→DataStore 及模块门禁已落地，勿重复列为待办。
 
-静态 get() 保留，作为兼容入口。
-新代码全部使用构造函数注入接口。
-ViewModel 通过 Factory 获取依赖。
-旧调用逐个迁移。
-静态入口清零后，再评估是否引入 Hilt。
-原则：依赖注入的目标是替换实现和便于测试，不是为了使用某个框架。
+八、现状模块清单
 
+:app                    应用入口、导航、依赖装配、页面和通用 UI 资源
+:common                 纯模型、算法工具、系统状态
+:core-network           网络客户端与策略
+:core-storage           Room、缓存、类型安全配置
+:log                    结构化日志与 Logcat 采集
+:spider                 爬虫契约与实现
+:player                 播放契约与内核实现
+:download               下载 Facade 与内部实现
+:share                  分享/导入导出契约与可插拔传输实现
+:thirdparty             TabLayout、CustomActivityOnCrash、QuickJS 等纯第三方代码
 
-五、状态与事件管理
-不要同时长期保留 EventBus、LiveData、静态回调、广播四套机制。
-
-建议统一：
-
-页面状态：ViewModel + LiveData；逐步 Kotlin 化后可改 StateFlow
-一次性页面事件：明确的 Event 类型
-下载、播放等跨页面状态：Facade 提供订阅接口
-系统网络、电量状态：统一由 SystemStateMonitor
-Android 广播：仅用于真正的系统或跨进程事件
-配置：类型安全 Config/Repository
-EventBus 仅作为迁移兼容层，新代码禁止新增 EventBus 事件。
-
-
-六、模块边界规则
-可以把下面规则作为后续架构检查标准：
-
-app 不得直接依赖 DAO、OkHttpClient、Spider 实现、IJK/Exo。
-download 不得依赖 spider 的实现类，只经爬虫契约（原 spider-api，现与实现同在 :spider 的 spiderapi 包；
-      契约与实现同模块后，边界由 checkModuleDependencies 源码红线守，而不是靠拆 Gradle 模块）。
-storage 不得依赖 spider、download、player。
-core-model（现 :common）不得依赖任何 Android 模块。
-UI 组件不得读取全局配置或访问业务单例。
-模块只通过公开 API 包通信，具体实现放 internal 包。
-Gradle 依赖默认使用 implementation，谨慎使用 api。
-同一领域模型只定义一次。
-跨模块不共享可变对象。
-所有后台任务必须由模块级执行器管理，页面不得自行创建线程池。
-所有可滚动组件（RecyclerView/ScrollView/GridView/横向列表等）必须保留内边距并配合 clipToPadding=false，禁止内容贴边滚动。
-用户主动触发的删除、清除、清空操作必须先弹确认框；取消后不得改动数据。批量操作应说明影响范围，删除正在使用的直播源等会改变当前选择的操作应说明后续行为；输入框清字和页面临时状态重置不属于此类。
-图片占位只有一套实现：加载态与失败态都用 util/PosterPlaceholderDrawable（灰底+居中图标，图标随宿主尺寸只缩不放），统一加载入口 util/PicassoLoad（URL 走 into、本地文件走 intoFile）；XML 的 placeholder_poster 只作布局静态形态，运行时占位一律经 PicassoLoad 铺。
-占位必须放 ImageView 的背景层，禁止塞进 src 或 .placeholder()/.error()（塞 src 会被 scaleType 当普通图片放大再裁剪，小卡片上会超出显示范围）。
-失败态文案位置：海报卡底部有渐变信息条时，"图片加载失败"文字与图标必须排在该条上方可用区（由 PosterPlaceholderDrawable#failed 自动量覆盖条高度），禁止贴底绘制。
-不得为同一用途引入第二套占位图（iv_load_fail / img_loading_placeholder / ic_img_placeholder / ic_poster_placeholder 等），发现即收敛到统一占位。
-（以上占位/滚动内边距细则的权威版本见 AGENTS.md「七、安全与工程红线」的「依赖、构建与资源」与「六、验收红线」第 7 条，两份文件要求一致。）
-
-七、推荐迁移顺序
-第一阶段：补齐现有边界
-风险最低，建议先做：
-
-SourceViewModel 全部改走 SpiderApi
-DownloadFragment 全部改走 DownloadFacade
-DetailActivity 不再直接调用 DownloadManager
-注册并使用 PlayerFactory
-禁止新增 Hawk、EventBus、具体 Manager 直调
-验收标准：app 中基本搜索不到 getCSP()、DownloadManager.get() 和具体播放器内核类型。
-
-第二阶段：抽公共基础
-依次新增：
-
-core-model
-spider-api
-core-network
-core-storage
-这是解除循环和实现复用的关键阶段。
-
-第三阶段：拆播放器和大页面
-建立 playback shell
-拆 PlayFragment
-拆 DetailActivity
-字幕能力迁入 playback
-ViewModel 只调用接口
-第四阶段：Feature 模块化
-基础边界稳定后，再按需拆：
-
-feature-home
-feature-detail
-feature-live
-feature-download
-feature-settings
-feature-remote
-不要一开始就拆 Feature，否则只是把高度耦合代码搬进不同目录。
-
-第五阶段：现代化
-ExoPlayer → Media3
-EventBus → Flow/明确监听接口
-Hawk → DataStore
-Java 大类逐步 Kotlin 化
-引入 Hilt（如果手动组合根已明显复杂）
-添加模块依赖检查和测试门禁
-
-
-八、建议的最终模块清单（目标清单；现状 10 模块见文首“现状”段）
-已落地（现状 10 个）：
-:app                    应用入口、导航、依赖组装（含原 :ui-common 的主题与公共资源）
-:common                 纯模型 + 算法工具 + 系统状态（原 :core-model/:core-utils/:state）
-:core-network           网络策略和客户端
-:core-storage           Room、配置、备份
-:log                    日志
-:spider                 爬虫实现 + 爬虫契约（原 :spider-api 已并入）
-:download               下载实现及 Facade
-:share                  分享/导入导出传输层（可插拔平台：storage.to 在线 / 局域网 / 本地文件；
-                        局域网 HTTP 服务在 :app，经 transport.lan.LanShareHost 桥接）
-:player                 播放内核实现 + 播放契约（原 :player-api 已并入）
-:thirdparty             纯第三方归堆（TabLayout/CustomActivityOnCrash/QuickJS，不依赖本仓模块）
-
-仍为目标的（未建，见 AGENTS.md §二/§八）：
-:ui-kit                 可复用 View（成熟后再拆）
-:playback                播放业务协调、字幕、后台服务
-:remote                  局域网遥控（后期）
-:vendor-tab              可选合并 TabLayout/ViewPager1Delegate（已并入 :thirdparty）
-核心不是模块数量，而是这三条：
-
-UI 只依赖门面和接口。
-业务模块只通过契约协作。
-网络、存储、模型和 UI 组件只有一个权威实现。
-当前最值得先做的是“补完现有门面调用”，然后抽 core-model + spider-api。这两步完成后，下载、爬虫、播放器和 app 的职责才会真正独立。
-（这两步已落地并按上文合模块收敛；接下来的重心是 AGENTS.md §三的“大页面拆分”与 §六红线不反弹。）
-
+尚未建立 playback 和 feature-* 模块；app 内的 ui/kit 已承载通用组件，成熟后再评估是否拆出。强制边界靠公开契约与 checkModuleDependencies 维护，不以模块数量为目标。
 
 九、发布与版本纪律（与 AGENTS.md 同步维护）
 1. Release / 更新说明只写“用户关注的内容”，禁止照搬 commit 列表：

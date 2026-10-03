@@ -4,7 +4,7 @@
 > SourceViewModel 已收敛为 **typed-first + 失败回退旧 HttpClient 直连**（detail/search/quickSearch/category/list/play 六入口），字符串通道 SpiderContentApi 仍为底层数据源（非可下线遗留层）。
 > 构造注入 SpiderService（替代静态 Provider）、删除回退通道为后续长线项，需逐源真机回归。
 
-> **模块现状（2026-09）**：全仓 9 个模块 `:app`/`:common`/`:core-storage`/`:player`/`:thirdparty`/`:log`/`:core-network`/`:spider`/`:download`。本文件中提到的 `:core-model`/`:core-utils`/`:state` 已合并进 `:common`，`:spider-api`→`:spider`，`:player-api`→`:player`，`:crash`/`:TabLayout`/`:ViewPager1Delegate`/`:quickjs`→`:thirdparty`，`:ui-common`→`:app`（主题 JSON 在 `app/src/main/assets/theme/`）。下文历史记录保留当年模块名。
+> **当前模块（2026-10-03）**：全仓 10 个模块，`:app`、`:common`、`:core-network`、`:core-storage`、`:log`、`:player`、`:spider`、`:download`、`:share`、`:thirdparty`。爬虫契约与实现同在 `:spider`，源码门禁约束 app/UI 只调用公开契约。
 
 > 目标：把 app 侧"字符串 JSON/XML + 各自解析"下沉为 :spider 内实现返回的**类型化领域对象**，
 > app/UI 只依赖 `:spider` 的契约（原 `:spider-api`，现契约与实现同模块，边界靠源码层门禁守）；并用 FakeSpiderService 支持 JVM 单测。

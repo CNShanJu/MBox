@@ -3,7 +3,7 @@
 > 生成方式：对照 `改进.txt` 逐项做仓库审计（grep/读码），记录"文档要求 vs 当前状态"。
 > 状态图例：✅ 已达标 / ⚠️ 部分 / ❌ 未做。审计日期：见最近提交记录。
 
-> **模块现状（2026-09）**：全仓 9 个模块 `:app`/`:common`/`:core-storage`/`:player`/`:thirdparty`/`:log`/`:core-network`/`:spider`/`:download`。本文件中提到的 `:core-model`/`:core-utils`/`:state` 已合并进 `:common`，`:spider-api`→`:spider`，`:player-api`→`:player`，`:crash`/`:TabLayout`/`:ViewPager1Delegate`/`:quickjs`→`:thirdparty`，`:ui-common`→`:app`（主题 JSON 在 `app/src/main/assets/theme/`）。下文历史记录保留当年模块名。
+> **当前模块（2026-10-03）**：全仓 10 个模块，`:app`、`:common`、`:core-network`、`:core-storage`、`:log`、`:player`、`:spider`、`:download`、`:share`、`:thirdparty`。已撤销的模块名在下文仅用于解释当时的改造路径；当前模块划分以 `settings.gradle` 为准。
 
 ## 1. 依赖方向（改进.txt §一/§六）— 大体达标
 - ✅ app 内 `getCSP()` 清零；UI 无 `new OkHttpClient.Builder()`。
@@ -27,7 +27,7 @@
 | `:core-storage` | ✅ | data/cache/Repository + **配置归位**：`SystemConfig/HawkConfig` 迁入 `com.github.tvbox.osc.config`，新增 `KeyValueStore`(Hawk 类型安全封装,App 侧业务 Config 均走它);app 无 DAO 直读、UI 经门面读写配置 |
 | `:spider`（原 `:spider-api`，现契约与实现同模块） | ✅ 试点 | 字符串通道(SpiderContentApi)仍在(过渡兼容)；`ApiConfig` 仍暴露具体 Spider(内部实现需留) |
 | `:download` | ✅ | 内部实现已收 `...download.internal` 包(Manager/Scheduler/Executor/Core/Store/Config/Policy/Archive/Notifier/Log/task 全族),公开包仅 Facade+模型/接口;app 零内部实现引用(门禁 java+kt 全查) |
-| `:player`（原 `:player-api`，现契约与实现同模块） | ⚠️ | 契约 + 原型已接；app 仍直用 `MyVideoView`/IJK/Exo、`PlayerTrackHelper` 按内核 instanceof 分发 |
+| `:player`（原 `:player-api`，现契约与实现同模块） | ⚠️ | 契约 + 原型已接；app 仍直用 `MyVideoView`/IJK/Media3、`PlayerTrackHelper` 经内核能力接口分发 |
 | `:app` 的 ui-kit / ui-common（原 `:ui-common` 已并入 `:app`） | ⚠️ | ui-common=纯资源 ✅（现为 app 内资源，主题 JSON 在 `app/src/main/assets/theme/`）；app 内已建 ui-kit package（6 个纯净组件），通用 View 归拢中 |
 | `:playback` / feature-* | ❌ | 未建（改进.txt 第三/四阶段，需真机回归环境） |
 
@@ -92,11 +92,11 @@ Exo→Media3 1.4.1 已完成代码迁移(2026-10-01，待播放器人工回归)�
 
 ## 8. 边界规则抽查结果（§六逐条）
 - ✅ app 无 getCSP / UI 无裸建 OkHttpClient / `:common`（原 core-model）无 android 依赖 / `:download` 只经 `:spider` 公开契约（原 `:spider-api`，现契约与实现同模块，边界由源码门禁守）。
-- ⚠️ 播放器收口第一步:新增 `player/KernelTrackSupport` 能力接口,IJK/Exo 各自实现,
+- ⚠️ 播放器收口第一步:新增 `player/KernelTrackSupport` 能力接口,IJK/Media3 各自实现,
   `PlayerTrackHelper` 不再 instanceof 具体内核(app 内 UI 已无内核强转);轨道切换/内置字幕回调/
   进度恢复语义收敛到接口。
   剩余(需真机回归):PlayFragment 由 mVideoView 直控切到 PlayerApi/PlaybackSessions 全驱动、
-  PlayViewModel 抽取、app 内 MyVideoView/IKJ/Exo 引用清零、PlayerHelper 工厂
+  PlayViewModel 抽取、app 内 MyVideoView/IJK/Media3 引用清零、PlayerHelper 工厂
   收口 AppCompositionRoot。
 - ✅ SubtitleCoordinator 抽离(等价搬移,宿主薄委托):`util/player/SubtitleCoordinator.java` 注入
   (Activity,VodController,MyVideoView),承载字幕装载(缓存/外挂/内置自动选中文)/字幕设置弹窗
@@ -268,18 +268,7 @@ Exo→Media3 1.4.1 已完成代码迁移(2026-10-01，待播放器人工回归)�
 - ✅ common(现 :core-network)event 收口完成:已删 HistoryStateEvent/TopStateEvent(零引用孤儿)、
   DownloadEvent/RefreshEvent/ServerEvent 各自归位业务/app 模块,LogEvent 空投随 LOG 改造移除——core-network
   已无 EventBus 事件/依赖,event 目录删除。
-- ⚠️ DownloadFragment 已完成 Facade 订阅去 EventBus;app 其余 EventBus 点(搜索/快速搜索/历史/直播等
-  refresh 事件)仍为跨 Fragment 通信,逐步收口属"状态/事件管理"长线项。
-  **当前面貌(截至 2026 快搜/字幕/死事件批次后)**:EventBus 订阅方仅剩
-  BaseActivity(空壳载体)/DetailActivity(`TYPE_REFRESH`、`TYPE_QUICK_SEARCH_RESULT`)/FastSearchActivity
-  (`TYPE_SEARCH_RESULT`、`ServerEvent`)/PlayService(`TYPE_REFRESH_NOTIFY`)/DownloadFacade(模块内桥);
-  PlayFragment/QuickSearchDialog/LocalPlayActivity/UserFragment/GridFragment 均已零订阅。
-  剩余有意保留:①播放器主线 `TYPE_REFRESH`/`TYPE_REFRESH_NOTIFY`(后台播放宿主销毁时 EventBus
-  静默丢弃是保护语义,直调化并入 PlayFragment 全驱动改造);②VM 多源结果流 `TYPE_SEARCH_RESULT`/
-  `TYPE_QUICK_SEARCH_RESULT`(每源一批、宿主累加,LiveData 单值会丢中间批次,归 SourceViewModel
-  注入化);③`ServerEvent` 遥控域(SearchReceiver 空壳/16-17 常量由并行侧接线);④download 模块内
-  Manager→Facade 桥(模块内实现,跨线程切主线程职责,非跨模块)。
-
+- ✅ EventBus 全仓下线：下载结构变化由 `DownloadFacade` 订阅分发，搜索批次经 `SourceViewModel` 明确监听器直接投递，播放通知由 `PlayService.onPlaybackNotify` 直调。app 与 download 的 eventbus 依赖已移除，`checkModuleDependencies` 对 app 层新增 EventBus 设红线。
 ## 10. 处理记录(按轮追加)
 - ✅ SourceViewModel type0/1 解析纯函数化:`spider-api/AbsXmlParser.parseXml/parseJson/normalize`(XStream 白名单加固、
   xml 清洗、线路串→beanList、sourceKey 回填),VM `xml()/json()` 改为解析+`publishDetailPayload` 副作用分离;
@@ -435,13 +424,7 @@ Exo→Media3 1.4.1 已完成代码迁移(2026-10-01，待播放器人工回归)�
    Picasso 下载器每张带 `@Headers=` 图片的 header JSON 解析、局域网 `/proxy` 每次请求的
    请求头序列化,均改类级静态 GSON(Gson 线程安全,AGENTS:解析器复用实例禁热路径重复构建);
    其余点均为冷路径(懒加载/一次性)。(1b121034)
-- ✅ EventBus 收窄为按需注册(BaseActivity 空壳订阅下线,改进.txt §五 兼容层收口):
-   BaseActivity 移除全 Activity 自动 register 与空 `@Subscribe refresh` 壳——此前每条事件
-   投递会扇出到所有存活 Activity 的空实现(无谓分发);真实订阅方各自补 @Subscribe 并自管
-   register/unregister:DetailActivity(TYPE_REFRESH/TYPE_QUICK_SEARCH_RESULT)、
-   FastSearchActivity(TYPE_SEARCH_RESULT/ServerEvent)、VideoListActivity(本地列表重扫)。
-   全仓 EventBus 订阅方收敛为:DetailActivity/FastSearchActivity/PlayService/
-   DownloadFacade(模块内桥),零空壳订阅。(27315f4f)
+- ✅ EventBus 已从 app 与 download 全仓移除，依赖已退出 classpath；跨页/模块通知改用直调、Facade 订阅接口或明确监听器，`checkModuleDependencies` 阻止 app 层重新引入。
 - ✅ UnicodeReader/CharsetUtils JVM 单测补充(字幕文件装载链路,不需真机):
    UnicodeReader BOM 识别与解码(UTF-8/UTF-16LE/UTF-16BE)、无 BOM 回退默认编码、空输入安全;
    CharsetUtils.detect 以"检测编码可无损还原原文"为准覆盖 UTF-8(含/不含 BOM)、ASCII、
@@ -534,12 +517,11 @@ Exo→Media3 1.4.1 已完成代码迁移(2026-10-01，待播放器人工回归)�
   开启时点播走 PlayerFactory 创建的内核并驱动基础播放 + PlaybackSessions 会话观察,与 doikki 路径并行对比。
   需控制器/字幕/进度接线与真机调,决定先不做,待播放器相关批次(会话/内核统一/字幕装载/电量/网速/DataStore/
   SAF)真机回归通过后,再按完整方案实现。
-- 回归通过后可继续:SourceViewModel `xml()/json()` 纯函数提取(type0/1 下沉前置,等值可单测);
-  EventBus 跨页 refresh 逐类收口;core-storage hawk 依赖下线(一次性迁移通道退役)。
+- 回归通过后可继续：SourceViewModel 剩余解析与编排逻辑拆分、播放器会话全驱动。EventBus 已移除，core-storage 的 Hawk 迁移通道与依赖已下线。
 
 ## 11. 剩余项清单(对照 改进.txt,截至 2026-09-06 代码级审计)
 
-> 代码级可安全批次已基本收口(hawk 退役 N/N+1、EventBus 按需注册、死代码清理、Gson 复用、
+> 代码级可安全批次已基本收口(Hawk 退役、EventBus 全仓移除、死代码清理、Gson 复用、
 > 解析/词表/字幕纯函数化与单测等)。以下为仍未完成的项及前置条件,均可在本文件 §9/§10、
 > doc/后续改造评估.md F 表与 doc/device-regression-checklist.md 找到登记。
 
@@ -562,8 +544,7 @@ Exo→Media3 1.4.1 已完成代码迁移(2026-10-01，待播放器人工回归)�
 协调器与纯化已大量下沉;剩余宿主编排需真机回归背书后继续搬移。
 
 ### C. 状态与事件(改进.txt §五)
-EventBus 订阅方已收敛 4 个真实方;仍剩多源结果流(TYPE_SEARCH_RESULT/TYPE_QUICK_SEARCH_RESULT)
-直调/注入化未做(行为敏感,建议随播放器收口批、真机回归)。
+EventBus 已全仓移除；多源搜索结果经直调/明确监听接口分发，下载状态经 `DownloadFacade` 订阅，播放通知经 `PlayService.onPlaybackNotify` 直调。新增跨页事件继续使用公开契约或明确监听器。
 
 ### D. 现代化(改进.txt §八·第五阶段)
 ✅ Hawk→DataStore(代码完成,发布前需 H 组旧版升级回归);⏳ Media3(代码完成,待 §B 播放人工回归);⚠️ Java→Kotlin 部分;

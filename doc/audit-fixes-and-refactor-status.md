@@ -3,7 +3,7 @@
 > 本文件汇总 MBox（原名 TVBoxOS-Mobile）多轮整改（安全/性能审计 + 模块边界路线图 改进.txt）
 > 的落地状态、关键改动点与真机回归矩阵。代码级验证：Debug/Release 双变体 BUILD SUCCESSFUL。
 
-> **模块现状（2026-09）**：全仓 9 个模块 `:app`/`:common`/`:core-storage`/`:player`/`:thirdparty`/`:log`/`:core-network`/`:spider`/`:download`。本文件中提到的 `:core-model`/`:core-utils`/`:state` 已合并进 `:common`，`:spider-api`→`:spider`，`:player-api`→`:player`，`:crash`/`:TabLayout`/`:ViewPager1Delegate`/`:quickjs`→`:thirdparty`，`:ui-common`→`:app`（主题 JSON 在 `app/src/main/assets/theme/`）。下文历史记录保留当年模块名。
+> **当前模块（2026-10-03）**：全仓 10 个模块，`:app`、`:common`、`:core-network`、`:core-storage`、`:log`、`:player`、`:spider`、`:download`、`:share`、`:thirdparty`。下文按修复发生时的顺序记录，涉及当时的模块名时以 `settings.gradle` 的当前划分为准。
 
 ## 0. 近期进展补充（2026-09-25）
 
@@ -17,19 +17,9 @@
   - **已机器验证**：`:app:assembleDebug :app:assembleRelease :app:testDebugUnitTest checkModuleDependencies` 全绿；新增请求头重播/隔离 2 个 JVM 用例通过；运行时依赖树 Media3 全为 1.4.1、无旧 ExoPlayer。
   - **待人工验证**：点播/直播/本地起播、连续 seek、倍速、多音轨/字幕、全屏/PiP、后台播放/通知、安全 DNS 切换后起播；详见 `device-regression-checklist.md` §B。本批未操作真机。
 
-- **局域网服务弹窗（标题长按那个）三处收口（2026-09-27，用户反馈）**：
-  - **「复制」改纯文字按钮 + 主题高亮色**：`item_lan_addr.xml` 原来是 `BtnGhost`（**带 1dp 描边**，所以看着像个描边按钮），文字色还是 `btn_plain_text`（主色）——同一个"复制"在播放详情弹窗里是 `text_accent` 的裸文字，两处观感不一致。现改 `TextView`：`text_accent` + 加粗 + `?selectableItemBackgroundBorderless` 涟漪，与详情页那份「复制」同档色（点击行为不变，整行/按钮都能复制）。
-  - **两个按钮并排等宽**：原来「立即重启应用」「知道了」各占整行、上下叠着。现包一层横向 `LinearLayout`，两个按钮 `layout_width=0dp` + `layout_weight=1` + 定高 40dp —— 等宽、并排、吃掉整排；「立即重启应用」`GONE` 时「知道了」自动占满整排（顺序按其它弹窗口径：次要动作在左、主动作在右）。
-  - **整段说明不再铺在弹窗里**：`setting_lan_server_tip`（"用它做什么…"六七行）原来直接铺在地址块下面，太碍眼。现收成一行可点的「用它做什么?」（`text_accent` + 12dp 小箭头 `ic_pre`），点开由 `TextTipDialog` 显示全文 —— **与设置行标题长按是同一个弹窗、同一份文案**（不抄第二份），且点开时下面那个局域网弹窗仍在（view 模式弹窗照旧保留，返回键由 `SettingActivity.onBackPressed` 先关它）。
-  - 验证：`:app:assembleDebug` 通过；**真机观感（两按钮并排高度/间距、说明入口是否好找）待人工验证**。
+- **局域网服务（当前实现，待人工回归）**：设置页打开 `LanServiceActivity` 二级页，显示服务状态、局域网地址、配对码、配置传输与设备控制台。开启后按页面提示重启应用，使服务绑定局域网；关闭前确认，确认后 `LanServerService.disable()` 立即停止外部访问、清除配对设备并保留本机回环服务。`ControlManager.lanState()` 区分未开启、待重启、已生效与异常待关闭状态；地址按实际端口列出，外部管理操作仍需配对与令牌鉴权。
+  - **已机器验证**：`LanAddressRulesTest` 覆盖私有 IPv4 网段、非法地址与网卡过滤；本次文档更新的全量构建与门禁由主任务执行。**待人工验证**：地址能在同网段访问、启停/重启后状态准确、回环播放与代理持续可用；本批未操作真机。
 
-- **"局域网服务开了却不知道访问地址"——设置页给出口 + 顺手修掉一个潜伏的回环服务坑（2026-09-27，用户反馈）**：
-  - **问题**：设置里打开「局域网服务」只弹一句"重启应用后生效"，**地址（本机 IP + 端口）从头到尾没地方能看到** —— 用户只能自己猜路由器分配的 IP 和端口；而设置行是"标题 + 开关"的横排，手机端没有多余空间放地址（用户明确要求信息不进控件）。
-  - **出口 = `LanServerDialog`（底部弹窗，两个入口同一实例）**：①开关由关变开时自动弹一次（此刻最需要知道地址）；②设置行标题**长按**随时再看（换网络后 IP 会变）。弹窗三块内容：**状态**（已开启 · 局域网设备现在就能访问 / 已开启 · 重启应用后才生效 / 未开启 · 仅本机可访问）、**访问地址列表**（逐个列出、每行可点复制）、**注意事项**（`setting_lan_server_tip` 与长按看到的是同一份文案，原文案里"本机 IP:端口"的占位说法已去掉，因为地址就在上面）。"已开启但当前进程仍是仅本机绑定"时额外给一个「立即重启应用」（CLEAR_TASK 重建任务栈，与备份还原后的重启同一套做法，不杀进程）。
-  - **状态必须区分"开关开了"与"真的生效了"**：开关是**重启生效**的，只读开关会把"开了还没重启"说成已生效。`ControlManager` 因此记 `lanBound`（本次实例构造时到底传没传 hostname）并暴露 `lanState()`：开关关且实例仅本机 → `LAN_OFF`；开关开但没重启 → `LAN_PENDING_RESTART`；开关开且当前实例绑定了所有网卡 → `LAN_ACTIVE`；**开关关但实例仍绑着所有网卡 → `LAN_PENDING_CLOSE`**（关掉开关不会立刻关端口，同一个进程里服务还在跑；此时显示"仅本机可访问"等于把暴露面说小，所以单列一种状态并写"重启应用后才会停止局域网访问"）。状态、引导语、是否显示「立即重启应用」三处都按这四种状态走。
-  - **地址怎么算（`RemoteServer.getLanIpv4Addresses()` + `common/util/LanAddressRules` 纯逻辑带单测）**：手机/电视上能列出好几种 IPv4，全部列出去只会让用户试错。口径两条：**①只认 RFC1918 内网地址**（10/8、172.16~31/12、192.168/16）—— 运营商地址（100.64/10 CGNAT、公网 IP）从局域网根本进不来；**②排除明确够不到的网卡**（蜂窝 `rmnet/ccmni/pdp`、VPN/隧道 `tun/tap/ppp`、Wi‑Fi Direct `p2p`、`dummy`）。用**排除法而不是允许名单**：各 ROM 网卡名五花八门（wlan0/eth0/en0/swlan0/ap0/softap0…），允许名单会把没见过的正常网卡一起滤掉，宁可多留一个也不要把唯一可用的地址藏起来。Wi‑Fi/以太网地址排前面（`isPreferredInterface`），热点等其它地址排在后面；一个都取不到（手机没连 Wi‑Fi）时弹窗明说"没取到局域网 IP"，退回 Wi‑Fi 接口报的地址兜一次底。**原来的 `getLocalIPAddress()` 保留不动**（它只回答"Wi‑Fi 那个地址"，取不到退 eth0/wlan0、最后兜 `0.0.0.0`，对展示没用）。
-  - **顺手修掉一个潜伏坑（不是本次新引入的）**：`ControlManager.stopServer()` 以前只 `stop()` 而**不清 `mServer` 引用**，而 `startServer()` 开头是 `if (mServer != null) return;` —— 于是**同一个进程内的"重启应用"**（CLEAR_TASK 重建任务栈：备份还原后、以及本次新增的"开启局域网服务后立即重启"）会让新首页的 startServer 判定"已存在"直接返回，而旧实例已被 `HomeFragment.onDestroy()` 停掉：**回环服务从此一直是停的**（订阅、本地播放、`/proxy`、`/purify.m3u8` 全失效），用户只能手动杀掉进程才恢复。现在：`stopServer()` 清引用并把 `lanBound` 复位；`startServer()` 做成幂等自愈（实例在跑且绑定方式与配置一致 → 复用；已停或绑定方式变了 → 停旧建新），顺带记下本次的 `lanBound`。
-  - **验证**：新增 JVM 单测 `LanAddressRulesTest`（RFC1918 三段边界、172.15/172.32 不算、回环/链路本地/CGNAT/公网一律不算、蜂窝与 VPN 网卡排除、**未知网卡名保留**、地址拼装只在合法输入下成立）。**真机行为（弹窗地址与实际可访问地址一致、一键重启后局域网真的能打开控制台、重启后回环播放/代理仍正常）待人工验证**。
 
 - **危险操作配色收敛为主题三件套（2026-09-27，用户要求）**：
   - **主题文件新增两个键**（两个主题文件 + 生成器默认表 + 派生表三处同步）：`swipe_red_text`（危险红底上的文字，白）与 `text_danger`（**不带底色**的危险文字/图标，归在文字分级那一族，与 `text_main`/`text_sub` 并列）；`swipe_red` 的 desc 从"列表右滑删除的红"改成"危险操作红底（左滑删除、删除确认按钮这类不可逆动作的填充色）"。生成后共 30 个颜色资源。**为什么分两档**：危险动作的"入口"（列表工具条的「删除」、条目上的删除图标）不需要底色，红字红图标就够；危险动作的"执行键"（确认删除/清空的按钮）才要红底 + 红底上的字 —— 混成一个键要么白字压在没有底色的工具条上看不见、要么红字压红底看不清。
@@ -101,8 +91,8 @@
 
 - **fMP4（`#EXT-X-MAP`）与字节范围分片（`#EXT-X-BYTERANGE`）支持（2026-09-26）**：新增纯逻辑解析器 `common/util/HlsMediaPlaylist`（21 例单测）；`DownloadExecutor` 去掉"遇这两条直接抛"，改为 init 段单独落盘并在**合并时先写 init 再拼分片**、带范围分片用**固定区间 Range**（回 200 即判失败、校验 `Content-Range` 起点终点、拒 `multipart/byteranges`）、重封装失败时 fMP4 **保留 `.mp4`**、指纹带上范围（整表无范围时与旧格式逐字节一致，升级不会误清在下的任务）。**限制**：加密 init 直接失败（不产出"分片都对、整集打不开"的成品）；跨 `#EXT-X-DISCONTINUITY` 仍不做时间轴重排；**fMP4 不参与跨线路补片**（替补片段与本线路 init 段"同源"无法证明，PTS 接缝校验只认 188 包 TS），切片型 TS 线路的补片范围已带上。真机回归见 §3 第 10 条。
 
-- **设置项有效性核查（2026-09-26）**：四条"改了就生效"里 **3 真 1 误报**：IJK 解码 `click` 只改内存字段未写 `PlayConfig` → 已补；安全 DNS 下标越界（老备份 `doh_url` 4~6 vs 列表 4 项）→ 加 `OkGoHelper.dohCount/dohLabel` 夹取；清缓存只删内部 cacheDir、裸线程 + 提前 toast → 改走 `HeavyTaskUtil` + `FileUtils.clearAllCache()` + 删完再 toast；**运行日志开关"要重启"是误报**（`LogConfig.setEnabled` 内部早已调 `LogStore.get().setEnabled`，写日志门控读的就是那个实例字段）。以下四条**口径已定**（刻意选择，不要再当缺陷修）：
-  - **局域网服务令牌**：保持现状 —— 令牌仍由本机（含回环）下发、`/token.js` 对局域网可见；开关默认关（显式 opt-in）。设置行不再写状态描述，"开启后到底能干啥"移到**标题长按**的 tip（`TextTipDialog` + `setting_lan_server_tip`，2026-09-26 用户要求：说明不塞进横排设置行）。要收紧需先定配对/一次性授权方案。
+- **设置项有效性核查（2026-09-26）**：四条"改了就生效"里 **3 真 1 误报**：IJK 解码 `click` 只改内存字段未写 `PlayConfig` → 已补；安全 DNS 下标越界（老备份 `doh_url` 4~6 vs 列表 4 项）→ 加 `OkGoHelper.dohCount/dohLabel` 夹取；清缓存只删内部 cacheDir、裸线程 + 提前 toast → 改走 `HeavyTaskUtil` + `FileUtils.clearAllCache()` + 删完再 toast；**运行日志开关"要重启"是误报**（`LogConfig.setEnabled` 内部早已调 `LogStore.get().setEnabled`，写日志门控读的就是那个实例字段）。以下四条为当时的口径记录；局域网服务后来已改造，以 §0 当前实现为准：
+  - **局域网服务令牌（2026-09-26 历史口径，现已废弃）**：当时令牌由本机（含回环）下发、`/token.js` 对局域网可见；开关默认关（显式 opt-in）。设置行不再写状态描述，"开启后到底能干啥"移到**标题长按**的 tip（`TextTipDialog` + `setting_lan_server_tip`，2026-09-26 用户要求：说明不塞进横排设置行）。后续已引入设备配对与会话令牌鉴权，关闭服务时清除配对设备；当前实现见 §0「局域网服务」。
   - **无痕浏览**：只覆盖"历史 + 搜索历史"，**收藏照常记录**（口径不变；设置页不再写"不记历史与搜索(收藏照常)"那行文案，按用户要求去掉，2026-09-26）。
   - **老剧的播放设置**：保持现状 —— 历史里的 per-vod `playerCfg` 优先于主设置（老剧沿用首次播放时的解码/渲染/缩放），要改就在播放面板改（面板改的也是这份 per-vod 配置）；这是"手动微调优先"的刻意语义。
   - **本地（回环）HTTP 服务的启停时机**：保持现状 —— 由 `HomeFragment.init()` 起（`ControlManager.startServer()`）、`HomeFragment.onDestroy()` 停；`App.onCreate` 只在"服务已起"时注入基址，自己不起（2026-09-27 用户确认，日志里那句 `本机服务已启动: http://127.0.0.1:9978/` 是正常现象，不要再当"多起了一个服务"修）。**为什么不是"用到才起"**：端口是动态的（9978 被占则 +1，上限 9999），所有回环 URL 都得先拿到 `ApiConfig.setLanBase(mServer.getLoadAddress())` 注入的实际基址，而首页初始化是最早会用到源/播放的时机。**消费方**（都是 URL 形态，所以必须有 HTTP 端点）：`/proxy?do=js…`（JS/jar 源代理，`Global.getProxy()`）、`/purify.m3u8`（净化后的清单喂给播放器，`PlayFragment`）、`/file/…`（本地·局域网文件）、`/dns-query`；这几个都强制校验回环来源，`/` 与 `/token.js`（web 控制台）只有开启「局域网服务」才对外。要整成"懒启动"必须在上面每个调用点前接 `ensureStarted()`，漏一处就是播放/本地文件失败 —— 属另开批次的事。

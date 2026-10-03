@@ -4,13 +4,15 @@
 
 | 入口 | 选择规则 | 文件/传输 | 导入语义 |
 | --- | --- | --- | --- |
-| 设置 → 局域网配置导入导出 | 连接另一台 MBox 后选类别；另一台通过本机地址和配对码取配置 | 一次 HTTP 下载一个 `mbox-config.zip` | 订阅、直播、主题、历史按现有去重/合并规则；所选设置覆盖对应键 |
-| 我的设置 → 本地备份 | 全量备份/还原 | `tvbox_backup/*.zip` | DataStore 设置与 Room 数据库恢复；旧版目录仍可还原 |
+| 设置 → 局域网服务管理 → 局域网配置导入导出 | 连接另一台 MBox 后选类别；另一台通过本机地址和配对码取配置 | 一次 HTTP 下载一个 `mbox-config.zip` | 订阅、直播、主题、历史按现有去重/合并规则；所选设置覆盖对应键 |
+| 设置 → 数据备份还原 | 全量备份/还原 | `tvbox_backup/*.zip` | DataStore 设置与 Room 数据库恢复；旧版目录仍可还原 |
 | 订阅管理 | 单条订阅用 JSON；勾选多条用订阅专用 ZIP | 单条 `{schema,category,items}`；多条复用 `mbox-config.zip`，只含 `subscriptions` 域 | 导入后逐条校验订阅，保留原页面的启用和去重流程 |
 | 主题编辑等单项入口 | 由所属功能直接处理 | 主题 JSON 或带背景图的 ZIP | 走该功能原有的校验和命名规则 |
 | 后续在线导入导出 | 平台只负责上传/下载包，不解析配置 | 同一个 `mbox-config.zip` | 下载后交给 `ConfigBundle.importSelected` |
 
-局域网地址、配对与传输由 `LanSyncClient` / `RemoteServer` 处理；连接地址只接受局域网 IP 字面量，避免 DNS 校验后重绑定。配置格式和合并由 `ConfigBundle` / `ConfigDataExchange` 处理。`ShareArchives` 是 `:share` 对业务公开的 ZIP 操作，所有批量解压都使用它的 Zip Slip、解压大小与条目数检查。局域网旧的逐类别 JSON 接口暂留给旧客户端，新客户端只请求 ZIP。
+局域网地址、配对与传输由 `LanSyncClient` / `RemoteServer` 处理；连接地址只接受局域网 IP 字面量，避免 DNS 校验后重绑定。配置格式和合并由 `ConfigBundle` / `ConfigDataExchange` 处理。`ShareArchives` 是 `:share` 对业务公开的 ZIP 操作，所有批量解压都使用它的 Zip Slip、解压大小与条目数检查。当前配对导入一次请求一个 ZIP,并以会话令牌鉴权。
+
+局域网服务由用户显式开启,开启后重启应用才会对外监听。确认关闭时立即停止对外监听、清除当前配对会话,再启动仅供本机使用的回环服务；状态页按实际监听状态提示异常残留。
 
 现有 `ShareFacade` 的 LAN 实现是「本机挂分享会话、对端访问或推送」模式，缺少连接另一台 MBox 后按目录勾选并拉取的能力；所以当前配对式 LAN 导入继续由 `LanSyncClient` 承担。两条传输路径共用归档格式和解压校验。未来在线平台可直接走 `ShareFacade` 的上传/下载能力，不需再实现领域解析。
 

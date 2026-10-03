@@ -10,7 +10,7 @@
 
 ## 一、目标架构(依赖方向,强制)
 
-最终分四层,依赖只允许自上而下,**禁止反向**:
+目标按以下方向分层,依赖只允许自上而下,**禁止反向**:
 
 ```
 app / feature
@@ -54,6 +54,7 @@ app / feature
 - `:core-network` 已只剩网络职责(OkGoHelper/HttpClient/HttpUrls/FCallBack/HCallBack/SSLCompat/urlhttp 的 brotli 拦截器);AES/MD5/AdBlocker/AppLog/LOG 已迁出。残留:网络客户端装配与通用工具仍同包,后续可按职责再分目录。
 - **日志只有一条写通道**:业务日志一律 `LogStore`(`:log` 模块,结构化落 Room),错误流由 `LogcatCapture` 落 `filesDir/app_logs/logcat-*.log`;旧 `AppLog` 按天文件通道**已删除**(它与 LogStore 共用 `"app_log"` 开关,一开日志就双写且 `app-*.log` 永不清理、界面不可见;调用点已全部迁移)。新代码**不得再新增文件级日志通道**。
 - `:spider` 字符串通道(SpiderContentApi)为过渡兼容层,新功能不得新增字符串协议依赖。
+- 订阅启动的 `ApiConfig.loadConfig/loadJar` 仍有主线程配置解析、Jar 校验/加载路径,可能让开屏动画掉帧。改为后台执行前须先把全局源配置整理为原子发布的快照,避免首页入场后读到半更新状态;当前首页分类/列表解析已使用共享执行器。
 - app 已无直连 `:spider` 实现的代码:批量下载解析经 `PlayUrlResolverProviders`(spiderapi 契约,组合根注入 `SpiderUrlResolverImpl`),JS 源运行态(取消在跑任务/清空源实例)经 `SourceLoaderProviders.stopAllSourceTasks/resetSources`。门禁 `spiderImplAllow` 白名单已收净,只剩组合根 `di/AppCompositionRoot`、启动 `base/App`、`server/ControlManager` 三个装配/注入点。
 - 未建 `:playback` / feature-* 模块(第三/四阶段,需真机回归环境再动)。
 
@@ -95,7 +96,7 @@ app / feature
 
 **网络与 TLS**
 - 禁止全局关闭 HTTPS/TLS 校验(如 WebView `onReceivedSslError` 一律 proceed、HttpClient 全信任);确需忽略证书只允许"按域 + 用户显式开关"且默认拒绝(cancel)。
-- 局域网/回环服务(RemoteServer 等)按需启动、用毕即停;对外暴露最小化,敏感操作必须带鉴权/令牌,禁止无鉴权读写。
+- 局域网/回环服务(RemoteServer 等)按需启动、用毕即停;对外暴露最小化,敏感操作必须带鉴权/令牌,禁止无鉴权读写。用户确认关闭局域网服务后,须立即停止对外监听、清除已配对设备并恢复仅本机回环;若异常残留对外监听,状态提示必须如实显示。
 
 **输入与文件安全**
 - 本地路径一律防目录穿越:拼接前校验并规范化,拒绝 `..`/绝对路径逃逸出目标目录。
@@ -106,6 +107,9 @@ app / feature
 - Room/DB 查询禁止主线程执行;需即异步(协程/执行器)或缓存预热。
 - Gson 等解析器复用实例并建索引/缓存,禁止热路径重复构建;UA 等常量数组化,避免每请求新建数组。
 - 启动阶段不做阻塞式删缓存/重 IO;大资源懒加载,页面销毁即释放。
+- 开屏只并行预取首页数据,为较长的数据加载提供动画缓冲。开屏可见期间不得装配或绘制首页 Fragment/组件:首页壳(ViewPager、底栏)也须延迟 inflate,不能只设 `GONE` 掩盖已创建的组件;遮罩关闭后才创建首页 Fragment、装配子页面并绘制首帧,让用户看到组件出现。
+- 开屏数据先就绪时可提前撤下动画;动画先播完时停留最后帧 **300ms** 后直接进入首页,不继续等数据,也不设 20 秒内容兜底(素材解析或播放异常的兜底仍保留)。`MainActivity#maybeDismissStartupSplash` 保持该时序;开屏动画只播一次。数据请求尚未结束就入场时,首页须接收同一轮结果,不得重复发起首屏请求。
+- 开屏预取默认首页热播、订阅分类及“关闭主页推荐”时首个分类的数据;大块 XML/JSON 解析不得占用动画所在的主线程。气泡、提示及自动检查等可见窗口在首页首帧之后再派发;节日素材选择继续集中在 `SplashContentSelector`,按需扩展图片/视频类型。
 - 列表更新用 DiffUtil 时保证差量正确(LocalVideoAdapter/下载列表等禁止 O(n²)/整表 notify);页面/Adapter 不得把视图/Activity 持有到生命周期外(视图泄漏)。
 
 **Android 暴露面**
@@ -200,11 +204,9 @@ app / feature
 
 ## 八、推荐推进顺序(供排期参考)
 
-1. **第一阶段(补边界)**:SourceViewModel→SpiderApi;DownloadFragment→DownloadFacade;DetailActivity 不直调 DownloadManager;注册并使用 PlayerFactory;禁止新增 Hawk/EventBus/具体 Manager 直调。
-2. **第二阶段(抽基础)**:common(模型/工具/状态)→ spider 契约 → core-network → core-storage;已完成,且契约模块已回并业务模块(见 §二)。
-3. **第三阶段(拆播放器与大页)**:playback shell;拆 PlayFragment/DetailActivity;字幕迁 playback;ViewModel 只调接口。
-4. **第四阶段**:feature-* 按需模块化(不要在依赖未稳时先搬目录)。
-5. **第五阶段(现代化)**:Exo→Media3(代码已迁移,待人工回归)、EventBus→Flow/接口、Hawk→DataStore、Java→Kotlin、Hilt(按需)、依赖检查与测试门禁。
+1. **播放器与大页收口**:在具备真机回归条件时,逐步拆 PlayFragment/DetailActivity;播放器控制、字幕和换源流程经 PlayerSession/Coordinator 协作,再评估 playback shell。
+2. **按需模块化**:现有依赖边界稳定后才考虑 feature-*;不要为搬目录先拆模块。
+3. **渐进现代化**:按收益推进 Java→Kotlin、LiveData→StateFlow 与 Hilt(按需)。维持 Media3 版本一致、DataStore 配置门面、EventBus 禁令及现有构建门禁。
 
 ## 九、开发与提交纪律
 
