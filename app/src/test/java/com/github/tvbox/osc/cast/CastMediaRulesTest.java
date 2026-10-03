@@ -32,6 +32,13 @@ public class CastMediaRulesTest {
         assertFalse(CastMediaRules.allowedChild(local, "http://127.0.0.1:9979/proxy?do=ts", 9978));
         assertFalse(CastMediaRules.allowedChild("https://video.example/index.m3u8",
                 "http://127.0.0.1:9978/proxy?do=ts", 9978));
+        assertFalse(CastMediaRules.allowedChild("https://video.example/index.m3u8",
+                "http://[::ffff:192.168.1.1]/private", 9978));
+        assertTrue(CastMediaRules.needsRelay(
+                "http://[::ffff:127.0.0.1]:9978/purify.m3u8", null, 9978));
+        assertFalse(CastMediaRules.allowedChild(
+                "http://[::ffff:127.0.0.1]:9978/purify.m3u8",
+                "http://[::ffff:127.0.0.1]:9978/api/lan/data", 9978));
     }
 
     @Test public void crossOriginChildrenDoNotReceiveSecrets() {
@@ -58,6 +65,16 @@ public class CastMediaRulesTest {
         assertTrue(rewritten.contains("URI=\"http://192.168.1.5:12345/media/capability/bin\""));
         assertTrue(rewritten.contains("http://192.168.1.5:12345/media/capability/ts"));
         assertFalse(rewritten.contains("\nseg.ts\n"));
+    }
+
+    @Test public void purifiedPlaylistKeepsItsSelectedPrivateSourceOrigin() {
+        String original = "http://192.168.1.2/movie.m3u8";
+        String manifest = "#EXTM3U\n#EXTINF:2,\nhttp://192.168.1.2/segment.ts\n";
+        String rewritten = LanCastRelayRules.rewriteWithResourceHint(manifest, original,
+                (child, role) -> CastMediaRules.allowedChild(original, child, 9978)
+                        ? "http://192.168.1.5:12345/media/segment.ts" : null);
+        assertTrue(rewritten.contains("http://192.168.1.5:12345/media/segment.ts"));
+        assertFalse(rewritten.contains("about:blank"));
     }
 
     @Test public void localRangeSupportsSeekAndSuffix() {

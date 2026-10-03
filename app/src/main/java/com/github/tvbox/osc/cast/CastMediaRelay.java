@@ -58,7 +58,10 @@ public final class CastMediaRelay {
     private static final long IDLE_MS = TimeUnit.MINUTES.toMillis(20);
     private static final long MAX_LIFE_MS = TimeUnit.HOURS.toMillis(6);
     private static final int MAX_PLAYLIST_BYTES = 4 * 1024 * 1024;
-    private static final int MAX_TARGETS = 4096;
+    // A four MiB VOD manifest can contain well over 4096 short segments. Keep the
+    // registry bounded, but allow long ordinary movies to register in full.
+    static final int MAX_TARGETS = 16384;
+    static final int MAX_TARGET_URL_CHARS = 8 * 1024 * 1024;
     private static final ScheduledExecutorService EXPIRY = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread thread = new Thread(r, "mbox-cast-media-expiry");
         thread.setDaemon(true);
@@ -122,59 +125,74 @@ public final class CastMediaRelay {
             if (pinnedPlaylist.getBytes(StandardCharsets.UTF_8).length > MAX_PLAYLIST_BYTES)
                 throw new IOException("Purified playlist is too large to cast");
         }
+        URI origin = pinnedPlaylist == null ? null : CastMediaRules.parse(headerOrigin);
+        String credentialOrigin = CastMediaRules.isHttp(origin) ? origin.toString() : mediaUrl;
 
-        CastMediaRules.MediaKind mediaKind = pinnedPlaylist != null
-                ? CastMediaRules.MediaKind.HLS
-                : CastMediaRules.mediaKind(mediaUrl, null, null, 0);
-        if (http && !mediaKind.known) mediaKind = probeHttp(mediaUrl, snapshot, RemoteServer.serverPort);
-        if (localFile && !mediaKind.known) mediaKind = probeLocal(context, uri, mediaUrl);
-        if (mediaKind == CastMediaRules.MediaKind.INVALID)
-            throw new IOException("Media source returned a non-video document");
-        if (!mediaKind.known)
-            throw new IOException("Media format could not be identified for casting");
-        LogStore.log(Category.PLAYER, "投屏媒体准备: 类型=" + mediaKind.extension
-                + "，来源=" + (localFile ? "本地文件" : CastMediaRules.isLoopback(uri.getHost()) ? "本机代理" : "网络"));
-
-        List<String> addresses = RemoteServer.getLanIpv4Addresses();
-        if (addresses.isEmpty()) throw new IOException("No reachable LAN IPv4 address");
-        String advertisedAddress = preferredAddress != null && addresses.contains(preferredAddress)
-                ? preferredAddress : addresses.get(0);
-        CastMediaRelay other = activeRelay;
-        if (other != null && other != this) other.closeCurrent(false);
-        closeCurrent(false);
-
-        MediaServer started = new MediaServer();
+        final okhttp3.OkHttpClient scopedClient;
         try {
-            started.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false);
-            int port = started.getListeningPort();
-            if (port <= 0) throw new IOException("Media relay did not bind a port");
-            Session session = new Session(context == null ? null : context.getApplicationContext(),
-                    "http://" + advertisedAddress + ":" + port,
-                    randomHex(32), RemoteServer.serverPort, GENERATIONS.incrementAndGet());
-            URI origin = CastMediaRules.parse(headerOrigin);
-            String credentialOrigin = pinnedPlaylist != null && CastMediaRules.isHttp(origin)
-                    ? origin.toString() : mediaUrl;
-            String path = session.register(mediaUrl, snapshot, pinnedPlaylist, credentialOrigin,
-                    mediaKind, null);
-            if (path == null) throw new IOException("Media relay resource limit");
-            server = started;
-            current = session;
-            activeRelay = this;
-            expiryTask = EXPIRY.scheduleAtFixedRate(() -> expire(session), 1, 1, TimeUnit.MINUTES);
-            try { CastMediaService.start(context, session.generation); }
-            catch (RuntimeException error) {
-                stop();
-                throw new IOException("Cannot keep media relay active in background", error);
-            }
-            return session.baseUrl + path;
-        } catch (IOException | RuntimeException error) {
+            okhttp3.OkHttpClient baseClient = OkGoHelper.getMediaRelayClient();
+            scopedClient = http ? OkGoHelper.newScopedMediaRelayClient(
+                    new CastMediaDns(baseClient.dns(), uri.getHost(),
+                            CastMediaRules.isHttp(origin) ? origin.getHost() : null)) : null;
+        } catch (RuntimeException error) {
+            throw new IOException("Cannot prepare media relay network policy", error);
+        }
+        boolean retainedClient = false;
+        try {
+            CastMediaRules.MediaKind mediaKind = pinnedPlaylist != null
+                    ? CastMediaRules.MediaKind.HLS
+                    : CastMediaRules.mediaKind(mediaUrl, null, null, 0);
+            if (http && !mediaKind.known)
+                mediaKind = probeHttp(mediaUrl, snapshot, RemoteServer.serverPort, scopedClient);
+            if (localFile && !mediaKind.known) mediaKind = probeLocal(context, uri, mediaUrl);
+            if (mediaKind == CastMediaRules.MediaKind.INVALID)
+                throw new IOException("Media source returned a non-video document");
+            if (!mediaKind.known)
+                throw new IOException("Media format could not be identified for casting");
+            LogStore.log(Category.PLAYER, "投屏媒体准备: 类型=" + mediaKind.extension
+                    + "，来源=" + (localFile ? "本地文件" : CastMediaRules.isLoopback(uri.getHost()) ? "本机代理" : "网络"));
+
+            List<String> addresses = RemoteServer.getLanIpv4Addresses();
+            if (addresses.isEmpty()) throw new IOException("No reachable LAN IPv4 address");
+            String advertisedAddress = preferredAddress != null && addresses.contains(preferredAddress)
+                    ? preferredAddress : addresses.get(0);
+            CastMediaRelay other = activeRelay;
+            if (other != null && other != this) other.closeCurrent(false);
             closeCurrent(false);
-            started.stop();
-            if (activeRelay == null) {
-                try { CastMediaService.stop(context); } catch (RuntimeException ignored) { }
+
+            MediaServer started = new MediaServer();
+            try {
+                started.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false);
+                int port = started.getListeningPort();
+                if (port <= 0) throw new IOException("Media relay did not bind a port");
+                Session session = new Session(context == null ? null : context.getApplicationContext(),
+                        "http://" + advertisedAddress + ":" + port,
+                        randomHex(32), RemoteServer.serverPort, GENERATIONS.incrementAndGet(), scopedClient);
+                String path = session.register(mediaUrl, snapshot, pinnedPlaylist, credentialOrigin,
+                        mediaKind, null);
+                if (path == null) throw new IOException("Media relay resource limit");
+                server = started;
+                current = session;
+                activeRelay = this;
+                expiryTask = EXPIRY.scheduleAtFixedRate(() -> expire(session), 1, 1, TimeUnit.MINUTES);
+                try { CastMediaService.start(context, session.generation); }
+                catch (RuntimeException error) {
+                    stop();
+                    throw new IOException("Cannot keep media relay active in background", error);
+                }
+                retainedClient = true;
+                return session.baseUrl + path;
+            } catch (IOException | RuntimeException error) {
+                closeCurrent(false);
+                started.stop();
+                if (activeRelay == null) {
+                    try { CastMediaService.stop(context); } catch (RuntimeException ignored) { }
+                }
+                if (error instanceof IOException) throw (IOException) error;
+                throw new IOException("Media relay failed to start", error);
             }
-            if (error instanceof IOException) throw (IOException) error;
-            throw new IOException("Media relay failed to start", error);
+        } finally {
+            if (!retainedClient && scopedClient != null) scopedClient.connectionPool().evictAll();
         }
     }
 
@@ -216,7 +234,8 @@ public final class CastMediaRelay {
     }
 
     private static CastMediaRules.MediaKind probeHttp(String sourceUrl, Map<String, String> headers,
-                                                      int localPort) throws IOException {
+                                                      int localPort,
+                                                      okhttp3.OkHttpClient client) throws IOException {
         String requestedUrl = sourceUrl;
         for (int redirects = 0; redirects <= 5; redirects++) {
             Request.Builder builder = new Request.Builder().url(requestedUrl).get()
@@ -227,7 +246,7 @@ public final class CastMediaRelay {
                 try { builder.header(entry.getKey(), entry.getValue()); }
                 catch (IllegalArgumentException ignored) { }
             }
-            okhttp3.Call call = OkGoHelper.getMediaRelayClient().newCall(builder.build());
+            okhttp3.Call call = client.newCall(builder.build());
             call.timeout().timeout(12, TimeUnit.SECONDS);
             try (okhttp3.Response response = call.execute()) {
                 String location = response.header("Location");
@@ -340,7 +359,7 @@ public final class CastMediaRelay {
         String requestedUrl = target.url;
         if (target.inlinePlaylist != null) {
             byte[] content = target.inlinePlaylist.getBytes(StandardCharsets.UTF_8);
-            return playlistResponse(request, session, requestedUrl,
+            return playlistResponse(request, session, target.headerOrigin,
                     target.headerOrigin, target.headers, content);
         }
         // HLS must always be rewritten as a complete playlist. A renderer may request a byte
@@ -358,7 +377,7 @@ public final class CastMediaRelay {
             }
             if (upstreamRange != null) builder.header("Range", upstreamRange);
             builder.header("Accept-Encoding", "identity");
-            upstream = OkGoHelper.getMediaRelayClient().newCall(builder.build()).execute();
+            upstream = session.client.newCall(builder.build()).execute();
             String location = upstream.header("Location");
             if (upstream.code() < 300 || upstream.code() > 399 || location == null) break;
             okhttp3.HttpUrl next = upstream.request().url().resolve(location);
@@ -448,21 +467,32 @@ public final class CastMediaRelay {
         boolean fragmentedMp4 = text.contains("#EXT-X-MAP:")
                 || (text.contains("#EXT-X-PRELOAD-HINT:") && text.contains("TYPE=MAP"));
         int[] counts = new int[4]; // child resources, rejected, inferred suffixes, segments
-        String rewritten = LanCastRelayRules.rewriteWithResourceHint(text, sourceUrl, (child, role) -> {
-            counts[0]++;
-            if (role == LanCastRelayRules.ResourceKind.SEGMENT) counts[3]++;
-            if (current != session || !CastMediaRules.allowedChild(sourceUrl, child, session.localPort)) {
-                counts[1]++;
-                return null;
-            }
-            if (role == LanCastRelayRules.ResourceKind.SEGMENT
-                    && !CastMediaRules.mediaKind(child, null, null, 0).known) counts[2]++;
-            String path = session.register(child,
-                    CastMediaRules.headersForChild(headerOrigin, child, sourceHeaders), null, child,
-                    CastMediaRules.hlsChildKind(child, role, fragmentedMp4), role);
-            if (path == null) counts[1]++;
-            return path == null ? null : session.baseUrl + path;
-        });
+        final String rewritten;
+        try {
+            rewritten = LanCastRelayRules.rewriteWithResourceHint(text, sourceUrl, (child, role) -> {
+                counts[0]++;
+                if (role == LanCastRelayRules.ResourceKind.SEGMENT) counts[3]++;
+                if (current != session || !CastMediaRules.allowedChild(sourceUrl, child, session.localPort)) {
+                    counts[1]++;
+                    return null;
+                }
+                if (role == LanCastRelayRules.ResourceKind.SEGMENT
+                        && !CastMediaRules.mediaKind(child, null, null, 0).known) counts[2]++;
+                String path = session.register(child,
+                        CastMediaRules.headersForChild(headerOrigin, child, sourceHeaders), null, child,
+                        CastMediaRules.hlsChildKind(child, role, fragmentedMp4), role);
+                if (path == null) counts[1]++;
+                return path == null ? null : session.baseUrl + path;
+            });
+        } catch (TargetLimitException limit) {
+            if (session.firstTargetLimit.compareAndSet(false, true))
+                LogStore.log(Category.PLAYER, "投屏媒体清单: 子资源超过上限 " + MAX_TARGETS + "，已拒绝整份清单");
+            NanoHTTPD.Response error = NanoHTTPD.newFixedLengthResponse(
+                    NanoHTTPD.Response.Status.INTERNAL_ERROR, NanoHTTPD.MIME_PLAINTEXT,
+                    "HLS playlist exceeds the media relay resource limit");
+            error.addHeader("Cache-Control", "no-store");
+            return error;
+        }
         boolean firstPlaylist = session.firstPlaylistRewrite.compareAndSet(false, true);
         boolean firstMediaPlaylist = counts[3] > 0
                 && session.firstSegmentPlaylistRewrite.compareAndSet(false, true);
@@ -664,15 +694,19 @@ public final class CastMediaRelay {
         }
     }
 
-    private static final class Session {
+    static final class TargetLimitException extends RuntimeException { }
+
+    static final class Session {
         final Context context;
         final String baseUrl;
         final String token;
         final int localPort;
         final long generation;
+        final okhttp3.OkHttpClient client;
         final long createdAt = System.currentTimeMillis();
         final Map<String, Target> targets = new LinkedHashMap<>();
         final Map<String, String> idsByUrl = new HashMap<>();
+        int targetUrlChars;
         final Set<Closeable> streams = Collections.newSetFromMap(new ConcurrentHashMap<Closeable, Boolean>());
         final AtomicBoolean firstMediaRequest = new AtomicBoolean();
         final AtomicBoolean firstUpstreamResponse = new AtomicBoolean();
@@ -682,15 +716,22 @@ public final class CastMediaRelay {
         final AtomicBoolean firstSegmentRequest = new AtomicBoolean();
         final AtomicBoolean firstSegmentResponse = new AtomicBoolean();
         final AtomicBoolean firstSegmentStream = new AtomicBoolean();
+        final AtomicBoolean firstTargetLimit = new AtomicBoolean();
         volatile long lastUsedAt = createdAt;
         volatile boolean closed;
 
         Session(Context context, String baseUrl, String token, int localPort, long generation) {
+            this(context, baseUrl, token, localPort, generation, null);
+        }
+
+        Session(Context context, String baseUrl, String token, int localPort, long generation,
+                okhttp3.OkHttpClient client) {
             this.context = context;
             this.baseUrl = baseUrl;
             this.token = token;
             this.localPort = localPort;
             this.generation = generation;
+            this.client = client;
         }
 
         synchronized String register(String url, Map<String, String> headers,
@@ -705,22 +746,28 @@ public final class CastMediaRelay {
                 old.registeredAt = System.currentTimeMillis();
                 return path(id, old);
             }
-            if (targets.size() >= MAX_TARGETS) {
+            int addedChars = url.length();
+            if (targets.size() >= MAX_TARGETS
+                    || targetUrlChars + addedChars > MAX_TARGET_URL_CHARS) {
                 long cutoff = System.currentTimeMillis() - TimeUnit.MINUTES.toMillis(10);
                 java.util.Iterator<Map.Entry<String, Target>> iterator = targets.entrySet().iterator();
                 while (iterator.hasNext()) {
                     Map.Entry<String, Target> entry = iterator.next();
                     if (entry.getValue().registeredAt < cutoff) {
                         idsByUrl.remove(resourceKey(entry.getValue().url, entry.getValue().role));
+                        targetUrlChars -= entry.getValue().url.length();
                         iterator.remove();
                     }
                 }
             }
-            if (targets.size() >= MAX_TARGETS) return null;
+            if (targets.size() >= MAX_TARGETS
+                    || targetUrlChars + addedChars > MAX_TARGET_URL_CHARS)
+                throw new TargetLimitException();
             id = randomHex(16);
             Target target = new Target(url, headers, inlinePlaylist, headerOrigin, kind, role);
             targets.put(id, target);
             idsByUrl.put(resourceKey, id);
+            targetUrlChars += addedChars;
             return path(id, target);
         }
 
@@ -745,7 +792,8 @@ public final class CastMediaRelay {
                 try { stream.close(); } catch (IOException ignored) { }
             }
             streams.clear();
-            synchronized (this) { targets.clear(); idsByUrl.clear(); }
+            synchronized (this) { targets.clear(); idsByUrl.clear(); targetUrlChars = 0; }
+            if (client != null) client.connectionPool().evictAll();
         }
     }
 

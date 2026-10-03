@@ -1,5 +1,6 @@
 package com.github.tvbox.osc.server;
 
+import java.net.InetAddress;
 import java.net.URI;
 import java.util.function.Function;
 import java.util.function.BiFunction;
@@ -88,18 +89,21 @@ public final class LanCastRelayRules {
 
     private static String relayUrl(URI base, String raw, ResourceKind kind,
                                    BiFunction<String, ResourceKind, String> register) {
+        URI resolved;
         try {
-            URI resolved = base.resolve(raw);
-            String scheme = resolved.getScheme();
-            if (scheme == null || !("http".equalsIgnoreCase(scheme)
-                    || "https".equalsIgnoreCase(scheme)) || resolved.getHost() == null
-                    || !allowedChildHost(base.getHost(), resolved.getHost()))
-                return "about:blank";
-            String relay = register.apply(resolved.toString(), kind);
-            return relay == null ? "about:blank" : relay;
+            resolved = base.resolve(raw);
         } catch (Exception ignored) {
             return "about:blank";
         }
+        String scheme = resolved.getScheme();
+        if (scheme == null || !("http".equalsIgnoreCase(scheme)
+                || "https".equalsIgnoreCase(scheme)) || resolved.getHost() == null
+                || !allowedChildHost(base.getHost(), resolved.getHost()))
+            return "about:blank";
+        // A resource-capacity failure from register must abort the whole manifest. Converting
+        // it to about:blank would create an apparently valid playlist that fails mid-playback.
+        String relay = register.apply(resolved.toString(), kind);
+        return relay == null ? "about:blank" : relay;
     }
 
     private static boolean allowedChildHost(String parentHost, String childHost) {
@@ -107,21 +111,80 @@ public final class LanCastRelayRules {
         String host = childHost.toLowerCase(java.util.Locale.ROOT).replace("[", "").replace("]", "");
         if (host.equals("localhost") || host.equals("localhost.") || host.endsWith(".local")
                 || host.equals("::1") || host.equals("0:0:0:0:0:0:0:1")) return false;
-        if (host.matches("\\d{1,3}(?:\\.\\d{1,3}){3}")) {
-            String[] parts = host.split("\\.");
-            try {
-                int first = Integer.parseInt(parts[0]);
-                int second = Integer.parseInt(parts[1]);
-                return first > 0 && first < 224 && first != 10 && first != 127
-                        && !(first == 100 && second >= 64 && second <= 127)
-                        && !(first == 169 && second == 254)
-                        && !(first == 172 && second >= 16 && second <= 31)
-                        && !(first == 192 && second == 168)
-                        && !(first == 198 && (second == 18 || second == 19));
-            } catch (Exception ignored) { return false; }
-        }
-        if (host.contains(":")) return !host.startsWith("fe80:") && !host.startsWith("fc")
-                && !host.startsWith("fd") && !host.equals("0:0:0:0:0:0:0:1");
+        // Check the parsed address, not only its spelling: IPv4-mapped IPv6 such as
+        // ::ffff:192.168.1.1 must not turn a public playlist into a LAN request.
+        InetAddress literal = numericLiteral(host);
+        if (literal != null) return publicLiteral(literal);
+        if (host.contains(":") || host.matches("[0-9.]+")) return false;
         return true;
+    }
+
+    /** Only parses numeric IP literals; this policy never performs a DNS lookup. */
+    private static InetAddress numericLiteral(String raw) {
+        if (raw == null) return null;
+        String host = raw.replace("[", "").replace("]", "");
+        boolean ipv6 = host.indexOf(':') >= 0;
+        if (ipv6 ? !host.matches("[0-9a-fA-F:.]+")
+                : !host.matches("(?:[0-9]{1,3}\\.){3}[0-9]{1,3}"))
+            return null;
+        try {
+            if (ipv6) return InetAddress.getByName(host); // A colon makes this a numeric IPv6 literal.
+            String[] parts = host.split("\\.");
+            byte[] bytes = new byte[4];
+            for (int i = 0; i < bytes.length; i++) {
+                int part = Integer.parseInt(parts[i]);
+                if (part > 255) return null;
+                bytes[i] = (byte) part;
+            }
+            return InetAddress.getByAddress(bytes);
+        } catch (Exception ignored) { return null; }
+    }
+
+    public static boolean isLoopbackLiteral(String host) {
+        InetAddress address = numericLiteral(host);
+        return address != null && (address.isLoopbackAddress()
+                || isMappedIpv4(address.getAddress()) && (address.getAddress()[12] & 0xff) == 127);
+    }
+
+    public static boolean isRestrictedIpLiteral(String host) {
+        InetAddress address = numericLiteral(host);
+        if (address != null) return !publicLiteral(address);
+        return host != null && host.replace("[", "").replace("]", "").matches("[0-9.]+");
+    }
+
+    /** Classify an address returned by the same DNS resolver OkHttp will use to connect. */
+    public static boolean isPublicAddress(InetAddress address) {
+        return address != null && publicLiteral(address);
+    }
+
+    private static boolean publicLiteral(InetAddress address) {
+        byte[] bytes = address.getAddress();
+        if (isMappedIpv4(bytes)) {
+            byte[] ipv4 = new byte[] {bytes[12], bytes[13], bytes[14], bytes[15]};
+            return publicIpv4(ipv4);
+        }
+        if (bytes.length == 4) return publicIpv4(bytes);
+        return bytes.length == 16 && !address.isAnyLocalAddress()
+                && !address.isLoopbackAddress() && !address.isLinkLocalAddress()
+                && !address.isSiteLocalAddress() && !address.isMulticastAddress()
+                && (bytes[0] & 0xfe) != 0xfc;
+    }
+
+    private static boolean isMappedIpv4(byte[] bytes) {
+        if (bytes.length != 16 || (bytes[10] & 0xff) != 0xff
+                || (bytes[11] & 0xff) != 0xff) return false;
+        for (int i = 0; i < 10; i++) if (bytes[i] != 0) return false;
+        return true;
+    }
+
+    private static boolean publicIpv4(byte[] bytes) {
+        int first = bytes[0] & 0xff;
+        int second = bytes[1] & 0xff;
+        return first > 0 && first < 224 && first != 10 && first != 127
+                && !(first == 100 && second >= 64 && second <= 127)
+                && !(first == 169 && second == 254)
+                && !(first == 172 && second >= 16 && second <= 31)
+                && !(first == 192 && second == 168)
+                && !(first == 198 && (second == 18 || second == 19));
     }
 }

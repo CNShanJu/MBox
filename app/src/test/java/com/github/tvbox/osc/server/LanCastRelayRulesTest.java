@@ -39,4 +39,16 @@ public class LanCastRelayRulesTest {
         assertTrue(LanCastRelayRules.allowedRedirect("https://video.example/index.m3u8",
                 "https://cdn.example/segment.ts"));
     }
+
+    @Test public void ipv4MappedIpv6CannotReachPrivateChildren() {
+        String publicManifest = "https://video.example/index.m3u8";
+        assertFalse(LanCastRelayRules.allowedRedirect(publicManifest,
+                "http://[::ffff:192.168.1.1]/admin"));
+        assertFalse(LanCastRelayRules.allowedRedirect(publicManifest,
+                "http://[0:0:0:0:0:ffff:c0a8:101]/admin"));
+        assertFalse(LanCastRelayRules.allowedRedirect(publicManifest,
+                "http://[::ffff:127.0.0.1]:9978/api/lan/data"));
+        assertTrue(LanCastRelayRules.allowedRedirect(publicManifest,
+                "https://[2001:4860:4860::8888]/segment.ts"));
+    }
 }

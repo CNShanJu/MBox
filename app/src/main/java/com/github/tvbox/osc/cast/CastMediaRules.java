@@ -24,7 +24,9 @@ final class CastMediaRules {
         String scheme = lower(uri.getScheme());
         if (!"http".equals(scheme) && !"https".equals(scheme)) return true;
         String host = uri.getHost();
-        return isLoopback(host) || (uri.getPort() == localPort && LanAddressRules.isPrivateIpv4(host));
+        return isLoopback(host) || (uri.getPort() == localPort
+                && (LanAddressRules.isPrivateIpv4(host)
+                || LanCastRelayRules.isRestrictedIpLiteral(host)));
     }
 
     static URI parse(String rawUrl) {
@@ -53,7 +55,8 @@ final class CastMediaRules {
         String value = lower(host);
         return value.startsWith("127.") || "localhost".equals(value) || "localhost.".equals(value)
                 || "::1".equals(value) || "[::1]".equals(value)
-                || "0:0:0:0:0:0:0:1".equals(value);
+                || "0:0:0:0:0:0:0:1".equals(value)
+                || LanCastRelayRules.isLoopbackLiteral(value);
     }
 
     /** A playlist cannot turn its media capability into access to the app's LAN APIs. */
@@ -62,7 +65,8 @@ final class CastMediaRules {
         URI child = parse(childUrl);
         if (!isHttp(parent) || !isHttp(child)) return false;
         String host = child.getHost();
-        boolean local = isLoopback(host) || LanAddressRules.isPrivateIpv4(host);
+        boolean local = isLoopback(host) || LanAddressRules.isPrivateIpv4(host)
+                || LanCastRelayRules.isRestrictedIpLiteral(host);
         if (!local) return true; // LanCastRelayRules separately rejects new private hosts.
         if (!sameOrigin(parent, child)) return false;
         if (isLoopback(host) || child.getPort() == localPort) {
