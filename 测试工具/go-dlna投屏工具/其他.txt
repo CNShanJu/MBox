@@ -1,0 +1,2 @@
+mpv Windows 构建下载页：https://github.com/shinchiro/mpv-winbuild-cmake/releases
+本目录附带的构建文件：mpv-x86_64-20261003-git-3186d369f9.7z
