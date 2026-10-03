@@ -98,11 +98,11 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
         private const val MAX_AUTO_PAGING_CHAIN = 3
 
         /** 第一波收尾兜底:个别源卡死/不回包时,到点也要把第二波放出去(否则慢源就被永远压在后面) */
-        private const val PRIMARY_WAVE_FALLBACK_MS = 12_000L
+        private const val PRIMARY_WAVE_FALLBACK_MS = 3_000L
 
         /**
          * 整轮搜索看门狗:某源 getSearch 抛异常(断网时很常见)时批次不会被投递 → allRunCount 不归零 →
-         * "搜索中"永远转、"到底了"永不出现。到点强制收尾(两波 + 重试都留足余量)。
+         * "搜索中"永远转、"到底了"永不出现。到点强制收尾(两波都留足余量)。
          */
         private const val SEARCH_WATCHDOG_MS = 60_000L
     }
@@ -205,6 +205,7 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
     private var searchAdapter = FastSearchAdapter()
     private var searchAdapterFilter = FastSearchAdapter()
     private var searchTitle: String? = ""
+    private var searchWords: List<String>? = null
     private var spNames = HashMap<String, String>()
     private var isFilterMode = false
     private var searchFilterKey: String? = "" // 过滤的key
@@ -243,20 +244,16 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
     override fun init() {
         sourceViewModel = ViewModelProvider(this).get(SourceViewModel::class.java)
         // 主搜索批次结果直调:VM 回调线程不保证主线程,统一切主线程喂 searchData(替代 TYPE_SEARCH_RESULT 订阅)
-        sourceViewModel.setSearchBatchListener { data ->
-            val call = syncCall.get()
-            if (call != null) {
-                // 同步返回(jar/JS 与 typed HTTP 都在 getSearch 内直调回来):置位后由 launchSearchTask 统一记账
-                if (data != null) call.delivered = true
-            } else if (data != null) {
-                // 异步回调(HTTP 源回退旧 HttpClient 路径时):批次里带来源 key,据此补记实测耗时(失败批次归不到来源,不记)
-                data.movie?.videoList?.firstOrNull()?.sourceKey?.let { recordSourceCost(it) }
+        sourceViewModel.setSearchBatchListener { key, data, epoch ->
+            // 每批都带来源和轮次：空结果也能画像，旧请求晚到不会污染新搜索。
+            recordSourceCost(key, epoch)
+            runOnUiThread {
+                if (epoch == searchEpoch) searchData(data)
             }
-            runOnUiThread { searchData(data, call?.isRetry == true) }
         }
         // 翻页批次单独一路:不与首屏批次混算,宿主按来源记账(见 searchPageData)
-        sourceViewModel.setSearchPageBatchListener { key, data, page ->
-            runOnUiThread { searchPageData(key, data, page) }
+        sourceViewModel.setSearchPageBatchListener { key, data, page, epoch ->
+            runOnUiThread { if (epoch == searchEpoch) searchPageData(key, data, page) }
         }
         initView()
         initData()
@@ -391,9 +388,9 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
     }
 
     /**
-     * 发起一轮"加载更多":对"已加载页 < 总页数"的来源各取下一页(共享大池并发,逐批追加)。
+     * 发起一轮"加载更多":对"已加载页 < 总页数"的来源各取下一页(搜索池并发,逐批追加)。
      * 首屏未完成、已有翻页在途、或所有源都到底时不做任何事。
-     * 请求走 [HeavyTaskUtil] 共享执行器(JS 源取页是同步网络调用,不能在主线程发起)。
+     * 请求走 [HeavyTaskUtil] 模块级搜索执行器(JS 源取页是同步网络调用,不能在主线程发起)。
      */
     private fun startPagingIfNeeded() {
         if (!searchFinished || paging.inRound()) return
@@ -403,10 +400,12 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
             return
         }
         if (!refreshSpinnerDismissed) refreshSpinnerDismissed = true
+        val epoch = searchEpoch
+        val word = searchTitle ?: ""
         for (key in keys) {
             val page = paging.pageOf(key) + 1
-            HeavyTaskUtil.getBigTaskExecutorService().execute {
-                sourceViewModel.getSearchPaged(key, searchTitle ?: "", page)
+            HeavyTaskUtil.getSearchExecutorService().execute {
+                if (epoch == searchEpoch) sourceViewModel.getSearchPaged(key, word, page, epoch)
             }
         }
         updateEndTip()
@@ -902,6 +901,7 @@ tv.text = s
         cancel()
         showLoading()
         searchTitle = title
+        searchWords = SearchFilter.words(title)
         //fenci();
         mBinding.mGridView.visibility = View.INVISIBLE
         mBinding.mGridViewFilter.visibility = View.GONE
@@ -970,7 +970,7 @@ tv.text = s
 
     /** 搜索编排状态:epoch=当前轮次;暂停后未发起的源进 pending,页面回前台续跑(替代页面自建 10 线程池) */
     private val searchLock = Object()
-    private var searchEpoch = 0L
+    @Volatile private var searchEpoch = 0L
     private var searchPaused = false
     private var searchSessionActive = false
     private val pendingSearchKeys = ArrayList<String>()
@@ -979,10 +979,8 @@ tv.text = s
     // ------------------------------------------------------------------
     // 两波投递:慢源不再堵住大部队(画像/分波规则在 SearchSourceHealth,纯逻辑有 JVM 单测)
     //
-    // 真机日志实测:所有来源共用 5 线程的应用级共享池,一个源从发起到回包全程占一个槽位,
-    // 慢源(6~15s 才超时)占满后后面的源根本发不出去 —— 现象是"先出来三四个,卡住十几秒,
-    // 再陆陆续续冒出来"。故:第一波只投"上一轮不慢"的源且快的在前(快源先占槽位,首屏最快出结果),
-    // 判慢的源与"本轮第一波里慢且没出结果"的源,等第一波收尾后再单独投第二波。
+    // 旧实现仅约 5 个共享槽位,慢源会让后面的来源排队。现在搜索独立并发,
+    // 同时把上一轮实测慢的源放到第二波,让快源优先产出首屏;每源每轮只请求一次。
     // ------------------------------------------------------------------
 
     /** 每源快慢画像(进程内共享,页面重建后仍记得谁慢) */
@@ -995,18 +993,8 @@ tv.text = s
     /** 本轮第二波要投的慢源(第一波收尾前先存着) */
     private var deferredWaveKeys = ArrayList<String>()
 
-    /** 本轮各源发起时刻(type3 同步调用、HTTP 异步回调都要用它算实测耗时) */
-    private val sourceStart = ConcurrentHashMap<String, Long>()
-
-    /** 来源是否同步通道:type3=jar/JS 同步调用(返回时即可判定有没有结果),0/1/4=HttpClient 异步回调 */
-    private val sourceSync = HashMap<String, Boolean>()
-
-    /** 同步调用上下文:jar/JS 的结果直调在同一线程同步回来,借此把批次归到来源上 */
-    private class SyncCall(val key: String, val isRetry: Boolean) {
-        var delivered = false
-    }
-
-    private val syncCall = ThreadLocal<SyncCall>()
+    /** 每个来源的请求时刻包含轮次，旧 HTTP 回包不会覆盖新一轮的耗时记录。 */
+    private val sourceStart = ConcurrentHashMap<Pair<Long, String>, Long>()
 
     /** 第一波收尾兜底:源卡死也要放第二波(见 PRIMARY_WAVE_FALLBACK_MS) */
     private val deferredWaveFallback = Runnable {
@@ -1029,6 +1017,8 @@ tv.text = s
     private fun finishSearchRound() {
         if (searchFinished) return
         searchFinished = true
+        mBinding.root.removeCallbacks(searchWatchdog)
+        mBinding.root.removeCallbacks(deferredWaveFallback)
         if (searchAdapter.data.size <= 0) {
             showEmpty()
         }
@@ -1047,12 +1037,17 @@ tv.text = s
         val params = DslTabLayout.LayoutParams(-2, -2)
         params.topMargin = 20
         params.bottomMargin = 20
-        textView.setPadding(20, 10, 20, 10)
+        // 选中背景按文字视图的实测高度绘制；垂直内边距用 dp，避免高密度屏上缩成一条。
+        val verticalPadding = resources.getDimensionPixelSize(R.dimen.dp_12)
+        textView.setPadding(20, verticalPadding, 20, verticalPadding)
         textView.layoutParams = params
         return textView
     }
 
     private fun searchResult() {
+        mBinding.root.removeCallbacks(searchWatchdog)
+        mBinding.root.removeCallbacks(deferredWaveFallback)
+        deferredWaveKeys.clear()
         synchronized(searchLock) {
             searchEpoch++
             searchPaused = false
@@ -1066,6 +1061,7 @@ tv.text = s
         searchAdapter.setNewData(ArrayList())
         searchAdapterFilter.setNewData(ArrayList())
         allRunCount.set(0)
+        sourceStart.clear()
         val searchRequestList: MutableList<SourceBean> = ArrayList()
         searchRequestList.addAll(SourceConfigProviders.get().sourceBeanList)
         val home = SourceConfigProviders.get().homeSourceBean
@@ -1083,7 +1079,6 @@ tv.text = s
             }
             siteKey.add(bean.key)
             spNames[bean.name] = bean.key
-            sourceSync[bean.key] = bean.type == 3 // jar/JS 同步通道;HTTP 源结果走异步回调
             allRunCount.incrementAndGet()
         }
         if (siteKey.isNotEmpty()) {
@@ -1091,17 +1086,18 @@ tv.text = s
         }
         // 一轮新搜索:复位翻页记账(各源从第 1 页重新开始)
         resetPagingState()
+        if (siteKey.isEmpty()) {
+            finishSearchRound()
+            return
+        }
         // 整轮看门狗:任何"没人投递批次"的路径都不允许把"搜索中"永久留着(断网 + 某源抛异常即触发)
-        mBinding.root.removeCallbacks(searchWatchdog)
         mBinding.root.postDelayed(searchWatchdog, SEARCH_WATCHDOG_MS)
-        // 分两波投递(见类内"两波投递"注释):第一波快源先行,判慢的源等第一波收尾后单独跑。
+        // 分两波投递:第一波快源先行,判慢的源等第一波收尾后单独跑。
         // allRunCount 记的是全部来源(第一波+第二波),故"全部来源已返回"仍等两波都回完。
-        sourceHealth.beginRound()
         val waves = sourceHealth.split(siteKey)
         deferredWaveKeys = ArrayList(waves.deferred)
         primaryPending = waves.primary.size
         primaryDone = waves.primary.isEmpty()
-        mBinding.root.removeCallbacks(deferredWaveFallback)
         if (!primaryDone) {
             mBinding.root.postDelayed(deferredWaveFallback, PRIMARY_WAVE_FALLBACK_MS)
         }
@@ -1113,18 +1109,16 @@ tv.text = s
         }
     }
 
-    /**
-     * 提交单个源搜索到应用级共享大池;真正发起前校验轮次/暂停,暂停任务进 pending(续跑再派)。
-     * @param isRetry 第二波里对第一波"慢且没出结果"来源的重跑:只补数据上屏,不计入完成态(见 searchData)
-     */
-    private fun launchSearch(key: String, isRetry: Boolean = false) {
+    /** 提交单个源搜索到模块级搜索池；发起前校验轮次/暂停。 */
+    private fun launchSearch(key: String) {
         val epoch = searchEpoch
-        HeavyTaskUtil.getBigTaskExecutorService().execute {
-            launchSearchTask(key, epoch, isRetry)
+        val word = searchTitle ?: ""
+        HeavyTaskUtil.getSearchExecutorService().execute {
+            launchSearchTask(key, word, epoch)
         }
     }
 
-    private fun launchSearchTask(key: String, epoch: Long, isRetry: Boolean) {
+    private fun launchSearchTask(key: String, word: String, epoch: Long) {
         synchronized(searchLock) {
             if (epoch != searchEpoch) return // 新一轮已发起:过期任务自弃(等价旧 shutdownNow)
             if (searchPaused) {
@@ -1133,45 +1127,31 @@ tv.text = s
             }
         }
         val started = SystemClock.elapsedRealtime()
-        sourceStart[key] = started
-        val call = SyncCall(key, isRetry)
-        syncCall.set(call)
+        sourceStart[epoch to key] = started
         try {
-            sourceViewModel.getSearch(key, searchTitle)
-        } catch (_: Exception) {
-        } finally {
-            syncCall.remove()
-        }
-        // 同步返回的来源在这里判定"这一波有没有出结果":
-        // - type3(jar/JS)本身同步;
-        // - HTTP 源(type0/1/4)走 typed 契约时**同样是同步返回**(结果在 getSearch 内直调回来),
-        //   只有回退到旧 HttpClient 路径才异步(那条由 recordSourceCost 记账)。
-        // 原判定只看 sourceSync(type==3),导致 typed HTTP 源既不记耗时也不参与分波 ——
-        // 慢的 HTTP 源永远留在第一波,"别让慢源占住池位"实际没生效。
-        if (call.delivered || sourceSync[key] == true) {
-            sourceHealth.onSourceDone(key, SystemClock.elapsedRealtime() - started, call.delivered)
+            sourceViewModel.getSearch(key, word, epoch)
+        } catch (th: Throwable) {
+            android.util.Log.w("FastSearch", "来源搜索异常: $key", th)
+            // 若回调已经送达，耗时记录已被取走；这里不能再记第二个空批次。
+            if (sourceStart.remove(epoch to key) != null && epoch == searchEpoch) {
+                runOnUiThread { if (epoch == searchEpoch) searchData(null) }
+            }
         }
     }
 
-    /** 异步源(HTTP)批次到达:按发起时刻补记实测耗时,供下一轮排序与分波 */
-    private fun recordSourceCost(key: String) {
-        val started = sourceStart[key] ?: return
-        sourceHealth.onSourceDone(key, SystemClock.elapsedRealtime() - started, true)
+    /** 同步/异步回包按来源和轮次记耗时；过期批次只清理计时。 */
+    private fun recordSourceCost(key: String, epoch: Long) {
+        val started = sourceStart.remove(epoch to key) ?: return
+        if (epoch == searchEpoch) sourceHealth.onSourceDone(key, SystemClock.elapsedRealtime() - started)
     }
 
-    /**
-     * 第一波收尾(或兜底超时)后投第二波:上一轮判慢的源 + 本轮第一波"慢且没出结果"的重跑。
-     * 此时共享池槽位已空出来,慢源只在自己的小批次里互相排队,不再堵住大部队。
-     */
+    /** 第一波收尾(或兜底超时)后投上一轮判慢的源，每源每轮只请求一次。 */
     private fun launchDeferredWave() {
         mBinding.root.removeCallbacks(deferredWaveFallback)
-        val retryKeys = sourceHealth.retryKeys()
-        val keys = LinkedHashSet<String>()
-        keys.addAll(deferredWaveKeys)
-        keys.addAll(retryKeys)
+        val keys = deferredWaveKeys
         deferredWaveKeys = ArrayList()
         for (k in keys) {
-            launchSearch(k, isRetry = retryKeys.contains(k))
+            launchSearch(k)
         }
     }
 
@@ -1229,18 +1209,19 @@ tv.text = s
         }
     }
 
-    private fun searchData(absXml: AbsXml?, isRetry: Boolean = false) {
+    private fun searchData(absXml: AbsXml?) {
+        if (searchFinished) return
         var lastSourceKey = ""
         if ((absXml != null) && (absXml.movie != null) && (absXml.movie.videoList != null) && (absXml.movie.videoList.size > 0)) {
             val data: MutableList<Movie.Video> = ArrayList()
             for (video: Movie.Video in absXml.movie.videoList) {
-                if (!SearchFilter.matches(video.name, searchTitle)) continue
+                if (!SearchFilter.matchesWords(video.name, searchWords)) continue
                 data.add(video)
                 if (!resultVods.containsKey(video.sourceKey)) {
                     resultVods[video.sourceKey] = ArrayList()
                 }
                 resultVods[video.sourceKey]!!.add(video)
-                if (video.sourceKey !== lastSourceKey) { // 添加到最后面并记录最后一个key用于下次判断
+                if (video.sourceKey != lastSourceKey) { // 添加到最后面并记录最后一个key用于下次判断
                     lastSourceKey = addWordAdapterIfNeed(video.sourceKey)
                 }
             }
@@ -1260,7 +1241,6 @@ tv.text = s
             val key = absXml.movie.videoList[0].sourceKey
             paging.recordFirstPage(key, absXml.movie.pagecount)
         }
-        if (isRetry) return // 重试批次只补数据上屏,不参与"全部来源已返回"的记账
         val count = allRunCount.decrementAndGet()
         // 第一波回包计数到位即投第二波:慢源不再压在队首堵住大部队
         if (!primaryDone) {
@@ -1287,7 +1267,7 @@ tv.text = s
         if (!videos.isNullOrEmpty()) {
             val data: MutableList<Movie.Video> = ArrayList()
             for (video: Movie.Video in videos) {
-                if (!SearchFilter.matches(video.name, searchTitle)) continue
+                if (!SearchFilter.matchesWords(video.name, searchWords)) continue
                 data.add(video)
                 if (!resultVods.containsKey(video.sourceKey)) {
                     resultVods[video.sourceKey] = ArrayList()

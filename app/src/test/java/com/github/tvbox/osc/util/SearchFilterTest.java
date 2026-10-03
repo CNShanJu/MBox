@@ -49,4 +49,13 @@ public class SearchFilterTest {
         assertTrue(SearchFilter.matches("Avengers Endgame", " Avengers"));
         assertFalse(SearchFilter.matches("Avengers Endgame", " Endgame Avengers2"));
     }
+
+    @Test
+    public void precomputedWords_matchSameAsDirectQuery() {
+        java.util.List<String> words = SearchFilter.words("  Avengers   Endgame  ");
+        assertTrue(SearchFilter.matchesWords("Avengers Endgame", words));
+        assertFalse(SearchFilter.matchesWords("Avengers Infinity War", words));
+        assertTrue(SearchFilter.matchesWords("任意片名", SearchFilter.words("   ")));
+        assertFalse(SearchFilter.matchesWords("任意片名", SearchFilter.words("")));
+    }
 }

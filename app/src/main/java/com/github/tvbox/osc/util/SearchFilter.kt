@@ -9,16 +9,25 @@ package com.github.tvbox.osc.util
  */
 object SearchFilter {
 
+    private val whitespace = "\\s+".toRegex()
+
+    /** 同一轮搜索只拆一次关键词；空白查询仍匹配任意非空片名。 */
+    @JvmStatic
+    fun words(searchTitle: String?): List<String>? {
+        if (searchTitle.isNullOrEmpty()) return null
+        return searchTitle.trim().split(whitespace).filter { it.isNotEmpty() }
+    }
+
     @JvmStatic
     fun matches(name: String?, searchTitle: String?): Boolean {
-        if (name.isNullOrEmpty() || searchTitle.isNullOrEmpty()) return false
-        val parts = searchTitle.trim().split("\\s+".toRegex())
-        var n = parts.size
-        while (n > 0 && parts[n - 1].isEmpty()) n--
-        if (n == 0) return true // 纯空白查询词:命中全部(与旧实现一致)
-        for (i in 0 until n) {
-            if (parts[i].isEmpty()) continue // 空 token 等价 name.contains("") 恒真
-            if (!name.contains(parts[i])) return false
+        return matchesWords(name, words(searchTitle))
+    }
+
+    @JvmStatic
+    fun matchesWords(name: String?, words: List<String>?): Boolean {
+        if (name.isNullOrEmpty() || words == null) return false
+        for (word in words) {
+            if (!name.contains(word)) return false
         }
         return true
     }

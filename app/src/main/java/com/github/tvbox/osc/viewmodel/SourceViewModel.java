@@ -582,7 +582,7 @@ public class SourceViewModel extends ViewModel {
      * TYPE_SEARCH_RESULT EventBus 投递。回调线程不保证主线程,宿主自行切主线程。
      */
     public interface SearchBatchListener {
-        void onSearchBatch(AbsXml data);
+        void onSearchBatch(String sourceKey, AbsXml data, long epoch);
     }
 
     private volatile SearchBatchListener searchBatchListener;
@@ -592,9 +592,9 @@ public class SourceViewModel extends ViewModel {
         this.searchBatchListener = listener;
     }
 
-    private void deliverSearchBatch(AbsXml data) {
+    private void deliverSearchBatch(String sourceKey, AbsXml data, long epoch) {
         SearchBatchListener listener = searchBatchListener;
-        if (listener != null) listener.onSearchBatch(data);
+        if (listener != null) listener.onSearchBatch(sourceKey, data, epoch);
     }
 
     /**
@@ -604,7 +604,7 @@ public class SourceViewModel extends ViewModel {
      */
     public interface SearchPageBatchListener {
         /** @param sourceKey 来源 key;@param data 该页解析结果(空页/失败为 null);@param page 该页页码(>=2) */
-        void onSearchPageBatch(String sourceKey, AbsXml data, int page);
+        void onSearchPageBatch(String sourceKey, AbsXml data, int page, long epoch);
     }
 
     private volatile SearchPageBatchListener searchPageBatchListener;
@@ -614,14 +614,18 @@ public class SourceViewModel extends ViewModel {
         searchPageBatchListener = listener;
     }
 
-    private void deliverSearchPageBatch(String sourceKey, AbsXml data, int page) {
+    private void deliverSearchPageBatch(String sourceKey, AbsXml data, int page, long epoch) {
         SearchPageBatchListener listener = searchPageBatchListener;
-        if (listener != null) listener.onSearchPageBatch(sourceKey, data, page);
+        if (listener != null) listener.onSearchPageBatch(sourceKey, data, page, epoch);
     }
 
     // searchContent
-    public void getSearch(String sourceKey, String wd) {
+    public void getSearch(String sourceKey, String wd, long epoch) {
         SourceBean sourceBean = sourceConfig.getSource(sourceKey);
+        if (sourceBean == null) {
+            deliverSearchBatch(sourceKey, null, epoch);
+            return;
+        }
         int type = sourceBean.getType();
         if (type == 3) {
             try {
@@ -630,21 +634,23 @@ public class SourceViewModel extends ViewModel {
                         com.github.tvbox.osc.spiderapi.SpiderSearchProviders.get().search(sourceBean.getKey(), wd, false);
                 if (typed != null && typed.movie != null) {
                     absXml(typed, sourceBean.getKey());
-                    deliverSearchBatch(typed);
+                    deliverSearchBatch(sourceKey, typed, epoch);
+                    return;
+                }
+                // 正式 typed 实现已经调用同一 SpiderContentImpl；空结果或失败再走字符串
+                // 通道只会对同一来源、同一关键词重发请求，慢源因此占池位两轮。
+                if (com.github.tvbox.osc.spiderapi.SpiderSearchProviders.isInstalled()) {
+                    deliverSearchBatch(sourceKey, null, epoch);
                     return;
                 }
                 android.util.Log.i("SpiderBridge", "search(typed) 不可用,回退字符串通道: key=" + sourceBean.getKey()
                         + " word=" + wd);
                 String search = com.github.tvbox.osc.spiderapi.SpiderContentProviders.get()
                         .searchContent(sourceBean.getKey(), wd, false);
-                if(!TextUtils.isEmpty(search)){
-                    json(searchResult, search, sourceBean.getKey());
-                } else {
-                    json(searchResult, "", sourceBean.getKey());
-                }
+                deliverSearchBatch(sourceKey, parseSearchPayload(search, sourceKey, 1), epoch);
             } catch (Throwable th) {
                 th.printStackTrace();
-                json(searchResult, "", sourceBean.getKey());
+                deliverSearchBatch(sourceKey, null, epoch);
             }
         } else if (type == 0 || type == 1 || type == 4) {
             // HTTP 源搜索契约化:typed 优先;失败/空结果回退旧 HttpClient 直连(行为兜底)
@@ -657,17 +663,22 @@ public class SourceViewModel extends ViewModel {
             }
             if (typed != null && typed.movie != null) {
                 absXml(typed, sourceBean.getKey());
-                deliverSearchBatch(typed);
+                deliverSearchBatch(sourceKey, typed, epoch);
+                return;
+            }
+            // typed HTTP 已用同一 URL/参数和解析器；空批次不应再发一次异步 GET。
+            if (com.github.tvbox.osc.spiderapi.SpiderSearchProviders.isInstalled()) {
+                deliverSearchBatch(sourceKey, null, epoch);
                 return;
             }
             android.util.Log.i("SpiderBridge", "search(typed/http) 不可用,回退旧路径: key=" + sourceBean.getKey()
                     + " word=" + wd);
-            fetchSearchHttpLegacy(sourceBean, type, wd);
+            fetchSearchHttpLegacy(sourceBean, type, wd, epoch);
         } else {
             // 未支持的源类型:也要投一批"空结果"通知宿主,否则宿主的"全部来源已返回/第一波收尾"
             // 记账永远等不到这一路(原实现只 searchResult.postValue(null),而该 LiveData 已无人观察),
             // 第二波只能干等兜底超时,完成态也一直不落。
-            deliverSearchBatch(null);
+            deliverSearchBatch(sourceKey, null, epoch);
         }
     }
 
@@ -680,10 +691,10 @@ public class SourceViewModel extends ViewModel {
      * type3(JS/JAR)走 [SpiderContentApi#searchContent(String,String,boolean,String)] 重载;
      * type0/1/4 走 HTTP 拼参(与首屏同一套 HttpSourceParams,额外带 pg)。
      */
-    public void getSearchPaged(final String sourceKey, final String wd, final int page) {
+    public void getSearchPaged(final String sourceKey, final String wd, final int page, final long epoch) {
         final SourceBean sourceBean = sourceConfig.getSource(sourceKey);
         if (sourceBean == null || page <= 1 || TextUtils.isEmpty(wd)) {
-            deliverSearchPageBatch(sourceKey, null, page);
+            deliverSearchPageBatch(sourceKey, null, page, epoch);
             return;
         }
         final int type = sourceBean.getType();
@@ -691,34 +702,34 @@ public class SourceViewModel extends ViewModel {
             try {
                 String search = com.github.tvbox.osc.spiderapi.SpiderContentProviders.get()
                         .searchContent(sourceBean.getKey(), wd, false, String.valueOf(page));
-                deliverSearchPageBatch(sourceKey, parseSearchPayload(search, sourceBean.getKey(), 1), page);
+                deliverSearchPageBatch(sourceKey, parseSearchPayload(search, sourceBean.getKey(), 1), page, epoch);
             } catch (Throwable th) {
                 th.printStackTrace();
-                deliverSearchPageBatch(sourceKey, null, page);
+                deliverSearchPageBatch(sourceKey, null, page, epoch);
             }
             return;
         }
         if (type == 0 || type == 1 || type == 4) {
             Map<String, String> searchParams = com.github.tvbox.osc.spiderapi.HttpSourceParams.search(type, wd, false);
             if (searchParams == null) {
-                deliverSearchPageBatch(sourceKey, null, page);
+                deliverSearchPageBatch(sourceKey, null, page, epoch);
                 return;
             }
             searchParams.put("pg", String.valueOf(page));
             HttpClient.get(sourceBean.getApi(), searchParams, null, "search", new HCallBack() {
                 @Override
                 public void onSuccess(String content) {
-                    deliverSearchPageBatch(sourceKey, parseSearchPayload(content, sourceBean.getKey(), type), page);
+                    deliverSearchPageBatch(sourceKey, parseSearchPayload(content, sourceBean.getKey(), type), page, epoch);
                 }
 
                 @Override
                 public void onError(Throwable e) {
-                    deliverSearchPageBatch(sourceKey, null, page);
+                    deliverSearchPageBatch(sourceKey, null, page, epoch);
                 }
             });
             return;
         }
-        deliverSearchPageBatch(sourceKey, null, page);
+        deliverSearchPageBatch(sourceKey, null, page, epoch);
     }
 
     /** 搜索响应串 → AbsXml(type0 走 XML 解析,其余走 JSON);空内容/解析失败返回 null */
@@ -734,28 +745,22 @@ public class SourceViewModel extends ViewModel {
     }
 
     /** type0/1/4 聚合搜索旧路径:HttpClient 直连拼参(typed 失败时的行为兜底,与原实现逐字一致) */
-    private void fetchSearchHttpLegacy(final SourceBean sourceBean, final int type, final String wd) {
+    private void fetchSearchHttpLegacy(final SourceBean sourceBean, final int type, final String wd, final long epoch) {
         Map<String, String> searchParams = com.github.tvbox.osc.spiderapi.HttpSourceParams.search(type, wd, false);
         if (searchParams == null) {
-            searchResult.postValue(null);
+            deliverSearchBatch(sourceBean.getKey(), null, epoch);
             return;
         }
         HttpClient.get(sourceBean.getApi(), searchParams, null, "search", new HCallBack() {
                     @Override
                     public void onSuccess(String content) {
-                        if (type == 0) {
-                            String xml = content;
-                            xml(searchResult, xml, sourceBean.getKey());
-                        } else {
-                            String json = content;
-                            json(searchResult, json, sourceBean.getKey());
-                        }
+                        deliverSearchBatch(sourceBean.getKey(),
+                                parseSearchPayload(content, sourceBean.getKey(), type), epoch);
                     }
 
                     @Override
                     public void onError(Throwable e) {
-                        // searchResult.postValue(null);
-                        deliverSearchBatch(null);
+                        deliverSearchBatch(sourceBean.getKey(), null, epoch);
                     }
                 });
     }
@@ -1026,9 +1031,7 @@ public class SourceViewModel extends ViewModel {
 
     /** 解析结果发布(原 xml/json 尾部副作用统一;data=null 表示解析失败,按原语义发布 null) */
     private void publishDetailPayload(MutableLiveData<AbsXml> result, AbsXml data) {
-        if (searchResult == result) {
-            deliverSearchBatch(data);
-        } else if (quickSearchResult == result) {
+        if (quickSearchResult == result) {
             deliverQuickSearchBatch(data);
         } else if (result != null) {
             if (result == detailResult) {

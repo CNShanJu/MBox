@@ -13,8 +13,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 聚合搜索「来源快慢画像 + 本轮分波」单测(纯 JVM,不碰真机):
- * 覆盖页面直接依赖的语义 —— 无画像不推迟、慢源下一轮进第二波、快源按实测耗时排前、
- * 慢而空手归来的才单独重跑(慢但有结果的不能重跑,否则重复上屏)。
+ * 覆盖页面直接依赖的语义 —— 无画像不推迟、慢源下一轮进第二波、快源按实测耗时排前。
  */
 public class SearchSourceHealthTest {
 
@@ -38,9 +37,8 @@ public class SearchSourceHealthTest {
     @Test
     public void slowSource_movesToDeferredNextRound() {
         SearchSourceHealth health = new SearchSourceHealth();
-        health.beginRound();
-        health.onSourceDone(SLOW, 15040L, false);
-        health.onSourceDone(FAST, 380L, true);
+        health.onSourceDone(SLOW, 15040L);
+        health.onSourceDone(FAST, 380L);
 
         SearchSourceHealth.Waves waves = health.split(Arrays.asList(SLOW, FAST, NEW));
         assertEquals(Collections.singletonList(SLOW), waves.getDeferred());
@@ -52,9 +50,9 @@ public class SearchSourceHealthTest {
     @Test
     public void primary_ordersKnownFastFirstThenUnknown() {
         SearchSourceHealth health = new SearchSourceHealth();
-        health.onSourceDone("c", 900L, true);
-        health.onSourceDone("a", 100L, true);
-        health.onSourceDone("b", 500L, true);
+        health.onSourceDone("c", 900L);
+        health.onSourceDone("a", 100L);
+        health.onSourceDone("b", 500L);
 
         // n1/n2 没画像:排在有画像的之后,且保持原序
         SearchSourceHealth.Waves waves = health.split(Arrays.asList("c", NEW, "a", "n2", "b"));
@@ -65,47 +63,45 @@ public class SearchSourceHealthTest {
     @Test
     public void recoveredSource_returnsToPrimary() {
         SearchSourceHealth health = new SearchSourceHealth();
-        health.onSourceDone(SLOW, 9000L, false);
+        health.onSourceDone(SLOW, 9000L);
         assertTrue(health.isSlow(SLOW));
 
-        health.onSourceDone(SLOW, 420L, true);
+        health.onSourceDone(SLOW, 420L);
         assertFalse(health.isSlow(SLOW));
         assertEquals(420L, health.costOf(SLOW));
         assertTrue(health.split(Collections.singletonList(SLOW)).getDeferred().isEmpty());
     }
 
-    /** 慢且空手而归 → 本轮第二波单独重跑;慢但带回了结果 → 不重跑(否则同一源重复上屏) */
+    /** 一轮内即便慢源没有结果，画像也只在下一轮生效；页面每源只请求一次。 */
     @Test
-    public void retryOnlySlowSourcesWithoutResult() {
+    public void slowSource_isDeferredOnNextSearch() {
         SearchSourceHealth health = new SearchSourceHealth();
-        health.beginRound();
-        health.onSourceDone(SLOW, 15010L, false);
-        health.onSourceDone(SLOW_HIT, 7200L, true);
-        health.onSourceDone(FAST, 200L, false);
+        health.onSourceDone(SLOW, 15010L);
+        health.onSourceDone(SLOW_HIT, 7200L);
+        health.onSourceDone(FAST, 200L);
 
-        assertEquals(Collections.singletonList(SLOW), health.retryKeys());
+        assertEquals(Arrays.asList(SLOW_HIT, SLOW),
+                health.split(Arrays.asList(FAST, SLOW, SLOW_HIT)).getDeferred());
     }
 
-    /** 新的一轮只清本轮重试名单,画像留着(否则每轮都从零开始,慢源又会堵一次) */
+    /** 多轮搜索保留画像，避免慢源每次都排在队首。 */
     @Test
-    public void beginRound_clearsRetryButKeepsProfile() {
+    public void profilePersistsAcrossSearches() {
         SearchSourceHealth health = new SearchSourceHealth();
-        health.beginRound();
-        health.onSourceDone(SLOW, 15000L, false);
-        assertEquals(Collections.singletonList(SLOW), health.retryKeys());
+        health.onSourceDone(SLOW, 15000L);
 
-        health.beginRound();
-        assertTrue(health.retryKeys().isEmpty());
         assertTrue(health.isSlow(SLOW));
+        assertEquals(Collections.singletonList(SLOW),
+                health.split(Arrays.asList(SLOW, FAST)).getDeferred());
     }
 
     /** 空 key / 非法耗时(负数)不记账,免得把垃圾数据当画像 */
     @Test
     public void blankKeyAndBadCost_ignored() {
         SearchSourceHealth health = new SearchSourceHealth();
-        health.onSourceDone(null, 9000L, false);
-        health.onSourceDone("  ", 9000L, false);
-        health.onSourceDone(SLOW, -1L, false);
+        health.onSourceDone(null, 9000L);
+        health.onSourceDone("  ", 9000L);
+        health.onSourceDone(SLOW, -1L);
 
         assertFalse(health.isSlow(SLOW));
         assertTrue(health.split(Arrays.asList(null, " ", SLOW)).getDeferred().isEmpty());
@@ -115,12 +111,10 @@ public class SearchSourceHealthTest {
     @Test
     public void customThreshold_isRespected() {
         SearchSourceHealth health = new SearchSourceHealth(1000L);
-        health.onSourceDone(SLOW, 1200L, true);
+        health.onSourceDone(SLOW, 1200L);
         assertTrue(health.isSlow(SLOW));
-        health.onSourceDone(FAST, 900L, true);
+        health.onSourceDone(FAST, 900L);
         assertFalse(health.isSlow(FAST));
-        // 判慢与"要不要重跑"都看同一阈值
-        assertEquals(Collections.emptyList(), health.retryKeys());
     }
 
     /**
@@ -138,7 +132,7 @@ public class SearchSourceHealthTest {
             pool[t] = new Thread(() -> {
                 try {
                     for (int i = 0; i < 500; i++) {
-                        health.onSourceDone("site_" + id, id % 2 == 0 ? 9000L : 100L, i % 3 != 0);
+                        health.onSourceDone("site_" + id, id % 2 == 0 ? 9000L : 100L);
                         health.split(Arrays.asList("site_0", "site_1", "site_2", "site_3"));
                         health.isSlow("site_" + id);
                         health.costOf("site_" + (id + 1) % threads);

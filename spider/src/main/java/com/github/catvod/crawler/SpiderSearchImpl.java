@@ -58,7 +58,7 @@ public final class SpiderSearchImpl implements SpiderSearchApi {
                 return null;
             }
             AbsXml xml = AbsXmlParser.parseJson(content, sourceKey);
-            if (xml == null || xml.movie == null || xml.movie.videoList == null || xml.movie.videoList.isEmpty()) {
+            if (xml == null || xml.movie == null || xml.movie.videoList == null) {
                 android.util.Log.w("SpiderBridge", "search(typed): 解析为空/无列表 key=" + sourceKey
                         + " word=" + word + " quick=" + quick);
                 return null;
@@ -89,7 +89,7 @@ public final class SpiderSearchImpl implements SpiderSearchApi {
             AbsXml xml = type == 0
                     ? AbsXmlParser.parseXml(content, sb.getKey())
                     : AbsXmlParser.parseJson(content, sb.getKey());
-            if (xml == null || xml.movie == null || xml.movie.videoList == null || xml.movie.videoList.isEmpty()) {
+            if (xml == null || xml.movie == null || xml.movie.videoList == null) {
                 android.util.Log.w("SpiderBridge", "search(typed/http): 解析为空/无列表 key=" + sb.getKey()
                         + " word=" + word + " quick=" + quick);
                 return null;

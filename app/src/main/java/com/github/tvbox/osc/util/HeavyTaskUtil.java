@@ -19,6 +19,10 @@ public class HeavyTaskUtil {
     private static ExecutorService executorService = new ThreadPoolExecutor(CORE_POOL_SIZE, 6,
             10L, TimeUnit.SECONDS, taskQueue);
 
+    /** 搜索会同步等待各资源站网络响应，独立的模块级有界并发池避免慢源占满通用任务池。 */
+    private static final ExecutorService searchExecutorService = new ThreadPoolExecutor(
+            12, 12, 30L, TimeUnit.SECONDS, new LinkedBlockingDeque<>(8192));
+
     /** 应用级共享串行执行器:适合"必须按提交顺序逐个执行"的后台小任务(如 SP 增量写) */
     private static final ExecutorService serialExecutorService = Executors.newSingleThreadExecutor();
 
@@ -48,6 +52,10 @@ public class HeavyTaskUtil {
 
     public static ExecutorService getSerialExecutorService() {
         return serialExecutorService;
+    }
+
+    public static ExecutorService getSearchExecutorService() {
+        return searchExecutorService;
     }
 
     /** 图片解码专用池(Picasso/Glide 等图片库 executor 用;与搜索/爬虫共享池隔离) */
