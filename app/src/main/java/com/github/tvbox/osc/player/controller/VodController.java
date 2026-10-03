@@ -975,8 +975,7 @@ public class VodController extends BaseController implements PlaybackSettingsCon
                 listener.playNext(true);
             }
         }
-        mCurrentTime.setText(PlayerUtils.stringForTime(position));
-        mTotalTime.setText(PlayerUtils.stringForTime(duration));
+        updateProgressTimeLabels(mCurrentTime, mTotalTime, duration, position);
         if (duration > 0) {
             mSeekBar.setEnabled(true);
             int pos = (int) (position * 1.0 / duration * mSeekBar.getMax());

@@ -1012,8 +1012,7 @@ public class LocalVideoController extends BaseController implements PlaybackSett
                 listener.playNext(true);
             }
         }
-        mCurrentTime.setText(PlayerUtils.stringForTime(position));
-        mTotalTime.setText(PlayerUtils.stringForTime(duration));
+        updateProgressTimeLabels(mCurrentTime, mTotalTime, duration, position);
         if (fromLongPress){
             LogUtils.d("当前获取时间:"+PlayerUtils.stringForTime(duration));
             LogUtils.d("当前播放状态:"+videoPlayState);

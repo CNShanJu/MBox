@@ -114,19 +114,20 @@ public abstract class BaseController extends BaseVideoController implements Gest
     private boolean mSeeking;
     private boolean mPausedBeforeSeeking;
     private boolean mSuppressPlayFeedback;
+    private int mReservedProgressTimeChars = -1;
     private static final long PLAY_FEEDBACK_DURATION_MS = 2500L;
     private final Runnable mHidePlayFeedback = () -> {
         if (mCenterPlaybackStatus != null && mCurPlayState != VideoView.STATE_PAUSED) {
             mCenterPlaybackStatus.setVisibility(GONE);
         }
     };
-
     private final DoubleTapSeekPolicy mDoubleTapSeek = new DoubleTapSeekPolicy();
     private DoubleTapSeekFeedbackView mDoubleTapSeekFeedback;
     private final Runnable mHideDoubleTapSeekFeedback = () -> {
         if (mDoubleTapSeekFeedback != null) mDoubleTapSeekFeedback.hide();
         mDoubleTapSeek.reset();
     };
+
     @Override
     protected void initView() {
         super.initView();
@@ -138,8 +139,8 @@ public abstract class BaseController extends BaseVideoController implements Gest
         mNetSpeed = findViewWithTag("play_load_net_speed"); // 直播布局无此 tag → null,仅控 loading
         mCenterPlaybackStatus = findViewById(R.id.center_playback_status);
         mCenterPlaybackIcon = findViewById(R.id.center_playback_icon);
-        if (mCenterPlaybackStatus != null) {
         mDoubleTapSeekFeedback = findViewById(R.id.double_tap_seek_feedback);
+        if (mCenterPlaybackStatus != null) {
             mCenterPlaybackStatus.setOnClickListener(v -> {
                 if (mControlWrapper != null && isInPlaybackState() && !isLocked() && !mSeeking) {
                     togglePlay();
@@ -248,8 +249,8 @@ public abstract class BaseController extends BaseVideoController implements Gest
     private void showCenterPlaybackStatus(boolean playingFeedback) {
         if (mCenterPlaybackStatus == null || mCenterPlaybackIcon == null) return;
         mHandler.removeCallbacks(mHidePlayFeedback);
-        mCenterPlaybackIcon.setImageResource(playingFeedback ? R.drawable.ic_play : R.drawable.ic_pause);
-        mCenterPlaybackStatus.setContentDescription(playingFeedback ? "播放中" : "继续播放");
+        mCenterPlaybackIcon.setImageResource(playingFeedback ? R.drawable.ic_pause : R.drawable.ic_play);
+        mCenterPlaybackStatus.setContentDescription(playingFeedback ? "暂停播放" : "继续播放");
         mCenterPlaybackStatus.setVisibility(VISIBLE);
         if (playingFeedback) mHandler.postDelayed(mHidePlayFeedback, PLAY_FEEDBACK_DURATION_MS);
     }
@@ -259,9 +260,31 @@ public abstract class BaseController extends BaseVideoController implements Gest
         super.setProgress(duration, position);
     }
 
+    /** Reserve the longest displayed timestamp so changing digits cannot resize the seek bar. */
+    protected void updateProgressTimeLabels(TextView currentTime, TextView totalTime, int duration, int position) {
+        String currentText = PlayerUtils.stringForTime(position);
+        String totalText = PlayerUtils.stringForTime(duration);
+        String widthSample = duration > 0 ? totalText : "0:00:00";
+        int reservedChars = Math.max(mReservedProgressTimeChars,
+                Math.max(widthSample.length(), currentText.length()));
+        if (mReservedProgressTimeChars != reservedChars) {
+            float characterWidth = currentTime.getPaint().measureText("0");
+            int width = (int) Math.ceil(characterWidth * reservedChars)
+                    + currentTime.getCompoundPaddingLeft() + currentTime.getCompoundPaddingRight();
+            currentTime.setMinWidth(width);
+            mReservedProgressTimeChars = reservedChars;
+        }
+        currentTime.setText(currentText);
+        totalTime.setText(totalText);
+    }
+
     @Override
     protected void onPlayStateChanged(int playState) {
         super.onPlayStateChanged(playState);
+        if (playState == VideoView.STATE_IDLE || playState == VideoView.STATE_PREPARING
+                || playState == VideoView.STATE_ERROR || playState == VideoView.STATE_PLAYBACK_COMPLETED) {
+            clearDoubleTapSeekFeedback();
+        }
         switch (playState) {
             case VideoView.STATE_PAUSED:
                 mWasPaused = true;
@@ -281,10 +304,6 @@ public abstract class BaseController extends BaseVideoController implements Gest
             case VideoView.STATE_BUFFERED:
                 if (mWasPaused && !mSeeking) showCenterPlaybackStatus(false);
                 break;
-        if (playState == VideoView.STATE_IDLE || playState == VideoView.STATE_PREPARING
-                || playState == VideoView.STATE_ERROR || playState == VideoView.STATE_PLAYBACK_COMPLETED) {
-            clearDoubleTapSeekFeedback();
-        }
             case VideoView.STATE_IDLE:
             case VideoView.STATE_PREPARING:
             case VideoView.STATE_PREPARED:
@@ -424,25 +443,6 @@ public abstract class BaseController extends BaseVideoController implements Gest
         return true;
     }
 
-    /**
-     * 在屏幕上滑动
-     */
-    @Override
-    public boolean onScroll(MotionEvent e1, MotionEvent e2, float distanceX, float distanceY) {
-        if (!isInPlaybackState() //不处于播放状态
-                || !mIsGestureEnabled //关闭了手势
-                || !mCanSlide //关闭了滑动手势
-                || isLocked() //锁住了屏幕
-                || PlayerUtils.isEdge(this, e1)) //处于控制器边沿
-            return true;
-        float deltaX = e1.getX() - e2.getX();
-        float deltaY = e1.getY() - e2.getY();
-        if (mFirstTouch) {
-            mChangePosition = Math.abs(distanceX) >= Math.abs(distanceY);
-            if (!mChangePosition) {
-                //半屏宽度
-                float halfScreen = getWidth() / 2f;
-                if (e1.getX() > halfScreen) {
     /** 按播放器自身尺寸命中左右曲边区域；中央返回 false，由原有双击暂停逻辑接管。 */
     protected final boolean handleDoubleTapSeek(MotionEvent event, View... controls) {
         for (View control : controls) {
@@ -480,6 +480,25 @@ public abstract class BaseController extends BaseVideoController implements Gest
         mHideDoubleTapSeekFeedback.run();
     }
 
+    /**
+     * 在屏幕上滑动
+     */
+    @Override
+    public boolean onScroll(MotionEvent e1, MotionEvent e2, float distanceX, float distanceY) {
+        if (!isInPlaybackState() //不处于播放状态
+                || !mIsGestureEnabled //关闭了手势
+                || !mCanSlide //关闭了滑动手势
+                || isLocked() //锁住了屏幕
+                || PlayerUtils.isEdge(this, e1)) //处于控制器边沿
+            return true;
+        float deltaX = e1.getX() - e2.getX();
+        float deltaY = e1.getY() - e2.getY();
+        if (mFirstTouch) {
+            mChangePosition = Math.abs(distanceX) >= Math.abs(distanceY);
+            if (!mChangePosition) {
+                //半屏宽度
+                float halfScreen = getWidth() / 2f;
+                if (e1.getX() > halfScreen) {
                     mChangeVolume = true;
                 } else {
                     mChangeBrightness = true;
@@ -639,6 +658,9 @@ public abstract class BaseController extends BaseVideoController implements Gest
 
     @Override
     public boolean onDoubleTapEvent(MotionEvent e) {
+        if (e.getActionMasked() == MotionEvent.ACTION_DOWN && mDoubleTapSeekFeedback != null) {
+            mDoubleTapSeekFeedback.updateTouch(e.getX(), e.getY());
+        }
         return false;
     }
 
@@ -652,6 +674,3 @@ public abstract class BaseController extends BaseVideoController implements Gest
         return false;
     }
 }
-        if (e.getActionMasked() == MotionEvent.ACTION_DOWN && mDoubleTapSeekFeedback != null) {
-            mDoubleTapSeekFeedback.updateTouch(e.getX(), e.getY());
-        }

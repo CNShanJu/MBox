@@ -271,6 +271,8 @@
                 android:id="@+id/curr_time"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:gravity="end|center_vertical"
                 android:paddingEnd="@dimen/dp_10"
                 android:paddingRight="@dimen/dp_10"
                 android:text="00:00"
@@ -300,6 +302,7 @@
                 android:id="@+id/total_time"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
+                android:fontFamily="monospace"
                 android:paddingStart="@dimen/dp_10"
                 android:paddingLeft="@dimen/dp_10"
                 android:text="00:00"
@@ -644,7 +647,7 @@
             android:layout_height="match_parent"
             android:padding="18dp"
             android:scaleType="fitCenter"
-            android:src="@drawable/ic_pause" />
+            android:src="@drawable/ic_play" />
     </com.lihang.ShadowLayout>
 
     <TextView
