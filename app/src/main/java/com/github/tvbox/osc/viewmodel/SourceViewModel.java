@@ -1,7 +1,8 @@
 package com.github.tvbox.osc.viewmodel;
 
+import android.os.Handler;
+import android.os.Looper;
 import android.text.TextUtils;
-
 import android.util.Base64;
 import androidx.lifecycle.MutableLiveData;
 import androidx.lifecycle.ViewModel;
@@ -45,6 +46,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * @author pj567
@@ -72,6 +74,24 @@ public class SourceViewModel extends ViewModel {
 
     /** 源配置元信息契约(源注册表/首页源/vip 解析旗标;不再直读 :spider 的 ApiConfig) */
     private final SourceConfigApi sourceConfig;
+    /** 首页源可能在旧请求返回前被切换；后台解析完成后只发布最新一轮。 */
+    private final AtomicInteger homeSortEpoch = new AtomicInteger();
+    private final Handler homeSortMain = new Handler(Looper.getMainLooper());
+    private final AtomicInteger listEpoch = new AtomicInteger();
+    private final Handler listMain = new Handler(Looper.getMainLooper());
+
+    private void publishHomeSortResult(int epoch, AbsSortXml result) {
+        // 排队期间也可能切换源；在主线程真正投递 LiveData 时再次确认轮次。
+        homeSortMain.post(() -> {
+            if (homeSortEpoch.get() == epoch) sortResult.setValue(result);
+        });
+    }
+
+    private void publishListResult(int epoch, AbsXml result) {
+        listMain.post(() -> {
+            if (listEpoch.get() == epoch) listResult.setValue(result);
+        });
+    }
 
     /**
      * 按源分道提交爬虫任务:同一 sourceKey 恒定同一单线程道(串行,保护 quickjs 上下文/jar 实例),
@@ -84,15 +104,16 @@ public class SourceViewModel extends ViewModel {
 
     // homeContent
     public void getSort(String sourceKey) {
+        final int epoch = homeSortEpoch.incrementAndGet();
         if (sourceKey == null) {
-            sortResult.postValue(null);
+            publishHomeSortResult(epoch, null);
             return;
         }
         SourceBean sourceBean = sourceConfig.getSource(sourceKey);
         if (sourceBean == null) {
             // 源不存在(订阅刚被换掉/删除):原来直接 sourceBean.getType() 抛 NPE →
             // 首页永远收不到"本轮结束" → loading 一直转(与 getDetail 同一防御)
-            sortResult.postValue(null);
+            publishHomeSortResult(epoch, null);
             return;
         }
         int type = sourceBean.getType();
@@ -159,13 +180,13 @@ public class SourceViewModel extends ViewModel {
                                 }
                             }
                         }
-                        publishHomeSort(sourceBean, sortXml, embedded);
+                        publishHomeSort(sourceBean, sortXml, embedded, epoch);
                     } catch (Throwable th) {
                         // 每条路径都必须让首页收到"本轮结束"(与 getList 同一教训):
                         // 原来只 printStackTrace,源抛异常/网络被快速失败时 sortResult 永不发射 →
                         // 首屏 loading 一直转(离线冷启动 + 从"网络不可用"页返回就是这个现象)
                         th.printStackTrace();
-                        sortResult.postValue(null);
+                        publishHomeSortResult(epoch, null);
                     } finally {
                         android.util.Log.i("SpiderTrace", "[首页] " + sourceBean.getName()
                                 + " homeContent 结束 耗时=" + (System.currentTimeMillis() - traceStart)
@@ -178,35 +199,35 @@ public class SourceViewModel extends ViewModel {
             HttpClient.get(sourceBean.getApi(), null, sourceBean.getKey() + "_sort", new HCallBack() {
                         @Override
                         public void onSuccess(String content) {
-                            AbsSortXml sortXml = null;
-                            if (type == 0) {
-                                String xml = content;
-                                sortXml = sortXml(xml);
-                            } else if (type == 1) {
-                                String json = content;
-                                sortXml = sortJson(json);
-                            }
-                            if (sortXml != null && SystemConfig.getHomeRec() == 1 && sortXml.list != null && sortXml.list.videoList != null && sortXml.list.videoList.size() > 0) {
-                                ArrayList<String> ids = new ArrayList<>();
-                                for (Movie.Video vod : sortXml.list.videoList) {
-                                    ids.add(vod.id);
-                                }
-                                AbsSortXml finalSortXml = sortXml;
-                                getHomeRecList(sourceBean, ids, new HomeRecCallback() {
-                                    @Override
-                                    public void done(List<Movie.Video> videos) {
-                                        finalSortXml.videoList = videos;
-                                        sortResult.postValue(finalSortXml);
+                            // HttpClient 在主线程回调；XML/JSON 解析不能占住开屏最后几帧。
+                            final boolean homeRecEnabled = SystemConfig.getHomeRec() == 1;
+                            HeavyTaskUtil.executeBigTask(() -> {
+                                if (homeSortEpoch.get() != epoch) return;
+                                try {
+                                    AbsSortXml sortXml = type == 0 ? sortXml(content) : sortJson(content);
+                                    if (homeSortEpoch.get() != epoch) return;
+                                    if (sortXml != null && homeRecEnabled && sortXml.list != null
+                                            && sortXml.list.videoList != null && !sortXml.list.videoList.isEmpty()) {
+                                        ArrayList<String> ids = new ArrayList<>();
+                                        for (Movie.Video vod : sortXml.list.videoList) ids.add(vod.id);
+                                        AbsSortXml finalSortXml = sortXml;
+                                        getHomeRecList(sourceBean, ids, videos -> {
+                                            finalSortXml.videoList = videos;
+                                            publishHomeSortResult(epoch, finalSortXml);
+                                        });
+                                    } else {
+                                        publishHomeSortResult(epoch, sortXml);
                                     }
-                                });
-                            } else {
-                                sortResult.postValue(sortXml);
-                            }
+                                } catch (Throwable th) {
+                                    th.printStackTrace();
+                                    publishHomeSortResult(epoch, null);
+                                }
+                            });
                         }
 
                         @Override
                         public void onError(Throwable e) {
-                            sortResult.postValue(null);
+                            publishHomeSortResult(epoch, null);
                         }
                     });
         }else if (type == 4) {
@@ -215,47 +236,53 @@ public class SourceViewModel extends ViewModel {
             HttpClient.get(sourceBean.getApi(), sortParams, null, sourceBean.getKey() + "_sort", new HCallBack() {
                     @Override
                     public void onSuccess(String sortJson) {
-                        if (sortJson != null) {
-                            AbsSortXml sortXml = sortJson(sortJson);
-                            if (sortXml != null && SystemConfig.getHomeRec() == 1) {
-                                AbsXml absXml = json(null, sortJson, sourceBean.getKey());
-                                if (absXml != null && absXml.movie != null && absXml.movie.videoList != null && absXml.movie.videoList.size() > 0) {
-                                    sortXml.videoList = absXml.movie.videoList;
-                                    sortResult.postValue(sortXml);
-                                } else {
-                                    getHomeRecList(sourceBean, null, new HomeRecCallback() {
-                                        @Override
-                                        public void done(List<Movie.Video> videos) {
+                        final boolean homeRecEnabled = SystemConfig.getHomeRec() == 1;
+                        HeavyTaskUtil.executeBigTask(() -> {
+                            if (homeSortEpoch.get() != epoch) return;
+                            try {
+                                AbsSortXml sortXml = sortJson == null ? null : sortJson(sortJson);
+                                if (homeSortEpoch.get() != epoch) return;
+                                if (sortXml != null && homeRecEnabled) {
+                                    AbsXml absXml = json(null, sortJson, sourceBean.getKey());
+                                    if (absXml != null && absXml.movie != null && absXml.movie.videoList != null
+                                            && !absXml.movie.videoList.isEmpty()) {
+                                        sortXml.videoList = absXml.movie.videoList;
+                                        publishHomeSortResult(epoch, sortXml);
+                                    } else {
+                                        getHomeRecList(sourceBean, null, videos -> {
                                             sortXml.videoList = videos;
-                                            sortResult.postValue(sortXml);
-                                        }
-                                    });
+                                            publishHomeSortResult(epoch, sortXml);
+                                        });
+                                    }
+                                } else {
+                                    publishHomeSortResult(epoch, sortXml);
                                 }
-                            } else {
-                                sortResult.postValue(sortXml);
+                            } catch (Throwable th) {
+                                th.printStackTrace();
+                                publishHomeSortResult(epoch, null);
                             }
-                        } else {
-                            sortResult.postValue(null);
-                        }
+                        });
                     }
 
                     @Override
                     public void onError(Throwable e) {
-                        sortResult.postValue(null);
+                        publishHomeSortResult(epoch, null);
                     }
                 });
         } else {
-            sortResult.postValue(null);
+            publishHomeSortResult(epoch, null);
         }
     }
     // categoryContent
     public void getList(MovieSort.SortData sortData, int page) {
+        final int epoch = listEpoch.incrementAndGet();
         SourceBean homeSourceBean = sourceConfig.getHomeSourceBean();
         int type = homeSourceBean.getType();
         if (type == 3) {
             spExecute(homeSourceBean.getKey(), new Runnable() {
                 @Override
                 public void run() {
+                    if (listEpoch.get() != epoch) return;
                     try {
                         // type3 的强类型实现和旧字符串通道最终都调用同一个爬虫、同一个解析器。
                         // 失败后再次回退只会重复请求该源（尤其会让异常的分类接口再抛一次）。
@@ -264,15 +291,15 @@ public class SourceViewModel extends ViewModel {
                                         homeSourceBean.getKey(), sortData.id, page + "", true, sortData.filterSelect);
                         if (typed != null && typed.movie != null) {
                             absXml(typed, homeSourceBean.getKey());
-                            listResult.postValue(typed);
+                            publishListResult(epoch, typed);
                         } else {
-                            listResult.postValue(null);
+                            publishListResult(epoch, null);
                         }
                     } catch (Throwable th) {
                         // 异常也必须收尾，避免分类页的加载动画一直盖住列表。
                         LogStore.fail(Category.SUBSCRIPTION, "分类加载异常: " + homeSourceBean.getName()
                                 + " 第" + page + "页, " + th);
-                        listResult.postValue(null);
+                        publishListResult(epoch, null);
                     }
                 }
             });
@@ -283,6 +310,7 @@ public class SourceViewModel extends ViewModel {
             spExecute(homeSourceBean.getKey(), new Runnable() {
                 @Override
                 public void run() {
+                    if (listEpoch.get() != epoch) return;
                     com.github.tvbox.osc.bean.AbsXml typed = null;
                     try {
                         typed = com.github.tvbox.osc.spiderapi.SpiderHomeProviders.get().category(
@@ -293,28 +321,29 @@ public class SourceViewModel extends ViewModel {
                     }
                     if (typed != null && typed.movie != null) {
                         absXml(typed, homeSourceBean.getKey());
-                        listResult.postValue(typed);
+                        publishListResult(epoch, typed);
                         return;
                     }
                     android.util.Log.i("SpiderBridge", "category(typed/http) 不可用,回退旧路径: key="
                             + homeSourceBean.getKey() + " tid=" + finalSortData.id + " pg=" + finalPage);
                     try {
-                        fetchListHttpLegacy(homeSourceBean, type, finalSortData, finalPage);
+                        if (listEpoch.get() != epoch) return;
+                        fetchListHttpLegacy(homeSourceBean, type, finalSortData, finalPage, epoch);
                     } catch (Throwable th) {
                         // 兜底:回退路径自身也炸时同样要收尾,别让调用方一直等
                         th.printStackTrace();
-                        listResult.postValue(null);
+                        publishListResult(epoch, null);
                     }
                 }
             });
         } else {
-            listResult.postValue(null);
+            publishListResult(epoch, null);
         }
     }
 
     /** type0/1/4 分类列表旧路径:HttpClient 直连拼参(typed 失败时的行为兜底,与原实现逐字一致) */
     private void fetchListHttpLegacy(final SourceBean homeSourceBean, final int type,
-                                     final MovieSort.SortData sortData, final int page) {
+                                     final MovieSort.SortData sortData, final int page, final int epoch) {
         if (type == 0 || type == 1) {
             Map<String, String> listParams = new HashMap<>();
             listParams.put("ac", type == 0 ? "videolist" : "detail");
@@ -330,18 +359,13 @@ public class SourceViewModel extends ViewModel {
 
                         @Override
                         public void onSuccess(String content) {
-                            if (type == 0) {
-                                String xml = content;
-                                xml(listResult, xml, homeSourceBean.getKey());
-                            } else {
-                                String json = content;
-                                json(listResult, json, homeSourceBean.getKey());
-                            }
+                            parseListHttpResponse(epoch, content, type == 0, false,
+                                    homeSourceBean.getKey());
                         }
 
                         @Override
                         public void onError(Throwable e) {
-                            listResult.postValue(null);
+                            publishListResult(epoch, null);
                         }
                     });
         } else if (type == 4) {
@@ -366,18 +390,36 @@ public class SourceViewModel extends ViewModel {
             HttpClient.get(homeSourceBean.getApi(), listExtParams, null, homeSourceBean.getApi(), new HCallBack() {
                     @Override
                     public void onSuccess(String json) {
-                        LOG.i(json);
-                        json(listResult, json, homeSourceBean.getKey());
+                        parseListHttpResponse(epoch, json, false, true,
+                                homeSourceBean.getKey());
                     }
 
                     @Override
                     public void onError(Throwable e) {
-                        listResult.postValue(null);
+                        publishListResult(epoch, null);
                     }
                 });
         } else {
-            listResult.postValue(null);
+            publishListResult(epoch, null);
         }
+    }
+
+    private void parseListHttpResponse(int epoch, String response, boolean isXml,
+                                       boolean logResponse, String sourceKey) {
+        if (listEpoch.get() != epoch) return;
+        HeavyTaskUtil.executeBigTask(() -> {
+            if (listEpoch.get() != epoch) return;
+            AbsXml parsed;
+            try {
+                if (logResponse) LOG.i(response);
+                parsed = isXml
+                        ? com.github.tvbox.osc.spiderapi.AbsXmlParser.parseXml(response, sourceKey)
+                        : com.github.tvbox.osc.spiderapi.AbsXmlParser.parseJson(response, sourceKey);
+            } catch (Exception error) {
+                parsed = null;
+            }
+            publishListResult(epoch, parsed);
+        });
     }
 
     interface HomeRecCallback {
@@ -389,11 +431,13 @@ public class SourceViewModel extends ViewModel {
      * homeRec=1 且有内嵌首页视频 → 富化后直接发布;无内嵌 → 走 homeVideoContent(typed)补推荐;
      * homeRec=0 → 仅发布分类。
      */
-    private void publishHomeSort(final SourceBean sourceBean, AbsSortXml sortXml, List<Movie.Video> embedded) {
+    private void publishHomeSort(final SourceBean sourceBean, AbsSortXml sortXml,
+                                 List<Movie.Video> embedded, int epoch) {
         if (sortXml == null) {
-            sortResult.postValue(null);
+            publishHomeSortResult(epoch, null);
             return;
         }
+        if (homeSortEpoch.get() != epoch) return;
         if (SystemConfig.getHomeRec() == 1) {
             if (embedded != null && !embedded.isEmpty()) {
                 // 同响应内嵌首页视频:与旧 json() 语义一致做富化(sourceKey 归属/urlBean 拆分)
@@ -403,21 +447,21 @@ public class SourceViewModel extends ViewModel {
                 wrap.movie = movie;
                 absXml(wrap, sourceBean.getKey());
                 sortXml.videoList = embedded;
-                sortResult.postValue(sortXml);
+                publishHomeSortResult(epoch, sortXml);
             } else {
                 getHomeRecList(sourceBean, null, new HomeRecCallback() {
                     @Override
                     public void done(List<Movie.Video> videos) {
                         sortXml.videoList = videos;
-                        sortResult.postValue(sortXml);
+                        publishHomeSortResult(epoch, sortXml);
                     }
                 });
             }
         } else {
-            sortResult.postValue(sortXml);
+            publishHomeSortResult(epoch, sortXml);
         }
     }
-//    homeVideoContent
+    // homeVideoContent：回调可能来自网络主线程或爬虫工作线程，调用方统一切回主线程发布。
     void getHomeRecList(SourceBean sourceBean, ArrayList<String> ids, HomeRecCallback callback) {
         int type = sourceBean.getType();
         if (type == 3) {
@@ -464,19 +508,18 @@ public class SourceViewModel extends ViewModel {
 
                         @Override
                         public void onSuccess(String content) {
-                            AbsXml absXml;
-                            if (sourceBean.getType() == 0) {
-                                String xml = content;
-                                absXml = xml(null, xml, sourceBean.getKey());
-                            } else {
-                                String json = content;
-                                absXml = json(null, json, sourceBean.getKey());
-                            }
-                            if (absXml != null && absXml.movie != null && absXml.movie.videoList != null) {
-                                callback.done(absXml.movie.videoList);
-                            } else {
-                                callback.done(null);
-                            }
+                            HeavyTaskUtil.executeBigTask(() -> {
+                                try {
+                                    AbsXml absXml = sourceBean.getType() == 0
+                                            ? xml(null, content, sourceBean.getKey())
+                                            : json(null, content, sourceBean.getKey());
+                                    callback.done(absXml != null && absXml.movie != null
+                                            ? absXml.movie.videoList : null);
+                                } catch (Throwable th) {
+                                    th.printStackTrace();
+                                    callback.done(null);
+                                }
+                            });
                         }
 
                         @Override
@@ -1079,6 +1122,8 @@ public class SourceViewModel extends ViewModel {
     }
     @Override
     protected void onCleared() {
+        homeSortEpoch.incrementAndGet();
+        listEpoch.incrementAndGet();
         super.onCleared();
     }
 }

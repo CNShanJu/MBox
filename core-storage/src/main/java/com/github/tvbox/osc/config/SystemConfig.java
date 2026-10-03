@@ -46,6 +46,8 @@ public final class SystemConfig {
     private static final String KEY_AUTO_UPDATE_PROMPT_VERSION = "auto_update_prompt_version";
     private static final String KEY_AUTO_UPDATE_PROMPT_AT = "auto_update_prompt_at";
     private static final String KEY_AUTO_CHECK_UPDATE = "auto_check_update";
+    /** 首次使用声明只记录在本机；声明需重新确认时递增版本后缀。 */
+    private static final String KEY_DISCLAIMER_ACCEPTED = "_private_disclaimer_accepted_v1";
     // 全局页面背景("body"底图):用户设置(键不存在=跟随主题) + 主题默认图 + 遮罩/缩放/位置
     private static final String KEY_PAGE_BG = "page_bg_image";
     private static final String KEY_THEME_BG = "theme_default_bg";
@@ -98,6 +100,18 @@ public final class SystemConfig {
     /** 安全 DNS 选项索引（0 关闭），默认 0 */
     public static int getDohUrl() {
         return PrefsDataStore.getInt(KEY_DOH_URL, 0);
+    }
+
+    public static boolean isDisclaimerAccepted() {
+        return PrefsDataStore.getBoolean(KEY_DISCLAIMER_ACCEPTED, false);
+    }
+
+    public static void acceptDisclaimer() {
+        PrefsDataStore.put(KEY_DISCLAIMER_ACCEPTED, true);
+    }
+
+    public static void declineDisclaimer() {
+        PrefsDataStore.put(KEY_DISCLAIMER_ACCEPTED, false);
     }
 
     /**

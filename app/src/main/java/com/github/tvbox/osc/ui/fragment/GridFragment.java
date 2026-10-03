@@ -26,6 +26,7 @@ import com.github.tvbox.osc.bean.MovieSort;
 import com.github.tvbox.osc.bean.SourceBean;
 import com.github.tvbox.osc.ui.activity.DetailActivity;
 import com.github.tvbox.osc.ui.activity.FastSearchActivity;
+import com.github.tvbox.osc.ui.activity.MainActivity;
 import com.github.tvbox.osc.ui.adapter.GridAdapter;
 import com.github.tvbox.osc.ui.dialog.GridFilterDialog;
 import com.github.tvbox.osc.ui.tv.widget.LoadMoreView;
@@ -54,6 +55,13 @@ public class GridFragment extends BaseLazyFragment {
     private MovieSort.SortData sortData = null;
     private RecyclerView mGridView;
     private SourceViewModel sourceViewModel;
+    /** Only the first visible grid may consume the list fetched during the splash. */
+    private boolean useStartupListPrefetch = false;
+    private boolean startupListPending = false;
+    private boolean startupInitialResumePending = false;
+    private boolean skipNextEmptyAutoRetry = false;
+    private SourceViewModel startupListViewModel;
+    private Observer<AbsXml> startupListObserver;
     private GridFilterDialog gridFilterDialog;
     private GridAdapter gridAdapter;
     private int page = 1;
@@ -115,6 +123,7 @@ public class GridFragment extends BaseLazyFragment {
      * 收尾后列表若是空的就显示空态;网络恢复由 {@link #refreshAfterNetworkBack()} 自动补一次刷新。
      */
     private void stopLoadingForOffline() {
+        abandonStartupListPrefetch();
         mRefreshEpoch++; // 作废在途刷新的看门狗(同一轮才有意义)
         mLoadInFlight = false;
         if (mRefreshSupport != null && mRefreshSupport.isRefreshing()) {
@@ -125,10 +134,17 @@ public class GridFragment extends BaseLazyFragment {
             if (gridAdapter != null) gridAdapter.loadMoreComplete(); // 顺带收掉底部"加载中"footer
         }
         if (gridAdapter == null || gridAdapter.getData().isEmpty()) showEmpty();
+        notifyInitialPageSettled();
     }
 
     public static GridFragment newInstance(MovieSort.SortData sortData) {
-        return new GridFragment().setArguments(sortData);
+        return newInstance(sortData, false);
+    }
+
+    public static GridFragment newInstance(MovieSort.SortData sortData, boolean useStartupListPrefetch) {
+        GridFragment fragment = new GridFragment().setArguments(sortData);
+        fragment.useStartupListPrefetch = useStartupListPrefetch;
+        return fragment;
     }
 
     public GridFragment setArguments(MovieSort.SortData sortData) {
@@ -154,7 +170,12 @@ public class GridFragment extends BaseLazyFragment {
     protected void init() {
         initView();
         initViewModel();
-        initData();
+        if (useStartupListPrefetch && getActivity() instanceof MainActivity
+                && ((MainActivity) getActivity()).isStartupFirstGridPrefetchFor(sortData == null ? null : sortData.id)) {
+            startStartupListPrefetchHandoff();
+        } else {
+            initData();
+        }
     }
 
     @Override
@@ -164,6 +185,7 @@ public class GridFragment extends BaseLazyFragment {
     }
 
     private void changeView(String id, Boolean isFolder){
+        abandonStartupListPrefetch();
         if(isFolder){
             this.sortData.flag ="1"; // 修改sortData.flag
         }else {
@@ -272,6 +294,7 @@ public class GridFragment extends BaseLazyFragment {
         gridAdapter.setOnLoadMoreListener(new BaseQuickAdapter.RequestLoadMoreListener() {
             @Override
             public void onLoadMoreRequested() {
+                abandonStartupListPrefetch();
                 gridAdapter.setEnableLoadMore(true);
                 mLoadMoreBusy = true;
                 if (mRefreshSupport != null) mRefreshSupport.updateEndTip();
@@ -340,6 +363,12 @@ public class GridFragment extends BaseLazyFragment {
         }
     }
 
+    private void notifyInitialPageSettled() {
+        if (getParentFragment() instanceof HomeFragment) {
+            ((HomeFragment) getParentFragment()).onFirstPageSettled(this);
+        }
+    }
+
     /**
      * 筛选悬浮钮的显隐:该分类<b>没有筛选项内容</b>时隐藏 —— 那种情况下点它也不会弹窗
      * (见 {@link #showFilter()} 的判空),留着只会让人以为是坏的。
@@ -369,9 +398,18 @@ public class GridFragment extends BaseLazyFragment {
         super.onDestroyView();
     }
 
+    @Override
+    public void onDestroy() {
+        // BaseLazyFragment retains its root view across onDestroyView. Keep the
+        // startup request through a view recreation, but release it with the Fragment.
+        abandonStartupListPrefetch();
+        super.onDestroy();
+    }
+
     /** 订阅系统网络状态(幂等:只在可见期间订阅),并记录当前是否离线作为"恢复"的基准 */
     private void bindNetworkListener() {
         mWasOffline = isOffline();
+        startupInitialResumePending = false;
         // 页面重新可见时(例如用户从无网络页点了"返回/我知道了"回来)补一次收尾:
         // 断网事件可能在页面不可见期间就发过了,那时监听是注销的,转圈会一直留着
         if (mWasOffline) stopLoadingForOffline();
@@ -379,7 +417,9 @@ public class GridFragment extends BaseLazyFragment {
         // 为什么需要:"断网→恢复"的那次状态变化常常发生在页面不可见期间(无网络页盖住、切到别的页),
         // 页面重新可见时它已经错过了,于是网络恢复了页面也不会自己去取数据(真机反馈:恢复后仍无内容,
         // 而且 loading 视图盖着列表连下拉都点不动 —— 那半边已由 stopLoadingForOffline/看门狗修掉)。
-        if (!mWasOffline && !isLoad() && !mLoadInFlight
+        boolean skipEmptyAutoRetry = skipNextEmptyAutoRetry;
+        skipNextEmptyAutoRetry = false;
+        if (!skipEmptyAutoRetry && !mWasOffline && !isLoad() && !mLoadInFlight
                 && (gridAdapter == null || gridAdapter.getData().isEmpty())
                 && (mRefreshSupport == null || !mRefreshSupport.isRefreshing())) {
             android.util.Log.i("GridFragment", "页面重新可见且从未加载成功:补一次初始化");
@@ -460,6 +500,9 @@ public class GridFragment extends BaseLazyFragment {
     }
 
     private void onPullRefresh() {
+        // A user refresh owns the visible list from this point on. Detach the splash
+        // result so a late prefetch cannot replace the newly requested data.
+        abandonStartupListPrefetch();
         if (mRefreshSupport != null) mRefreshSupport.onRefreshStarted(); // 新一轮刷新
         if (sourceViewModel == null) {
             if (mRefreshSupport != null) mRefreshSupport.finishRefreshing();
@@ -496,6 +539,7 @@ public class GridFragment extends BaseLazyFragment {
         if (mGridView == null) return;
         mGridView.postDelayed(() -> {
             if (epoch != mRefreshEpoch) return;                     // 已收到结果/已进入下一轮:本条作废
+            abandonStartupListPrefetch();
             mLoadInFlight = false;
             if (mRefreshSupport != null && mRefreshSupport.isRefreshing()) {
                 mRefreshSupport.finishRefreshing();
@@ -504,72 +548,110 @@ public class GridFragment extends BaseLazyFragment {
                 android.util.Log.w("GridFragment", "加载看门狗触发:请求无结果,强制收尾(显示空态)");
                 showEmpty();
             }
+            notifyInitialPageSettled();
         }, LOAD_WATCHDOG_MS);
     }
 
     private void initViewModel() {
         if(sourceViewModel != null) { return;}
         sourceViewModel = new ViewModelProvider(this).get(SourceViewModel.class);
-        sourceViewModel.listResult.observe(this, new Observer<AbsXml>() {
-            @Override
-            public void onChanged(AbsXml absXml) {
-                // 收到任何结果(数据/空/null)都算本轮结束:作废看门狗并清"在途"标记
-                mRefreshEpoch++;
-                mLoadInFlight = false;
-                // 刷新被用户打断:丢弃在途的第一页结果,维持下拉前旧列表
-                if (page == 1 && mRefreshSupport != null && mRefreshSupport.shouldDiscardArrival()) {
-                    mLoadMoreBusy = false;
-                    mRefreshSupport.updateEndTip();
-                    mRefreshSupport.finishRefreshing();
-                    return;
-                }
-//                if(mGridView != null) mGridView.requestFocus();
-                if (absXml != null && absXml.movie != null && absXml.movie.videoList != null && absXml.movie.videoList.size() > 0) {
-                    if (page == 1) {
-                        showSuccess();
-                        isLoad = true;
-                        gridAdapter.setNewData(absXml.movie.videoList);
-                        // 复位 footer 状态, 避免上一次"到底了"残留(下一页请求期间应显示"加载中")
-                        gridAdapter.loadMoreComplete();
-                        gridAdapter.setEnableLoadMore(true);
-                    } else {
-                        gridAdapter.addData(absXml.movie.videoList);
-                    }
-                    page++;
-                    maxPage = absXml.movie.pagecount;
+        // BaseLazyFragment retains its root view and initializes only once. Keep one
+        // observer across view recreation so LiveData neither replays a stale null
+        // nor drops a result emitted while the view lifecycle is stopped.
+        sourceViewModel.listResult.observe(this, this::applyListResult);
+    }
 
-                    if (page > maxPage) {
-                        // 确认没有更多:不再渲染列表尾的 BRVAH end 行,改由底部悬浮提示承担(贴导航栏)
-                        mEndReached = true;
-                        gridAdapter.loadMoreComplete();
-                        gridAdapter.setEnableLoadMore(false);
-                        if(page>2)AppBubble.toast("没有更多了");
-                    } else {
-                        mEndReached = false;
-                        gridAdapter.loadMoreComplete();
-                        gridAdapter.setEnableLoadMore(true);
-                    }
-                } else {
-                    if(page == 1){
-                        if (gridAdapter != null && !gridAdapter.getData().isEmpty()) {
-                            // 刷新返回空但已有旧内容:保留旧列表(反复下拉/打断时序下避免被误清成"暂无数据")
-                        } else {
-                            showEmpty();
-                        }
-                    }else{
-                        AppBubble.toast("没有更多了");
-                        mEndReached = true;
-                        gridAdapter.loadMoreComplete();
-                        gridAdapter.setEnableLoadMore(false);
-                    }
-                }
-                mLoadMoreBusy = false; // 本轮请求结束(成功/空/到底),底部回到文字判定
-                if (mRefreshSupport != null) {
-                    mRefreshSupport.updateEndTip();
-                    mRefreshSupport.finishRefreshing();
-                }
+    private void startStartupListPrefetchHandoff() {
+        startupListPending = true;
+        startupInitialResumePending = true;
+        showLoading();
+        isLoad = false;
+        mEndReached = false;
+        scrollTop();
+        startLoadWatchdog();
+        startupListViewModel = new ViewModelProvider(requireActivity()).get(SourceViewModel.class);
+        startupListObserver = absXml -> {
+            if (!startupListPending) return;
+            boolean emptyResult = absXml == null || absXml.movie == null
+                    || absXml.movie.videoList == null || absXml.movie.videoList.isEmpty();
+            if (emptyResult && startupInitialResumePending) skipNextEmptyAutoRetry = true;
+            abandonStartupListPrefetch();
+            applyListResult(absXml);
+        };
+        startupListViewModel.listResult.observe(this, startupListObserver);
+    }
+
+    private void abandonStartupListPrefetch() {
+        if (!startupListPending) return;
+        startupListPending = false;
+        useStartupListPrefetch = false;
+        if (startupListViewModel != null && startupListObserver != null) {
+            startupListViewModel.listResult.removeObserver(startupListObserver);
+        }
+        startupListObserver = null;
+        startupListViewModel = null;
+        if (getActivity() instanceof MainActivity) {
+            ((MainActivity) getActivity()).consumeStartupFirstGridPrefetch();
+        }
+    }
+
+    private void applyListResult(AbsXml absXml) {
+        boolean firstPage = page == 1;
+        // 收到任何结果(数据/空/null)都算本轮结束:作废看门狗并清"在途"标记
+        mRefreshEpoch++;
+        mLoadInFlight = false;
+        // 刷新被用户打断:丢弃在途的第一页结果,维持下拉前旧列表
+        if (page == 1 && mRefreshSupport != null && mRefreshSupport.shouldDiscardArrival()) {
+            mLoadMoreBusy = false;
+            mRefreshSupport.updateEndTip();
+            mRefreshSupport.finishRefreshing();
+            return;
+        }
+        if (absXml != null && absXml.movie != null && absXml.movie.videoList != null && absXml.movie.videoList.size() > 0) {
+            if (page == 1) {
+                showSuccess();
+                isLoad = true;
+                gridAdapter.setNewData(absXml.movie.videoList);
+                // 复位 footer 状态, 避免上一次"到底了"残留(下一页请求期间应显示"加载中")
+                gridAdapter.loadMoreComplete();
+                gridAdapter.setEnableLoadMore(true);
+            } else {
+                gridAdapter.addData(absXml.movie.videoList);
             }
-        });
+            page++;
+            maxPage = absXml.movie.pagecount;
+
+            if (page > maxPage) {
+                // 确认没有更多:不再渲染列表尾的 BRVAH end 行,改由底部悬浮提示承担(贴导航栏)
+                mEndReached = true;
+                gridAdapter.loadMoreComplete();
+                gridAdapter.setEnableLoadMore(false);
+                if(page>2)AppBubble.toast("没有更多了");
+            } else {
+                mEndReached = false;
+                gridAdapter.loadMoreComplete();
+                gridAdapter.setEnableLoadMore(true);
+            }
+        } else {
+            if(page == 1){
+                if (gridAdapter != null && !gridAdapter.getData().isEmpty()) {
+                    // 刷新返回空但已有旧内容:保留旧列表(反复下拉/打断时序下避免被误清成"暂无数据")
+                } else {
+                    showEmpty();
+                }
+            }else{
+                AppBubble.toast("没有更多了");
+                mEndReached = true;
+                gridAdapter.loadMoreComplete();
+                gridAdapter.setEnableLoadMore(false);
+            }
+        }
+        mLoadMoreBusy = false; // 本轮请求结束(成功/空/到底),底部回到文字判定
+        if (mRefreshSupport != null) {
+            mRefreshSupport.updateEndTip();
+            mRefreshSupport.finishRefreshing();
+        }
+        if (firstPage) notifyInitialPageSettled();
     }
 
     public boolean isLoad() {
@@ -577,8 +659,10 @@ public class GridFragment extends BaseLazyFragment {
     }
 
     private void initData() {
+        abandonStartupListPrefetch();
         if (com.github.tvbox.osc.spiderapi.SourceConfigProviders.get().getHomeSourceBean().getApi()==null){// 系统杀死app恢复缓存的fragment后会直接getList,此时首页api都未加载完
             showEmpty();
+            notifyInitialPageSettled();
             return;
         }
         showLoading();

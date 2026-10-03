@@ -1,11 +1,13 @@
 package com.github.tvbox.osc.util;
 
+import android.app.Activity;
 import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
 import android.widget.Toast;
 
 import com.github.tvbox.osc.base.App;
+import com.github.tvbox.osc.ui.activity.MainActivity;
 
 /**
  * 统一提醒组件（系统 Toast 样式）：
@@ -27,6 +29,8 @@ public class AppBubble {
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     /** 上一条 Toast(正在显示或仍在系统队列中);弹新提示前 cancel 实现"后到顶替" */
     private static Toast sCurrentToast;
+    /** 延后的开屏提醒只保留最后一条，避免退出开屏时连续补弹。 */
+    private static long sToastSequence;
 
     private AppBubble() {
     }
@@ -53,21 +57,40 @@ public class AppBubble {
         MAIN.post(new Runnable() {
             @Override
             public void run() {
-                try {
-                    // 顶掉上一条仍在显示/排队的 toast,避免连续触发时延迟堆积
-                    if (sCurrentToast != null) {
-                        sCurrentToast.cancel();
-                        sCurrentToast = null;
+                long sequence = ++sToastSequence;
+                Activity current = AppManager.getInstance().isActivity()
+                        ? AppManager.getInstance().currentActivity() : null;
+                if (current instanceof MainActivity) {
+                    MainActivity main = (MainActivity) current;
+                    if (main.isStartupSplashVisible()) {
+                        main.runAfterStartupSplash(() -> {
+                            Activity top = AppManager.getInstance().isActivity()
+                                    ? AppManager.getInstance().currentActivity() : null;
+                            if (sequence == sToastSequence && top == main
+                                    && !main.isStartupSplashVisible()) showNow(msg, longDuration);
+                        });
+                        return;
                     }
-                    Context ctx = App.getInstance();
-                    Toast toast = Toast.makeText(ctx, msg,
-                            longDuration ? Toast.LENGTH_LONG : Toast.LENGTH_SHORT);
-                    sCurrentToast = toast;
-                    toast.show();
-                } catch (Throwable ignored) {
-                    sCurrentToast = null;
                 }
+                showNow(msg, longDuration);
             }
         });
+    }
+
+    private static void showNow(CharSequence msg, boolean longDuration) {
+        try {
+            // 顶掉上一条仍在显示/排队的 toast,避免连续触发时延迟堆积
+            if (sCurrentToast != null) {
+                sCurrentToast.cancel();
+                sCurrentToast = null;
+            }
+            Context ctx = App.getInstance();
+            Toast toast = Toast.makeText(ctx, msg,
+                    longDuration ? Toast.LENGTH_LONG : Toast.LENGTH_SHORT);
+            sCurrentToast = toast;
+            toast.show();
+        } catch (Throwable ignored) {
+            sCurrentToast = null;
+        }
     }
 }

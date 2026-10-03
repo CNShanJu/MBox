@@ -11,8 +11,10 @@ import com.github.tvbox.osc.log.Category;
 import com.github.tvbox.osc.log.LogStore;
 import com.github.tvbox.osc.state.SystemState;
 import com.github.tvbox.osc.state.SystemStateMonitor;
+import com.github.tvbox.osc.ui.activity.DisclaimerActivity;
 import com.github.tvbox.osc.ui.activity.MainActivity;
 import com.github.tvbox.osc.ui.activity.NoNetworkActivity;
+import com.github.tvbox.osc.ui.activity.SplashActivity;
 
 /**
  * "网络不可用"页的路由：联网请求确认断网，或首页可见时默认网络断开，才拉起页面。
@@ -166,9 +168,31 @@ public final class NetworkIssueRouter {
                 logSkip("已经在无网络页");
                 return;
             }
+            if (activity instanceof SplashActivity) {
+                logSkip("启动路由页尚未进入首页,暂不弹无网络页");
+                return;
+            }
+            if (activity instanceof DisclaimerActivity) {
+                logSkip("首次使用声明显示中,暂不弹无网络页");
+                return;
+            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1 && activity.isDestroyed()) {
                 logSkip("当前页面已销毁");
                 return;
+            }
+            if (activity instanceof MainActivity) {
+                MainActivity main = (MainActivity) activity;
+                if (main.isStartupSplashVisible()) {
+                    // 无网络页是另一 Activity，会直接盖掉同窗口内的开屏动画。
+                    // 开屏结束后重新核对当前页面和网络状态，再决定是否弹出。
+                    main.runAfterStartupSplash(() -> {
+                        Activity current = AppManager.getInstance().isActivity()
+                                ? AppManager.getInstance().currentActivity() : null;
+                        if (current == main && !main.isStartupSplashVisible()) show(reason);
+                    });
+                    logSkip("开屏动画仍在播放,延后判断是否弹无网络页");
+                    return;
+                }
             }
             lastShownAt = now;
             lastShownUptime = SystemClock.uptimeMillis();

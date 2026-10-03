@@ -13,6 +13,9 @@ import android.view.ViewGroup;
 import android.widget.FrameLayout;
 
 import com.github.tvbox.osc.R;
+import com.github.tvbox.osc.ui.activity.DisclaimerActivity;
+import com.github.tvbox.osc.ui.activity.MainActivity;
+import com.github.tvbox.osc.ui.activity.SplashActivity;
 import com.github.tvbox.osc.util.LOG;
 
 /**
@@ -37,6 +40,8 @@ public final class UpdateFloatIndicator implements UpdateManager.Listener {
     private UpdateBubbleView bubbleView;
     private ViewGroup attachedParent;
     private Activity currentActivity;
+    /** 只有 Activity 的 onResume/开屏退场确认后才允许把悬浮圈挂到窗口。 */
+    private boolean activityResumed;
     private UpdateIndicatorDialog dialog;
 
     /** 悬浮圈当前位置(left/top margin,px;初始 null=默认右下角) */
@@ -74,6 +79,7 @@ public final class UpdateFloatIndicator implements UpdateManager.Listener {
         if (activity == null)
             return;
         this.currentActivity = activity;
+        this.activityResumed = true;
         /* LOG.i(TAG, "attach " + activity.getClass().getSimpleName()
                 + " state=" + UpdateManager.get().getState()); */
         syncView();
@@ -83,21 +89,17 @@ public final class UpdateFloatIndicator implements UpdateManager.Listener {
     public void detach(Activity activity) {
         if (activity != null && activity == currentActivity) {
             // LOG.i(TAG, "detach " + activity.getClass().getSimpleName());
+            activityResumed = false;
+            currentActivity = null;
             hide();
         }
     }
 
-    /** 当前前台 Activity:优先取 attach 值,兜底用全局 Activity 堆栈顶(避免下载开始时 onResume 未赶上) */
-    private Activity resolveActivity(Activity fallback) {
-        if (fallback != null && !fallback.isFinishing() && !fallback.isDestroyed())
-            return fallback;
-        try {
-            Activity top = com.github.tvbox.osc.util.AppManager.getInstance().currentActivity();
-            if (top != null && !top.isFinishing() && !top.isDestroyed())
-                return top;
-        } catch (Throwable ignored) {
-        }
-        return null;
+    /** 仅使用最近一次 onResume 明确交付的 Activity，避免后台进度回调重新挂载。 */
+    private Activity resolveActivity() {
+        Activity activity = currentActivity;
+        return activityResumed && activity != null && !activity.isFinishing()
+                && !activity.isDestroyed() ? activity : null;
     }
 
     // ── 状态回调 ──
@@ -116,7 +118,14 @@ public final class UpdateFloatIndicator implements UpdateManager.Listener {
                 || s == UpdateManager.State.PAUSED
                 || s == UpdateManager.State.COMPLETED
                 || s == UpdateManager.State.FAILED);
-        Activity a = resolveActivity(currentActivity);
+        Activity a = resolveActivity();
+        // 首页开屏遮罩在内容视图内，悬浮圈却加到 decor 最上层；此时必须先卸下。
+        // MainActivity 关闭遮罩时会再次 attach，恢复当前下载状态。
+        if (a instanceof SplashActivity || a instanceof DisclaimerActivity
+                || (a instanceof MainActivity && ((MainActivity) a).isStartupSplashVisible())) {
+            hide();
+            return;
+        }
         /* LOG.i(TAG, "syncView state=" + s + " show=" + show + " act="
                 + (a == null ? "null" : a.getClass().getSimpleName())
                 + (a == null ? "" : (" fin=" + a.isFinishing() + " des=" + a.isDestroyed()))
@@ -206,6 +215,8 @@ public final class UpdateFloatIndicator implements UpdateManager.Listener {
     }
 
     private void hide() {
+        longPressHandler.removeCallbacks(longPressRunnable);
+        dragTracking = false;
         // floatView 对象常驻(listener 在首次创建时已绑定),仅从父容器摘除并暂停动画
         if (floatView != null) {
             /* LOG.i(TAG, "hide: removing floatView, parent="
@@ -276,6 +287,8 @@ public final class UpdateFloatIndicator implements UpdateManager.Listener {
         Activity a = currentActivity;
         if (a == null || a.isFinishing() || a.isDestroyed())
             return;
+        if (a instanceof SplashActivity || a instanceof DisclaimerActivity
+                || (a instanceof MainActivity && ((MainActivity) a).isStartupSplashVisible())) return;
         dialog = new UpdateIndicatorDialog(a);
         dialog.show();
     }

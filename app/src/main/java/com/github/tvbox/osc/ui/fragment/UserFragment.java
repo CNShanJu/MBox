@@ -3,6 +3,8 @@ package com.github.tvbox.osc.ui.fragment;
 import android.content.Intent;
 import android.content.res.Configuration;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.TextUtils;
 import android.view.View;
 import android.view.ViewGroup;
@@ -24,6 +26,7 @@ import com.github.tvbox.osc.ui.activity.DetailActivity;
 import com.github.tvbox.osc.ui.activity.FastSearchActivity;
 import com.github.tvbox.osc.ui.activity.HistoryActivity;
 import com.github.tvbox.osc.ui.activity.LiveActivity;
+import com.github.tvbox.osc.ui.activity.MainActivity;
 
 import com.github.tvbox.osc.ui.activity.SettingActivity;
 import com.github.tvbox.osc.ui.adapter.GridAdapter;
@@ -32,15 +35,13 @@ import com.github.tvbox.osc.ui.kit.ListRefreshSupport;
 import com.github.tvbox.osc.ui.kit.RubberBandSwipeRefreshLayout;
 import com.github.tvbox.osc.util.FastClickCheckUtil;
 import com.github.tvbox.osc.util.HCallBack;
+import com.github.tvbox.osc.util.HeavyTaskUtil;
 import com.github.tvbox.osc.util.HomeHotCache;
+import com.github.tvbox.osc.util.HomeHotPreloader;
 import com.github.tvbox.osc.util.HttpClient;
 import com.github.tvbox.osc.config.SystemConfig;
 import com.github.tvbox.osc.util.UA;
 import com.github.tvbox.osc.util.Utils;
-import com.google.gson.Gson;
-import com.google.gson.JsonArray;
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
 import com.owen.tvrecyclerview.widget.TvRecyclerView;
 import com.owen.tvrecyclerview.widget.V7GridLayoutManager;
 import com.owen.tvrecyclerview.widget.V7LinearLayoutManager;
@@ -50,6 +51,7 @@ import java.util.Calendar;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * @author pj567
@@ -61,6 +63,9 @@ public class UserFragment extends BaseLazyFragment {
     private GridAdapter homeHotVodAdapter;
     private List<Movie.Video> homeSourceRec;
     RecyclerView tvHotList1;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    /** 作废刷新及销毁视图后仍在途的缓存、解析和网络结果。 */
+    private final AtomicInteger homeHotLoadEpoch = new AtomicInteger();
     /** 下拉刷新 + 到底了 装配门面(容器/打断守卫/到底控制器统一收口) */
     private ListRefreshSupport mRefreshSupport = null;
 
@@ -165,7 +170,7 @@ public class UserFragment extends BaseLazyFragment {
         tvHotList1.setAdapter(homeHotVodAdapter);
         attachRefreshAndEndTip();
         setLoadSir2(tvHotList1);
-        initHomeHotVod(homeHotVodAdapter);
+        initHomeHotVod(homeHotVodAdapter, false);
     }
 
     private void openFastSearchFromHome(Bundle bundle) {
@@ -173,6 +178,12 @@ public class UserFragment extends BaseLazyFragment {
             ((HomeFragment) getParentFragment()).openFastSearch(bundle);
         } else {
             jumpActivity(FastSearchActivity.class, bundle);
+        }
+    }
+
+    private void notifyInitialPageSettled() {
+        if (getParentFragment() instanceof HomeFragment) {
+            ((HomeFragment) getParentFragment()).onFirstPageSettled(this);
         }
     }
 
@@ -217,6 +228,9 @@ public class UserFragment extends BaseLazyFragment {
      */
     private void onPullRefresh() {
         if (mRefreshSupport != null) mRefreshSupport.onRefreshStarted(); // 新一轮刷新
+        if (mActivity instanceof MainActivity) {
+            ((MainActivity) mActivity).consumeStartupHomeHotPreloader();
+        }
         if (SystemConfig.getHomeRec() == 1) {
             if (homeSourceRec != null && homeSourceRec.size() > 0) {
                 homeHotVodAdapter.setNewData(homeSourceRec);
@@ -228,14 +242,11 @@ public class UserFragment extends BaseLazyFragment {
             if (mRefreshSupport != null) mRefreshSupport.finishRefreshing();
             return;
         }
-        try {
-            HomeHotCache.clear();
-        } catch (Throwable ignored) {
-        }
-        initHomeHotVod(homeHotVodAdapter);
+        initHomeHotVod(homeHotVodAdapter, true);
     }
 
-    private void initHomeHotVod(GridAdapter adapter) {
+    private void initHomeHotVod(GridAdapter adapter, boolean clearCache) {
+        final int epoch = homeHotLoadEpoch.incrementAndGet();
         if (SystemConfig.getHomeRec() == 1) {
             if (homeSourceRec != null && homeSourceRec.size() > 0) {
                 showSuccess();
@@ -245,104 +256,146 @@ public class UserFragment extends BaseLazyFragment {
                 showEmpty();
             }
             if (mRefreshSupport != null) mRefreshSupport.finishRefreshing();
+            notifyInitialPageSettled();
             return;
         }
-        try {
-            Calendar cal = Calendar.getInstance();
-            int year = cal.get(Calendar.YEAR);
-            int month = cal.get(Calendar.MONTH) + 1;
-            int day = cal.get(Calendar.DATE);
-            String today = String.format("%d%d%d", year, month, day);
-            String requestDay = HomeHotCache.getDay();
-            if (requestDay.equals(today)) {
-                String json = HomeHotCache.getData();
-                if (!json.isEmpty()) {
-                    ArrayList<Movie.Video> hotMovies = loadHots(json);
-                    if (hotMovies != null && hotMovies.size() > 0) {
+        if (!clearCache && mActivity instanceof MainActivity) {
+            HomeHotPreloader preloader = ((MainActivity) mActivity).startupHomeHotPreloader();
+            if (preloader != null) {
+                if (!preloader.isSettled() && adapter.getData().isEmpty()) showLoading();
+                preloader.videos().observe(getViewLifecycleOwner(), videos -> {
+                    if (!isCurrentHotLoad(adapter, epoch)) return;
+                    if (videos != null && !videos.isEmpty()) {
                         showSuccess();
-                        adapter.setNewData(hotMovies);
-                        if (mRefreshSupport != null) mRefreshSupport.updateEndTip();
-                        if (mRefreshSupport != null) mRefreshSupport.finishRefreshing();
-                        return;
+                        adapter.setNewData(videos);
+                    } else if (adapter.getData().isEmpty()) {
+                        showEmpty();
                     }
+                    if (mRefreshSupport != null) {
+                        mRefreshSupport.updateEndTip();
+                        mRefreshSupport.finishRefreshing();
+                    }
+                    notifyInitialPageSettled();
+                    ((MainActivity) mActivity).consumeStartupHomeHotPreloader();
+                });
+                return;
+            }
+        }
+        Calendar cal = Calendar.getInstance();
+        int year = cal.get(Calendar.YEAR);
+        int month = cal.get(Calendar.MONTH) + 1;
+        int day = cal.get(Calendar.DATE);
+        String today = String.format("%d%d%d", year, month, day);
+        HeavyTaskUtil.getSerialExecutorService().execute(() -> {
+            if (homeHotLoadEpoch.get() != epoch) return;
+            ArrayList<Movie.Video> cached = null;
+            try {
+                if (clearCache) HomeHotCache.clear();
+                if (today.equals(HomeHotCache.getDay())) {
+                    String json = HomeHotCache.getData();
+                    if (!json.isEmpty()) cached = loadHots(json);
                 }
+            } catch (Throwable ignored) {
+                // 缓存不可用时仍从网络加载。
             }
-            // 首次加载给出状态;下拉刷新时已有旧数据则不整页盖住
-            if (adapter.getData().isEmpty()) {
-                showLoading();
-            }
-            String doubanUrl = "https://movie.douban.com/j/new_search_subjects?sort=U&range=0,10&tags=&playable=1&start=0&year_range=" + year + "," + year;
-            Map<String, String> headers = new HashMap<>();
-            headers.put("User-Agent", UA.randomOne());
+            final ArrayList<Movie.Video> hotMovies = cached;
+            mainHandler.post(() -> {
+                if (!isCurrentHotLoad(adapter, epoch)) return;
+                if (hotMovies != null && !hotMovies.isEmpty()) {
+                    showSuccess();
+                    adapter.setNewData(hotMovies);
+                    if (mRefreshSupport != null) mRefreshSupport.updateEndTip();
+                    if (mRefreshSupport != null) mRefreshSupport.finishRefreshing();
+                    notifyInitialPageSettled();
+                } else {
+                    // 缓存没命中时才显示加载态；命中缓存不闪一次 loading。
+                    if (adapter.getData().isEmpty()) showLoading();
+                    requestHomeHotVod(adapter, today, year, epoch);
+                }
+            });
+        });
+    }
+
+    private void requestHomeHotVod(GridAdapter adapter, String today, int year, int epoch) {
+        String doubanUrl = "https://movie.douban.com/j/new_search_subjects?sort=U&range=0,10&tags=&playable=1&start=0&year_range=" + year + "," + year;
+        Map<String, String> headers = new HashMap<>();
+        headers.put("User-Agent", UA.randomOne());
+        try {
             HttpClient.get(doubanUrl, headers, null, new HCallBack() {
                 @Override
                 public void onSuccess(String netJson) {
-                    HomeHotCache.save(today, netJson);
-                    mActivity.runOnUiThread(new Runnable() {
-                        @Override
-                        public void run() {
-                            // 刷新被用户打断:丢弃在途结果,维持下拉前旧列表
+                    if (homeHotLoadEpoch.get() != epoch) return;
+                    HeavyTaskUtil.getSerialExecutorService().execute(() -> {
+                        if (homeHotLoadEpoch.get() != epoch) return;
+                        ArrayList<Movie.Video> videos = loadHots(netJson);
+                        try {
+                            HomeHotCache.save(today, netJson);
+                        } catch (Throwable ignored) {
+                            // 缓存写入失败不影响本次数据展示。
+                        }
+                        mainHandler.post(() -> {
+                            if (!isCurrentHotLoad(adapter, epoch)) return;
+                            // 刷新被用户打断:丢弃在途结果,维持下拉前旧列表。
                             if (mRefreshSupport != null && mRefreshSupport.shouldDiscardArrival()) {
-                                if (mRefreshSupport != null) mRefreshSupport.finishRefreshing();
+                                mRefreshSupport.finishRefreshing();
                                 return;
                             }
-                            ArrayList<Movie.Video> videos = loadHots(netJson);
-                            if (videos.size() > 0) {
+                            if (!videos.isEmpty()) {
                                 showSuccess();
                                 adapter.setNewData(videos);
                                 if (mRefreshSupport != null) mRefreshSupport.updateEndTip();
                             } else if (adapter.getData().isEmpty()) {
-                                // 无旧内容才进空态;已有内容时刷新拿到空结果保留旧列表,
-                                // 避免"反复下拉/打断"时序把已有内容误清成"暂无数据"
                                 showEmpty();
-                            } else {
-                                if (mRefreshSupport != null) mRefreshSupport.updateEndTip();
+                            } else if (mRefreshSupport != null) {
+                                mRefreshSupport.updateEndTip();
                             }
                             if (mRefreshSupport != null) mRefreshSupport.finishRefreshing();
-                        }
+                            notifyInitialPageSettled();
+                        });
                     });
                 }
 
                 @Override
                 public void onError(Throwable e) {
-                    // 保持原行为(旧列表不变); 首载失败也要有状态,避免一直停在 loading
-                    mActivity.runOnUiThread(new Runnable() {
-                        @Override
-                        public void run() {
-                            if (adapter.getData().isEmpty()) {
-                                showEmpty();
-                            }
-                            if (mRefreshSupport != null) mRefreshSupport.finishRefreshing();
-                        }
+                    mainHandler.post(() -> {
+                        if (!isCurrentHotLoad(adapter, epoch)) return;
+                        if (adapter.getData().isEmpty()) showEmpty();
+                        if (mRefreshSupport != null) mRefreshSupport.finishRefreshing();
+                        notifyInitialPageSettled();
                     });
                 }
             });
         } catch (Throwable th) {
             th.printStackTrace();
-            if (adapter.getData().isEmpty()){
-                showEmpty();
-            }
+            if (!isCurrentHotLoad(adapter, epoch)) return;
+            if (adapter.getData().isEmpty()) showEmpty();
             if (mRefreshSupport != null) mRefreshSupport.finishRefreshing();
+            notifyInitialPageSettled();
+        }
+    }
+
+    private boolean isCurrentHotLoad(GridAdapter adapter, int epoch) {
+        return homeHotLoadEpoch.get() == epoch && isAdded() && getView() != null
+                && adapter == homeHotVodAdapter;
+    }
+
+    @Override
+    public void onDestroyView() {
+        homeHotLoadEpoch.incrementAndGet();
+        super.onDestroyView();
+    }
+
+    @Override
+    public void onViewCreated(View view, Bundle savedInstanceState) {
+        // BaseLazyFragment keeps rootView but does not rerun init() after a view recreation.
+        boolean hadInitialized = !mIsFirstVisible;
+        super.onViewCreated(view, savedInstanceState);
+        if (hadInitialized && homeHotVodAdapter != null && homeHotVodAdapter.getData().isEmpty()) {
+            initHomeHotVod(homeHotVodAdapter, false);
         }
     }
 
     private ArrayList<Movie.Video> loadHots(String json) {
-        ArrayList<Movie.Video> result = new ArrayList<>();
-        try {
-            JsonObject infoJson = new Gson().fromJson(json, JsonObject.class);
-            JsonArray array = infoJson.getAsJsonArray("data");
-            for (JsonElement ele : array) {
-                JsonObject obj = (JsonObject) ele;
-                Movie.Video vod = new Movie.Video();
-                vod.name = obj.get("title").getAsString();
-                vod.note = obj.get("rate").getAsString();
-                if (!vod.note.isEmpty()) vod.note += " 分";
-                vod.pic = obj.get("cover").getAsString() + "@Referer=https://movie.douban.com/@User-Agent=" + UA.random();
-                result.add(vod);
-            }
-        } catch (Throwable th) {
-
-        }
-        return result;
+        return HomeHotPreloader.parse(json);
     }
 }

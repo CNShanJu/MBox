@@ -12,9 +12,11 @@ import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentStatePagerAdapter
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
+import androidx.viewpager.widget.ViewPager
 import com.angcyo.tablayout.delegate.ViewPager1Delegate.Companion.install
 import com.blankj.utilcode.util.ConvertUtils
 import com.blankj.utilcode.util.ScreenUtils
+import com.blankj.utilcode.util.ActivityUtils
 import com.github.tvbox.osc.log.Category
 import com.github.tvbox.osc.log.LogStore
 import com.github.tvbox.osc.util.AppBubble
@@ -69,6 +71,25 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
     private var sourceViewModel: SourceViewModel? = null
     private val fragments: MutableList<BaseLazyFragment> = ArrayList()
     private val mHandler = Handler()
+    /** 开屏只预取数据；Fragment 创建后接收同一个请求结果，不再重复加载配置和首页分类。 */
+    private var awaitingStartupPrefetch = false
+    private var startupHistoryRequested = false
+    private var startupHistoryPending = false
+    private var suppressNextAutomaticRetry = false
+    private var pendingStartupError: String? = null
+
+    /** 首个可见页面绑定数据或显示空态时通知启动页；只触发一次。 */
+    var onInitialContentReady: (() -> Unit)? = null
+
+    fun onFirstPageSettled(fragment: BaseLazyFragment) {
+        if (fragments.firstOrNull() === fragment) notifyInitialContentReady()
+    }
+
+    private fun notifyInitialContentReady() {
+        val callback = onInitialContentReady ?: return
+        onInitialContentReady = null
+        callback()
+    }
 
     companion object {
         /** "上次看到"气泡的展示时长:自动检查更新要等它消失后再做 */
@@ -109,6 +130,12 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
     /** "上次看到"气泡预计消失的时间点(uptimeMillis);无气泡时保持 0,自动检查按默认延时走 */
     private var bubbleUntil = 0L
     private var lastViewedBubble: LastViewedDialog? = null
+    private var mainPager: ViewPager? = null
+    private val mainPageListener = object : ViewPager.SimpleOnPageChangeListener() {
+        override fun onPageSelected(position: Int) {
+            if (position != 0) dismissLastViewedBubble()
+        }
+    }
     /** 历史查询可能晚于更新检查返回，届时不能再把气泡盖到更新弹窗上。 */
     private var autoCheckStarted = false
 
@@ -122,6 +149,23 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
      * 换了原因(如"解析配置失败"→"该订阅不是 TVBox 配置")必须重建弹窗,否则显示的还是旧原因
      */
     private var errorTipMsg: String? = null
+
+    /** 启动遮罩退场后才允许独立窗口出现；旧 Fragment 或被其他页面盖住时作废。 */
+    private fun canShowStartupUi(host: MainActivity, expectedView: View?): Boolean =
+        isAdded && view === expectedView && isResumed && activity === host &&
+            !host.isFinishing && !host.isDestroyed && ActivityUtils.getTopActivity() === host
+
+    private fun showStartupAwareToast(message: String) {
+        val host = activity as? MainActivity
+        if (host?.isStartupSplashVisible() == true) {
+            val expectedView = view
+            host.runAfterStartupSplash(Runnable {
+                if (canShowStartupUi(host, expectedView)) AppBubble.toast(message)
+            })
+        } else {
+            AppBubble.toast(message)
+        }
+    }
 
     /**
      * true: 配置变更重载
@@ -176,8 +220,16 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
             jumpActivity(CollectActivity::class.java)
         }
         setLoadSir(mBinding.contentLayout)
-        initViewModel()
-        initData()
+        awaitingStartupPrefetch = (activity as? MainActivity)?.hasStartupHomePrefetch() == true
+        if (awaitingStartupPrefetch) {
+            // 先进入等待态再观察 LiveData：预取已完成时观察者会立即重放最后的结果。
+            initData()
+            initViewModel()
+            onStartupHomePrefetchSettled()
+        } else {
+            initViewModel()
+            initData()
+        }
     }
 
     /** 首页搜索框和首页剧集卡片共用展开入口，返回时才能收回到同一个搜索框。 */
@@ -192,11 +244,28 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
     }
 
     private fun initViewModel() {
-        sourceViewModel = ViewModelProvider(this).get(SourceViewModel::class.java)
-        sourceViewModel?.sortResult?.observe(this) { absXml: AbsSortXml? ->
+        sourceViewModel = if ((activity as? MainActivity)?.hasStartupHomePrefetch() == true) {
+            ViewModelProvider(requireActivity()).get(SourceViewModel::class.java)
+        } else {
+            ViewModelProvider(this).get(SourceViewModel::class.java)
+        }
+        sourceViewModel?.sortResult?.observe(viewLifecycleOwner) { absXml: AbsSortXml? ->
             if (!hasSubscription()) {
+                val consumedStartupResult = awaitingStartupPrefetch
+                awaitingStartupPrefetch = false
                 showNoSubscriptionState()
+                if (consumedStartupResult) (activity as? MainActivity)?.consumeStartupHomePrefetch()
                 return@observe
+            }
+            val consumedStartupResult = awaitingStartupPrefetch
+            if (consumedStartupResult) {
+                // 同一个活动级 VM 的预取结果；之后的用户重试仍走 Fragment 原有加载流程。
+                awaitingStartupPrefetch = false
+                dataInitOk = true
+                jarInitOk = true
+                suppressNextAutomaticRetry = !isResumed
+                refreshHomeSourceName()
+                requestStartupHistoryOnce()
             }
             // 收到任何结果(数据/空/null)都算本轮结束:作废看门狗、清"在途"标记(同 GridFragment)
             loadEpoch++
@@ -206,7 +275,8 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
                 showSuccess()
             } else {
                 // 分类都拿不到:别只切"成功态"留下一个连 tab 都没有的空壳 —— 走收尾,让空态带上原因
-                settleFirstScreen()
+                // 仍需先装好下面的默认页，再通知依赖首屏的浮层调度。
+                settleFirstScreen(notifySplash = false)
             }
             mSortDataList =
                 if (absXml?.classes != null && absXml.classes.sortList != null) {
@@ -219,6 +289,7 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
                     DefaultConfig.adjustSort(SourceConfigProviders.get().homeSourceBean.key, ArrayList(), true)
                 }
             initViewPager(absXml)
+            if (consumedStartupResult) (activity as? MainActivity)?.consumeStartupHomePrefetch()
         }
     }
 
@@ -228,12 +299,7 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
 
         val hasSubscription = hasSubscription()
         if (hasSubscription) mBinding.noSubscriptionView.visibility = View.GONE
-        val home = if (hasSubscription) SourceConfigProviders.get().homeSourceBean else null
-        mBinding.tvName.text = when {
-            !hasSubscription -> getString(R.string.home_source_unconfigured)
-            !home?.name.isNullOrEmpty() -> home?.name.orEmpty()
-            else -> getString(R.string.app_name)
-        }
+        refreshHomeSourceName()
         mBinding.tvName.postDelayed({ mBinding.tvName.isSelected = true }, 2000)
 
         // 启动自动检查更新:挂在首页数据初始化上(而不是"有上次播放记录"那支),
@@ -244,11 +310,16 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
         if (!hasSubscription) {
             showNoSubscriptionState()
             // 让加载器同步清理已删除订阅留下的源列表与首页源；不启动首屏看门狗。
-            loadConfig()
+            if (!awaitingStartupPrefetch) loadConfig()
             return
         }
         showLoading()
         startLoadWatchdog()
+        if (awaitingStartupPrefetch) {
+            // 启动页预取在 MainActivity 继续进行；超时入场时这里只等同一轮请求。
+            onStartupHomePrefetchSettled()
+            return
+        }
         when{
             dataInitOk && jarInitOk -> {
                 //正常初始化会先加载,最终到这,此时数据有以下几种情况
@@ -262,6 +333,55 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
                 loadConfig()
             }
         }
+    }
+
+    private fun refreshHomeSourceName() {
+        val home = if (hasSubscription()) SourceConfigProviders.get().homeSourceBean else null
+        mBinding.tvName.text = when {
+            !hasSubscription() -> getString(R.string.home_source_unconfigured)
+            !home?.name.isNullOrEmpty() -> home?.name.orEmpty()
+            else -> getString(R.string.app_name)
+        }
+    }
+
+    /** 预取发生在 Fragment 创建前；配置失败也必须能在超时入场后通知已出现的页面。 */
+    fun onStartupHomePrefetchSettled() {
+        if (!awaitingStartupPrefetch || !isAdded || view == null) return
+        val host = activity as? MainActivity ?: return
+        if (!host.isStartupHomeDataReady()) return
+        val error = host.startupHomeError()
+        when {
+            error == "-1" || !hasSubscription() -> {
+                awaitingStartupPrefetch = false
+                showNoSubscriptionState()
+                host.consumeStartupHomePrefetch()
+            }
+            error != null -> {
+                awaitingStartupPrefetch = false
+                suppressNextAutomaticRetry = !isResumed
+                settleFirstScreen()
+                if (isResumed) showTipDialog(error) else pendingStartupError = error
+                host.consumeStartupHomePrefetch()
+            }
+            else -> {
+                // 正常结果由活动级 sortResult 重放/送达，不能在这里再发一次 getSort。
+                dataInitOk = true
+                jarInitOk = true
+                refreshHomeSourceName()
+                requestStartupHistoryOnce()
+            }
+        }
+    }
+
+    private fun requestStartupHistoryOnce() {
+        if (startupHistoryRequested || onlyConfigChanged || !isAdded) return
+        if (!isResumed) {
+            startupHistoryPending = true
+            return
+        }
+        startupHistoryPending = false
+        startupHistoryRequested = true
+        queryHistory()
     }
 
     private fun loadConfig(){
@@ -320,7 +440,7 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
                     override fun error(msg: String) {
                         jarInitOk = true
                         mHandler.post {
-                            AppBubble.toast("更新订阅失败")
+                            showStartupAwareToast("更新订阅失败")
                             initData()
                         }
                     }
@@ -329,6 +449,17 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
     }
 
     private fun showTipDialog(msg: String) {
+        val host = activity as? MainActivity
+        if (host?.isStartupSplashVisible() == true) {
+            val expectedView = view
+            val expectedEpoch = loadEpoch
+            host.runAfterStartupSplash(Runnable {
+                if (loadEpoch == expectedEpoch && canShowStartupUi(host, expectedView)) {
+                    showTipDialog(msg)
+                }
+            })
+            return
+        }
         if (errorTipDialog == null || errorTipMsg != msg) {
             errorTipDialog?.hide()
             errorTipMsg = msg
@@ -394,6 +525,7 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
         errorTipDialog = null
         errorTipMsg = null
         mBinding.noSubscriptionView.visibility = View.VISIBLE
+        notifyInitialContentReady()
     }
 
     private fun getTabTextView(text: String): TextView {
@@ -432,37 +564,47 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
         if (mSortDataList.isNotEmpty()) {
             mBinding.tabLayout.removeAllViews()
             fragments.clear()
-            for (data in mSortDataList) {
+            val homeRec = SystemConfig.getHomeRec()
+            mSortDataList.forEachIndexed { index, data ->
                 mBinding.tabLayout.addView(getTabTextView(data.name))
                 if (data.id == "my0") { //tab是主页,添加主页fragment 根据设置项显示豆瓣热门/站点推荐(每个源不一样)/历史记录
-                    if (SystemConfig.getHomeRec() == 1 && absXml != null && absXml.videoList != null && absXml.videoList.size > 0
+                    if (homeRec == 1 && absXml != null && absXml.videoList != null && absXml.videoList.size > 0
                     ) { //站点推荐
                         fragments.add(UserFragment.newInstance(absXml.videoList))
                     } else { //豆瓣热门/历史记录
                         fragments.add(UserFragment.newInstance(null))
                     }
                 } else { //来自源的分类
-                    fragments.add(GridFragment.newInstance(data))
+                    val useStartupList = homeRec == 2 && index == 1 &&
+                        (activity as? MainActivity)?.isStartupFirstGridPrefetchFor(data.id) == true
+                    fragments.add(GridFragment.newInstance(data, useStartupList))
                 }
             }
-            if (SystemConfig.getHomeRec() == 2) { //关闭主页
+            if (homeRec == 2) { //关闭主页
                 mBinding.tabLayout.removeViewAt(0)
                 fragments.removeAt(0)
             }
-
             //重新渲染vp
             mBinding.mViewPager.adapter =
                 object : FragmentStatePagerAdapter(getChildFragmentManager()) {
                     override fun getItem(position: Int): Fragment {
                         return fragments[position]
                     }
-
                     override fun getCount(): Int {
                         return fragments.size
                     }
                 }
             //tab和vp绑定
             install(mBinding.mViewPager, mBinding.tabLayout, true)
+            if (absXml == null || fragments.isEmpty()) {
+                // null 结果的具体错误说明已由 settleFirstScreen 显示，别盖回默认空态。
+                if (absXml != null && fragments.isEmpty()) showEmpty()
+                notifyInitialContentReady()
+            }
+        } else {
+            // null 结果的具体错误说明已由 settleFirstScreen 显示，别盖回默认空态。
+            if (absXml != null) showEmpty()
+            notifyInitialContentReady()
         }
     }
 
@@ -480,20 +622,32 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
 
     override fun onResume() {
         super.onResume()
+        val pager = (activity as? MainActivity)?.findViewById<ViewPager>(R.id.vp)
+        if (mainPager !== pager) {
+            mainPager?.removeOnPageChangeListener(mainPageListener)
+            mainPager = pager
+            pager?.addOnPageChangeListener(mainPageListener)
+        }
+        if (pager?.currentItem != 0) dismissLastViewedBubble()
         if (pendingInit) continueInit()
         // "断网/恢复网络"的事件常常发生在页面不可见期间(被无网络页盖住、切到别的页),那时监听是注销的,
         // 回来时已经错过 → 这里按当前网络状态补一次收尾或补一次加载。真机反馈:断网冷启动进无网络页、
         // 点"返回"回首页,lading 一直转、恢复网络也不动 —— 就是这条时序没接上。
         bindNetworkState()
+        if (startupHistoryPending) requestStartupHistoryOnce()
+        pendingStartupError?.let { error ->
+            pendingStartupError = null
+            showTipDialog(error)
+        }
         // onPause 会撤掉待执行的自动检查；气泡停留期间离开再返回时补排一次。
         if (!autoCheckStarted) scheduleAutoUpdateCheck()
     }
 
     override fun onPause() {
         unbindNetworkState()
-        lastViewedBubble?.dismiss()
-        lastViewedBubble = null
-        bubbleUntil = 0L
+        mainPager?.removeOnPageChangeListener(mainPageListener)
+        mainPager = null
+        dismissLastViewedBubble()
         super.onPause()
         mHandler.removeCallbacksAndMessages(null)
     }
@@ -501,6 +655,8 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
     override fun onDestroyView() {
         unbindNetworkState()
         pendingInit = false
+        pendingStartupError = null
+        onInitialContentReady = null
         mHandler.removeCallbacksAndMessages(null)
         super.onDestroyView()
     }
@@ -522,9 +678,14 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
         if (isOffline()) {
             settleFirstScreen()
         } else if (!loadedOnce && !loadInFlight) {
-            // 从未加载成功 + 现在有网:补一次初始化
-            mHandler.post {
-                if (!loadedOnce && !loadInFlight) initData()
+            if (suppressNextAutomaticRetry) {
+                // 预取的失败/空结果刚被重放，首帧不应立即重复发起同一个请求。
+                suppressNextAutomaticRetry = false
+            } else {
+                // 从未加载成功 + 现在有网:补一次初始化
+                mHandler.post {
+                    if (!loadedOnce && !loadInFlight) initData()
+                }
             }
         } else if (loadInFlight) {
             // 页面不可见期间看门狗被 onPause 清掉了,重新武装,别让 loading 无限等
@@ -583,7 +744,7 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
      * <p>
      * 已经加载成功过就只收尾、不动已有内容(别把用户的列表刷掉)。
      */
-    private fun settleFirstScreen() {
+    private fun settleFirstScreen(notifySplash: Boolean = true) {
         if (!hasSubscription()) {
             showNoSubscriptionState()
             return
@@ -596,6 +757,7 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
             LogStore.log(Category.SYSTEM, "首页: 收尾显示空态,原因=" + (if (reason.isNullOrEmpty()) "默认(暂无数据)" else reason.replace('\n', ' ')))
             showEmpty(reason)
         }
+        if (notifySplash) notifyInitialContentReady()
     }
 
     /**
@@ -675,32 +837,49 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
                 vodInfoList
             }
 
-            // 查询完成后更新UI
-            val host = activity
-            if (vodInfoList.isNotEmpty() && vodInfoList[0] != null && isAdded
-                && host != null && !host.isFinishing && !host.isDestroyed && !autoCheckStarted) {
-                if (lastViewedBubble?.isShow == true) return@launch
-                val shownAt = android.os.SystemClock.uptimeMillis()
-                bubbleUntil = shownAt + BUBBLE_SHOW_MS
-                val bubble = LastViewedDialog(host, vodInfoList[0])
-                lastViewedBubble = bubble
-                XPopup.Builder(host)
-                    .hasShadowBg(false)
-                    .isDestroyOnDismiss(true)
-                    .isCenterHorizontal(true)
-                    .isTouchThrough(true)
-                    // 单行气泡高度约 44dp，底部距屏幕底约 155dp。
-                    .offsetY(ScreenUtils.getAppScreenHeight() - ConvertUtils.dp2px(155f + 44f))
-                    .asCustom(bubble)
-                    .show()
-                    .delayDismiss(BUBBLE_SHOW_MS)
-                mHandler.postDelayed({
-                    if (lastViewedBubble === bubble) lastViewedBubble = null
-                }, CHECK_AFTER_BUBBLE_MS + 1000L)
-                // 气泡真的出现了:把自动检查往后排到它消失之后(可能已由 initData 排过一次)
-                rescheduleAutoUpdateCheckAfterBubble()
+            // 历史数据照常查询，气泡等开屏退场后再创建独立窗口。
+            val host = activity as? MainActivity ?: return@launch
+            val vod = vodInfoList.firstOrNull() ?: return@launch
+            if (host.isStartupSplashVisible()) {
+                val expectedView = view
+                host.runAfterStartupSplash(Runnable {
+                    if (canShowStartupUi(host, expectedView)) showLastViewedBubble(host, vod)
+                })
+            } else {
+                showLastViewedBubble(host, vod)
             }
         }
+    }
+
+    private fun showLastViewedBubble(host: MainActivity, vod: VodInfo) {
+        if (!canShowStartupUi(host, view) || !host.isOnlineContentVisible() ||
+            host.isStartupSplashVisible() || autoCheckStarted ||
+            lastViewedBubble?.isShow == true) return
+        val shownAt = android.os.SystemClock.uptimeMillis()
+        bubbleUntil = shownAt + BUBBLE_SHOW_MS
+        val bubble = LastViewedDialog(host, vod)
+        lastViewedBubble = bubble
+        XPopup.Builder(host)
+            .hasShadowBg(false)
+            .isDestroyOnDismiss(true)
+            .isCenterHorizontal(true)
+            .isTouchThrough(true)
+            // 单行气泡高度约 44dp，底部距屏幕底约 155dp。
+            .offsetY(ScreenUtils.getAppScreenHeight() - ConvertUtils.dp2px(155f + 44f))
+            .asCustom(bubble)
+            .show()
+            .delayDismiss(BUBBLE_SHOW_MS)
+        mHandler.postDelayed({
+            if (lastViewedBubble === bubble) lastViewedBubble = null
+        }, CHECK_AFTER_BUBBLE_MS + 1000L)
+        // 气泡真的出现了:把自动检查往后排到它消失之后。
+        rescheduleAutoUpdateCheckAfterBubble()
+    }
+
+    private fun dismissLastViewedBubble() {
+        lastViewedBubble?.dismiss()
+        lastViewedBubble = null
+        bubbleUntil = 0L
     }
 
     private fun rescheduleAutoUpdateCheckAfterBubble() {
@@ -720,6 +899,16 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
     private fun scheduleAutoUpdateCheck() {
         if (!com.github.tvbox.osc.config.SystemConfig.isAutoCheckUpdate()) return
         mHandler.removeCallbacks(pendingAutoCheck)
+        val host = activity as? MainActivity
+        if (host?.isStartupSplashVisible() == true) {
+            val expectedView = view
+            host.runAfterStartupSplash(Runnable {
+                if (canShowStartupUi(host, expectedView) && !autoCheckStarted) {
+                    scheduleAutoUpdateCheck()
+                }
+            })
+            return
+        }
         // 气泡若已排好,等到它消失;否则(无历史/无痕)用默认延时
         val now = android.os.SystemClock.uptimeMillis()
         val remain = bubbleUntil - now
@@ -729,7 +918,12 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
     /** 真正执行自动检查(主线程):进程级去重与开关判定在 UpdateCheck 内 */
     private fun runAutoUpdateCheck() {
         val act = activity ?: return
-        if (isAdded && !act.isFinishing && !act.isDestroyed) {
+        if (act is MainActivity && act.isStartupSplashVisible()) {
+            scheduleAutoUpdateCheck()
+            return
+        }
+        if (isAdded && isResumed && !act.isFinishing && !act.isDestroyed &&
+            ActivityUtils.getTopActivity() === act) {
             autoCheckStarted = true
             val bubble = lastViewedBubble
             lastViewedBubble = null

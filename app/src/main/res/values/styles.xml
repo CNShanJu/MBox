@@ -83,7 +83,7 @@
     </style>
 
     <style name="SplashTheme" parent="AppTheme">
-        <!-- 开屏动画由 activity_splash 布局显示，windowBackground 只留纯色，避免系统启动窗口的缩放动画 -->
+        <!-- SplashActivity 立即转到首页；windowBackground 只留纯色，避免系统启动窗口的缩放动画 -->
         <item name="android:windowBackground">@color/bg_body</item>
         <item name="android:windowFullscreen">true</item>
         <item name="android:windowDrawsSystemBarBackgrounds">false</item>

@@ -54,6 +54,14 @@ public class App extends MultiDexApplication {
     public static String burl;
 
     public boolean isNormalStart;
+    private boolean pendingSafeModeNotice;
+
+    /** 安全模式提示由首页在开屏关闭后消费，避免系统 Toast 盖住开屏。 */
+    public boolean consumePendingSafeModeNotice() {
+        boolean pending = pendingSafeModeNotice;
+        pendingSafeModeNotice = false;
+        return pending;
+    }
 
     /** 换肤后的应用级 Resources(见下面的 getResources 覆写);快照未装配时为 null */
     private android.content.res.Resources mThemedResources;
@@ -632,12 +640,7 @@ public class App extends MultiDexApplication {
                     + StartupGuard.bootAttempts() + " 次,本次未加载 JS 引擎");
         } catch (Throwable ignored) {
         }
-        try {
-            android.widget.Toast.makeText(this,
-                    "连续崩溃，已进入安全模式（JS 源未加载）",
-                    android.widget.Toast.LENGTH_LONG).show();
-        } catch (Throwable ignored) {
-        }
+        pendingSafeModeNotice = true;
     }
 
     /** 判断是否为魅族系统内部的无害异常(系统线程 NPE 等),不应导致 App 崩溃 */

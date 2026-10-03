@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/main_content"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+
+    <!-- 内容区:占上方全部空间, 底部导航栏下方另有布局占位, 内容底部在导航栏上方结束 -->
+    <androidx.viewpager.widget.ViewPager
+        android:id="@+id/vp"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+    <!-- 底部导航栏:占真实布局高度(不再悬浮覆盖内容), 上层内容不会被其遮挡,
+         页面滚动区域底部在导航栏上沿结束, 版本号等底部内容可正常显示/滚动 -->
+    <FrameLayout
+        android:id="@+id/bottom_nav_surface"
+        android:layout_width="match_parent"
+        android:layout_height="58dp"
+        android:elevation="10dp"
+        android:background="@color/bg_surface">
+
+        <!-- 图标层:透明背景, 绘制在纯色(94% 透明度)遮罩上;
+             用自定义底栏:长按条目不再弹系统 Tooltip 提示, 改为放一簇烟花(见 ui/kit/FireworksBottomNavigationView) -->
+        <com.github.tvbox.osc.ui.kit.FireworksBottomNavigationView
+            android:id="@+id/bottom_nav"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@android:color/transparent"
+            android:elevation="0dp"
+            app:compatShadowEnabled="false"
+            app:itemRippleColor="@android:color/transparent"
+            app:itemBackground="@android:color/transparent"
+            app:itemActiveIndicatorStyle="@style/EmptyActiveIndicator"
+            app:itemIconSize="22dp"
+            app:itemIconTint="@color/bottom_navigation_item_selector"
+            app:itemPaddingTop="10dp"
+            app:itemPaddingBottom="11dp"
+            app:itemTextAppearanceActive="@style/NavItemTextAppearance"
+            app:itemTextAppearanceInactive="@style/NavItemTextAppearance"
+            app:itemTextColor="@color/bottom_navigation_item_selector"
+            app:labelVisibilityMode="labeled"
+            app:menu="@menu/main_bottom_navigation" />
+    </FrameLayout>
+</LinearLayout>

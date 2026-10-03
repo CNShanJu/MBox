@@ -1,18 +1,20 @@
 package com.github.tvbox.osc.ui.splash
 
+import android.graphics.Color
 import androidx.core.graphics.ColorUtils
 
 /** 开屏素材的选择集中在这里；后续节日规则可返回新的图片或视频素材类型。 */
 internal sealed interface SplashContent {
-    data class Lottie(val assetPath: String) : SplashContent
+    data class Lottie(val assetPath: String, val backgroundColor: Int) : SplashContent
 }
 
 internal object SplashContentSelector {
-    fun select(backgroundColor: Int): SplashContent {
-        // 暗背景用黑猫白描边，亮背景保留原始黑猫。节日素材规则从这里接入。
-        val darkBackground = ColorUtils.calculateLuminance(backgroundColor) < 0.5
+    fun select(themeBackground: Int, hasBackgroundImage: Boolean): SplashContent {
+        val darkBackground = ColorUtils.calculateLuminance(themeBackground) < 0.5
         val asset = if (darkBackground) DARK_CAT else LIGHT_CAT
-        return SplashContent.Lottie(asset)
+        // 背景图下保留黑色画布，以免图片和开屏素材抢画面；纯色主题直接使用其 bg_body。
+        val background = if (hasBackgroundImage && darkBackground) Color.BLACK else themeBackground
+        return SplashContent.Lottie(asset, background)
     }
 
     private const val LIGHT_CAT = "splash/mbox_cat_light.json"
