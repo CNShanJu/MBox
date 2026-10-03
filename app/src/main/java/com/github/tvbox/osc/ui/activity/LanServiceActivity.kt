@@ -13,6 +13,7 @@ import com.blankj.utilcode.util.AppUtils
 import com.blankj.utilcode.util.ClipboardUtils
 import com.github.tvbox.osc.R
 import com.github.tvbox.osc.base.BaseVbActivity
+import com.github.tvbox.osc.config.SystemConfig
 import com.github.tvbox.osc.databinding.ActivityLanServiceBinding
 import com.github.tvbox.osc.server.ControlManager
 import com.github.tvbox.osc.service.LanServerService
@@ -23,6 +24,7 @@ import com.github.tvbox.osc.ui.dialog.LanImportDialog
 import com.github.tvbox.osc.ui.dialog.LanPairQrDialog
 import com.github.tvbox.osc.ui.dialog.TextTipDialog
 import com.github.tvbox.osc.util.AppBubble
+import com.github.tvbox.osc.util.FastClickCheckUtil
 import com.github.tvbox.osc.util.LanPairQr
 import com.lxj.xpopup.XPopup
 
@@ -47,6 +49,16 @@ class LanServiceActivity : BaseVbActivity<ActivityLanServiceBinding>() {
         // 前台服务可在无 Activity 的进程里被系统恢复；通知直达本页属于正常入口。
         if (intent?.getBooleanExtra(EXTRA_FROM_NOTIFICATION, false) == true) {
             com.github.tvbox.osc.base.App.getInstance().isNormalStart = true
+        }
+        mBinding.llLanServer.setOnClickListener { view ->
+            FastClickCheckUtil.check(view)
+            if (SystemConfig.isLanServerEnabled()) {
+                ConfirmDialog.show(this, "关闭局域网服务",
+                    "关闭会清除已配对设备；正在运行的服务需重启应用后才会停止局域网访问。",
+                    "确认关闭") { updateLanServerEnabled(false) }
+            } else {
+                updateLanServerEnabled(true)
+            }
         }
         mBinding.panelLanConsole.setOnClickListener { openConsole() }
         mBinding.btnOpenLanConsole.setOnClickListener { openConsole() }
@@ -148,6 +160,7 @@ class LanServiceActivity : BaseVbActivity<ActivityLanServiceBinding>() {
     private fun renderStatus() {
         val manager = ControlManager.get()
         val state = manager.lanState()
+        mBinding.switchLanServer.setChecked(SystemConfig.isLanServerEnabled())
         mBinding.tvLanState.text = when (state) {
             ControlManager.LAN_ACTIVE -> getString(R.string.lan_server_state_active)
             ControlManager.LAN_PENDING_RESTART -> getString(R.string.lan_server_state_pending)
@@ -213,6 +226,15 @@ class LanServiceActivity : BaseVbActivity<ActivityLanServiceBinding>() {
     }
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density + 0.5f).toInt()
+
+    private fun updateLanServerEnabled(enabled: Boolean) {
+        SystemConfig.setLanServerEnabled(enabled)
+        renderStatus()
+        if (!enabled) {
+            AppBubble.toast(if (ControlManager.get().lanState() == ControlManager.LAN_PENDING_CLOSE)
+                "局域网服务已关闭，重启生效" else "局域网服务已关闭")
+        }
+    }
 
     private fun restartAppForLan() {
         com.github.tvbox.osc.config.SystemConfig.markInternalRestart()

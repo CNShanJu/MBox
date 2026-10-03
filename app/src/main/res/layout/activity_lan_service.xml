@@ -26,8 +26,51 @@
             android:paddingHorizontal="14dp">
 
             <LinearLayout
+                android:id="@+id/llLanServer"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:background="@drawable/bg_large_round_float"
+                android:focusable="true"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:padding="16dp"
+                android:foreground="?android:selectableItemBackground">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="允许局域网访问"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="16sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="5dp"
+                        android:text="开启后同一局域网的设备可访问本机；更改后需重启应用。"
+                        android:textColor="@color/text_sub_foreground"
+                        android:textSize="12sp" />
+                </LinearLayout>
+
+                <com.github.tvbox.osc.ui.kit.AppSwitch
+                    android:id="@+id/switchLanServer"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="12dp"
+                    android:clickable="false" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
                 android:background="@drawable/bg_large_round_float"
                 android:orientation="vertical"
                 android:padding="16dp">

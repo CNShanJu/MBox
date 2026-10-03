@@ -35,7 +35,6 @@ import com.github.tvbox.osc.util.LoadingAnim
 import com.github.tvbox.osc.util.OkGoHelper
 import com.github.tvbox.osc.util.PlayerHelper
 import com.github.tvbox.osc.config.SystemConfig
-import com.github.tvbox.osc.server.ControlManager
 import com.github.tvbox.osc.util.Utils
 import com.blankj.utilcode.util.AppUtils
 import com.hjq.permissions.OnPermissionCallback
@@ -57,8 +56,6 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
 
     /** init() 是否已跑完(onResume 刷新显示前要确认控件已就绪) */
     private var inited = false
-
-    /** 局域网服务弹窗引用:view 模式弹窗不接管返回键,由本页 onBackPressed 先关它(见文件末尾) */
 
     /** 主题颜色弹窗引用(编辑页返回后若它还开着,就地刷新列表) */
     private var themeDialog: com.github.tvbox.osc.ui.dialog.ThemePickerDialog? = null
@@ -102,31 +99,10 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             SystemConfig.setPrivateBrowsing(newConfig)
         }
 
-        // 局域网服务开关(默认关闭):关闭时 HTTP 服务仅监听 127.0.0.1(订阅/本地播放/代理不受影响);
-        // 开启后局域网设备经配对访问网页与文件；地址、设备管理、配置导入各有独立入口。
-        // 开关由关变开时进入局域网服务二级页，地址、设备与配置导入都在该页。
-        val lanEnabled = SystemConfig.isLanServerEnabled()
-        mBinding.switchLanServer.setChecked(lanEnabled)
+        // 局域网服务的开关和运行状态统一在管理页显示。
         mBinding.llLanAddress.setOnClickListener { openLanServicePage() }
         com.github.tvbox.osc.theme.ThemeSweep.applyImageTint(
             mBinding.ivLanManageArrow, R.color.text_foreground)
-        mBinding.tvLanServerTitle.setOnLongClickListener {
-            openLanServicePage()
-            true
-        }
-        mBinding.llLanServer.setOnClickListener { view: View? ->
-            FastClickCheckUtil.check(view)
-            val newVal = !SystemConfig.isLanServerEnabled()
-            mBinding.switchLanServer.setChecked(newVal)
-            SystemConfig.setLanServerEnabled(newVal)
-            val lanState = ControlManager.get().lanState()
-            if (newVal) {
-                openLanServicePage()
-            } else {
-                AppBubble.toast(if (lanState == ControlManager.LAN_PENDING_CLOSE)
-                    "局域网服务已关闭，重启生效" else "局域网服务已关闭")
-            }
-        }
 
         // 忽略证书错误(默认关闭,会降低 TLS 安全性):个别自签名/证书异常站点打不开时再开启;
         // WebView 即时生效,网络请求(OkHttp)在应用重启后按开关重建客户端时生效。
