@@ -347,7 +347,7 @@ public final class DownloadDialogCoordinator {
 
     /** 存储权限确认弹窗:文案与"我的-本地视频"入口保持一致,确认后拉起系统授权 */
     private void showStoragePermissionDialog(List<VodInfo.VodSeries> selected) {
-        ConfirmDialog.show(context, "提示",
+        ConfirmDialog.showInHostView(context, "提示",
                 "为了下载视频到本地,我们需要访问您设备文件的读写权限", "去授权",
                 () -> requestStoragePermission(selected));
     }

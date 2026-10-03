@@ -11,8 +11,6 @@ import com.github.tvbox.osc.R;
 import com.github.tvbox.osc.bean.Movie;
 import com.github.tvbox.osc.ui.adapter.QuickSearchAdapter;
 import com.github.tvbox.osc.ui.adapter.SearchWordAdapter;
-import com.github.tvbox.osc.util.Utils;
-import com.lxj.xpopup.XPopup;
 import com.lxj.xpopup.core.BasePopupView;
 import com.lxj.xpopup.interfaces.XPopupCallback;
 import com.owen.tvrecyclerview.widget.TvRecyclerView;
@@ -91,9 +89,7 @@ public class QuickSearchDialog extends AppBottomPopupView {
     @Override
     public BasePopupView show() {
         if (popupInfo == null) {
-            return new XPopup.Builder(getContext())
-                    .isDarkTheme(Utils.isDarkTheme())
-                    .setPopupCallback(new XPopupCallback() {
+            return DialogCoordinator.bottom(getContext(), this, 0, new XPopupCallback() {
                         @Override public void onCreated(BasePopupView v) { }
                         @Override public void beforeShow(BasePopupView v) { }
                         @Override public void onShow(BasePopupView v) { }
@@ -107,8 +103,7 @@ public class QuickSearchDialog extends AppBottomPopupView {
                         @Override public void onKeyBoardStateChanged(BasePopupView v, int h) { }
                         @Override public void onDrag(BasePopupView v, int c, float x, boolean b) { }
                         @Override public void onClickOutside(BasePopupView v) { }
-                    })
-                    .asCustom(this).show();
+                    }).show();
         }
         return super.show();
     }

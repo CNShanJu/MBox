@@ -23,6 +23,7 @@ import com.github.tvbox.osc.player.TrackInfoBean;
 import com.github.tvbox.osc.player.api.PlayConfig;
 import com.github.tvbox.osc.player.controller.SubtitleController;
 import com.github.tvbox.osc.ui.adapter.SelectDialogAdapter;
+import com.github.tvbox.osc.ui.dialog.DialogCoordinator;
 import com.github.tvbox.osc.ui.dialog.SearchSubtitleDialog;
 import com.github.tvbox.osc.ui.dialog.SelectDialog;
 import com.github.tvbox.osc.ui.dialog.SubtitleDialog;
@@ -275,7 +276,7 @@ public final class SubtitleCoordinator {
                     searchWord = vodInfo.playNote;
                 }
                 searchSubtitleDialog.setSearchWord(TextUtils.isEmpty(searchWord) ? "" : searchWord);
-                searchSubtitleDialog.show();
+                DialogCoordinator.centerInHostView(mActivity, searchSubtitleDialog).show();
             }
         });
         subtitleDialog.setLocalFileChooserListener(new SubtitleDialog.LocalFileChooserListener() {
@@ -284,7 +285,7 @@ public final class SubtitleCoordinator {
                 openLocalSubtitleChooser();
             }
         });
-        subtitleDialog.show();
+        DialogCoordinator.centerInHostView(mActivity, subtitleDialog).show();
     }
 
     /**
@@ -304,13 +305,14 @@ public final class SubtitleCoordinator {
     }
 
     private void showSubtitleFileChooser() {
-        new SubtitleFileChooserDialog(mActivity, "/storage/emulated/0/Download", new SubtitleFileChooserDialog.OnFileChosenListener() {
+        SubtitleFileChooserDialog dialog = new SubtitleFileChooserDialog(mActivity, "/storage/emulated/0/Download", new SubtitleFileChooserDialog.OnFileChosenListener() {
             @Override
             public void onChosen(String path) {
                 LOG.i("Local Subtitle Path: " + path);
                 setSubtitlePath(path);//设置字幕
             }
-        }).show();
+        });
+        DialogCoordinator.centerInHostView(mActivity, dialog).show();
     }
 
     /** 全文件访问(MANAGE_EXTERNAL_STORAGE)授权;授权成功后再打开字幕文件浏览器 */
@@ -404,7 +406,7 @@ public final class SubtitleCoordinator {
                 return oldItem.trackId == newItem.trackId;
             }
         }, bean, trackInfo.getAudioSelected(false));
-        dialog.show();
+        DialogCoordinator.centerInHostView(mActivity, dialog).show();
     }
 
     /** 切换内置字幕 */
@@ -466,7 +468,7 @@ public final class SubtitleCoordinator {
                 return oldItem.trackId == newItem.trackId;
             }
         }, bean, trackInfo.getSubtitleSelected(false));
-        dialog.show();
+        DialogCoordinator.centerInHostView(mActivity, dialog).show();
     }
 
     // ── 其它（外部事件驱动的字幕字号变更）──

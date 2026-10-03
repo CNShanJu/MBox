@@ -1,6 +1,7 @@
 package com.github.tvbox.osc.ui.activity;
 
 import android.content.Context;
+import android.content.res.Configuration;
 import android.net.Uri;
 import android.os.Handler;
 import android.util.Base64;
@@ -8,6 +9,7 @@ import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.View.OnClickListener;
+import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -110,6 +112,7 @@ public class LiveActivity extends BaseActivity implements LiveLineSelectHost, Li
     private BasePopupView mSettingRightDialog;
     private BasePopupView mSettingBottomDialog;
     private BasePopupView mAllChannelRightDialog;
+    private LivePasswordDialog mPasswordDialog;
 
     @Override
     protected int getLayoutResID() {
@@ -230,7 +233,11 @@ public class LiveActivity extends BaseActivity implements LiveLineSelectHost, Li
 
     @Override
     public void onBackPressed() {
-        if(isBack){
+        if (mPasswordDialog != null && mPasswordDialog.isShow()) {
+            mPasswordDialog.cancelFromBack();
+        } else if (DialogCoordinator.dismissSimpleHostPopupOnBack(this)) {
+            return;
+        } else if(isBack){
             isBack= false;
             playPreSource();
         } else if(mSettingBottomDialog!=null && mSettingBottomDialog.isShow()){//适配底部导航栏(手势条闪屏)变成view模式后在back时手动隐藏
@@ -294,6 +301,32 @@ public class LiveActivity extends BaseActivity implements LiveLineSelectHost, Li
         if (mVideoView != null) {
             mVideoView.resume();
         }
+    }
+
+    @Override
+    public void onConfigurationChanged(@NonNull Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        // 横竖屏变化可能重置系统栏标志；等新布局完成后恢复直播全屏状态。
+        View decor = getWindow().getDecorView();
+        decor.post(this::restoreLiveFullscreenBars);
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) restoreLiveFullscreenBars();
+    }
+
+    private void restoreLiveFullscreenBars() {
+        if (mVideoView == null || !mVideoView.isFullScreen()) return;
+        View decor = getWindow().getDecorView();
+        int flags = decor.getSystemUiVisibility() | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION;
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.KITKAT) {
+            flags |= View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
+        }
+        decor.setSystemUiVisibility(flags);
+        getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN,
+                WindowManager.LayoutParams.FLAG_FULLSCREEN);
     }
 
     /**
@@ -779,6 +812,7 @@ public class LiveActivity extends BaseActivity implements LiveLineSelectHost, Li
     private void showPasswordDialog(int groupIndex, int liveChannelIndex) {
 
         LivePasswordDialog dialog = new LivePasswordDialog(this);
+        mPasswordDialog = dialog;
         dialog.setOnListener(new LivePasswordDialog.OnListener() {
             @Override
             public void onChange(String password) {

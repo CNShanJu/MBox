@@ -33,6 +33,7 @@ import com.github.tvbox.osc.subtitle.widget.SimpleSubtitleView;
 import com.github.tvbox.osc.ui.adapter.ParseAdapter;
 import com.github.tvbox.osc.ui.adapter.SelectDialogAdapter;
 import com.github.tvbox.osc.ui.dialog.SelectDialog;
+import com.github.tvbox.osc.ui.dialog.DialogCoordinator;
 import com.github.tvbox.osc.ui.widget.MyBatteryView;
 import com.github.tvbox.osc.util.FastClickCheckUtil;
 import com.github.tvbox.osc.util.PlayerHelper;
@@ -228,10 +229,10 @@ public class LocalVideoController extends BaseController implements PlaybackSett
             @Override
             public void onClick(View view) {
                 isLock = !isLock;
-                if (isLock) {// 上了锁
                 setLocked(isLock);
-                    mLockView.setImageResource(R.drawable.ic_lock);
+                if (isLock) {// 上了锁
                     clearDoubleTapSeekFeedback();
+                    mLockView.setImageResource(R.drawable.ic_lock);
                     hideBottom();
                     mHandler.removeCallbacks(lockRunnable);
                     mHandler.postDelayed(lockRunnable, dismissTimeLock);
@@ -524,7 +525,7 @@ public class LocalVideoController extends BaseController implements PlaybackSett
                             return oldItem.intValue() == newItem.intValue();
                         }
                     }, renders, defaultPos);
-                    dialog.show();
+                    DialogCoordinator.centerInHostView(mActivity, dialog).show();
                 } catch (JSONException e) {
                     e.printStackTrace();
                 }
@@ -1093,12 +1094,12 @@ public class LocalVideoController extends BaseController implements PlaybackSett
     @Override
     protected void onPlayStateChanged(int playState) {
         super.onPlayStateChanged(playState);
+        if (isLock && !isLocked()) setLocked(true);
         videoPlayState = playState;
         switch (playState) {
             case VideoView.STATE_IDLE:
                 break;
             case VideoView.STATE_PLAYING:
-        if (isLock && !isLocked()) setLocked(true);
                 initLandscapePortraitBtnInfo();
                 startProgress();
                 mIvPlayStatus.setImageResource(R.drawable.ic_pause);
@@ -1243,11 +1244,6 @@ public class LocalVideoController extends BaseController implements PlaybackSett
     }
 
     @Override
-    public boolean onBackPressed() {
-        if (super.onBackPressed()) {
-            return true;
-        }
-    @Override
     public boolean onDoubleTap(MotionEvent e) {
         if (mControlWrapper == null) return super.onDoubleTap(e);
         if (isLock || isLocked() || !isInPlaybackState()) return true;
@@ -1256,6 +1252,11 @@ public class LocalVideoController extends BaseController implements PlaybackSett
                 || super.onDoubleTap(e);
     }
 
+    @Override
+    public boolean onBackPressed() {
+        if (super.onBackPressed()) {
+            return true;
+        }
         if (isBottomVisible()) {
             hideBottom();
             return true;
@@ -1265,12 +1266,12 @@ public class LocalVideoController extends BaseController implements PlaybackSett
 
     @Override
     protected void onDetachedFromWindow() {
+        clearDoubleTapSeekFeedback();
         super.onDetachedFromWindow();
         mHandler.removeCallbacks(myRunnable2);
         // 与 VodController 同一处缺陷:1004(设速度)在"非播放态"分支会每 100ms 自我重投,
         // MessageQueue 里的消息持有 Handler → 持有 View → 持有 Activity;这里一并清干净
         // (myHandle 在 initView 里才创建,视图被提前移除时为 null,故判空)
-        clearDoubleTapSeekFeedback();
         if (myHandle != null) myHandle.removeCallbacksAndMessages(null);
         if (mHandler != null) mHandler.removeCallbacksAndMessages(null);
     }

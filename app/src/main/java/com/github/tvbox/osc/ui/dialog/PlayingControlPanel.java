@@ -203,7 +203,7 @@ final class PlayingControlPanel {
                 return PlayerHelper.getScaleName(val);
             }
         }, INT_DIFF, new ArrayList<>(Arrays.asList(0, 1, 2, 3, 4, 5)), cur);
-        dialog.show();
+        DialogCoordinator.centerInHostView(mActivity, dialog).show();
     }
 
     /** 播放器:列出所有可用播放器直接选择 */
@@ -258,7 +258,7 @@ final class PlayingControlPanel {
                 return PlayerHelper.getRenderName(value);
             }
         }, INT_DIFF, new ArrayList<>(Arrays.asList(0, 1)), cur);
-        dialog.show();
+        DialogCoordinator.centerInHostView(mActivity, dialog).show();
     }
 
     private void showBackgroundPlayDialog() {
@@ -278,7 +278,7 @@ final class PlayingControlPanel {
                 return value;
             }
         }, SelectDialogAdapter.stringDiff, BackgroundPlaySettings.MODES, current);
-        dialog.show();
+        DialogCoordinator.centerInHostView(mActivity, dialog).show();
     }
 
     private void updateSpeedUi() {
@@ -313,5 +313,19 @@ final class PlayingControlPanel {
         } else if (after != null) {
             after.run();
         }
+    }
+
+    /** XPopup 的 dismissWith 回调先于从 decor 移除弹窗；转屏要等移除完成。 */
+    private void dismissThenRotate(Runnable after) {
+        if (mHost == null || mActivity == null) {
+            dismissWith(after);
+            return;
+        }
+        mHost.dismissWith(() -> {
+            View decor = mActivity.getWindow().getDecorView();
+            decor.post(() -> {
+                if (!mActivity.isFinishing() && !mActivity.isDestroyed()) after.run();
+            });
+        });
     }
 }

@@ -28,6 +28,7 @@ import com.github.tvbox.osc.subtitle.widget.SimpleSubtitleView;
 import com.github.tvbox.osc.ui.adapter.ParseAdapter;
 import com.github.tvbox.osc.ui.adapter.SelectDialogAdapter;
 import com.github.tvbox.osc.ui.dialog.SelectDialog;
+import com.github.tvbox.osc.ui.dialog.DialogCoordinator;
 import com.github.tvbox.osc.ui.widget.MyBatteryView;
 import com.github.tvbox.osc.util.FastClickCheckUtil;
 import com.github.tvbox.osc.util.PlayerHelper;
@@ -498,7 +499,7 @@ public class VodController extends BaseController implements PlaybackSettingsCon
                         return oldItem.intValue() == newItem.intValue();
                     }
                 }, renders, defaultPos);
-                dialog.show();
+                DialogCoordinator.centerInHostView(mActivity, dialog).show();
             } catch (JSONException e) {
                 e.printStackTrace();
             }

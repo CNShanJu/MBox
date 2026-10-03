@@ -15,6 +15,7 @@ import android.text.TextUtils;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowManager;
 import android.view.animation.DecelerateInterpolator;
 import android.widget.FrameLayout;
 import android.widget.Toast;
@@ -75,6 +76,7 @@ import com.github.tvbox.osc.config.SystemConfig;
 import com.github.tvbox.osc.util.Utils;
 import com.github.tvbox.osc.viewmodel.SourceViewModel;
 import com.gyf.immersionbar.ImmersionBar;
+import com.gyf.immersionbar.BarHide;
 import com.lxj.xpopup.core.BasePopupView;
 import com.owen.tvrecyclerview.widget.V7LinearLayoutManager;
 
@@ -384,7 +386,7 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
                     AppBubble.toast("已加入收藏夹");
                     updateCollectAction(true);
                 } else {
-                    com.github.tvbox.osc.ui.dialog.ConfirmDialog.showDanger(
+                    com.github.tvbox.osc.ui.dialog.ConfirmDialog.showDangerInHostView(
                             DetailActivity.this, "取消收藏",
                             "确定将《" + (vodInfo.name == null ? "该影片" : vodInfo.name) + "》移出收藏夹吗？",
                             "移除", () -> {
@@ -1097,6 +1099,7 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
 
     @Override
     public void onBackPressed() {
+        if (DialogCoordinator.dismissSimpleHostPopupOnBack(this)) return;
         if (mAllSeriesRightDialog != null && mAllSeriesRightDialog.isShow()) {
             mAllSeriesRightDialog.dismiss();
             return;
@@ -1162,6 +1165,17 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
         mBinding.tvSort.setFocusable(!fullWindows);
         mBinding.tvCollect.setFocusable(!fullWindows);
         toggleSubtitleTextSize();
+        if (fullWindows) {
+            restoreFullscreenBars();
+        } else {
+            // 退出全屏预览时撤销窗口标志，详情内容重新按可见系统栏留白。
+            View decor = getWindow().getDecorView();
+            decor.setSystemUiVisibility(decor.getSystemUiVisibility()
+                    & ~(View.SYSTEM_UI_FLAG_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY));
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+        }
     }
 
     void toggleSubtitleTextSize() {
@@ -1270,6 +1284,32 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
         // 兜底:本设备上点X关闭不触发 onPictureInPictureModeChanged(false),只触发配置变化,
         // 由 PipHelper 统一延迟判断"放大/点X关闭"
         pipHelper.onConfigurationChanged();
+        // 设置抽屉切换横竖屏会触发配置变化；系统可能重置沉浸式标志，等新布局完成后补回。
+        if (fullWindows) mBinding.getRoot().post(this::restoreFullscreenBars);
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) restoreFullscreenBars();
+    }
+
+    private void restoreFullscreenBars() {
+        if (!fullWindows || (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O
+                && isInPictureInPictureMode())) return;
+        ImmersionBar.with(this)
+                .hideBar(BarHide.FLAG_HIDE_BAR)
+                .navigationBarColor(R.color.black)
+                .fitsSystemWindows(false)
+                .init();
+        // 转屏后系统可能再次显示状态栏；直接恢复窗口全屏标志，避免顶部 inset 把画面压低。
+        View decor = getWindow().getDecorView();
+        decor.setSystemUiVisibility(decor.getSystemUiVisibility()
+                | View.SYSTEM_UI_FLAG_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+        getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN,
+                WindowManager.LayoutParams.FLAG_FULLSCREEN);
     }
 
     /**
@@ -1368,7 +1408,7 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
                     }
                 }, SelectDialogAdapter.stringDiff, java.util.Arrays.asList(labels), -1);
                 // -1 = 动作列表:4 项都没有"默认选中",每一行都点得动(选择列表才会跳过已选项)
-                DialogCoordinator.center(this, dialog).show();
+                DialogCoordinator.centerInHostView(this, dialog).show();
             });
             screenShotListenManager.startListen();
         }else {

@@ -18,7 +18,7 @@ import org.jetbrains.annotations.NotNull;
  * 半透明度由 theme_colors 的 bg_float_alpha 控制, 深浅色随主题),圆角走主题圆角档 radius_dialog,
  * 与 DeleteDownloadDialog 等下载相关弹窗视觉一致(替代 XPopup 默认 asConfirm 的库内固定圆角)。
  *
- * <p><b>必须通过 {@link #show(Context, String, String, String, Runnable)} 弹出</b>:
+ * <p><b>必须通过 {@link #show(Context, String, String, String, Runnable)} 或宿主视图工厂弹出</b>:
  * XPopup 的 popupInfo 只由 Builder 绑定,直接 {@code new ConfirmDialog(ctx).show()} 会抛
  * {@code popupInfo is null}(BasePopupView.show 硬校验)——统一工厂内部走 Builder 绑定,避免各调用点漏写。</p>
  */
@@ -44,6 +44,19 @@ public class ConfirmDialog extends AppCenterPopupView {
         new XPopup.Builder(context)
                 .asCustom(new ConfirmDialog(context, title, message, confirmText, onConfirm, danger))
                 .show();
+    }
+
+    /** Keep a player/detail page's existing status and navigation bars while confirming. */
+    public static void showInHostView(Context context, String title, String message,
+                                      String confirmText, Runnable onConfirm) {
+        DialogCoordinator.centerInHostView(context,
+                new ConfirmDialog(context, title, message, confirmText, onConfirm, false)).show();
+    }
+
+    public static void showDangerInHostView(Context context, String title, String message,
+                                            String confirmText, Runnable onConfirm) {
+        DialogCoordinator.centerInHostView(context,
+                new ConfirmDialog(context, title, message, confirmText, onConfirm, true)).show();
     }
 
     private final String mTitle;

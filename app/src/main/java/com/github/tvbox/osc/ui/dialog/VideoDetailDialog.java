@@ -99,6 +99,8 @@ public class VideoDetailDialog extends SheetResizableBottomPopup {
                 // 大图查看器必须传自己的图片加载器:XPopup 自带的 SmartGlideImageLoader 依赖 Glide,
                 // 而 Glide 已从本仓移除 → 点缩略图即 NoClassDefFoundError 崩溃(见 PicassoImageLoader)
                 new XPopup.Builder(getContext())
+                        .isViewMode(true)
+                        .hasNavigationBar(false)
                         .asImageViewer(binding.ivThum, picUrl, new PicassoImageLoader())
                         .show();
             });

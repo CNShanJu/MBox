@@ -6,6 +6,8 @@ import android.content.res.Configuration;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
+import android.view.View;
+import android.view.WindowManager;
 
 import com.blankj.utilcode.util.GsonUtils;
 import com.blankj.utilcode.util.NotificationUtils;
@@ -15,21 +17,24 @@ import com.github.tvbox.osc.base.BaseVbActivity;
 import com.github.tvbox.osc.bean.ParseBean;
 import com.github.tvbox.osc.bean.VideoInfo;
 import com.github.tvbox.osc.bean.VodInfo;
+import com.github.tvbox.osc.bean.CastVideo;
 import com.github.tvbox.osc.constant.CacheConst;
 import com.github.tvbox.osc.databinding.ActivityLocalPlayBinding;
-import com.github.tvbox.osc.bean.CastVideo;
 import com.github.tvbox.osc.player.MyVideoView;
 import com.github.tvbox.osc.player.PlayerSession;
 import com.github.tvbox.osc.player.api.PlayConfig;
 import com.github.tvbox.osc.player.controller.LocalVideoController;
 import com.github.tvbox.osc.ui.dialog.AllLocalSeriesDialog;
+import com.github.tvbox.osc.ui.dialog.CastListDialog;
 import com.github.tvbox.osc.ui.dialog.DialogCoordinator;
 import com.github.tvbox.osc.ui.dialog.PlayingControlRightDialog;
-import com.github.tvbox.osc.ui.dialog.CastListDialog;
 import com.github.tvbox.osc.util.BroadcastUtils;
 import com.github.tvbox.osc.util.PipHelper;
 import com.github.tvbox.osc.util.PlayerHelper;
 import com.github.tvbox.osc.util.player.SubtitleCoordinator;
+import com.github.tvbox.osc.R;
+import com.gyf.immersionbar.BarHide;
+import com.gyf.immersionbar.ImmersionBar;
 import com.google.common.reflect.TypeToken;
 import com.lxj.xpopup.core.BasePopupView;
 
@@ -325,11 +330,6 @@ public class LocalPlayActivity extends BaseVbActivity<ActivityLocalPlayBinding> 
         mSubtitleCoordinator = new SubtitleCoordinator(this, mController, mPlaySession);
     }
 
-    /** 本地字幕设置弹窗:构造最小 VodInfo(取本地文件名作为搜索词)后交给协调器 */
-    private void openLocalSubtitleDialog() {
-        if (mSubtitleCoordinator == null) return;
-        VodInfo vodInfo = new VodInfo();
-        VideoInfo info = mVideoList.get(mPosition);
     private void showCastDialog() {
         if (mPosition < 0 || mPosition >= mVideoList.size()) return;
         VideoInfo video = mVideoList.get(mPosition);
@@ -347,6 +347,11 @@ public class LocalPlayActivity extends BaseVbActivity<ActivityLocalPlayBinding> 
         DialogCoordinator.centerInHostView(this, dialog).show();
     }
 
+    /** 本地字幕设置弹窗:构造最小 VodInfo(取本地文件名作为搜索词)后交给协调器 */
+    private void openLocalSubtitleDialog() {
+        if (mSubtitleCoordinator == null) return;
+        VodInfo vodInfo = new VodInfo();
+        VideoInfo info = mVideoList.get(mPosition);
         vodInfo.name = info.getDisplayName();
         mSubtitleCoordinator.openSubtitleDialog(vodInfo);
     }
@@ -479,6 +484,32 @@ public class LocalPlayActivity extends BaseVbActivity<ActivityLocalPlayBinding> 
         super.onConfigurationChanged(newConfig);
         // 兜底:部分设备点X关闭不触发 onPictureInPictureModeChanged(false),由 PipHelper 延迟判断
         if (pipHelper != null) pipHelper.onConfigurationChanged();
+        mBinding.getRoot().post(this::restoreFullscreenBars);
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) restoreFullscreenBars();
+    }
+
+    private void restoreFullscreenBars() {
+        if (mVideoView == null || !mVideoView.isFullScreen()
+                || (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O
+                && isInPictureInPictureMode())) return;
+        ImmersionBar.with(this)
+                .hideBar(BarHide.FLAG_HIDE_BAR)
+                .navigationBarColor(R.color.black)
+                .fitsSystemWindows(false)
+                .init();
+        // 与在线全屏播放一致，转屏后直接补回状态栏和导航栏的隐藏标志。
+        View decor = getWindow().getDecorView();
+        decor.setSystemUiVisibility(decor.getSystemUiVisibility()
+                | View.SYSTEM_UI_FLAG_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);
+        getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN,
+                WindowManager.LayoutParams.FLAG_FULLSCREEN);
     }
 
     /** 进入画中画(小窗) */
@@ -506,6 +537,7 @@ public class LocalPlayActivity extends BaseVbActivity<ActivityLocalPlayBinding> 
 
     @Override
     public void onBackPressed() {
+        if (DialogCoordinator.dismissSimpleHostPopupOnBack(this)) return;
         if (!mVideoView.onBackPressed()) {
             super.onBackPressed();
         }

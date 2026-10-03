@@ -6,8 +6,6 @@ import android.widget.EditText;
 import androidx.annotation.NonNull;
 
 import com.github.tvbox.osc.R;
-import com.github.tvbox.osc.util.Utils;
-import com.lxj.xpopup.XPopup;
 import com.lxj.xpopup.core.BasePopupView;
 import com.lxj.xpopup.interfaces.XPopupCallback;
 
@@ -22,6 +20,7 @@ public class LivePasswordDialog extends AppCenterPopupView {
 
     private OnListener listener = null;
     private EditText inputPassword;
+    private boolean backCancelDispatched;
 
     public LivePasswordDialog(@NonNull @NotNull Context context) {
         super(context);
@@ -45,29 +44,37 @@ public class LivePasswordDialog extends AppCenterPopupView {
         });
     }
 
-    /** 兼容旧调用点：popupInfo 未绑定时经 Builder 绑定（返回键→onCancel 后关闭） */
+    /** 全屏直播密码框附着到宿主视图，避免独立弹窗窗口唤出状态栏。 */
     @Override
     public BasePopupView show() {
         if (popupInfo == null) {
-            return new XPopup.Builder(getContext())
-                    .isDarkTheme(Utils.isDarkTheme())
-                    .setPopupCallback(new XPopupCallback() {
+            return DialogCoordinator.centerInHostView(getContext(), this,
+                    new XPopupCallback() {
                         @Override public void onCreated(BasePopupView v) { }
                         @Override public void beforeShow(BasePopupView v) { }
                         @Override public void onShow(BasePopupView v) { }
                         @Override public void onDismiss(BasePopupView v) { }
                         @Override public void beforeDismiss(BasePopupView v) { }
                         @Override public boolean onBackPressed(BasePopupView v) {
-                            if (listener != null) listener.onCancel();
+                            cancelFromBack();
                             return true;
                         }
                         @Override public void onKeyBoardStateChanged(BasePopupView v, int h) { }
                         @Override public void onDrag(BasePopupView v, int c, float x, boolean b) { }
                         @Override public void onClickOutside(BasePopupView v) { }
                     })
-                    .asCustom(this).show();
+                    .show();
         }
         return super.show();
+    }
+
+    /** view 模式下 Activity 接到返回键时调用；与 XPopup 回调共用一次性取消语义。 */
+    public void cancelFromBack() {
+        if (!backCancelDispatched) {
+            backCancelDispatched = true;
+            if (listener != null) listener.onCancel();
+        }
+        dismiss();
     }
 
     public void setOnListener(OnListener listener) {
