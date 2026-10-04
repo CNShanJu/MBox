@@ -7,7 +7,9 @@ import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.provider.OpenableColumns
+import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
@@ -437,22 +439,102 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
     private fun setupTabs() {
         mBinding.tabVideo.setOnClickListener { switchTab(false) }
         mBinding.tabLive.setOnClickListener { switchTab(true) }
-        // 内容区左右滑动也能切 tab(2026-10-01,用户口径"订阅管理 tab 为啥没法从底下那些区域左右滑动切 tab"):
-        // 手势在 dispatchTouchEvent 里统一观察(见 TabSwipeHelper 的说明 —— 挂列表上会被条目吃掉事件)
-        swipeTracker = TabSwipeHelper.tracker(this) { dir ->
-            if (dir < 0) switchTab(true) else switchTab(false)   // 左滑 = 下一个 tab(直播源)
-        }
+        // 内容区左右滑动切 tab；条目收到 DOWN 后若确认是横滑，须先发 CANCEL 再切页。
         // 首帧把指示条摆到"视频源"下方(不播动画):等标签行量完尺寸再摆,顺手把它显示出来
         mBinding.llTabs.post { moveIndicator(false) }
     }
 
-    /** 内容区左右滑动切 tab 的手势追踪(只观察、不消费事件) */
-    private var swipeTracker: TabSwipeHelper.Tracker? = null
+    private val pageSwipeMinPx by lazy { TabSwipeHelper.minDistancePx(this) }
+    private val pageTouchSlop by lazy { ViewConfiguration.get(this).scaledTouchSlop }
+    private var pageSwipeEligible = false
+    private var pageSwipeCaptured = false
+    private var pageSwipeDirection = 0
+    private var pageSwipeDownX = 0f
+    private var pageSwipeDownY = 0f
     private val tabPageAnimator = TabPageAnimator()
 
-    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
-        swipeTracker?.onTouch(ev)
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                pageSwipeEligible = touchInPage(ev)
+                pageSwipeCaptured = false
+                pageSwipeDirection = 0
+                pageSwipeDownX = ev.x
+                pageSwipeDownY = ev.y
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (pageSwipeCaptured) return true
+                if (pageSwipeEligible) {
+                    val dx = ev.x - pageSwipeDownX
+                    val dy = ev.y - pageSwipeDownY
+                    val direction = TabSwipeHelper.direction(dx, dy, pageSwipeMinPx)
+                    if (direction != 0) {
+                        capturePageSwipe(ev, direction)
+                        return true
+                    }
+                    if (kotlin.math.abs(dy) > pageTouchSlop.toFloat() && kotlin.math.abs(dy) > kotlin.math.abs(dx)) {
+                        pageSwipeEligible = false // 已开始纵向滚动，不再抢列表手势
+                    }
+                }
+            }
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                pageSwipeEligible = false
+                if (pageSwipeCaptured) {
+                    pageSwipeDirection = 0
+                    return true
+                }
+            }
+            MotionEvent.ACTION_POINTER_UP -> if (pageSwipeCaptured) return true
+            MotionEvent.ACTION_UP -> {
+                if (!pageSwipeCaptured && pageSwipeEligible) {
+                    val direction = TabSwipeHelper.direction(
+                        ev.x - pageSwipeDownX, ev.y - pageSwipeDownY, pageSwipeMinPx
+                    )
+                    if (direction != 0) capturePageSwipe(ev, direction)
+                }
+                if (pageSwipeCaptured) {
+                    val direction = if (pageSwipeDirection == 0) 0 else TabSwipeHelper.direction(
+                        ev.x - pageSwipeDownX, ev.y - pageSwipeDownY, pageSwipeMinPx
+                    )
+                    pageSwipeCaptured = false
+                    pageSwipeEligible = false
+                    pageSwipeDirection = 0
+                    if (direction != 0) switchTab(direction < 0)
+                    return true // 子视图只收到 CANCEL，不再收到会触发选源的 UP
+                }
+                pageSwipeEligible = false
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                if (pageSwipeCaptured) {
+                    pageSwipeCaptured = false
+                    pageSwipeEligible = false
+                    pageSwipeDirection = 0
+                    return true
+                }
+                pageSwipeEligible = false
+            }
+        }
         return super.dispatchTouchEvent(ev)
+    }
+
+    private fun capturePageSwipe(ev: MotionEvent, direction: Int) {
+        pageSwipeCaptured = true
+        pageSwipeDirection = direction
+        val cancel = MotionEvent.obtain(ev)
+        cancel.action = MotionEvent.ACTION_CANCEL
+        try {
+            super.dispatchTouchEvent(cancel)
+        } finally {
+            cancel.recycle()
+        }
+    }
+
+    private fun touchInPage(ev: MotionEvent): Boolean {
+        val page = mBinding.tabPageContainer
+        val location = IntArray(2)
+        page.getLocationOnScreen(location)
+        return page.isShown && ev.rawX >= location[0] && ev.rawX < location[0] + page.width &&
+            ev.rawY >= location[1] && ev.rawY < location[1] + page.height
     }
 
     /** 切标签页:同一张卡片换数据;标题栏动作区(导出/添加)跟着换 */

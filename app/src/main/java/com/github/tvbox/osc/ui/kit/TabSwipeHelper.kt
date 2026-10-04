@@ -59,10 +59,14 @@ object TabSwipeHelper {
         }
     }
 
+    /** 供需要先取消子视图点击的页面复用同一滑动阈值。 */
+    @JvmStatic
+    fun minDistancePx(context: Context): Float = MIN_DP * context.resources.displayMetrics.density
+
     /** 按屏幕密度算好阈值建一个 [Tracker](用 [context] 的 density) */
     @JvmStatic
     fun tracker(context: Context, cb: OnDir): Tracker =
-        Tracker(MIN_DP * context.resources.displayMetrics.density, cb)
+        Tracker(minDistancePx(context), cb)
 
     /**
      * 位移 → 切页方向(**纯函数,带 JVM 单测** [com.github.tvbox.osc.ui.kit.TabSwipeHelperTest])。
