@@ -9,55 +9,48 @@
 ## 功能特性
 
 - **多源订阅**:远程 JSON 配置,兼容 BOM/注释/图片+base64/AES 等非标准套路(见 `doc/接口解析.md`);支持本地 `.txt`/`.json` 文件导入(SAF `content://` 流)
-- **点播 / 直播 / 快捷搜索**:多线路选集、EPG、倍速、字幕;DLNA 投屏代码已接入,待用户真机回归。直播源基于 [vbskycn/iptv](https://github.com/vbskycn/iptv)
-- **内置下载**:并发调度(1-3)、断点续传、HLS 分段下载及合并(符合条件时封装 MP4)、磁盘空间预检、断网自动续传、来源/剧名分目录;无公共目录权限时可用应用私有目录
+- **点播 / 直播 / 快捷搜索**:内置 IJK、Media3 与系统播放器,支持多线路选集、EPG、倍速、字幕;历史记录优先用剧集快照起播并后台刷新详情,快照起播失败时按刷新结果限次重试。DLNA 投屏代码已接入,待用户真机回归。直播源基于 [vbskycn/iptv](https://github.com/vbskycn/iptv)
+- **下载**:默认将当前集的原始播放地址与请求头交给 1DM+;设置中可开启内置下载,提供并发调度(1-3)、断点续传、HLS 分段下载及合并(符合条件时封装 MP4)、磁盘空间预检与来源/剧名分目录;无公共目录权限时可用应用私有目录
 - **自适应卡片**:剧集卡片统一 宽:高 = 3:4,列数随屏幕宽度自适应(单卡 ≤190dp),大屏旋转自动刷新
 - **主题**:内置浅色/深色与自定义主题,运行时调色板统一供色;视频画面上的播放控件使用固定配色,带主题面板底的控件跟随主题
 - **局域网服务**:默认仅本机回环(订阅/本地播放/爬虫代理/m3u8 代理)。在「设置 → 局域网服务」二级页开启后重启应用,可查看运行状态、复制访问地址、管理配对设备并导入导出配置;远程管理和文件访问需设备配对。确认关闭后立即停止对外监听,本机回环服务继续运行
-- **检查更新**:GitHub Releases 检测,APK 依次尝试 Gitee 发行版镜像、GitHub 加速代理、GitHub 直连
+- **检查更新**:GitHub Releases 检测,APK 依次尝试 Gitee 发行版镜像、GitHub 加速代理、GitHub 直连;更新说明弹窗随任务显示查看进度、安装或重试入口,重复查看不重复创建下载
 - **分享与导入导出**:在线、局域网与本地文件传输由 `:share` 模块统一提供
-- **崩溃兜底 + 运行日志**:崩溃页与 logcat 完整捕获查看(设置开关)
+- **崩溃兜底 + 运行日志**:业务日志与 logcat 错误流分开查看(设置开关),支持筛选、搜索、复制与导出;业务日志保留最近一批记录,按旧到新显示并定位到最新内容
 
-## 构建环境与依赖版本
+## 构建环境
 
 | 项 | 当前版本 | 配置来源 |
 | --- | --- | --- |
 | JDK | 17 | `.github/workflows/build-apk.yml` |
 | Gradle | 8.4 | `gradle/wrapper/gradle-wrapper.properties` |
-| Android Gradle Plugin（application / library） | 8.2.2 | 根目录 `build.gradle` |
-| Kotlin Android 插件 | 1.9.22 | 根目录 `build.gradle` |
-| 应用版本 / versionCode / debug 展示版本 | 3.6.5 / 74 / 3.6.4 | `app/app_config.properties` |
+| Android Gradle Plugin | 8.2.2 | 根目录 `build.gradle` |
+| Kotlin | 1.9.22 | 根目录 `build.gradle` |
+| 应用版本 / versionCode / debug 展示版本 | 3.6.7 / 76 / 3.6.6 | `app/app_config.properties` |
 | compileSdk / targetSdk / minSdk | 34 / 34 / 24 | 各模块 `build.gradle` |
 | Java source / target、Kotlin JVM target | 1.8 | 各模块 `build.gradle` |
-| GitHub Actions（checkout / setup-java / setup-gradle / upload-artifact / action-gh-release） | v4 / v4 / v4 / v4 / v2 | `.github/workflows/build-apk.yml` |
 
-以下为各模块 `build.gradle` **直接声明**的依赖版本；同一依赖在不同模块声明了不同版本时分别列出。
+## 核心组件
 
-| 依赖 | 声明版本 |
-| --- | --- |
-| AndroidX Annotation | 1.3.0 |
-| AndroidX Core / Core KTX | Core 1.6.0；Core KTX 在 `:app` 为 1.6.0、`:thirdparty` 为 1.3.1 |
-| AndroidX AppCompat | `:app` 1.3.0；`:thirdparty` 1.3.1 |
-| AndroidX ConstraintLayout / SwipeRefreshLayout / RecyclerView / MultiDex | 2.0.4 / 1.0.0 / 1.2.1 / 2.0.1 |
-| AndroidX Lifecycle（ViewModel / LiveData / Runtime KTX） | 2.6.2 |
-| AndroidX Room（Runtime / Compiler） / DataStore Preferences RxJava3 | 2.5.2 / 1.0.0 |
-| AndroidX Media3（ExoPlayer / DASH / HLS / RTSP / RTMP） | 1.4.1（全部一致） |
-| Kotlin Stdlib JDK 8 | 1.9.22 |
-| Material Components / Picasso / Lottie / BlurView | 1.9.0 / 2.71828 / 6.7.1 / 1.6.3 |
-| DKPlayer UI / TVRecyclerView / BaseRecyclerViewAdapterHelper | 3.3.5 / 3.0.0 / 2.9.45-androidx |
-| OkHttp（核心 / Logging Interceptor / DNS over HTTPS） | 4.12.0（全部一致） |
-| Gson / Jsoup / XStream / Commons IO | 2.10.1 / 1.14.1 / 1.4.20 / 2.11.0 |
-| NanoHTTPD / ZXing Core / juniversalchardet / android-retrofuture | 2.3.1 / 3.4.1 / 1.0.3 / 1.7.4 |
-| LoadSir / AndroidAutoSize / XXPermissions / ImmersionBar | 1.3.8 / v1.2.1 / 13.6 / 3.2.2 |
-| TitleBar / XPopup / utilcodex / ShadowLayout / ExpandableTextView | 10.5 / 2.10.0 / 1.31.0 / 3.3.3 / v1.6.1-x |
-| JUnit（JVM 单测） | 4.13.2 |
-| 本地 JAR：Commons Lang 3 / dec | 3.12.0 / 0.1.2（以文件名标识） |
-| 本地 JAR：thunder；内置 TabLayout、CustomActivityOnCrash | 仓库未记录可核实的上游版本 |
-| 内置 QuickJS | `:thirdparty` 内的源码及预编译 `.so`；仓库引入提交 `4f80c383`，未记录可核实的上游版本 |
+只列支撑主要能力的组件;辅助 UI、工具库和 CI 插件不在此逐项展开。版本以各模块的 `build.gradle` 与仓库内置库为准。
 
-> `local.properties`(本机 SDK 路径)不入库,首次构建需用 Android Studio 打开或自行配置。
+| 组件 | 当前版本 / 形态 | 用途与来源 |
+| --- | --- | --- |
+| AndroidX Media3 | 1.4.1,各组件一致 | 播放内核,含 DASH / HLS / RTSP / RTMP;[player/build.gradle](player/build.gradle) |
+| IJK | 内置定制内核,FFmpeg 标识为 Ffmpeg4.0 | 播放内核;`player/src/main/` |
+| Android MediaPlayer | 随设备 Android 系统提供 | 系统播放内核;`player/src/main/` |
+| QuickJS | 内置引擎标识 2021-03-27 | JS 爬虫引擎;`thirdparty/src/main/` |
+| OkHttp | 4.12.0,核心 / 日志拦截器 / DNS over HTTPS 一致 | 网络请求与媒体取流;[core-network/build.gradle](core-network/build.gradle) |
+| Room / DataStore Preferences | 2.5.2 / 1.0.0 | 历史、收藏、业务日志与配置存储;[core-storage/build.gradle](core-storage/build.gradle)、[log/build.gradle](log/build.gradle) |
+| Picasso | 2.71828 | 统一图片加载;[app/build.gradle](app/build.gradle) |
+| Lottie | 6.7.1 | 开屏、加载与界面动画;[app/build.gradle](app/build.gradle) |
+
+旧 ExoPlayer 已迁至 Media3;`EXOmPlayer` 和 `xyz.doikki.videoplayer.exo` 仅保留兼容类名,不表示仍使用旧 ExoPlayer。
+IJK / QuickJS 的本地库标识不等于封装层发行号;仓库未记录可核实的 IJK 与 QuickJS Java 封装上游版本。
 
 ## 本地构建
+
+`local.properties`(本机 SDK 路径)不入库,首次构建需用 Android Studio 打开或自行配置。
 
 Windows:
 
@@ -73,7 +66,7 @@ export JAVA_HOME=/path/to/jdk17
 ./gradlew assembleRelease
 ```
 
-产物路径:`app/build/outputs/apk/release/`(当前版本示例:`MBox_v3.6.5_release_YYYYMMDD.apk`)。debug 包显示 `app/app_config.properties` 中明确配置的上一发布版本(`debugVersionName`),不按正式版本号的末段推算。
+产物路径:`app/build/outputs/apk/release/`(当前版本示例:`MBox_v3.6.7_release_YYYYMMDD.apk`)。debug 包显示 `app/app_config.properties` 中明确配置的上一发布版本(`debugVersionName`),不按正式版本号的末段推算。
 应用名/版本号/图标统一在 `app/app_config.properties` 维护,改完重新构建即可。
 
 ## GitHub Actions 打包
