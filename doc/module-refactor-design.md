@@ -389,7 +389,7 @@ void subscribe(PlayListener l);     // 状态/进度/缓冲/错误(错误必记�
 void enterWindow(); void backgroundPlay(boolean);
 ```
 
-**统一方法契约（引擎无关——为升级 Media3 铺路）**：
+**统一方法契约（引擎无关，Media3 已迁移，继续收口调用方）**：
 - **PlayerApi 只暴露项目自有类型**（`PlayState / PlayOptions / PlayListener / PlayError`），IJK/Media3 内核类型不得跨出适配层；
 - 调用方（PlayFragment / 小窗 / 后台播放 / 预览）只依赖 PlayerApi，感知不到内核是谁；
 - 每个内核一个**适配器**（PlayerApiAdapter）：现有 18 个播放器类收敛为适配器（Exo2Adapter / IjkAdapter / MxAdapter / KodiAdapter / VlcAdapter / ReexAdapter / RemoteTvBoxAdapter...），统一实现 PlayerApi；
@@ -401,7 +401,7 @@ void enterWindow(); void backgroundPlay(boolean);
 **依赖方向**：⑥ → ④（resolvePlayUrl 解析）+ ②（断网提示 / 横竖屏全屏）+ ③（播放日志，大类型=播放，小类型=init/switchSource/buffering/seek/error）+ PlayConfig（自持）+ ⑤ ui-common（播放页资源，现并入 `:app`）。
 
 **风险**：
-- `:player` 为 vendored 源码（DKVideoPlayer 基于 Exo2），升级 Media3 需评估 doikki 新版支持或自研薄内核；**PlayerApi 契约稳定是前提**；
+- `:player` 保留 DKVideoPlayer 封装与兼容类名,旧 ExoPlayer 已迁至 Media3 1.4.1;后续重点是调用方契约收口与真机回归,不是再次迁移内核。**PlayerApi 契约稳定是前提**,Media3 组件版本继续统一；
 - 直播（LiveController）与点播（VodController）差异大，PlayerApi 提供点播/直播两种模式或子接口；
 - 内核特有能力禁止调用方强转内核类型，必须经 PlayerApi 显式暴露，否则 Media3 升级时调用方会破。
 
