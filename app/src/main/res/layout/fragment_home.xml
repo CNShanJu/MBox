@@ -6,7 +6,7 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
-    <LinearLayout
+    <com.github.tvbox.osc.ui.kit.HomeSearchBarLayout
         android:id="@+id/topLayout"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -28,7 +28,6 @@
                 android:id="@+id/tvName"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:maxWidth="110dp"
                 android:text="@string/app_name"
                 android:textAlignment="gravity"
                 android:textColor="@color/text_foreground"
@@ -56,6 +55,7 @@
             android:layout_width="wrap_content"
             android:layout_weight="1"
             android:layout_height="36dp"
+            android:minWidth="160dp"
             android:background="@drawable/bg_search_round_float"
             android:gravity="center_vertical"
             android:paddingHorizontal="12sp"
@@ -82,7 +82,7 @@
             android:padding="8dp"
             android:src="@drawable/ic_history_48"/>
 
-    </LinearLayout>
+    </com.github.tvbox.osc.ui.kit.HomeSearchBarLayout>
 
     <FrameLayout
         android:layout_width="match_parent"
