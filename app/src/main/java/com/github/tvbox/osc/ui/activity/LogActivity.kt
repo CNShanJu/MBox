@@ -1,24 +1,31 @@
 package com.github.tvbox.osc.ui.activity
 
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import android.text.Editable
+import android.text.Selection
 import android.text.SpannableString
 import android.text.Spanned
 import android.text.TextWatcher
 import android.text.style.BackgroundColorSpan
+import android.view.MotionEvent
 import android.view.View
 import android.view.inputmethod.EditorInfo
+import android.widget.ScrollView
 import android.widget.TextView
 import com.github.tvbox.osc.log.Category
 import com.github.tvbox.osc.log.LogStore
 import com.github.tvbox.osc.util.AppBubble
-import com.github.tvbox.osc.R
 import com.github.tvbox.osc.base.BaseVbActivity
 import com.github.tvbox.osc.databinding.ActivityLogBinding
 import com.github.tvbox.osc.util.HeavyTaskUtil
 import com.github.tvbox.osc.util.LogViewAssembler
+import com.github.tvbox.osc.ui.kit.TabPageAnimator
+import com.github.tvbox.osc.ui.kit.TabSwipeHelper
 import com.github.tvbox.osc.ui.kit.WidgetPressEffect
 import java.io.File
+import java.lang.ref.WeakReference
 import java.util.Locale
 
 /**
@@ -41,6 +48,19 @@ class LogActivity : BaseVbActivity<ActivityLogBinding>() {
     private var filterErrorOnly = false
     private var downloadTaskKey: String? = null
     private val bizEpoch = java.util.concurrent.atomic.AtomicInteger()
+    private val errorEpoch = java.util.concurrent.atomic.AtomicInteger()
+    private var clearing = false
+    private val mainPageAnimator = TabPageAnimator()
+    private val bizPageAnimator = TabPageAnimator()
+    private var activeBizPage = 0
+    private var businessText = ""
+    private var errorText = ""
+    private var swipeEligible = false
+    private val swipeTracker by lazy { TabSwipeHelper.tracker(this) { navigateSwipe(it) } }
+    private val categories = arrayOf<String?>(
+        null, Category.DOWNLOAD.name, Category.PLAYER.name,
+        Category.SUBSCRIPTION.name, Category.SYSTEM.name
+    )
 
     // ── 全文搜索(类浏览器 Ctrl+F)──
     /** 当前展示的未高亮全文 */
@@ -75,7 +95,10 @@ class LogActivity : BaseVbActivity<ActivityLogBinding>() {
         mBinding.ftSystem.setOnClickListener { setBizFilter(Category.SYSTEM.name, false) }
         mBinding.ftError.setOnClickListener { setBizFilter(filterCategory, true) }
 
-        switchTab(0)
+        styleMainTabs()
+        updateFilterButtons()
+        mBinding.llFilter.visibility = View.VISIBLE
+        mBinding.llDatePicker.visibility = View.GONE
     }
 
     override fun onResume() {
@@ -83,35 +106,105 @@ class LogActivity : BaseVbActivity<ActivityLogBinding>() {
         refreshContent()
     }
 
+    /** 仅观察日志内容区的单指滑动；输入、日期、筛选条与操作按钮保留自己的手势。 */
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                swipeEligible = hit(mBinding.tabPageContainer, ev) &&
+                    !hit(mBinding.btnScrollBottom, ev) && !hasTextSelection()
+                if (swipeEligible) {
+                    swipeTracker.onTouch(ev)
+                }
+            }
+            MotionEvent.ACTION_POINTER_DOWN, MotionEvent.ACTION_CANCEL -> swipeEligible = false
+        }
+        val handled = super.dispatchTouchEvent(ev)
+        if (ev.actionMasked == MotionEvent.ACTION_UP) {
+            if (swipeEligible && !hasTextSelection()) swipeTracker.onTouch(ev)
+            swipeEligible = false
+        }
+        return handled
+    }
+
+    private fun hasTextSelection(): Boolean {
+        val text = activeTextView().text
+        if (text !is Spanned) return false
+        val start = Selection.getSelectionStart(text)
+        val end = Selection.getSelectionEnd(text)
+        return start >= 0 && end > start
+    }
+
+    private fun hit(view: View, event: MotionEvent): Boolean {
+        if (!view.isShown) return false
+        val xy = IntArray(2)
+        view.getLocationOnScreen(xy)
+        return event.rawX >= xy[0] && event.rawX < xy[0] + view.width &&
+            event.rawY >= xy[1] && event.rawY < xy[1] + view.height
+    }
+
+    private fun navigateSwipe(dir: Int) {
+        when {
+            currentTab == 0 && dir < 0 -> switchTab(1)
+            currentTab == 1 && dir > 0 -> switchTab(0)
+        }
+    }
+
     // ------------------------------------------------------------------
     // Tab 切换
     // ------------------------------------------------------------------
 
     private fun switchTab(tab: Int) {
+        if (tab == currentTab) return
+        bizPageAnimator.finish()
+        val outgoing = if (currentTab == 0) mBinding.pageBiz else mBinding.pageError
+        val incoming = if (tab == 0) mBinding.pageBiz else mBinding.pageError
+        if (currentTab == 0) bizEpoch.incrementAndGet() else errorEpoch.incrementAndGet()
         currentTab = tab
-        // Tab 是"选择型"小组件按钮:只切 isSelected —— 底与文字色由 style/WidgetBtn 的
-        // selector_widget_btn + widget_btn_text 一对选择器给(空心选中时文字与描边同取高亮色)
-        mBinding.tvTabBiz.isSelected = tab == 0
-        mBinding.tvTabAll.isSelected = tab == 1
+        styleMainTabs()
         val isBiz = tab == 0
         mBinding.llFilter.visibility = if (isBiz) View.VISIBLE else View.GONE
         mBinding.llDatePicker.visibility = if (isBiz) View.GONE else View.VISIBLE
+        rawText = if (isBiz) businessText else errorText
+        renderSearch()
+        mainPageAnimator.slide(mBinding.tabPageContainer, outgoing, incoming, if (isBiz) 1 else -1)
         refreshContent()
     }
 
+    private fun styleMainTabs() {
+        mBinding.tvTabBiz.isSelected = currentTab == 0
+        mBinding.tvTabAll.isSelected = currentTab == 1
+    }
+
     private fun setBizFilter(category: String?, errorToggle: Boolean) {
+        val previousCategory = filterCategory
+        val previousErrorOnly = filterErrorOnly
         if (errorToggle) {
             filterErrorOnly = !filterErrorOnly
         } else {
             filterCategory = category
-            filterErrorOnly = false
         }
+        if (previousCategory == filterCategory && previousErrorOnly == filterErrorOnly) return
+        val previousIndex = categories.indexOf(previousCategory).coerceAtLeast(0)
+        val nextIndex = categories.indexOf(filterCategory).coerceAtLeast(0)
+        val direction = if (errorToggle) {
+            if (filterErrorOnly) -1 else 1
+        } else if (nextIndex > previousIndex) -1 else 1
         updateFilterButtons()
-        refreshContent()
+        revealFilterButton()
+        bizPageAnimator.finish()
+        val outgoing = activeBizScroll()
+        activeBizPage = 1 - activeBizPage
+        val incoming = activeBizScroll()
+        businessText = "加载中..."
+        rawText = businessText
+        renderSearch()
+        incoming.scrollTo(0, 0)
+        bizPageAnimator.slide(mBinding.bizPageContainer, outgoing, incoming, direction)
+        loadBizLogs()
     }
 
     private fun updateFilterButtons() {
-        setFilterSelected(mBinding.ftAll, filterCategory == null && !filterErrorOnly)
+        setFilterSelected(mBinding.ftAll, filterCategory == null)
         setFilterSelected(mBinding.ftDownload, filterCategory == Category.DOWNLOAD.name)
         setFilterSelected(mBinding.ftPlayer, filterCategory == Category.PLAYER.name)
         setFilterSelected(mBinding.ftSubscription, filterCategory == Category.SUBSCRIPTION.name)
@@ -122,6 +215,37 @@ class LogActivity : BaseVbActivity<ActivityLogBinding>() {
     private fun setFilterSelected(tv: TextView, selected: Boolean) {
         // 选择型小组件按钮:只切 isSelected,底与字都由 WidgetBtn 那对选择器给
         tv.isSelected = selected
+    }
+
+    private fun revealFilterButton() {
+        val selected = when (filterCategory) {
+            Category.DOWNLOAD.name -> mBinding.ftDownload
+            Category.PLAYER.name -> mBinding.ftPlayer
+            Category.SUBSCRIPTION.name -> mBinding.ftSubscription
+            Category.SYSTEM.name -> mBinding.ftSystem
+            else -> mBinding.ftAll
+        }
+        mBinding.llFilter.post {
+            val scroll = mBinding.llFilter
+            val left = selected.left
+            val right = selected.right
+            when {
+                left < scroll.scrollX -> scroll.smoothScrollTo(left, 0)
+                right > scroll.scrollX + scroll.width -> scroll.smoothScrollTo(right - scroll.width, 0)
+            }
+        }
+    }
+
+    private fun activeBizScroll(): ScrollView =
+        if (activeBizPage == 0) mBinding.scrollLog else mBinding.scrollBizNext
+
+    private fun activeScroll(): ScrollView =
+        if (currentTab == 0) activeBizScroll() else mBinding.scrollError
+
+    private fun activeTextView(): TextView = when {
+        currentTab == 1 -> mBinding.tvError
+        activeBizPage == 0 -> mBinding.tvContent
+        else -> mBinding.tvBizNext
     }
 
 
@@ -139,8 +263,8 @@ class LogActivity : BaseVbActivity<ActivityLogBinding>() {
         val errorOnly = filterErrorOnly
         val taskKey = downloadTaskKey
         val epoch = bizEpoch.incrementAndGet()
-        mBinding.tvContent.text = "加载中..."
-        HeavyTaskUtil.getSerialExecutorService().execute {
+        if (businessText.isEmpty()) setRawText("加载中...")
+        HeavyTaskUtil.getBigTaskExecutorService().execute {
             val text = try {
                 LogViewAssembler.bizText(LogStore.get(), category, errorOnly, taskKey)
             } catch (th: Throwable) {
@@ -148,10 +272,13 @@ class LogActivity : BaseVbActivity<ActivityLogBinding>() {
                 null
             }
             runOnUiThread {
-                if (bizEpoch.get() != epoch || isFinishing || isDestroyed) return@runOnUiThread
+                if (bizEpoch.get() != epoch || currentTab != 0 || isFinishing || isDestroyed) return@runOnUiThread
                 setRawText(text ?: "暂无业务日志（设置→业务日志 开启后记录）")
                 if (searchQuery.isEmpty()) {
-                    mBinding.scrollLog.post { mBinding.scrollLog.fullScroll(View.FOCUS_UP) }
+                    val scroll = activeScroll()
+                    scroll.post {
+                        if (bizEpoch.get() == epoch && currentTab == 0) scroll.fullScroll(View.FOCUS_UP)
+                    }
                 }
             }
         }
@@ -159,38 +286,41 @@ class LogActivity : BaseVbActivity<ActivityLogBinding>() {
 
     override fun onDestroy() {
         bizEpoch.incrementAndGet()
+        errorEpoch.incrementAndGet()
+        mainPageAnimator.finish()
+        bizPageAnimator.finish()
         super.onDestroy()
     }
 
     /** Tab2 错误日志：文件列表/读尾也走 LogStore 门面，后台线程读取,避免大文件卡主线程 */
     private fun loadAllLogs() {
-        dayFiles.clear()
-        dayFiles.addAll(LogViewAssembler.rawFiles(LogStore.get()))
-        if (dayFiles.isEmpty()) {
-            selectedFile = null
-            mBinding.tvSelectedDay.text = "暂无日志"
-            mBinding.tvContent.text = "暂无日志"
-            return
-        }
-        if (selectedFile == null || !dayFiles.contains(selectedFile)) {
-            selectedFile = dayFiles[0]
-        }
-        mBinding.tvSelectedDay.text = selectedFile?.name?.let { LogViewAssembler.dayLabel(it) } ?: "暂无日志"
-        val file = selectedFile
-        Thread {
-            val text = try {
-                LogViewAssembler.rawText(LogStore.get(), file)
+        val epoch = errorEpoch.incrementAndGet()
+        val preferredFile = selectedFile
+        if (errorText.isEmpty()) setRawText("加载中...")
+        HeavyTaskUtil.getBigTaskExecutorService().execute {
+            val result = try {
+                val files = LogViewAssembler.rawFiles(LogStore.get())
+                val file = preferredFile?.takeIf { files.contains(it) } ?: files.firstOrNull()
+                Triple(files, file, LogViewAssembler.rawText(LogStore.get(), file))
             } catch (th: Throwable) {
                 th.printStackTrace()
                 null
             }
             runOnUiThread {
-                setRawText(text ?: "暂无内容")
+                if (errorEpoch.get() != epoch || currentTab != 1 || isFinishing || isDestroyed) return@runOnUiThread
+                dayFiles.clear()
+                if (result != null) dayFiles.addAll(result.first)
+                selectedFile = result?.second
+                mBinding.tvSelectedDay.text = selectedFile?.name?.let { LogViewAssembler.dayLabel(it) } ?: "暂无日志"
+                setRawText(result?.third ?: if (dayFiles.isEmpty()) "暂无日志" else "暂无内容")
                 if (searchQuery.isEmpty()) {
-                    mBinding.scrollLog.post { mBinding.scrollLog.fullScroll(View.FOCUS_DOWN) }
+                    val scroll = activeScroll()
+                    scroll.post {
+                        if (errorEpoch.get() == epoch && currentTab == 1) scroll.fullScroll(View.FOCUS_DOWN)
+                    }
                 }
             }
-        }.start()
+        }
     }
 
     /** 底部抽屉选择日期:走公共抽屉组件(见 ui/dialog/BottomListDialog 的类注释) */
@@ -211,7 +341,7 @@ class LogActivity : BaseVbActivity<ActivityLogBinding>() {
     }
 
     private fun scrollBottom() {
-        mBinding.scrollLog.fullScroll(View.FOCUS_DOWN)
+        activeScroll().fullScroll(View.FOCUS_DOWN)
     }
 
     // ------------------------------------------------------------------
@@ -251,13 +381,14 @@ class LogActivity : BaseVbActivity<ActivityLogBinding>() {
 
     /** 内容装载统一入口:记录原始文本并(若有关键词)重算高亮 */
     private fun setRawText(text: String) {
+        if (currentTab == 0) businessText = text else errorText = text
         rawText = text
         renderSearch()
     }
 
     /** 按当前关键词重绘全文:全部命中浅色底,当前命中高亮底,并滚动到当前命中 */
     private fun renderSearch() {
-        val tv = mBinding.tvContent
+        val tv = activeTextView()
         val q = searchQuery.trim()
         matches.clear()
         if (q.isEmpty() || rawText.isEmpty()) {
@@ -306,19 +437,22 @@ class LogActivity : BaseVbActivity<ActivityLogBinding>() {
     /** 让当前命中行进入可视区(尽量居中) */
     private fun scrollToMatch() {
         if (matches.isEmpty() || matchIndex !in matches.indices) return
-        mBinding.scrollLog.post {
-            val tv = mBinding.tvContent
+        val scroll = activeScroll()
+        val tv = activeTextView()
+        val tab = currentTab
+        scroll.post {
+            if (tab != currentTab || tv !== activeTextView() || matchIndex !in matches.indices) return@post
             val layout = tv.layout ?: return@post
             val line = layout.getLineForOffset(matches[matchIndex])
             // 内边距在滚动容器上(卡片内部滚动,见 activity_log.xml):行坐标要加上容器上内边距换算到滚动内容坐标系,
             // 可视区高度也要扣掉上下内边距,否则命中行会整体偏一个内边距
-            val padTop = mBinding.scrollLog.paddingTop
-            val visible = mBinding.scrollLog.height - padTop - mBinding.scrollLog.paddingBottom
+            val padTop = scroll.paddingTop
+            val visible = scroll.height - padTop - scroll.paddingBottom
             val top = layout.getLineTop(line) + padTop
             val bottom = layout.getLineBottom(line) + padTop
-            val sy = mBinding.scrollLog.scrollY
+            val sy = scroll.scrollY
             val target = if (top < sy + padTop || bottom > sy + padTop + visible) (top + bottom - visible) / 2 - padTop else sy
-            mBinding.scrollLog.scrollTo(0, maxOf(0, target))
+            scroll.scrollTo(0, maxOf(0, target))
         }
     }
 
@@ -352,7 +486,7 @@ class LogActivity : BaseVbActivity<ActivityLogBinding>() {
         getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
 
     private fun copyContent() {
-        val text = mBinding.tvContent.text?.toString() ?: ""
+        val text = activeTextView().text?.toString() ?: ""
         if (text.isEmpty()) {
             AppBubble.toast("暂无内容可复制")
             return
@@ -363,18 +497,39 @@ class LogActivity : BaseVbActivity<ActivityLogBinding>() {
     }
 
     private fun confirmClear() {
+        if (clearing) return
+        val tabToClear = currentTab
         // 清空不可逆 → 确认键走红边红字的危险空心样式
         com.github.tvbox.osc.ui.dialog.ConfirmDialog.showDanger(this, "清空日志",
-            "确定清空${if (currentTab == 0) "业务日志" else "错误日志"}吗？", "清空", {
-                if (currentTab == 0) {
-                    LogViewAssembler.clearBiz(LogStore.get())
-                    mBinding.tvContent.text = "暂无日志"
-                } else {
-                    LogViewAssembler.clearRaw(LogStore.get())
-                    selectedFile = null
-                    refreshContent()
+            "确定清空${if (tabToClear == 0) "业务日志" else "错误日志"}吗？", "清空", {
+                if (clearing) return@showDanger
+                clearing = true
+                mBinding.btnClear.isEnabled = false
+                if (tabToClear == 0) bizEpoch.incrementAndGet() else errorEpoch.incrementAndGet()
+                val pageRef = WeakReference(this)
+                HeavyTaskUtil.getBigTaskExecutorService().execute {
+                    val cleared = runCatching {
+                        if (tabToClear == 0) LogViewAssembler.clearBiz(LogStore.get())
+                        else LogViewAssembler.clearRaw(LogStore.get())
+                    }.getOrDefault(false)
+                    Handler(Looper.getMainLooper()).post {
+                        val page = pageRef.get() ?: return@post
+                        if (page.isFinishing || page.isDestroyed) return@post
+                        page.clearing = false
+                        page.mBinding.btnClear.isEnabled = true
+                        if (tabToClear == 0) {
+                            page.bizEpoch.incrementAndGet()
+                            page.businessText = ""
+                        } else {
+                            page.errorEpoch.incrementAndGet()
+                            page.errorText = ""
+                            page.dayFiles.clear()
+                            page.selectedFile = null
+                        }
+                        if (page.currentTab == tabToClear) page.refreshContent()
+                        AppBubble.toast(if (cleared) "已清空" else "清空未完成，请重试")
+                    }
                 }
-                AppBubble.toast("已清空")
             })
     }
 

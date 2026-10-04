@@ -139,6 +139,8 @@
         android:layout_height="wrap_content"
         android:layout_marginHorizontal="14dp"
         android:layout_marginTop="8dp"
+        android:clipToPadding="false"
+        android:paddingHorizontal="4dp"
         android:scrollbars="none"
         android:visibility="gone">
 
@@ -237,32 +239,96 @@
     </LinearLayout>
 
     <FrameLayout
+        android:id="@+id/tab_page_container"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_margin="14dp"
-        android:layout_weight="1">
+        android:layout_weight="1"
+        android:clipChildren="true">
 
-        <!-- 卡片内部滚动:内边距放在滚动容器上(不再放在里面的 TextView 上),并 clipToPadding=true,
-             滚动过程中文字不越过内边距,不会贴到圆角卡片上下/左右边(与「我的」页、订阅页同一处理)。
-             内边距若放在内容 TextView 上,滚动时文字会一路滑到卡片边缘才被裁掉。 -->
-        <ScrollView
-            android:id="@+id/scroll_log"
+        <FrameLayout
+            android:id="@+id/page_biz"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:background="@drawable/bg_large_round_float"
-            android:clipToPadding="true"
-            android:padding="12dp"
-            android:scrollbars="vertical">
+            android:clipToOutline="true">
 
-            <TextView
-                android:id="@+id/tv_content"
+            <!-- 分类切换时两份业务内容交替滑动，旧页保留原文至动画结束。 -->
+            <FrameLayout
+                android:id="@+id/biz_page_container"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:fontFamily="monospace"
-                android:textColor="@color/text_foreground"
-                android:textIsSelectable="true"
-                android:textSize="11sp" />
-        </ScrollView>
+                android:layout_height="match_parent"
+                android:clipChildren="true">
+
+                <!-- 外边距保证滚动中的文字也离卡片边缘至少 16dp；内边距保留首尾留白。 -->
+                <ScrollView
+                    android:id="@+id/scroll_log"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:layout_margin="16dp"
+                    android:clipToPadding="false"
+                    android:padding="6dp"
+                    android:scrollbars="vertical">
+
+                    <TextView
+                        android:id="@+id/tv_content"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="monospace"
+                        android:textColor="@color/text_foreground"
+                        android:textIsSelectable="true"
+                        android:textSize="11sp" />
+                </ScrollView>
+
+                <ScrollView
+                    android:id="@+id/scroll_biz_next"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:layout_margin="16dp"
+                    android:clipToPadding="false"
+                    android:padding="6dp"
+                    android:scrollbars="vertical"
+                    android:visibility="gone">
+
+                    <TextView
+                        android:id="@+id/tv_biz_next"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="monospace"
+                        android:textColor="@color/text_foreground"
+                        android:textIsSelectable="true"
+                        android:textSize="11sp" />
+                </ScrollView>
+            </FrameLayout>
+        </FrameLayout>
+
+        <FrameLayout
+            android:id="@+id/page_error"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@drawable/bg_large_round_float"
+            android:clipToOutline="true"
+            android:visibility="gone">
+
+            <ScrollView
+                android:id="@+id/scroll_error"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:layout_margin="16dp"
+                android:clipToPadding="false"
+                android:padding="6dp"
+                android:scrollbars="vertical">
+
+                <TextView
+                    android:id="@+id/tv_error"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:fontFamily="monospace"
+                    android:textColor="@color/text_foreground"
+                    android:textIsSelectable="true"
+                    android:textSize="11sp" />
+            </ScrollView>
+        </FrameLayout>
 
         <!-- 点击直接滚动到底部 -->
         <ImageView

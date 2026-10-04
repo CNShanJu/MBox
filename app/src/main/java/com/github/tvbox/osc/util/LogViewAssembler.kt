@@ -80,7 +80,7 @@ object LogViewAssembler {
     /** Tab2 导出：导出错误日志文件 txt（cacheDir）。无文件返回 null。 */
     fun exportRaw(store: LogStore): File? = store.exportRawLogFiles()
 
-    fun clearBiz(store: LogStore) = store.clearAll()
+    fun clearBiz(store: LogStore): Boolean = store.clearBusinessLogsBlocking()
 
-    fun clearRaw(store: LogStore) = store.clearRawLogFiles()
+    fun clearRaw(store: LogStore): Boolean = store.clearRawLogFilesChecked()
 }
