@@ -6,7 +6,10 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.InputType
 import android.view.View
+import android.widget.EditText
+import androidx.appcompat.app.AlertDialog
 import androidx.recyclerview.widget.DiffUtil
 import com.github.tvbox.osc.log.LogConfig
 import com.github.tvbox.osc.player.PlayerTrackHelper
@@ -108,8 +111,7 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
         com.github.tvbox.osc.theme.ThemeSweep.applyImageTint(
             mBinding.ivLanManageArrow, R.color.text_foreground)
 
-        // 忽略证书错误(默认关闭,会降低 TLS 安全性):个别自签名/证书异常站点打不开时再开启;
-        // WebView 即时生效,网络请求(OkHttp)在应用重启后按开关重建客户端时生效。
+        // 证书例外只针对用户输入的精确主机名；旧版全局开关没有主机名时默认拒绝。
         val ignoreSsl = SystemConfig.isIgnoreSslError()
         mBinding.switchIgnoreSsl.setChecked(ignoreSsl)
         mBinding.tvIgnoreSslTitle.setOnLongClickListener {
@@ -118,12 +120,32 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
         }
         mBinding.llIgnoreSsl.setOnClickListener { view: View? ->
             FastClickCheckUtil.check(view)
-            val newVal = !SystemConfig.isIgnoreSslError()
-            mBinding.switchIgnoreSsl.setChecked(newVal)
-            SystemConfig.setIgnoreSslError(newVal)
-            AppBubble.toast(
-                if (newVal) "已开启证书忽略，仅用于自签名站点" else "已恢复证书校验"
-            )
+            if (SystemConfig.isIgnoreSslError()) {
+                SystemConfig.setIgnoreSslError(false)
+                mBinding.switchIgnoreSsl.setChecked(false)
+                AppBubble.toast("已恢复证书校验")
+            } else {
+                val input = EditText(this@SettingActivity)
+                input.setSingleLine(true)
+                input.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+                input.hint = "example.com"
+                input.setText(SystemConfig.getSslExceptionHost())
+                AlertDialog.Builder(this@SettingActivity)
+                    .setTitle("指定证书例外网站")
+                    .setMessage("只对填写的精确主机名忽略证书错误；该网站的连接可能被截获。请输入域名，不含协议、端口或路径。")
+                    .setView(input)
+                    .setNegativeButton("取消", null)
+                    .setPositiveButton("启用") { _, _ ->
+                        if (SystemConfig.setSslExceptionHost(input.text.toString())) {
+                            SystemConfig.setIgnoreSslError(true)
+                            mBinding.switchIgnoreSsl.setChecked(true)
+                            AppBubble.toast("仅 ${SystemConfig.getSslExceptionHost()} 已启用证书例外，网络请求重启应用后生效")
+                        } else {
+                            AppBubble.toast("请输入有效的单个域名")
+                        }
+                    }
+                    .show()
+            }
         }
 
         // 直播源已移到「订阅管理 - 直播源」页(订阅自带的跟着订阅走、用户自建的在那儿加),

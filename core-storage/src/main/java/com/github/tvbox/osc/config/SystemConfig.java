@@ -8,6 +8,8 @@ import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.security.SecureRandom;
 import java.util.Locale;
+import java.net.IDN;
+import java.net.URI;
 
 /**
  * 系统配置门面（配置门面模式 3.6：数据自持 + 模块内持久化 + 变更订阅）。
@@ -38,7 +40,8 @@ public final class SystemConfig {
     private static final String KEY_SHOW_PREVIEW = "show_preview";
     private static final String KEY_FAST_SEARCH_MODE = "fast_search_mode";
     private static final String KEY_DEBUG_OPEN = "debug_open";
-    private static final String KEY_IGNORE_SSL_ERROR = "ignore_ssl_error";
+    static final String KEY_IGNORE_SSL_ERROR = "ignore_ssl_error";
+    static final String KEY_SSL_EXCEPTION_HOST = "ssl_exception_host";
     private static final String KEY_LAN_SERVER_ENABLE = "lan_server_enable";
     private static final String KEY_LAN_PAIRING_CODE = "lan_pairing_code";
     private static final String KEY_INTERNAL_RESTART_AT = "internal_restart_at";
@@ -202,9 +205,48 @@ public final class SystemConfig {
         return PrefsDataStore.getBoolean(KEY_DEBUG_OPEN, false);
     }
 
-    /** 忽略 HTTPS 证书错误（默认关：开启会降低 TLS 安全性，仅个别自签名站点用） */
+    /** 只有用户同时开启开关并保存有效的精确主机名，例外才生效；旧版全局开关不会自动放行。 */
     public static boolean isIgnoreSslError() {
-        return PrefsDataStore.getBoolean(KEY_IGNORE_SSL_ERROR, false);
+        return PrefsDataStore.getBoolean(KEY_IGNORE_SSL_ERROR, false)
+                && !getSslExceptionHost().isEmpty();
+    }
+
+    public static String getSslExceptionHost() {
+        return normalizeSslHost(PrefsDataStore.getString(KEY_SSL_EXCEPTION_HOST, ""));
+    }
+
+    public static boolean isSslExceptionAllowedForHost(String host) {
+        String configured = getSslExceptionHost();
+        return isIgnoreSslError() && !configured.isEmpty()
+                && configured.equals(normalizeSslHost(host));
+    }
+
+    public static boolean isSslExceptionAllowedForUrl(String url) {
+        try {
+            URI uri = URI.create(url);
+            return "https".equalsIgnoreCase(uri.getScheme())
+                    && isSslExceptionAllowedForHost(uri.getHost());
+        } catch (RuntimeException ignored) {
+            return false;
+        }
+    }
+
+    /** 只接受单个 DNS 主机名或 IPv4；拒绝通配符、路径、端口与非法标签。 */
+    public static String normalizeSslHost(String input) {
+        if (input == null) return "";
+        String candidate = input.trim();
+        if (candidate.isEmpty() || candidate.indexOf('/') >= 0 || candidate.indexOf(':') >= 0
+                || candidate.indexOf('*') >= 0 || candidate.indexOf('@') >= 0) return "";
+        try {
+            candidate = IDN.toASCII(candidate, IDN.USE_STD3_ASCII_RULES).toLowerCase(Locale.ROOT);
+        } catch (IllegalArgumentException ignored) {
+            return "";
+        }
+        if (candidate.length() > 253 || candidate.startsWith(".") || candidate.endsWith(".")) return "";
+        for (String label : candidate.split("\\.", -1)) {
+            if (label.isEmpty() || label.length() > 63 || label.startsWith("-") || label.endsWith("-")) return "";
+        }
+        return candidate;
     }
 
     /** 局域网服务开关（默认关：关闭时 HTTP 服务仅监听 127.0.0.1） */
@@ -554,10 +596,22 @@ public final class SystemConfig {
     }
 
     public static void setIgnoreSslError(boolean on) {
+        if (on && getSslExceptionHost().isEmpty()) return;
         if (isIgnoreSslError() == on) return;
         PrefsDataStore.put(KEY_IGNORE_SSL_ERROR, on);
-        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM, "系统设置: 忽略证书错误=" + on);
+        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM,
+                "系统设置: 证书例外=" + on + "，主机=" + getSslExceptionHost());
         fireChanged();
+    }
+
+    public static boolean setSslExceptionHost(String host) {
+        String normalized = normalizeSslHost(host);
+        if (normalized.isEmpty()) return false;
+        PrefsDataStore.put(KEY_SSL_EXCEPTION_HOST, normalized);
+        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM,
+                "系统设置: 证书例外主机=" + normalized);
+        fireChanged();
+        return true;
     }
 
     public static void setLanServerEnabled(boolean on) {

@@ -360,8 +360,7 @@ public class WebSniffResolver implements DownloadUrlSniffer {
         @SuppressLint("WebViewClientOnReceivedSslError")
         @Override
         public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
-            // 默认拒绝(取消加载):只有用户显式开启"忽略证书错误"调试选项时才放行,防止中间人篡改
-            if (SystemConfig.isIgnoreSslError()) {
+            if (error != null && SystemConfig.isSslExceptionAllowedForUrl(error.getUrl())) {
                 handler.proceed();
             } else {
                 handler.cancel();

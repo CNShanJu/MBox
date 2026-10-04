@@ -687,8 +687,7 @@ public class PlayParseCoordinator {
         @SuppressLint("WebViewClientOnReceivedSslError")
         @Override
         public void onReceivedSslError(WebView webView, SslErrorHandler sslErrorHandler, SslError sslError) {
-            // 默认拒绝:只有用户显式开启"忽略证书错误"才放行,防止中间人篡改(同 WebSniffResolver 策略)
-            if (SystemConfig.isIgnoreSslError()) {
+            if (sslError != null && SystemConfig.isSslExceptionAllowedForUrl(sslError.getUrl())) {
                 sslErrorHandler.proceed();
             } else {
                 sslErrorHandler.cancel();

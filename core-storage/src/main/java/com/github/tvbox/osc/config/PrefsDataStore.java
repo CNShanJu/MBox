@@ -215,8 +215,7 @@ public final class PrefsDataStore {
         try {
             java.util.Map<String, Object> exportable = new java.util.LinkedHashMap<>();
             for (java.util.Map.Entry<String, Object> entry : cache.entrySet()) {
-                if (!entry.getKey().startsWith(PRIVATE_KEY_PREFIX)
-                        && !LAN_PAIRING_CODE_KEY.equals(entry.getKey())) {
+                if (!isTransferExcludedKey(entry.getKey())) {
                     exportable.put(entry.getKey(), entry.getValue());
                 }
             }
@@ -278,8 +277,7 @@ public final class PrefsDataStore {
         for (java.util.Map.Entry<String, Object> e : cfg.entrySet()) {
             String key = e.getKey();
             Object v = e.getValue();
-            if (key == null || v == null || key.startsWith(PRIVATE_KEY_PREFIX)
-                    || LAN_PAIRING_CODE_KEY.equals(key)) continue;
+            if (key == null || v == null || isTransferExcludedKey(key)) continue;
             if (v instanceof Boolean || v instanceof String) {
                 values.put(key, v);
             } else if (v instanceof Integer || v instanceof Long || v instanceof Float) {
@@ -332,5 +330,12 @@ public final class PrefsDataStore {
                 th.printStackTrace();
             }
         }
+    }
+
+    /** 敏感本机设置必须由用户在本机显式操作，不能从共享/备份数据启用。 */
+    private static boolean isTransferExcludedKey(String key) {
+        return key.startsWith(PRIVATE_KEY_PREFIX) || LAN_PAIRING_CODE_KEY.equals(key)
+                || SystemConfig.KEY_IGNORE_SSL_ERROR.equals(key)
+                || SystemConfig.KEY_SSL_EXCEPTION_HOST.equals(key);
     }
 }

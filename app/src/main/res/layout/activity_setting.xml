@@ -312,7 +312,7 @@
                         android:id="@+id/tvIgnoreSslTitle"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="忽略证书错误"
+                        android:text="指定网站证书例外"
                         android:textColor="@color/text_foreground"
                         android:textSize="16sp"
                         />
