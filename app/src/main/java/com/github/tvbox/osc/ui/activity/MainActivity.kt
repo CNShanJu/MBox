@@ -692,7 +692,13 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
             confirmExit()
             return
         }
-        val fragment: Fragment = childFragments[homeFragment.tabIndex]
+        val tabIndex = homeFragment.tabIndex
+        if (tabIndex !in childFragments.indices) {
+            // TabLayout may report -1 between rebuilding tabs and its next measure pass.
+            confirmExit()
+            return
+        }
+        val fragment: Fragment = childFragments[tabIndex]
         if (fragment is GridFragment) { // 首页数据源动态加载的tab
             if (!fragment.restoreView()) { // 有回退的view,先回退(AList等文件夹列表),没有可回退的,返到主页tab
                 if (!homeFragment.scrollToFirstTab()) {
