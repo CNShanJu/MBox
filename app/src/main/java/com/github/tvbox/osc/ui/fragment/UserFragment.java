@@ -285,7 +285,7 @@ public class UserFragment extends BaseLazyFragment {
         int year = cal.get(Calendar.YEAR);
         int month = cal.get(Calendar.MONTH) + 1;
         int day = cal.get(Calendar.DATE);
-        String today = String.format("%d%d%d", year, month, day);
+        String today = HomeHotCache.dayKey(year, month, day);
         HeavyTaskUtil.getSerialExecutorService().execute(() -> {
             if (homeHotLoadEpoch.get() != epoch) return;
             ArrayList<Movie.Video> cached = null;

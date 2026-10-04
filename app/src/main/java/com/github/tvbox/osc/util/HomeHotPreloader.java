@@ -41,7 +41,7 @@ public final class HomeHotPreloader {
         HeavyTaskUtil.getSerialExecutorService().execute(() -> {
             Calendar calendar = Calendar.getInstance();
             int year = calendar.get(Calendar.YEAR);
-            String today = String.format("%d%d%d", year, calendar.get(Calendar.MONTH) + 1,
+            String today = HomeHotCache.dayKey(year, calendar.get(Calendar.MONTH) + 1,
                     calendar.get(Calendar.DATE));
             try {
                 if (today.equals(HomeHotCache.getDay())) {

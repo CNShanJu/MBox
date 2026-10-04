@@ -16,6 +16,11 @@ public final class HomeHotCache {
     private HomeHotCache() {
     }
 
+    /** Fixed-width local date key; legacy unpadded keys simply miss and refresh once. */
+    public static String dayKey(int year, int month, int day) {
+        return String.format(java.util.Locale.ROOT, "%04d%02d%02d", year, month, day);
+    }
+
 
     /** 缓存写入日（未缓存返回空串） */
     public static String getDay() {
