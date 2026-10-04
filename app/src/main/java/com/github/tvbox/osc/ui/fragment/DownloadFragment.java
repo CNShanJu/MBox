@@ -1056,7 +1056,7 @@ public class DownloadFragment extends BaseVbFragment<FragmentDownloadBinding> {
         }
         // 本地海报还在懒拉取:加载态占位(与首页加载态同观感,图标按宿主尺寸自适应)
         PicassoLoad.showLoadingPlaceholder(iv);
-        if (pic.equals(iv.getTag(TAG_POSTER_SOURCE))) return; // 同一条目的 pic 只发起一次
+        // 后端按目标文件去重在途请求；失败后仍可在下次绑定时重试。
         iv.setTag(TAG_POSTER_SOURCE, pic);
         DownloadFacade.get().ensurePosterAsync(pic, vodName);
     }

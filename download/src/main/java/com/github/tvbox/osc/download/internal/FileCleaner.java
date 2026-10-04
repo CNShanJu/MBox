@@ -129,18 +129,21 @@ public class FileCleaner {
     static String migrateTmpDirToPrivate(String legacyTmpDir) {
         if (legacyTmpDir == null || appContext == null) return legacyTmpDir;
         try {
-            String pubRoot = getSaveDir().getAbsolutePath();
-            if (!legacyTmpDir.startsWith(pubRoot)) return legacyTmpDir; // 已是私有/其它
-            String rel = legacyTmpDir.substring(pubRoot.length()); // 含首分隔符(如 /来源/剧名/tmp/xxxxx)
-            File target = new File(getPrivateTmpRoot(), rel);
-            File legacy = new File(legacyTmpDir);
+            File publicRoot = getSaveDir().getCanonicalFile();
+            File legacy = new File(legacyTmpDir).getCanonicalFile();
+            String pubRoot = publicRoot.getPath() + File.separator;
+            if (!legacy.getPath().startsWith(pubRoot)) return legacyTmpDir; // 已是私有/其它
+            String rel = legacy.getPath().substring(pubRoot.length());
+            File privateRoot = getPrivateTmpRoot().getCanonicalFile();
+            File target = new File(privateRoot, rel).getCanonicalFile();
+            if (!target.getPath().startsWith(privateRoot.getPath() + File.separator)) return legacyTmpDir;
             if (legacy.exists()) {
                 File parent = target.getParentFile();
-                if (parent != null && !parent.exists()) parent.mkdirs();
+                if (parent != null && !parent.exists() && !parent.mkdirs()) return legacyTmpDir;
                 if (target.exists()) {
-                    moveContent(legacy, target); // 同名目标已存在:并入后清旧
+                    moveContent(legacy, target); // 同名目标已存在:复制完整后清旧
                 } else if (!legacy.renameTo(target)) {
-                    moveContent(legacy, target); // 跨分区 rename 失败:复制+删除
+                    moveContent(legacy, target); // 跨分区 rename 失败:复制完整后清旧
                 }
             }
             return target.getAbsolutePath();
@@ -149,24 +152,72 @@ public class FileCleaner {
         }
     }
 
-    /** 把 srcDir 下全部内容移入 dstDir(跨分区 rename 失败时逐项复制+删除),最后删除 srcDir */
-    private static void moveContent(File srcDir, File dstDir) {
+    /** 仅在所有文件完整复制后删除源目录；失败时旧任务继续使用源目录。 */
+    static void moveContent(File srcDir, File dstDir) throws IOException {
+        copyContentForMigration(srcDir, dstDir);
+        deleteRecursive(srcDir);
+    }
+
+    private static void copyContentForMigration(File srcDir, File dstDir) throws IOException {
+        rejectSymlink(srcDir);
+        rejectSymlink(dstDir);
+        if (!srcDir.isDirectory()) throw new IOException("旧临时目录不存在: " + srcDir);
+        if (dstDir.exists() ? !dstDir.isDirectory() : !dstDir.mkdirs())
+            throw new IOException("无法创建迁移目录: " + dstDir);
         File[] children = srcDir.listFiles();
-        if (children == null) return;
+        if (children == null) throw new IOException("无法读取旧临时目录: " + srcDir);
         for (File c : children) {
             File to = new File(dstDir, c.getName());
-            if (c.renameTo(to)) continue;
             if (c.isDirectory()) {
-                if (to.exists() || to.mkdirs()) moveContent(c, to);
-            } else if (!to.exists()) {
-                try {
-                    copyFile(c, to);
-                } catch (IOException ignored) {
-                    // 复制失败:保留该文件在旧目录,交由孤儿清理/重下覆盖
-                }
+                copyContentForMigration(c, to);
+            } else if (c.isFile()) {
+                copyFileForMigration(c, to);
+            } else {
+                throw new IOException("不支持的迁移条目: " + c);
             }
         }
-        deleteRecursive(srcDir);
+    }
+
+    private static void copyFileForMigration(File src, File dst) throws IOException {
+        rejectSymlink(src);
+        rejectSymlink(dst);
+        if (dst.exists()) {
+            if (!sameFileContent(src, dst)) throw new IOException("迁移目标文件冲突: " + dst);
+            return;
+        }
+        File part = File.createTempFile(".migrate-", ".part", dst.getParentFile());
+        try {
+            copyFile(src, part);
+            if (part.length() != src.length() || !part.renameTo(dst))
+                throw new IOException("迁移文件未完整落盘: " + dst);
+        } finally {
+            if (part.exists()) part.delete();
+        }
+    }
+
+    private static void rejectSymlink(File file) throws IOException {
+        if (!file.getCanonicalFile().equals(file.getAbsoluteFile()))
+            throw new IOException("迁移目录中存在软链接: " + file);
+    }
+
+    private static boolean sameFileContent(File first, File second) throws IOException {
+        if (!second.isFile() || first.length() != second.length()) return false;
+        try (FileInputStream a = new FileInputStream(first);
+             FileInputStream b = new FileInputStream(second)) {
+            byte[] left = new byte[DownloadManager.BUFFER];
+            byte[] right = new byte[DownloadManager.BUFFER];
+            int n;
+            while ((n = a.read(left)) != -1) {
+                int done = 0;
+                while (done < n) {
+                    int read = b.read(right, done, n - done);
+                    if (read == -1) return false;
+                    done += read;
+                }
+                for (int i = 0; i < n; i++) if (left[i] != right[i]) return false;
+            }
+            return b.read() == -1;
+        }
     }
 
     static void deleteQuietly(File f) {
@@ -188,13 +239,12 @@ public class FileCleaner {
     }
 
     static void copyFile(File src, File dst) throws IOException {
-        FileInputStream fis = new FileInputStream(src);
-        FileOutputStream fos = new FileOutputStream(dst);
-        byte[] buf = new byte[DownloadManager.BUFFER];
-        int n;
-        while ((n = fis.read(buf)) != -1) fos.write(buf, 0, n); // != -1:0 不是 EOF
-        fis.close();
-        fos.close();
+        try (FileInputStream fis = new FileInputStream(src);
+             FileOutputStream fos = new FileOutputStream(dst)) {
+            byte[] buf = new byte[DownloadManager.BUFFER];
+            int n;
+            while ((n = fis.read(buf)) != -1) fos.write(buf, 0, n); // != -1:0 不是 EOF
+        }
     }
 
     static void copyFile(File src, OutputStream out) throws IOException {

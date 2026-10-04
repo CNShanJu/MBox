@@ -1740,9 +1740,8 @@ class HlsDownloader {
         try {
             if (!resp.isSuccessful())
                 throw new DownloadErrors.HttpFailure(resp.code(), "HLS key");
-            byte[] data = resp.body().bytes();
-            if (data.length != 16)
-                throw new IOException("HLS key 长度异常: " + data.length + "B");
+            if (resp.body() == null) throw new IOException("HLS key 响应为空");
+            byte[] data = readAes128Key(resp.body().byteStream());
             HlsKeyCheckpoint.verify(executor.segmentsDirOf(t), key.keyUri, data, t.doneSegments > 0);
             cache.put(key.keyUri, data);
             return data;
@@ -1754,6 +1753,19 @@ class HlsDownloader {
             }
             resp.close();
         }
+    }
+
+    /** 只读到第 17 字节即可拒绝异常响应，避免密钥接口返回大文件时耗尽内存。 */
+    static byte[] readAes128Key(InputStream input) throws IOException {
+        byte[] limited = new byte[17];
+        int count = 0;
+        while (count < limited.length) {
+            int n = input.read(limited, count, limited.length - count);
+            if (n == -1) break;
+            count += n;
+        }
+        if (count != 16) throw new IOException("HLS key 长度异常: " + (count == 17 ? ">16" : count) + "B");
+        return java.util.Arrays.copyOf(limited, 16);
     }
 
     /**

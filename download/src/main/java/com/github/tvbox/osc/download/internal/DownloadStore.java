@@ -9,6 +9,7 @@ import com.google.gson.reflect.TypeToken;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Type;
 import java.util.ArrayList;
@@ -26,6 +27,8 @@ import okhttp3.Response;
  * 数据在下载模块内部维护（私有文件 download_tasks_v1.json），对外经 DownloadManager 门面访问。
  */
 public class DownloadStore {
+
+    private static final long MAX_POSTER_BYTES = 8L * 1024L * 1024L;
 
     /** 注入的 application context(独立模块 :download, 海报目录用) */
     private static volatile Context appContext;
@@ -250,14 +253,18 @@ public class DownloadStore {
     static File getPosterFile(String vodName) {
         if (vodName == null || vodName.isEmpty()) return null;
         File f = new File(getPosterDir(vodName), "poster.jpg");
-        return f.exists() ? f : null;
+        return isUsablePoster(f) ? f : null;
+    }
+
+    private static boolean isUsablePoster(File file) {
+        return file.isFile() && file.length() > 0 && file.length() <= MAX_POSTER_BYTES;
     }
 
     /** 确保剧集海报已下载到本地(缺失才异步拉取,同文件去重);pic 为空/拉取失败静默跳过 */
     void ensurePosterAsync(String pic, String vodName) {
         if (pic == null || pic.isEmpty() || vodName == null || vodName.isEmpty()) return;
         final File target = new File(getPosterDir(vodName), "poster.jpg");
-        if (target.exists()) return;
+        if (isUsablePoster(target)) return;
         final String key = target.getAbsolutePath();
         synchronized (posterFetching) {
             if (posterFetching.contains(key)) return;
@@ -269,25 +276,48 @@ public class DownloadStore {
                 try (Response resp = dm.downloadClient().newCall(req).execute()) {
                     if (!resp.isSuccessful() || resp.body() == null) return;
                     String ct = resp.header("Content-Type");
-                    if (ct != null && !ct.toLowerCase(java.util.Locale.ROOT).contains("image")) return;
-                    File dir = target.getParentFile();
-                    if (dir != null && !dir.exists()) dir.mkdirs();
-                    try (InputStream is = resp.body().byteStream();
-                         FileOutputStream fos = new FileOutputStream(target)) {
-                        byte[] buf = new byte[DownloadManager.BUFFER];
-                        int n;
-                        while ((n = is.read(buf)) != -1) fos.write(buf, 0, n); // != -1:0 不是 EOF
+                    if (ct != null && !ct.toLowerCase(java.util.Locale.ROOT).startsWith("image/")) return;
+                    try (InputStream is = resp.body().byteStream()) {
+                        savePoster(is, target, resp.body().contentLength());
                     }
                     Log.i("TVBox-Download", "海报已下载 " + target.getAbsolutePath());
                     dm.notifyChanged(); // 海报就绪,刷新下载页
                 }
             } catch (Throwable th) {
-                Log.i("TVBox-Download", "海报下载失败 " + pic + " : " + th.getMessage());
+                Log.i("TVBox-Download", "海报下载失败: " + th.getMessage());
             } finally {
                 synchronized (posterFetching) {
                     posterFetching.remove(key);
                 }
             }
         });
+    }
+
+    /** 下载先写同目录临时文件，完整且不超限后才发布为可见海报。 */
+    static void savePoster(InputStream input, File target, long contentLength) throws IOException {
+        if (contentLength > MAX_POSTER_BYTES) throw new IOException("海报超过 8 MB");
+        File dir = target.getParentFile();
+        if (dir == null || (!dir.exists() && !dir.mkdirs())) throw new IOException("无法创建海报目录");
+        File part = new File(dir, target.getName() + ".part");
+        if (part.exists() && !part.delete()) throw new IOException("无法清理旧海报临时文件");
+        try {
+            long written = 0;
+            try (FileOutputStream out = new FileOutputStream(part)) {
+                byte[] buffer = new byte[DownloadManager.BUFFER];
+                int n;
+                while ((n = input.read(buffer)) != -1) {
+                    written += n;
+                    if (written > MAX_POSTER_BYTES) throw new IOException("海报超过 8 MB");
+                    out.write(buffer, 0, n);
+                }
+                if (written == 0) throw new IOException("海报响应为空");
+                out.getFD().sync();
+            }
+            if (target.exists() && !isUsablePoster(target) && !target.delete())
+                throw new IOException("无法清理残缺海报");
+            if (!part.renameTo(target)) throw new IOException("海报文件发布失败");
+        } finally {
+            if (part.exists()) part.delete();
+        }
     }
 }

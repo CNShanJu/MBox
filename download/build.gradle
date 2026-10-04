@@ -38,4 +38,5 @@ dependencies {
     implementation('com.thoughtworks.xstream:xstream:1.4.20') { // bean 注解
         exclude group: 'xmlpull', module: 'xmlpull'
     }
+    testImplementation 'junit:junit:4.13.2'
 }
