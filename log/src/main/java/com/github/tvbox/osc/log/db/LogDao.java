@@ -29,14 +29,14 @@ public interface LogDao {
             + "AND (:toTs IS NULL OR timestamp <= :toTs) "
             + "AND (:keyword IS NULL OR detail LIKE '%' || :keyword || '%' "
             + "     OR reason LIKE '%' || :keyword || '%') "
-            + "ORDER BY timestamp DESC LIMIT :limit OFFSET :offset")
+            + "ORDER BY timestamp DESC, id DESC LIMIT :limit OFFSET :offset")
     List<LogEntry> query(@Nullable String category, @Nullable String subType, int minLevel,
                          @Nullable String taskKey, @Nullable Long fromTs, @Nullable Long toTs,
                          @Nullable String keyword, int limit, int offset);
 
     /** 任务维度视图（"任务详情→查看日志"） */
     @Query("SELECT * FROM log_entry WHERE taskKey = :taskKey "
-            + "ORDER BY timestamp DESC LIMIT :limit OFFSET :offset")
+            + "ORDER BY timestamp DESC, id DESC LIMIT :limit OFFSET :offset")
     List<LogEntry> queryByTask(String taskKey, int limit, int offset);
 
     /** 删除某时间点之前的日志（按天清理） */
@@ -45,7 +45,7 @@ public interface LogDao {
 
     /** 只保留最近 keep 条（超出删最旧，防总量膨胀） */
     @Query("DELETE FROM log_entry WHERE id IN "
-            + "(SELECT id FROM log_entry ORDER BY timestamp DESC LIMIT -1 OFFSET :keep)")
+            + "(SELECT id FROM log_entry ORDER BY timestamp DESC, id DESC LIMIT -1 OFFSET :keep)")
     int trimTo(int keep);
 
     @Query("SELECT COUNT(*) FROM log_entry")

@@ -9,6 +9,8 @@ import com.github.tvbox.osc.log.LogEntry;
 import com.github.tvbox.osc.log.LogFilter;
 import com.github.tvbox.osc.log.db.LogDatabase;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
@@ -207,20 +209,29 @@ public final class LogRepository {
     // 读通道（同步阻塞至结果；页面调用建议放后台线程）
     // ------------------------------------------------------------------
 
-    /** 组合筛选查询；降级模式返回 null */
+    /** 组合筛选查询:取最近的分页结果,页内按时间正序返回;降级模式返回 null。 */
     @Nullable
     public List<LogEntry> query(final LogFilter f) {
         if (db == null) return null;
-        return await(() -> db.logDao().query(
+        return chronologicalPage(await(() -> db.logDao().query(
                 f.category, f.subType, f.minLevel, f.taskKey,
-                f.fromTs, f.toTs, f.keyword, f.limit, f.offset));
+                f.fromTs, f.toTs, f.keyword, f.limit, f.offset)));
     }
 
-    /** 任务维度视图；降级模式返回 null */
+    /** 任务维度视图:最近的分页结果按时间正序返回;降级模式返回 null。 */
     @Nullable
     public List<LogEntry> queryByTask(String taskKey, int limit, int offset) {
         if (db == null) return null;
-        return await(() -> db.logDao().queryByTask(taskKey, limit, offset));
+        return chronologicalPage(await(() -> db.logDao().queryByTask(taskKey, limit, offset)));
+    }
+
+    @Nullable
+    static List<LogEntry> chronologicalPage(@Nullable List<LogEntry> newestFirst) {
+        if (newestFirst == null) return null;
+        // 先限量选出最近的记录,再反转整条记录;不能把多行详情或异常栈逐行倒序。
+        List<LogEntry> chronological = new ArrayList<>(newestFirst);
+        Collections.reverse(chronological);
+        return chronological;
     }
 
     /** 逻辑内容大小，必须由后台调用；查询失败返回 null，不能误报 0 字节。 */

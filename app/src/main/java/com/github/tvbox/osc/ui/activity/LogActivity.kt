@@ -277,7 +277,8 @@ class LogActivity : BaseVbActivity<ActivityLogBinding>() {
                 if (searchQuery.isEmpty()) {
                     val scroll = activeScroll()
                     scroll.post {
-                        if (bizEpoch.get() == epoch && currentTab == 0) scroll.fullScroll(View.FOCUS_UP)
+                        if (bizEpoch.get() == epoch && currentTab == 0 && searchQuery.isEmpty() &&
+                            scroll === activeScroll()) scroll.fullScroll(View.FOCUS_DOWN)
                     }
                 }
             }
