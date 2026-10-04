@@ -27,12 +27,10 @@ import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 
-import java.io.BufferedOutputStream;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -61,8 +59,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.zip.GZIPInputStream;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
 
 import fi.iki.elonen.NanoHTTPD;
 import okhttp3.Request;
@@ -85,6 +81,8 @@ public class RemoteServer extends NanoHTTPD {
 
     /** 每台设备独立的配对会话；踢出时撤销该设备的 Cookie 或请求头令牌。 */
     private volatile String pairingCode;
+    /** 只给本进程的本地文件读取使用，不通过 HTTP 响应或配对接口发布。 */
+    private final String localReadToken = generateToken();
     private final Map<String, FailedPairing> failedPairings = new ConcurrentHashMap<>();
     private long lastPlaybackAuthDeniedLogAt;
     private final Map<String, LanDevice> devices = new ConcurrentHashMap<>();
@@ -911,10 +909,12 @@ public class RemoteServer extends NanoHTTPD {
         return getRequestList.get(0).doResponse(session, "", null, null);
     }
 
-    /** GET /file/<rel>: 本机回环直通，局域网侧文件和目录都需配对。 */
+    /** GET /file/<rel>: 配对设备可读文件和目录；进程令牌仅可在回环读取单个文件。 */
     private Response serveFileGet(IHTTPSession session, String rel) {
         try {
-            if (!isAuthorized(session, session.getParms())) {
+            boolean paired = isAuthorized(session, session.getParms());
+            boolean localFileReader = !paired && isLocalFileReader(session);
+            if (!paired && !localFileReader) {
                 return createPlainTextResponse(Response.Status.FORBIDDEN, "forbidden");
             }
             File root = storageRoot();
@@ -931,7 +931,7 @@ public class RemoteServer extends NanoHTTPD {
                 if (localFile.isFile()) {
                     return streamLocalFile(session, localFile);
                 } else {
-                    if (!isAuthorized(session, session.getParms())) {
+                    if (!paired) {
                         return createPlainTextResponse(NanoHTTPD.Response.Status.FORBIDDEN, "forbidden");
                     }
                     return NanoHTTPD.newFixedLengthResponse(NanoHTTPD.Response.Status.OK, NanoHTTPD.MIME_PLAINTEXT, fileList(root.getAbsolutePath(), rel == null ? "" : rel));
@@ -1020,7 +1020,7 @@ public class RemoteServer extends NanoHTTPD {
             LanDevice device = authorizedDevice(session);
             return recordPlaybackEvent(device, params);
         }
-        // 管理/变更类接口统一鉴权:本机(loopback)放行,局域网侧必须携带进程令牌
+        // 管理/变更类接口统一要求已配对会话；回环地址本身不是身份凭据。
         for (RequestProcess process : postRequestList) {
             if (process.isRequest(session, fileName)) {
                 return process.doResponse(session, fileName, params, files);
@@ -1036,6 +1036,8 @@ public class RemoteServer extends NanoHTTPD {
             } else if (fileName.equals("/delFile")) {
                 return handleDelete(params, false);
             }
+        } catch (StagedZipExtractor.InvalidArchiveException rejected) {
+            return createPlainTextResponse(NanoHTTPD.Response.Status.BAD_REQUEST, rejected.getMessage());
         } catch (Throwable th) {
             return createPlainTextResponse(NanoHTTPD.Response.Status.INTERNAL_ERROR, "operation failed");
         }
@@ -1043,7 +1045,7 @@ public class RemoteServer extends NanoHTTPD {
         return getRequestList.get(0).doResponse(session, "", null, null);
     }
 
-    /** /upload: 目标目录限定在外部存储根目录内,文件名必须为单段,zip 解压带 Zip Slip 防护 */
+    /** /upload: 目标限定在外部存储根目录内，ZIP 先完整暂存和校验，再提交。 */
     private Response handleUpload(Map<String, String> params, Map<String, String> files) throws IOException {
         File destDir = resolveUnderRoot(params.get("path"));
         if (destDir == null) {
@@ -1066,14 +1068,11 @@ public class RemoteServer extends NanoHTTPD {
             if (target == null) {
                 return createPlainTextResponse(NanoHTTPD.Response.Status.BAD_REQUEST, "invalid target path");
             }
-            if (target.exists() && !target.delete()) {
-                return createPlainTextResponse(NanoHTTPD.Response.Status.INTERNAL_ERROR, "cannot replace " + safeName);
-            }
             if (tmp.exists()) {
                 if (safeName.toLowerCase().endsWith(".zip")) {
-                    unzip(tmp, destDir);
+                    StagedZipExtractor.unzip(tmp, destDir);
                 } else {
-                    FileUtils.copyFile(tmp, target);
+                    StagedZipExtractor.copyFileAtomically(tmp, target);
                 }
             }
             if (tmp.exists()) tmp.delete();
@@ -1137,10 +1136,24 @@ public class RemoteServer extends NanoHTTPD {
                 || ip.startsWith("127."));
     }
 
-    /** 管理接口鉴权:本机直连放行；局域网请求需 Cookie 或 X-TVBox-Token 请求头。 */
+    /** 管理接口鉴权:回环和局域网都必须携带有效配对会话。 */
     private boolean isAuthorized(IHTTPSession session, Map<String, String> params) {
-        if (isLoopbackRequest(session)) return true;
         return authorizedDevice(session) != null;
+    }
+
+    /** 应用内本地订阅只读单文件；其他本机应用即使能连上回环端口也拿不到此随机令牌。 */
+    private boolean isLocalFileReader(IHTTPSession session) {
+        if (!isLoopbackRequest(session)) return false;
+        Map<String, String> headers = session.getHeaders();
+        String provided = headers == null ? null : headers.get("x-mbox-local-token");
+        return provided != null && MessageDigest.isEqual(
+                localReadToken.getBytes(StandardCharsets.US_ASCII),
+                provided.getBytes(StandardCharsets.US_ASCII));
+    }
+
+    /** 仅由本进程装配根注入 spider 的本地订阅读取器，不写入 URL、日志或持久配置。 */
+    public String getLocalReadToken() {
+        return localReadToken;
     }
 
     private Response serveCastMedia(IHTTPSession session) {
@@ -1689,64 +1702,6 @@ public class RemoteServer extends NanoHTTPD {
         }
         info.add("files", result);
         return info.toString();
-    }
-
-    /**
-     * 解压 ZIP 到目标目录。
-     * Zip Slip 防护:逐条目做 canonical 包含性校验,任何通过 ../ 或绝对路径
-     * 越出 destDir 的条目一律拒绝(抛 SecurityException,整体失败,不落盘)。
-     * ZipFile 与输入流均用 try-with-resources 确保关闭。
-     */
-    void unzip(File zipFilePath, File destDir) throws IOException {
-        if (destDir == null) {
-            throw new IOException("null dest dir");
-        }
-        if (!destDir.exists() && !destDir.mkdirs()) {
-            throw new IOException("cannot create dest dir: " + destDir);
-        }
-        String destCanonical = destDir.getCanonicalPath();
-        try (ZipFile zip = new ZipFile(zipFilePath)) {
-            Enumeration<? extends ZipEntry> iter = (Enumeration<? extends ZipEntry>) zip.entries();
-            while (iter.hasMoreElements()) {
-                ZipEntry entry = iter.nextElement();
-                String name = entry.getName();
-                if (name == null || name.indexOf('\0') >= 0) {
-                    throw new SecurityException("Invalid zip entry name");
-                }
-                File target = new File(destDir, name);
-                String targetCanonical = target.getCanonicalPath();
-                if (!targetCanonical.equals(destCanonical)
-                        && !targetCanonical.startsWith(destCanonical + File.separator)) {
-                    throw new SecurityException("Zip entry escapes target directory: " + name);
-                }
-                if (entry.isDirectory()) {
-                    if (!target.exists()) target.mkdirs();
-                    File flag = new File(target, ".tvbox_folder");
-                    if (!flag.exists()) flag.createNewFile();
-                } else {
-                    File parent = target.getParentFile();
-                    if (parent != null && !parent.exists()) parent.mkdirs();
-                    try (InputStream is = zip.getInputStream(entry)) {
-                        extractFile(is, target);
-                    }
-                }
-            }
-        }
-    }
-
-    void extractFile(InputStream inputStream, File dst) throws IOException {
-        File parent = dst.getParentFile();
-        if (parent != null && !parent.exists()) parent.mkdirs();
-        if (dst.exists() && !dst.delete()) {
-            throw new IOException("cannot replace existing file: " + dst);
-        }
-        try (BufferedOutputStream bos = new BufferedOutputStream(new FileOutputStream(dst))) {
-            byte[] bytesIn = new byte[2048];
-            int len;
-            while ((len = inputStream.read(bytesIn)) > 0) {
-                bos.write(bytesIn, 0, len);
-            }
-        }
     }
 
 }

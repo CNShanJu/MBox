@@ -207,6 +207,8 @@ public class ControlManager {
         if (running != null) {
             // 已在跑且绑定方式就是当前配置:复用(本方法是幂等的,首页每次 init 都会调用)
             if (running.isStarting() && lanBound == lanEnabled) {
+                com.github.tvbox.osc.util.OkGoHelper.setLocalFileReadAccess(
+                        RemoteServer.serverPort, running.getLocalReadToken());
                 return;
             }
             // 已停(首页销毁过)或绑定方式变了(开关改动后重启应用):必须停旧实例再重建。
@@ -225,6 +227,7 @@ public class ControlManager {
             }
             mServer = null;
             lanBound = false;
+            com.github.tvbox.osc.util.OkGoHelper.clearLocalFileReadAccess();
         }
         // 默认仅绑定本机回环:本 App 的订阅/本地播放/代理全部走 127.0.0.1,无需对局域网开放端口。
         // 需要局域网文件共享/远程管理(web 控制台)时,显式开启 HawkConfig.LAN_SERVER_ENABLE 后重启生效。
@@ -252,6 +255,8 @@ public class ControlManager {
             });
             try {
                 mServer.start();
+                com.github.tvbox.osc.util.OkGoHelper.setLocalFileReadAccess(
+                        tryPort, mServer.getLocalReadToken());
                 lanBound = lanEnabled; // 记下本次实例的实际绑定方式(供 lanState 区分"已开但没重启")
                 IjkMediaPlayer.setDotPort(SystemConfig.getDohUrl() > 0, RemoteServer.serverPort);
                 // server 就绪后注入局域网地址(:spider 模块 ApiConfig 用,替代直接依赖本类)
@@ -278,6 +283,7 @@ public class ControlManager {
             }
         } while (RemoteServer.serverPort < 9999);
         if (!started) {
+            com.github.tvbox.osc.util.OkGoHelper.clearLocalFileReadAccess();
             Log.w("TVBox-Server", "本机服务启动失败:从 " + preferredPort + " 起连续端口都被占用");
             if (lanEnabled) LogStore.fail(Category.SYSTEM,
                     "局域网服务启动失败 reason=port_unavailable");
@@ -308,6 +314,7 @@ public class ControlManager {
         if (mServer == s) {
             mServer = null;
             lanBound = false;
+            com.github.tvbox.osc.util.OkGoHelper.clearLocalFileReadAccess();
         }
         if (wasLanBound) LogStore.log(Category.SYSTEM, "局域网服务已停止");
     }

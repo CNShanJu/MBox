@@ -37,6 +37,7 @@ import okhttp3.Dns;
 import okhttp3.HttpUrl;
 import okhttp3.Interceptor;
 import okhttp3.OkHttpClient;
+import okhttp3.Request;
 import okhttp3.dnsoverhttps.DnsOverHttps;
 import okhttp3.logging.HttpLoggingInterceptor;
 
@@ -49,6 +50,19 @@ public class OkGoHelper {
     public static final long DEFAULT_MILLISECONDS = 10000;      //默认的超时时间
 
     private static Context appContext;
+    private static volatile String localFileReadToken = "";
+    private static volatile int localFileReadPort = -1;
+
+    /** Token 只保存在进程内，服务重建时覆盖；仅由本机服务组合根注入。 */
+    public static void setLocalFileReadAccess(int port, String token) {
+        localFileReadPort = port;
+        localFileReadToken = token == null ? "" : token;
+    }
+
+    public static void clearLocalFileReadAccess() {
+        localFileReadToken = "";
+        localFileReadPort = -1;
+    }
 
     /** 当前生效的安全 DNS 解析器(null=关闭)。{@link #refreshDnsOverHttps()} 整体替换,读方只取一次引用 */
     private static volatile DnsOverHttps dnsOverHttps = null;
@@ -167,6 +181,7 @@ public class OkGoHelper {
             loggingInterceptor.setLevel(HttpLoggingInterceptor.Level.NONE);
         }
         builder.addInterceptor(loggingInterceptor);
+        addLocalFileTokenInterceptor(builder);
         builder.addInterceptor(new BrotliInterceptor());
         try {
             setOkHttpSsl(builder);
@@ -179,6 +194,24 @@ public class OkGoHelper {
         }
         OkHttpClient dohClient = builder.build();
         return new DnsOverHttps.Builder().client(dohClient).url(HttpUrl.get(dohUrl)).build();
+    }
+
+    private static void addLocalFileTokenInterceptor(OkHttpClient.Builder builder) {
+        // network interceptor 每次重定向重新执行；令牌也不进入 application 层的 HTTP 日志。
+        builder.addNetworkInterceptor(chain -> {
+            Request request = chain.request();
+            HttpUrl url = request.url();
+            String host = url.host();
+            boolean localFile = "http".equals(url.scheme())
+                    && ("127.0.0.1".equals(host) || "localhost".equals(host) || "::1".equals(host))
+                    && url.port() == localFileReadPort
+                    && url.encodedPath().startsWith("/file/")
+                    && "GET".equals(request.method());
+            String token = localFileReadToken;
+            Request.Builder authenticated = request.newBuilder().removeHeader("X-MBox-Local-Token");
+            if (localFile && !token.isEmpty()) authenticated.header("X-MBox-Local-Token", token);
+            return chain.proceed(authenticated.build());
+        });
     }
 
     /** 默认客户端(可被 DoH 变更整体替换,故 volatile;读方取一次引用用到底,不会中途换池) */
@@ -454,6 +487,7 @@ public class OkGoHelper {
             loggingInterceptor.setLevel(HttpLoggingInterceptor.Level.NONE);
         }
         builder.addInterceptor(loggingInterceptor);
+        addLocalFileTokenInterceptor(builder);
         // 默认 User-Agent:还原 OkGo 的全局 UA 行为,部分源接口无 UA 会拒绝请求
         builder.addInterceptor(new HttpClient.UserAgentInterceptor());
         builder.connectionSpecs(getConnectionSpec());
