@@ -860,14 +860,16 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
             lastViewedBubble?.isShow == true) return
         val shownAt = android.os.SystemClock.uptimeMillis()
         bubbleUntil = shownAt + BUBBLE_SHOW_MS
-        val bubble = LastViewedDialog(host, vod)
+        val visibleContent = fragments.getOrNull(mBinding.mViewPager.currentItem)
+        val liveBubble = visibleContent?.view?.findViewById<View>(R.id.btn_live)
+        val bubble = LastViewedDialog(host, vod, mBinding.root, liveBubble)
         lastViewedBubble = bubble
         XPopup.Builder(host)
             .hasShadowBg(false)
             .isDestroyOnDismiss(true)
             .isCenterHorizontal(true)
             .isTouchThrough(true)
-            // 单行气泡高度约 44dp，底部距屏幕底约 155dp。
+            // 没有可见直播球时沿用原位置；有直播球时保持水平居中并按空间选择同排或上移。
             .offsetY(ScreenUtils.getAppScreenHeight() - ConvertUtils.dp2px(155f + 44f))
             .asCustom(bubble)
             .show()
