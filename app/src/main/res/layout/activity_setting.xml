@@ -400,6 +400,38 @@
                 android:layout_marginTop="14dp"
                 android:background="@drawable/bg_large_round_float">
                 <LinearLayout
+                    android:id="@+id/llInternalDownload"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/dp_70"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="40dp"
+                    android:foreground="?android:selectableItemBackground">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="使用内置下载"
+                            android:textColor="@color/text_foreground"
+                            android:textSize="16sp"/>
+
+                    </LinearLayout>
+
+                    <com.github.tvbox.osc.ui.kit.AppSwitch
+                        android:id="@+id/switchInternalDownload"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:clickable="false"/>
+                </LinearLayout>
+
+                <LinearLayout
                     android:id="@+id/llDlWifiOnly"
                     android:layout_width="match_parent"
                     android:layout_height="@dimen/dp_60"

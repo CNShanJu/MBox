@@ -86,7 +86,7 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
         }
         mBinding.tvMediaCodec.text = PlayConfig.getIjkCodec()
 
-        // 下载设置:仅WiFi / 并发数 / 保存位置(与下载页标题栏齿轮共用 DownloadConfig,单一事实源)
+        // 下载设置:下载方式 / 仅WiFi / 并发数 / 限速
         initDownloadSettings()
         // 加载动画:默认 / Glowing Fish(全局 LoadSir 加载动画,播放器与下载不受影响)
         initLoadingAnimSetting()
@@ -511,8 +511,17 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
         inited = true
     }
 
-    /** 下载设置分组:仅WiFi开关 + 并发数选择 + 保存位置只读,统一走 DownloadFacade(门禁:UI 不触内部实现) */
+    /** 下载设置分组:下载方式走 SystemConfig；内置下载参数统一走 DownloadFacade。 */
     private fun initDownloadSettings() {
+        mBinding.switchInternalDownload.setChecked(SystemConfig.isInternalDownloadEnabled())
+        refreshInternalDownloadSettingsVisibility()
+        mBinding.llInternalDownload.setOnClickListener { view: View ->
+            FastClickCheckUtil.check(view)
+            val enabled = !SystemConfig.isInternalDownloadEnabled()
+            SystemConfig.setInternalDownloadEnabled(enabled)
+            mBinding.switchInternalDownload.setChecked(enabled)
+            refreshInternalDownloadSettingsVisibility()
+        }
         // 仅 Wi-Fi 下载开关
         mBinding.switchDlWifiOnly.setChecked(DownloadFacade.get().isWifiOnly())
         mBinding.llDlWifiOnly.setOnClickListener {
@@ -571,6 +580,13 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             }, SelectDialogAdapter.stringDiff, labels, defaultPos)
             dialog.show()
         }
+    }
+
+    private fun refreshInternalDownloadSettingsVisibility() {
+        val visibility = if (SystemConfig.isInternalDownloadEnabled()) View.VISIBLE else View.GONE
+        mBinding.llDlWifiOnly.visibility = visibility
+        mBinding.llDlConcurrent.visibility = visibility
+        mBinding.llDlSpeed.visibility = visibility
     }
 
     /** 加载动画选项:默认 + assets/loading/ 下的动画文件夹(每个文件夹一个动画 + config.json) */
@@ -646,6 +662,8 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
         mBinding.tvBackgroundPlayType.text = BackgroundPlaySettings.currentLabel()
         // 背景图设置页返回后刷新取值(默认/自定义)
         if (inited) {
+            mBinding.switchInternalDownload.setChecked(SystemConfig.isInternalDownloadEnabled())
+            refreshInternalDownloadSettingsVisibility()
             updatePageBackgroundValue()
             updatePageBackgroundVisibility()
             updateThemeValue()

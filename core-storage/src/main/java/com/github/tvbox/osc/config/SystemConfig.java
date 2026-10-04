@@ -36,6 +36,7 @@ public final class SystemConfig {
     private static final String KEY_SEARCH_RESULT_LAYOUT = "search_result_layout";
     private static final String KEY_LIVE_URL = "live_url";
     private static final String KEY_PRIVATE_BROWSING = "private_browsing";
+    private static final String KEY_INTERNAL_DOWNLOAD_ENABLED = "internal_download_enabled";
     // UI/功能偏好（同样沿用旧应用 key，历史设置兼容）
     private static final String KEY_SHOW_PREVIEW = "show_preview";
     private static final String KEY_FAST_SEARCH_MODE = "fast_search_mode";
@@ -189,6 +190,11 @@ public final class SystemConfig {
     /** 无痕浏览（不存搜索/观看历史），默认关 */
     public static boolean isPrivateBrowsing() {
         return PrefsDataStore.getBoolean(KEY_PRIVATE_BROWSING, false);
+    }
+
+    /** 使用应用内下载流程；默认关闭，使用外部下载器。 */
+    public static boolean isInternalDownloadEnabled() {
+        return PrefsDataStore.getBoolean(KEY_INTERNAL_DOWNLOAD_ENABLED, false);
     }
 
     /** 详情页缩略预览，默认开 */
@@ -595,6 +601,12 @@ public final class SystemConfig {
         fireChanged();
     }
 
+    public static void setInternalDownloadEnabled(boolean on) {
+        if (isInternalDownloadEnabled() == on) return;
+        PrefsDataStore.put(KEY_INTERNAL_DOWNLOAD_ENABLED, on);
+        fireChanged();
+    }
+
     public static void setShowPreview(boolean on) {
         if (isShowPreview() == on) return;
         PrefsDataStore.put(KEY_SHOW_PREVIEW, on);
@@ -760,6 +772,7 @@ public final class SystemConfig {
         cfg.put(KEY_HISTORY_NUM, getHistoryNum());
         cfg.put(KEY_LIVE_URL, getLiveUrl());
         cfg.put(KEY_PRIVATE_BROWSING, isPrivateBrowsing());
+        cfg.put(KEY_INTERNAL_DOWNLOAD_ENABLED, isInternalDownloadEnabled());
         cfg.put(KEY_AUTO_CHECK_UPDATE, isAutoCheckUpdate());
         return cfg;
     }
@@ -777,6 +790,7 @@ public final class SystemConfig {
         if ((v = cfg.get(KEY_HISTORY_NUM)) instanceof Number) setHistoryNum(((Number) v).intValue());
         if ((v = cfg.get(KEY_LIVE_URL)) instanceof String) setLiveUrl((String) v);
         if ((v = cfg.get(KEY_PRIVATE_BROWSING)) instanceof Boolean) setPrivateBrowsing((Boolean) v);
+        if ((v = cfg.get(KEY_INTERNAL_DOWNLOAD_ENABLED)) instanceof Boolean) setInternalDownloadEnabled((Boolean) v);
         if ((v = cfg.get(KEY_AUTO_CHECK_UPDATE)) instanceof Boolean) setAutoCheckUpdate((Boolean) v);
     }
 }

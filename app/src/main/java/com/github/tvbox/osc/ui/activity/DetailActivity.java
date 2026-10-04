@@ -1,6 +1,7 @@
 package com.github.tvbox.osc.ui.activity;
 
 import android.annotation.SuppressLint;
+import android.content.ActivityNotFoundException;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
 import android.content.Context;
@@ -8,6 +9,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.res.ColorStateList;
 import android.content.res.Configuration;
+import android.net.Uri;
 import android.os.Bundle;
 
 import androidx.annotation.Nullable;
@@ -45,6 +47,8 @@ import com.github.tvbox.osc.repo.HistoryRepositories;
 import com.github.tvbox.osc.databinding.ActivityDetailBinding;
 import com.github.tvbox.osc.player.api.PlayConfig;
 import com.github.tvbox.osc.service.PlayService;
+import com.github.tvbox.osc.spiderapi.PlayUrlResolverProviders;
+import com.github.tvbox.osc.spiderapi.ResolveResult;
 import com.github.tvbox.osc.ui.adapter.ParseAdapter;
 import com.github.tvbox.osc.ui.adapter.SelectDialogAdapter;
 import com.github.tvbox.osc.ui.adapter.SeriesAdapter;
@@ -54,6 +58,7 @@ import com.github.tvbox.osc.ui.dialog.AllVodSeriesRightDialog;
 import com.github.tvbox.osc.ui.dialog.CastListDialog;
 import com.github.tvbox.osc.server.ControlManager;
 import com.github.tvbox.osc.server.RemoteServer;
+import com.github.tvbox.osc.ui.dialog.ConfirmDialog;
 import com.github.tvbox.osc.ui.dialog.DialogCoordinator;
 import com.github.tvbox.osc.ui.dialog.DownloadDialogCoordinator;
 import com.github.tvbox.osc.ui.dialog.QuickSearchDialog;
@@ -63,6 +68,7 @@ import com.github.tvbox.osc.ui.fragment.PlayFragment;
 import com.github.tvbox.osc.ui.kit.LinearSpacingItemDecoration;
 import com.github.tvbox.osc.util.BroadcastUtils;
 import com.github.tvbox.osc.util.DetailQuickSearchHelper;
+import com.github.tvbox.osc.util.DownloadHeaders;
 import com.github.tvbox.osc.ui.activity.DownloadActivity;
 import com.github.tvbox.osc.util.FastClickCheckUtil;
 import com.github.tvbox.osc.util.HeavyTaskUtil;
@@ -88,6 +94,7 @@ import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * @author pj567
@@ -97,6 +104,8 @@ import java.util.List;
 
 public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
         implements DownloadDialogCoordinator.Host, VideoDetailDialog.Host, PlayFragment.PlaySyncHost {
+    private static final String EXTERNAL_DOWNLOADER_PACKAGE = "idm.internet.download.manager.plus";
+    private static final String EXTERNAL_DOWNLOADER_ACTIVITY = "idm.internet.download.manager.Downloader";
     private PlayFragment playFragment = null;
     private SourceViewModel sourceViewModel;
     /** 详情页"快速搜索"请求编排(共享线程池 + epoch 去重/暂停;UI 只负责弹窗展示与直喂数据) */
@@ -106,6 +115,8 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     /** 下载选择弹窗协调器(底部弹窗 + 全屏右侧抽屉编排;宿主只提供数据/全屏时序/跳转能力) */
     private final DownloadDialogCoordinator downloadDialogCoordinator =
             new DownloadDialogCoordinator(this, this);
+    /** 外部下载解析代次:重复点击或页面离开后丢弃旧结果。 */
+    private int externalDownloadEpoch;
     private VodInfo vodInfo;
     private VodInfo historyRecord;
     private boolean historyRecordReady;
@@ -275,6 +286,7 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     @Override
     protected void onStop() {
         super.onStop();
+        externalDownloadEpoch++;
         // 兜底暂停:Activity 真正不可见且不在小窗中时暂停播放,防止"关闭小窗/退出页面后后台一直出声"。
         // 例外:后台播放=开启(类型1,onUserLeaveHint 已置 openBackgroundPlay=true)时不暂停,
         // 由 PlayService 继续后台播放;进入小窗时 isInPictureInPictureMode() 为 true 也不会误暂停
@@ -1262,15 +1274,155 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
         runOnUiThread(action);
     }
 
-    /** 打开"选择下载剧集"弹窗:网格多选 + 开始下载/下载管理(编排见协调器) */
+    /** 下载入口:内置模式选集下载,外部模式把当前集交给 1DM+。 */
     public void showDownloadSeriesDialog() {
-        downloadDialogCoordinator.showDownloadSeriesDialog();
+        if (SystemConfig.isInternalDownloadEnabled()) {
+            downloadDialogCoordinator.showDownloadSeriesDialog();
+        } else {
+            openExternalDownloader();
+        }
     }
 
-    /** 全屏控制栏"下载"按钮:右侧下载抽屉(编排见协调器;仅全屏触发) */
+    /** 全屏控制栏与详情页使用同一下载方式设置。 */
     public void showDownloadDialogInFullscreen() {
-        downloadDialogCoordinator.showDownloadDialogInFullscreen();
+        if (SystemConfig.isInternalDownloadEnabled()) {
+            downloadDialogCoordinator.showDownloadDialogInFullscreen();
+        } else {
+            openExternalDownloader();
+        }
     }
+
+    private void openExternalDownloader() {
+        if (vodInfo == null || vodInfo.seriesMap == null) {
+            toast("资源异常,请稍后重试");
+            return;
+        }
+        List<VodInfo.VodSeries> series = vodInfo.seriesMap.get(vodInfo.playFlag);
+        int index = vodInfo.playIndex;
+        if (series == null || index < 0 || index >= series.size()) {
+            toast("资源异常,请稍后重试");
+            return;
+        }
+        VodInfo.VodSeries episode = series.get(index);
+        if (episode == null) {
+            toast("资源异常,请稍后重试");
+            return;
+        }
+        String rawUrl = episode.url;
+        String title = downloadVodName() + " " + (episode.name == null ? "" : episode.name);
+        int epoch = ++externalDownloadEpoch;
+        // getFinalUrl keeps the resolved source URL, before the local purified playback playlist.
+        String finalUrl = playFragment == null ? "" : playFragment.getFinalUrl();
+        Map<String, String> playHeaders = playFragment == null ? null : playFragment.getPlayHeaders();
+        if (isExternalDownloadAddress(finalUrl)) {
+            launchExternalDownloader(finalUrl, title, playHeaders);
+            return;
+        }
+        if (TextUtils.isEmpty(rawUrl)) {
+            toast("当前剧集没有可用的下载地址");
+            return;
+        }
+        if (isExternalDownloadAddress(rawUrl) && !isHttpAddress(rawUrl)) {
+            launchExternalDownloader(rawUrl, title, null);
+            return;
+        }
+
+        // 预览未开启或当前集尚未起播时,原集地址可能只是爬虫标识,不能直接交给 1DM+。
+        final VodInfo requestVod = vodInfo;
+        final String playFlag = vodInfo.playFlag;
+        toast("正在解析下载地址，请稍候...");
+        HeavyTaskUtil.getBigTaskExecutorService().execute(() -> {
+            ResolveResult resolved = PlayUrlResolverProviders.get().resolvePlayUrl(
+                    requestVod.sourceKey, playFlag, rawUrl);
+            runOnUiThread(() -> {
+                if (!isCurrentExternalDownloadRequest(epoch, requestVod, playFlag, index, episode)) return;
+                String resolvedUrl = resolved == null ? null : resolved.url;
+                String url = isExternalDownloadAddress(resolvedUrl) ? resolvedUrl
+                        : isExternalDownloadAddress(rawUrl) ? rawUrl : null;
+                if (url == null) {
+                    toast("该集未解析出可供 1DM+ 下载的地址，请先播放后重试");
+                    return;
+                }
+                Map<String, String> headers = TextUtils.equals(url, resolvedUrl)
+                        ? DownloadHeaders.mergeForOrigin(finalUrl, url, playHeaders,
+                                resolved == null ? null : resolved.headers)
+                        : null;
+                launchExternalDownloader(url, title, headers);
+            });
+        });
+    }
+
+    private boolean isCurrentExternalDownloadRequest(int epoch, VodInfo requestVod,
+                                                     String playFlag, int index, VodInfo.VodSeries episode) {
+        List<VodInfo.VodSeries> currentSeries = requestVod.seriesMap == null
+                ? null : requestVod.seriesMap.get(playFlag);
+        return epoch == externalDownloadEpoch && !isFinishing() && !isDestroyed()
+                && vodInfo == requestVod && requestVod.playIndex == index
+                && TextUtils.equals(requestVod.playFlag, playFlag)
+                && currentSeries != null && index >= 0 && index < currentSeries.size()
+                && currentSeries.get(index) == episode;
+    }
+
+    private static boolean isHttpAddress(String url) {
+        if (TextUtils.isEmpty(url)) return false;
+        String scheme = Uri.parse(url.trim()).getScheme();
+        return "http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme);
+    }
+
+    private static boolean isExternalDownloadAddress(String url) {
+        if (TextUtils.isEmpty(url)) return false;
+        String scheme = Uri.parse(url.trim()).getScheme();
+        return "http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme)
+                || "magnet".equalsIgnoreCase(scheme) || "ftp".equalsIgnoreCase(scheme)
+                || "thunder".equalsIgnoreCase(scheme) || "ed2k".equalsIgnoreCase(scheme);
+    }
+
+    private void launchExternalDownloader(String url, String title, Map<String, String> headers) {
+        Intent intent = new Intent(Intent.ACTION_VIEW);
+        // 1DM's download contract accepts the source URL and request headers directly.
+        // Let the downloader identify HLS/file media from the URL and HTTP response.
+        intent.setData(Uri.parse(url.trim()));
+        intent.putExtra("title", title.trim());
+        intent.putExtra("extra_filename", title.trim());
+        Map<String, String> snapshot = DownloadHeaders.merge(headers);
+        if (!snapshot.isEmpty() && isHttpAddress(url)) {
+            Bundle requestHeaders = new Bundle();
+            for (Map.Entry<String, String> header : snapshot.entrySet())
+                requestHeaders.putString(header.getKey(), header.getValue());
+            intent.putExtra("extra_headers", requestHeaders);
+        }
+        intent.setClassName(EXTERNAL_DOWNLOADER_PACKAGE, EXTERNAL_DOWNLOADER_ACTIVITY);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        if (tryStartExternalActivity(intent)) return;
+
+        // 1DM+ 的入口类名在不同版本可能变化,仅在同一包内尝试其它可处理入口。
+        intent.setComponent(null);
+        intent.setPackage(EXTERNAL_DOWNLOADER_PACKAGE);
+        if (tryStartExternalActivity(intent)) return;
+
+        ConfirmDialog.showInHostView(this, "需要 1DM+ 下载管理器",
+                "未找到可处理当前视频的 1DM+。安装后可重试下载。", "前往应用商店",
+                () -> {
+                    Intent store = new Intent(Intent.ACTION_VIEW,
+                            Uri.parse("market://details?id=" + EXTERNAL_DOWNLOADER_PACKAGE));
+                    if (tryStartExternalActivity(store)) return;
+                    Intent web = new Intent(Intent.ACTION_VIEW,
+                            Uri.parse("https://play.google.com/store/apps/details?id=" + EXTERNAL_DOWNLOADER_PACKAGE));
+                    if (!tryStartExternalActivity(web)) toast("无法打开应用商店，请手动安装 1DM+");
+                });
+    }
+
+    private boolean tryStartExternalActivity(Intent intent) {
+        navigatingAway = true;
+        try {
+            startActivity(intent);
+            return true;
+        } catch (ActivityNotFoundException | SecurityException ignored) {
+            navigatingAway = false;
+            return false;
+        }
+    }
+
     /**
      * 画中画模式(小窗):进入小窗。逻辑封装在 PipHelper,详情页/本地播放器复用。
      */

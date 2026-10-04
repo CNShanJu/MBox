@@ -105,7 +105,10 @@ public class MyFragment extends BaseVbFragment<FragmentMyBinding> {
         mBinding.tvHistory.setOnClickListener(v -> jumpActivity(HistoryActivity.class));
         mBinding.llCollect.setOnClickListener(v -> jumpActivity(CollectActivity.class));
 
-        mBinding.tvDownload.setOnClickListener(v -> jumpActivity(DownloadActivity.class));
+        mBinding.tvDownload.setOnClickListener(v -> {
+            if (SystemConfig.isInternalDownloadEnabled()) jumpActivity(DownloadActivity.class);
+        });
+        refreshDownloadEntry();
 
         mBinding.tvLocal.setOnClickListener(v -> {
             if (!XXPermissions.isGranted(mContext, Permission.MANAGE_EXTERNAL_STORAGE)) {
@@ -129,6 +132,8 @@ public class MyFragment extends BaseVbFragment<FragmentMyBinding> {
     @Override
     public void onResume() {
         super.onResume();
+        // 从设置页返回后立刻同步开关;GONE 让后续菜单项自动补位。
+        refreshDownloadEntry();
         refreshCalendar();
         startCalendarUpdates();
     }
@@ -189,6 +194,11 @@ public class MyFragment extends BaseVbFragment<FragmentMyBinding> {
             calendarReceiverContext.unregisterReceiver(calendarClockReceiver);
             calendarReceiverContext = null;
         }
+    }
+
+    private void refreshDownloadEntry() {
+        mBinding.tvDownload.setVisibility(SystemConfig.isInternalDownloadEnabled()
+                ? View.VISIBLE : View.GONE);
     }
 
     private void checkUpdate() {
