@@ -3,7 +3,7 @@
   "name": "深色",
   "default": true,
   "bg_body": "#141414",
-  "bg_surface": "#181818",
+  "bg_surface": "#1a1a1a",
   "bg_card_alpha": 72,
   "bg_float_alpha": 96,
 
