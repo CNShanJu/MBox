@@ -52,6 +52,7 @@ public final class LoadingAnimPreviewDialog extends AppCenterPopupView {
         animationView.setRepeatCount(LottieDrawable.INFINITE);
         animationView.setSpeed(LoadingAnim.getPlaybackSpeed(animName));
         animationView.setClipToCompositionBounds(false);
+        LoadingAnim.applyAppearance(animationView, animName, false);
         animationView.playAnimation();
     }
 

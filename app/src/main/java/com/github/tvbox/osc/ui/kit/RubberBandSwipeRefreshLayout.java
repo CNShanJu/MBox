@@ -502,6 +502,7 @@ public class RubberBandSwipeRefreshLayout extends FrameLayout {
             lav.setRepeatCount(LottieDrawable.INFINITE);
             lav.setSpeed(mEnv.loadingAnimSpeed());
             lav.setClipToCompositionBounds(false); // 光晕等超出画布内容不被裁剪
+            mEnv.applyLoadingAnimAppearance(lav);
         } catch (Throwable ignored) {
         }
         lav.setVisibility(View.GONE);
@@ -549,7 +550,8 @@ public class RubberBandSwipeRefreshLayout extends FrameLayout {
         float cy = mOffset / 2f; // 空白区中心(容器坐标系)
         mIndicatorView.setTranslationY(cy - px / 2f);
         float scale = mRefreshing ? 1f : (INDICATOR_MIN_SCALE + (1f - INDICATOR_MIN_SCALE) * reveal);
-        mIndicatorView.setScaleX(scale);
+        // 保留配置的左右镜像方向,下拉揭示动画只改变缩放幅度。
+        mIndicatorView.setScaleX(Math.copySign(scale, mIndicatorView.getScaleX()));
         mIndicatorView.setScaleY(scale);
         mIndicatorView.setAlpha(mRefreshing ? 1f : reveal);
         if (mRefreshing) {

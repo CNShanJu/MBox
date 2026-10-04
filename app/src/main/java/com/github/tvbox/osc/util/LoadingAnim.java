@@ -2,11 +2,22 @@ package com.github.tvbox.osc.util;
 import com.github.tvbox.osc.config.SystemConfig;
 
 import android.content.Context;
+import android.graphics.Color;
+import android.graphics.ColorFilter;
 import android.view.View;
+
+import androidx.core.content.ContextCompat;
 
 import com.airbnb.lottie.LottieAnimationView;
 import com.airbnb.lottie.LottieDrawable;
+import com.airbnb.lottie.LottieProperty;
+import com.airbnb.lottie.SimpleColorFilter;
+import com.airbnb.lottie.model.KeyPath;
+import com.airbnb.lottie.value.LottieValueCallback;
+import com.github.tvbox.osc.R;
 import com.github.tvbox.osc.base.App;
+import com.github.tvbox.osc.bean.theme.ThemePalette;
+import com.github.tvbox.osc.theme.ThemeRuntime;
 
 import org.json.JSONObject;
 
@@ -31,7 +42,8 @@ import java.util.Map;
  *     glowing_fish_loader.json
  *     config.json           { "mbox_tipsname": "鱼", "size_other": 100, "msg_gap": -12, "speed": 1.0 }
  * </pre>
- * 展示名(mbox_tipsname)、页面显示尺寸(size_*,dp)、状态文字间距(msg_gap,dp)和播放速度(speed 倍率)
+ * 展示名(mbox_tipsname)、页面显示尺寸(size_*,dp)、状态文字间距(msg_gap,dp)、播放速度(speed 倍率)、
+ * 旋转角度(rotation)、左右镜像(flip_horizontal)和着色模式(color_mode: original/theme_text)
  * 统一从 config.json 读取,
  * 不再读 lottie 文件。选择值(HawkConfig.LOADING_ANIM)存动画文件夹名;旧版存的文件名/数字自动兼容。
  */
@@ -53,6 +65,13 @@ public class LoadingAnim {
     private static final String KEY_MSG_GAP = "msg_gap";
     /** 配置键:动画播放速度倍率(1=原速,0.5=半速,2=双倍速) */
     private static final String KEY_SPEED = "speed";
+    /** 配置键:绕动画视图中心旋转的角度;180=上下倒转 */
+    private static final String KEY_ROTATION = "rotation";
+    /** 配置键:true=左右镜像,改变角色朝向 */
+    private static final String KEY_FLIP_HORIZONTAL = "flip_horizontal";
+    /** 配置键:original=素材原色,theme_text=主题主文字色 */
+    private static final String KEY_COLOR_MODE = "color_mode";
+    private static final KeyPath ALL_CONTENT = new KeyPath("**");
 
     /** 兼容旧版:Glowing Fish 的旧选择值 1 映射到文件夹名 */
     private static final String LEGACY_GLOWING_FISH_NAME = "glowing_fish_loader";
@@ -149,6 +168,40 @@ public class LoadingAnim {
         float playbackSpeed = (float) speed;
         return playbackSpeed > 0 && !Float.isInfinite(playbackSpeed)
                 ? playbackSpeed : DEFAULT_SPEED;
+    }
+
+    /**
+     * 应用指定动画的旋转、镜像与颜色,不修改素材或播放进度。
+     * theme_text 将整个动画统一着色;压在视频画面上的动画使用固定白色。
+     * 页面、刷新指示与设置预览共用此入口,应在 setAnimation 后调用。
+     */
+    public static void applyAppearance(LottieAnimationView view, String animName, boolean playerOverlay) {
+        JSONObject cfg = readConfig(animName);
+        double rotation = cfg != null ? cfg.optDouble(KEY_ROTATION, 0) : 0;
+        view.setRotation(Double.isNaN(rotation) || Double.isInfinite(rotation)
+                ? 0f : (float) (rotation % 360));
+        boolean flipHorizontal = cfg != null && cfg.optBoolean(KEY_FLIP_HORIZONTAL, false);
+        float scaleX = Math.abs(view.getScaleX());
+        view.setScaleX(flipHorizontal ? -scaleX : scaleX);
+
+        // 保留非空回调并返回 null,让复用的 Paint 显式清除上一次的滤镜。
+        LottieValueCallback<ColorFilter> colorCallback = new LottieValueCallback<>((ColorFilter) null);
+        LottieValueCallback<Integer> textColorCallback = null;
+        if (cfg != null && "theme_text".equals(cfg.optString(KEY_COLOR_MODE, "original"))) {
+            int color = Color.WHITE;
+            if (!playerOverlay) {
+                ThemePalette palette = ThemeRuntime.runtimePalette();
+                color = palette != null ? palette.get("text_main")
+                        : ContextCompat.getColor(view.getContext(), R.color.text_foreground);
+            }
+            colorCallback = new LottieValueCallback<>(new SimpleColorFilter(color));
+            textColorCallback = new LottieValueCallback<>(color);
+        }
+        // Lottie 会在异步 composition 就绪后应用尚未执行的回调。
+        view.addValueCallback(ALL_CONTENT, LottieProperty.COLOR_FILTER, colorCallback);
+        // 文本图层不处理 COLOR_FILTER,另接填色与描边;null 恢复素材原本的颜色动画。
+        view.addValueCallback(ALL_CONTENT, LottieProperty.COLOR, textColorCallback);
+        view.addValueCallback(ALL_CONTENT, LottieProperty.STROKE_COLOR, textColorCallback);
     }
 
     /** 可用加载动画列表:loading/ 下的子目录(每个目录 = 一个动画),按目录名排序 */
@@ -249,6 +302,7 @@ public class LoadingAnim {
                 lav.setSpeed(getPlaybackSpeed(animName)); // 代码设置动画时 XML 的 lottie_speed 不生效
                 // 动画含高斯模糊等超出画布内容时关闭按画布裁剪,避免光晕被边界切掉
                 lav.setClipToCompositionBounds(false);
+                applyAppearance(lav, animName, player);
                 android.view.ViewGroup.LayoutParams lp = lav.getLayoutParams();
                 if (lp != null) {
                     int px = Math.round(size * view.getResources().getDisplayMetrics().density);

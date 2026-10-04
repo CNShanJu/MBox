@@ -1,16 +1,17 @@
 package com.github.tvbox.osc.ui.dialog;
 
 import android.content.Context;
+import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
+import androidx.core.content.ContextCompat;
 
 import com.github.tvbox.osc.R;
-import com.github.tvbox.osc.bean.theme.ThemeShapePalette;
-import com.github.tvbox.osc.theme.ThemeRuntime;
+import com.github.tvbox.osc.theme.ThemeDrawables;
 import com.github.tvbox.osc.util.LoadingAnim;
 import com.lxj.xpopup.core.CenterPopupView;
 
@@ -19,7 +20,8 @@ import org.jetbrains.annotations.NotNull;
 /**
  * 全局加载框(居中):内容为全局加载态 Lottie({@link LoadingAnim#apply} 按设置切换动画/尺寸),
  * 替代 XPopup {@code asLoading()} 的默认转圈,保证订阅导入等所有 {@code showLoadingDialog}
- * 调用与全局加载态一致。动画浮在遮罩上,状态文字与取消键有不透底的主题面板;BACK 不关闭。
+ * 调用与全局加载态一致。有进度时动画、状态文字与取消键共用主题面板;纯动画态不铺面板底。
+ * BACK 不关闭。
  * <p>
  * 可选状态文本({@link #setHint}):资源站嗅探等"要逐个试候选地址、可能十几秒"的流程用它
  * 显示当前进度,避免界面长时间无反馈被误认为点击无响应;文字与动画的间距取自动画配置
@@ -28,6 +30,8 @@ import org.jetbrains.annotations.NotNull;
 public class LoadingDialog extends CenterPopupView {
 
     private TextView msgView;
+    private View loadingPanel;
+    private Drawable panelBackground;
     private View statusPanel;
     private com.google.android.material.button.MaterialButton cancelView;
     private CharSequence pendingHint;
@@ -39,7 +43,8 @@ public class LoadingDialog extends CenterPopupView {
 
     @Override
     protected int getMaxWidth() {
-        return DialogStyle.centerWidthPx(getContext());
+        int compactWidth = Math.round(280 * getResources().getDisplayMetrics().density);
+        return Math.min(compactWidth, DialogStyle.centerWidthPx(getContext()));
     }
 
     /**
@@ -72,7 +77,8 @@ public class LoadingDialog extends CenterPopupView {
     @Override
     protected void beforeShow() {
         super.beforeShow();
-        refreshStatusPanelBackground();
+        fitPanelToWindow();
+        refreshPanelBackground();
         ViewGroup.LayoutParams lp = getLayoutParams();
         if (lp == null) return;
         if (lp.width == ViewGroup.LayoutParams.MATCH_PARENT
@@ -94,29 +100,42 @@ public class LoadingDialog extends CenterPopupView {
         PopupKeyboardPolicy.onCreate(this);
         super.onCreate();
         LoadingAnim.apply(findViewById(R.id.lottie_loading));
+        loadingPanel = findViewById(R.id.loading_panel);
         statusPanel = findViewById(R.id.loading_status_panel);
-        refreshStatusPanelBackground();
         msgView = findViewById(R.id.tv_loading_msg);
-        msgView.setTextColor(getResources().getColor(R.color.text_foreground));
         cancelView = findViewById(R.id.btn_loading_cancel);
-        com.github.tvbox.osc.theme.ThemeSweep.watchItems(statusPanel);
+        fitPanelToWindow();
+        refreshPanelBackground();
         applyMsgGap();
         setHint(pendingHint);   // show() 与 onCreate 之间设过的提示在此补上
         bindCancel();
     }
 
-    private void refreshStatusPanelBackground() {
-        if (statusPanel == null) return;
-        GradientDrawable panelBackground = new GradientDrawable();
+    private void fitPanelToWindow() {
+        if (loadingPanel == null) return;
+        ViewGroup.LayoutParams lp = loadingPanel.getLayoutParams();
+        int width = getMaxWidth();
+        // XPopup 的上限只收缩外层容器,固定宽度的内容还需同步收缩。
+        if (lp != null && lp.width != width) {
+            lp.width = width;
+            loadingPanel.setLayoutParams(lp);
+        }
+    }
+
+    private void refreshPanelBackground() {
+        if (loadingPanel == null) return;
+        panelBackground = ThemeDrawables.rebuild(R.drawable.bg_dialog, getResources());
+        if (panelBackground == null) {
+            panelBackground = ContextCompat.getDrawable(getContext(), R.drawable.bg_dialog);
+        }
         // 主题允许 bg_float 半透明，进度面板强制不透底以免页面文字穿透。
-        panelBackground.setColor(getResources().getColor(R.color.bg_float) | 0xFF000000);
-        float radius = ThemeRuntime.snapshot() == null
-                ? getResources().getDimension(R.dimen.radius_dialog)
-                : ThemeRuntime.shapePalette().radiusPx(
-                        ThemeShapePalette.RADIUS_DIALOG, getResources().getDisplayMetrics().density);
-        panelBackground.setCornerRadius(radius);
-        statusPanel.setBackground(panelBackground);
+        if (panelBackground instanceof GradientDrawable) {
+            panelBackground = panelBackground.mutate();
+            ((GradientDrawable) panelBackground).setColor(
+                    ContextCompat.getColor(getContext(), R.color.bg_float) | 0xFF000000);
+        }
         if (msgView != null) msgView.setTextColor(getResources().getColor(R.color.text_foreground));
+        updatePanelVisibility();
     }
 
     @Override
@@ -148,8 +167,8 @@ public class LoadingDialog extends CenterPopupView {
     /**
      * 状态文字与加载动画的间距取自动画自身配置({@link LoadingAnim#getMsgGapDp()},可为负):
      * Lottie 图形的可见内容常只占画布中上部,盒子底部有十几二十 dp 的固有留白,
-     * 固定正间距会让"动画—文字"之间离得太远,配负值把文字提进这段留白(订阅导入/资源站嗅探这类
-     * 长耗时提示尤其明显)。布局里的 2dp 只是兜底,这里按当前动画覆盖。
+     * 固定正间距会让"动画—文字"之间离得太远,配负值把文字区提进这段留白。
+     * 只移动面板内的文字区,不移动整个面板。布局里的 2dp 只是兜底。
      */
     private void applyMsgGap() {
         ViewGroup.LayoutParams lp = statusPanel.getLayoutParams();
@@ -172,9 +191,15 @@ public class LoadingDialog extends CenterPopupView {
     }
 
     private void updatePanelVisibility() {
-        if (statusPanel == null || msgView == null || cancelView == null) return;
-        statusPanel.setVisibility(msgView.getVisibility() == View.VISIBLE
-                || cancelView.getVisibility() == View.VISIBLE ? View.VISIBLE : View.GONE);
+        if (loadingPanel == null || statusPanel == null || msgView == null || cancelView == null) return;
+        boolean hasStatus = msgView.getVisibility() == View.VISIBLE
+                || cancelView.getVisibility() == View.VISIBLE;
+        statusPanel.setVisibility(hasStatus ? View.VISIBLE : View.GONE);
+        loadingPanel.setBackground(hasStatus ? panelBackground : null);
+        float density = getResources().getDisplayMetrics().density;
+        int horizontal = Math.round((hasStatus ? 20 : 12) * density);
+        int vertical = hasStatus ? Math.round(20 * density) : 0;
+        loadingPanel.setPadding(horizontal, vertical, horizontal, vertical);
     }
 
     /** 阻塞态:BACK 不关闭加载框,避免导入/请求中途被误关 */

@@ -1,22 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 全局加载框:动画浮在遮罩上；有提示/取消键时，文字放在不透底的主题面板中，
-     避免页面列表文字穿透进度信息。面板与动画的间距由 LoadingAnim 配置调整。 -->
+<!-- 有进度时将动画、文字、取消键合为一个主题面板;纯动画加载态仍不显示面板底。 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
-    android:layout_width="wrap_content"
+    android:id="@+id/loading_panel"
+    android:layout_width="280dp"
     android:layout_height="wrap_content"
+    android:background="@drawable/bg_dialog"
     android:gravity="center_horizontal"
     android:orientation="vertical"
-    android:paddingLeft="12dp"
-    android:paddingRight="12dp">
+    android:padding="20dp">
 
     <com.airbnb.lottie.LottieAnimationView
         android:id="@+id/lottie_loading"
         android:layout_width="120dp"
         android:layout_height="120dp"
         android:layout_gravity="center_horizontal"
-        android:scaleType="centerCrop"
+        android:importantForAccessibility="no"
+        android:scaleType="fitCenter"
         app:lottie_autoPlay="true"
         app:lottie_speed="1"
         app:lottie_loop="true"
@@ -24,43 +25,38 @@
 
     <LinearLayout
         android:id="@+id/loading_status_panel"
-        android:layout_width="wrap_content"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="2dp"
         android:gravity="center_horizontal"
         android:orientation="vertical"
-        android:paddingLeft="16dp"
-        android:paddingTop="12dp"
-        android:paddingRight="16dp"
-        android:paddingBottom="12dp"
         android:visibility="gone">
 
         <TextView
             android:id="@+id/tv_loading_msg"
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:accessibilityLiveRegion="polite"
+            android:breakStrategy="simple"
             android:gravity="center"
-            android:maxWidth="240dp"
+            android:lineSpacingExtra="2dp"
+            android:minHeight="44dp"
             android:textColor="@color/text_foreground"
-            android:textSize="13sp"
+            android:textSize="14sp"
             android:visibility="gone"
-            tools:text="正在识别资源站 3/10" />
+            tools:text="正在解析订阅源 3/10…"
+            tools:visibility="visible" />
 
-    <!-- 可取消流程(导出/导入等长耗时)才显示:默认隐藏,由 LoadingDialog.setOnCancel 打开。
-         用全局按钮色板 BtnSecondary(= 空心按钮:btn_plain_text 描边与文字 + radius_btn),
-         不写任何色值:空心键始终透明,描边与文字随主题同色;加载框遮罩浓度由 DialogCoordinator 控制。
-         高度必须写成定高 33dp(与其它弹窗的取消/确定按钮一致):原来用 wrap_content,MaterialButton 默认
-         minHeight=48dp → 这个"取消"比其他页的按钮明显大一圈(订阅导入/导出时看到的就是它) -->
+        <!-- 仅可取消流程显示,沿用确认弹窗的空心按钮和高度。 -->
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btn_loading_cancel"
             style="@style/BtnSecondary"
-            android:layout_width="wrap_content"
-            android:layout_height="33dp"
+            android:layout_width="match_parent"
+            android:layout_height="40dp"
             android:layout_gravity="center_horizontal"
-            android:layout_marginTop="12dp"
+            android:layout_marginTop="16dp"
             android:insetTop="0dp"
             android:insetBottom="0dp"
-            android:minWidth="96dp"
             android:text="取消"
             android:visibility="gone"
             tools:visibility="visible" />

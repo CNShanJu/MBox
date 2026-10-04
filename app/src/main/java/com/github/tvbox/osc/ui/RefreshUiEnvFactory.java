@@ -2,6 +2,7 @@ package com.github.tvbox.osc.ui;
 
 import androidx.annotation.NonNull;
 
+import com.airbnb.lottie.LottieAnimationView;
 import com.github.tvbox.osc.ui.kit.PullRefreshEnv;
 import com.github.tvbox.osc.util.AppBubble;
 import com.github.tvbox.osc.util.LoadingAnim;
@@ -11,7 +12,7 @@ import com.github.tvbox.osc.util.LoadingAnim;
  *
  * kit 的 {@link PullRefreshEnv} 只声明契约,不直连全局配置/单例;
  * 本类在 app 层用 LoadingAnim(读 SystemConfig/动画配置)、AppBubble(toast)
- * 组装默认实现(动画路径、尺寸、速度),供各列表页 attach 时注入。
+ * 组装默认实现(动画路径、尺寸、速度、外观),供各列表页 attach 时注入。
  */
 public final class RefreshUiEnvFactory {
 
@@ -35,6 +36,11 @@ public final class RefreshUiEnvFactory {
             @Override
             public float loadingAnimSpeed() {
                 return LoadingAnim.getPlaybackSpeed(); // config.json speed
+            }
+
+            @Override
+            public void applyLoadingAnimAppearance(LottieAnimationView view) {
+                LoadingAnim.applyAppearance(view, LoadingAnim.getAnimName(), false);
             }
 
             @Override

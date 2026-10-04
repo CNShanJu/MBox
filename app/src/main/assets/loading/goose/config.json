@@ -1,14 +1,13 @@
 {
-  "mbox_tipsname": "初始",
-  "size_player": 32,
-  "size_other": 32,
-  "size_refresh": 36,
-  "msg_gap": 2,
+  "mbox_tipsname": "大白鹅",
+  "size_player": 46,
+  "size_other": 46,
+  "size_refresh": 46,
+  "msg_gap": -12,
   "speed": 1.0,
   "rotation": 0,
-  "flip_horizontal": false,
+  "flip_horizontal": true,
   "color_mode": "original",
-
   "desc": {
     "mbox_tipsname": "「设置 - 加载动画」列表中的名称;不写或留空时显示文件夹名",
     "size_player": "播放器加载动画的宽高(dp);不写或填非正数时默认 72",

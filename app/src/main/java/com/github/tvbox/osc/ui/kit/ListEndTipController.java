@@ -116,6 +116,7 @@ public final class ListEndTipController {
             lav.setRepeatCount(LottieDrawable.INFINITE);
             lav.setSpeed(mEnv.loadingAnimSpeed());
             lav.setClipToCompositionBounds(false);
+            mEnv.applyLoadingAnimAppearance(lav);
         } catch (Throwable ignored) {
         }
         lav.setVisibility(View.GONE);
