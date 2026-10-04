@@ -326,6 +326,32 @@ public final class LogStore {
         repository.clearAllAsync();
     }
 
+    /**
+     * 缓存页的运行日志内容约大小：业务记录的 UTF-8 内容估算 + 错误日志文件实际字节。
+     * 不把 Room 空闲页、WAL 和数据库结构误算为仍存在的日志。必须从后台线程调用。
+     */
+    public long storedLogBytes() {
+        if (!collector.flushNowBlocking(2_000))
+            throw new IllegalStateException("业务日志尚未写入完成");
+        Long business = repository.contentBytes();
+        if (business == null) throw new IllegalStateException("业务日志大小读取失败");
+        long raw = LogcatCapture.storedBytes();
+        return raw > Long.MAX_VALUE - business ? Long.MAX_VALUE : business + raw;
+    }
+
+    /** 后台调用：清空业务记录并等待写队列完成。 */
+    public boolean clearBusinessLogsBlocking() {
+        collector.flushNow();
+        return repository.clearAllBlocking();
+    }
+
+    /** 后台调用：清空业务记录及错误文件并等待完成，返回是否全部清理成功。 */
+    public boolean clearStoredLogsBlocking() {
+        boolean businessCleared = clearBusinessLogsBlocking();
+        boolean rawCleared = clearRawLogFilesChecked();
+        return businessCleared && rawCleared;
+    }
+
     /** 按当前筛选导出 txt（放 cacheDir，可 FileProvider 分享）；无结果/降级模式返回 null */
     @Nullable
     public File export(LogFilter f) {
@@ -387,6 +413,11 @@ public final class LogStore {
     /** 清空原始日志文件；未 init/降级空操作 */
     public void clearRawLogFiles() {
         LogcatCapture.clearAll();
+    }
+
+    /** 后台调用：清空错误日志文件并报告是否全部删除成功。 */
+    public boolean clearRawLogFilesChecked() {
+        return LogcatCapture.clearAllChecked();
     }
 
     /** 导出全部原始日志文件到一个 txt（cacheDir，可 FileProvider 分享）；无文件/未 init 返回 null */

@@ -24,7 +24,7 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="总缓存大小"
+            android:text="缓存与日志大小"
             android:textColor="@color/text_sub_foreground"
             android:textSize="14sp" />
 
@@ -54,7 +54,7 @@
         android:layout_marginHorizontal="24dp"
         android:layout_marginTop="16dp"
         android:layout_marginBottom="8dp"
-        android:text="缓存分类"
+        android:text="存储分类"
         android:textColor="@color/text_foreground"
         android:textSize="15sp" />
 

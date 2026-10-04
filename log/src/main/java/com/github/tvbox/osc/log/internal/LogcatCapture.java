@@ -367,14 +367,50 @@ public final class LogcatCapture {
 
     /** 清空全部应用日志文件(分段 + 当日 + 旧通道残留的 app-*.log) */
     public static void clearAll() {
+        clearAllChecked();
+    }
+
+    /** 缓存管理页清理入口：等待当前写入结束，并报告任何未能删除的日志文件。 */
+    public static boolean clearAllChecked() {
         synchronized (LOCK) {
+            if (appContext() == null) return true;
+            File dir = logDir();
+            try {
+                if (!isSafeLogDir(dir)) return false;
+            } catch (Exception error) {
+                return false;
+            }
+            if (dir.exists() && (!dir.isDirectory() || dir.listFiles() == null)) return false;
+            boolean cleared = true;
             for (File f : allLogFiles()) {
                 try {
-                    //noinspection ResultOfMethodCallIgnored
-                    f.delete();
-                } catch (Throwable ignored) {
+                    if (!f.delete() && f.exists()) cleared = false;
+                } catch (Throwable error) {
+                    cleared = false;
                 }
             }
+            return cleared;
+        }
+    }
+
+    /** 错误日志文件内容字节量，和清理操作共用同一把写入锁。 */
+    public static long storedBytes() {
+        synchronized (LOCK) {
+            try {
+                if (appContext() != null && !isSafeLogDir(logDir()))
+                    throw new IllegalStateException("错误日志目录不安全");
+                File dir = appContext() == null ? null : logDir();
+                if (dir != null && dir.exists() && (!dir.isDirectory() || dir.listFiles() == null))
+                    throw new IllegalStateException("错误日志目录不可读");
+            } catch (java.io.IOException error) {
+                throw new IllegalStateException("错误日志目录不可用", error);
+            }
+            long bytes = 0L;
+            for (File file : allLogFiles()) {
+                long size = Math.max(0L, file.length());
+                bytes = size > Long.MAX_VALUE - bytes ? Long.MAX_VALUE : bytes + size;
+            }
+            return bytes;
         }
     }
 
@@ -598,13 +634,22 @@ public final class LogcatCapture {
         List<File> out = new ArrayList<>();
         try {
             File dir = logDir();
+            if (!isSafeLogDir(dir)) return out;
+            File canonicalDir = dir.getCanonicalFile();
             File[] fs = dir.listFiles();
             if (fs == null) return out;
             for (File f : fs) {
-                if (isLogFile(f)) out.add(f);
+                // 不让目录内的同名符号链接把统计/清理范围转到别处。
+                if (isLogFile(f) && f.getCanonicalFile().equals(new File(canonicalDir, f.getName())))
+                    out.add(f);
             }
         } catch (Throwable ignored) {
         }
         return out;
+    }
+
+    private static boolean isSafeLogDir(File dir) throws java.io.IOException {
+        File filesRoot = appContext().getFilesDir().getCanonicalFile();
+        return dir.getCanonicalFile().equals(new File(filesRoot, DIR));
     }
 }

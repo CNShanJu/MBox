@@ -51,6 +51,18 @@ public interface LogDao {
     @Query("SELECT COUNT(*) FROM log_entry")
     int count();
 
+    /** UTF-8 内容字节量，不把 Room 数据库文件预留页误算成仍可清理的日志。 */
+    @Query("SELECT COALESCE(SUM(32"
+            + " + length(CAST(COALESCE(category, '') AS BLOB))"
+            + " + length(CAST(COALESCE(subTypeCode, '') AS BLOB))"
+            + " + length(CAST(COALESCE(subTypeLabel, '') AS BLOB))"
+            + " + length(CAST(COALESCE(detail, '') AS BLOB))"
+            + " + length(CAST(COALESCE(result, '') AS BLOB))"
+            + " + length(CAST(COALESCE(reason, '') AS BLOB))"
+            + " + length(CAST(COALESCE(extras, '') AS BLOB))"
+            + " + length(CAST(COALESCE(taskKey, '') AS BLOB))), 0) FROM log_entry")
+    long contentBytes();
+
     @Query("DELETE FROM log_entry")
     void clearAll();
 }

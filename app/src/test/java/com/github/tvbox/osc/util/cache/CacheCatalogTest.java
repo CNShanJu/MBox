@@ -15,6 +15,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.concurrent.atomic.AtomicLong;
 
 public class CacheCatalogTest {
     @Rule public TemporaryFolder temporaryFolder = new TemporaryFolder();
@@ -134,6 +135,50 @@ public class CacheCatalogTest {
         assertTrue(jar.exists());
         assertTrue(config.exists());
         assertEquals(before.totalBytes, after.after.totalBytes);
+    }
+
+    @Test public void runtimeLogsCanBeClearedWithoutTouchingOtherCategories() throws Exception {
+        File internal = temporaryFolder.newFolder("internal-logs");
+        File files = temporaryFolder.newFolder("files-logs");
+        File sourceJar = write(files, "csp.jar", "keep source", true);
+        File image = write(internal, "image_http_cache/journal", "keep image", true);
+        AtomicLong logBytes = new AtomicLong(1_024);
+        CacheCatalog.LogCacheAccess logs = new CacheCatalog.LogCacheAccess() {
+            @Override public long bytes() { return logBytes.get(); }
+            @Override public boolean clear() { logBytes.set(0L); return true; }
+        };
+        CacheCatalog catalog = new CacheCatalog(internal, null, files, () -> {}, logs);
+
+        CacheCatalog.Snapshot before = catalog.scan();
+        assertEquals(1_024L, size(before, CacheCatalog.LOGS));
+        assertEquals(1_024L + sourceJar.length() + image.length(), before.totalBytes);
+
+        CacheCatalog.ClearResult result = catalog.clear(new HashSet<>(Arrays.asList(CacheCatalog.LOGS)));
+        assertTrue(result.failures.isEmpty());
+        assertTrue(result.clearedIds.contains(CacheCatalog.LOGS));
+        assertEquals(0L, size(result.after, CacheCatalog.LOGS));
+        assertEquals(sourceJar.length() + image.length(), result.after.totalBytes);
+        assertTrue(sourceJar.exists());
+        assertTrue(image.exists());
+    }
+
+    @Test public void unavailableLogSizeDoesNotHideOtherClearableCache() throws Exception {
+        File internal = temporaryFolder.newFolder("internal-log-error");
+        File stale = write(internal, "mbox_config_older.zip", "stale export", true);
+        CacheCatalog.LogCacheAccess logs = new CacheCatalog.LogCacheAccess() {
+            @Override public long bytes() { throw new IllegalStateException("database busy"); }
+            @Override public boolean clear() { throw new AssertionError("Unavailable logs cannot be cleared"); }
+        };
+        CacheCatalog catalog = new CacheCatalog(internal, null, null, () -> {}, logs);
+
+        CacheCatalog.Snapshot snapshot = catalog.scan();
+        assertTrue(snapshot.logSizeUnavailable);
+        assertEquals(stale.length(), snapshot.totalBytes);
+        for (CacheCatalog.Entry entry : snapshot.entries)
+            if (CacheCatalog.LOGS.equals(entry.id)) assertFalse(entry.clearable);
+        CacheCatalog.ClearResult result = catalog.clear(new HashSet<>(Arrays.asList(CacheCatalog.TEMP_FILES)));
+        assertFalse(stale.exists());
+        assertTrue(result.failures.isEmpty());
     }
 
     private static File write(File root, String relative, String contents, boolean stale)

@@ -86,9 +86,12 @@ class CacheManagementActivity : BaseVbActivity<ActivityCacheManagementBinding>()
     private fun render(data: CacheCatalog.Snapshot) {
         snapshot = data
         selectedIds.retainAll(data.entries.filter { it.clearable && it.sizeBytes > 0 }.map { it.id }.toSet())
-        mBinding.tvTotalSize.text = CacheSizeText.format(data.totalBytes)
-        mBinding.tvSizeDetail.text = if (data.totalBytes == 0L) {
-            "暂无可统计的缓存；下载、收藏和观看记录不计入"
+        mBinding.tvTotalSize.text = (if (data.logSizeUnavailable) "已知 " else "") +
+            CacheSizeText.format(data.totalBytes)
+        mBinding.tvSizeDetail.text = if (data.logSizeUnavailable) {
+            "日志大小读取失败，未计入总量；其他分类仍可清理"
+        } else if (data.totalBytes == 0L) {
+            "暂无可统计的缓存和日志；下载、收藏和观看记录不计入"
         } else {
             "可清理 ${CacheSizeText.format(data.clearableBytes)} · 必要 ${CacheSizeText.format(data.protectedBytes)}"
         }
@@ -98,8 +101,11 @@ class CacheManagementActivity : BaseVbActivity<ActivityCacheManagementBinding>()
             val row = ItemCacheCategoryBinding.inflate(inflater, mBinding.categoryList, false)
             row.categoryTitle.text = entry.title
             row.categoryDescription.text = entry.description
-            row.categorySize.text = CacheSizeText.format(entry.sizeBytes) +
-                if (entry.clearable) "" else " · 保留"
+            row.categorySize.text = if (data.logSizeUnavailable && entry.id == CacheCatalog.LOGS) {
+                "读取失败"
+            } else {
+                CacheSizeText.format(entry.sizeBytes) + if (entry.clearable) "" else " · 保留"
+            }
             val available = entry.clearable && entry.sizeBytes > 0
             row.categoryCheckbox.visibility = if (selectMode && available) View.VISIBLE else View.GONE
             row.categoryCheckbox.isChecked = selectedIds.contains(entry.id)
@@ -136,7 +142,11 @@ class CacheManagementActivity : BaseVbActivity<ActivityCacheManagementBinding>()
             !entry.clearable -> entry.description
             entry.id == CacheCatalog.TEMP_FILES && entry.sizeBytes <= 0 ->
                 "导入导出工作文件通常在操作结束后自动删除；当前没有超过 24 小时的可清理副本。"
+            entry.id == CacheCatalog.LOGS && entry.sizeBytes <= 0 ->
+                "业务日志记录与错误日志文件按内容约大小统计。当前没有可清理的日志；新日志可能继续产生。"
             entry.sizeBytes <= 0 -> "${entry.description}\n\n当前没有可清理的磁盘缓存。"
+            entry.id == CacheCatalog.LOGS ->
+                "${entry.description}\n\n清理会移除业务日志记录和错误日志文件，历史排障信息无法恢复；后续新日志仍可能产生。长按此项可选择清理。"
             entry.id == CacheCatalog.TEMP_FILES ->
                 "${entry.description}\n\n只清理超过 24 小时的副本。已保存到相册或选定位置的正式文件不会删除。长按此项可选择清理。"
             else -> "${entry.description}\n\n长按此项可选择清理。"
@@ -162,7 +172,7 @@ class CacheManagementActivity : BaseVbActivity<ActivityCacheManagementBinding>()
     private fun updateSelection() {
         val count = selectedIds.size
         val bytes = snapshot?.entries?.filter { selectedIds.contains(it.id) }?.sumOf { it.sizeBytes } ?: 0L
-        mBinding.tvSelection.text = if (!selectMode) "缓存分类 · 长按可选择清理" else
+        mBinding.tvSelection.text = if (!selectMode) "存储分类 · 长按可选择清理" else
             "已选 $count 项 · ${CacheSizeText.format(bytes)}"
         val available = snapshot?.entries?.filter { it.clearable && it.sizeBytes > 0 }?.map { it.id }
             ?: emptyList()
@@ -184,8 +194,11 @@ class CacheManagementActivity : BaseVbActivity<ActivityCacheManagementBinding>()
         val impact = buildString {
             if (validIds.contains(CacheCatalog.IMAGE_HTTP)) append("\n图片清理后会重新加载。")
             if (validIds.contains(CacheCatalog.TEMP_FILES)) append("\n旧导出文件的分享链接可能失效。")
+            if (validIds.contains(CacheCatalog.LOGS))
+                append("\n将清空业务日志记录、本应用错误日志文件及旧版日志残留，历史排障信息无法恢复；新日志仍可能继续产生。")
         }
-        ConfirmDialog.showDanger(this, "清除缓存", "确定清除$names（$size）吗？$impact", "清除", {
+        val sizeLabel = if (validIds.contains(CacheCatalog.LOGS)) "内容约 $size" else size
+        ConfirmDialog.showDanger(this, "清除所选数据", "确定清除$names（$sizeLabel）吗？$impact", "清除", {
             clear(validIds)
         })
     }
@@ -206,7 +219,7 @@ class CacheManagementActivity : BaseVbActivity<ActivityCacheManagementBinding>()
                     page.selectedIds.removeAll(it.clearedIds.toSet())
                     if (it.failures.isEmpty()) page.selectMode = false
                     page.render(it.after)
-                    AppBubble.toast(if (it.failures.isEmpty()) "缓存已清除" else "部分缓存清除失败，请重试")
+                    AppBubble.toast(if (it.failures.isEmpty()) "所选数据已清除" else "部分数据清除失败，请重试")
                 }.onFailure {
                     AppBubble.toast("清除失败，请重试")
                     page.refresh()

@@ -2,6 +2,7 @@ package com.github.tvbox.osc.util.cache;
 
 import android.content.Context;
 
+import com.github.tvbox.osc.log.LogStore;
 import com.github.tvbox.osc.util.OkGoHelper;
 
 import java.io.File;
@@ -16,12 +17,13 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * App cache inventory and narrowly scoped cleanup. Both methods perform disk IO and must run on
- * a module-level background executor. Known source cache files in filesDir are counted as
- * protected data and are never deleted here.
+ * App cache and log inventory with narrowly scoped cleanup. Both methods perform disk IO and
+ * must run on a module-level background executor. Known source cache files in filesDir are
+ * counted as protected data and are never deleted here.
  */
 public final class CacheCatalog {
     public static final String IMAGE_HTTP = "image_http";
+    public static final String LOGS = "logs";
     public static final String TEMP_FILES = "temp_files";
 
     private static final String RUNTIME_DATA = "runtime_data";
@@ -29,6 +31,7 @@ public final class CacheCatalog {
 
     private static final Definition[] DEFINITIONS = {
             new Definition(IMAGE_HTTP, "图片缓存", "已浏览的海报和封面，清理后会重新加载", true),
+            new Definition(LOGS, "运行日志", "业务日志记录、错误日志文件及旧版日志残留（内容约大小）", true),
             new Definition(TEMP_FILES, "遗留的副本", "保存图片、分享或导入导出后遗留的旧副本", true),
             new Definition(RUNTIME_DATA, "应用运行文件", "播放、站点等功能使用的文件，不可清理", false)
     };
@@ -37,6 +40,12 @@ public final class CacheCatalog {
     private final File externalRoot;
     private final File filesRoot;
     private final ImageCacheEvictor imageCacheEvictor;
+    private final LogCacheAccess logCacheAccess;
+
+    private static final LogCacheAccess NO_LOGS = new LogCacheAccess() {
+        @Override public long bytes() { return 0L; }
+        @Override public boolean clear() { return true; }
+    };
 
     public CacheCatalog(Context context) {
         Context app = context.getApplicationContext();
@@ -44,6 +53,11 @@ public final class CacheCatalog {
         externalRoot = app.getExternalCacheDir();
         filesRoot = app.getFilesDir();
         imageCacheEvictor = OkGoHelper::evictImageDiskCache;
+        LogStore logs = LogStore.get();
+        logCacheAccess = new LogCacheAccess() {
+            @Override public long bytes() { return logs.storedLogBytes(); }
+            @Override public boolean clear() { return logs.clearStoredLogsBlocking(); }
+        };
     }
 
     // Package-private seam for the file safety regression test. Production always uses the
@@ -54,13 +68,19 @@ public final class CacheCatalog {
 
     CacheCatalog(File internalRoot, File externalRoot, File filesRoot,
                  ImageCacheEvictor imageCacheEvictor) {
+        this(internalRoot, externalRoot, filesRoot, imageCacheEvictor, NO_LOGS);
+    }
+
+    CacheCatalog(File internalRoot, File externalRoot, File filesRoot,
+                 ImageCacheEvictor imageCacheEvictor, LogCacheAccess logCacheAccess) {
         this.internalRoot = internalRoot;
         this.externalRoot = externalRoot;
         this.filesRoot = filesRoot;
         this.imageCacheEvictor = imageCacheEvictor;
+        this.logCacheAccess = logCacheAccess;
     }
 
-    /** Logical bytes in both Android cache directories and protected source cache files. */
+    /** Cache/file bytes plus an estimate of stored log content. */
     public Snapshot scan() {
         final Map<String, Long> sizes = new LinkedHashMap<>();
         for (Definition definition : DEFINITIONS) sizes.put(definition.id, 0L);
@@ -68,18 +88,28 @@ public final class CacheCatalog {
         walkBoth(staleBefore, (file, category) -> sizes.put(category,
                 saturatedAdd(sizes.get(category), Math.max(0L, file.length()))), null);
         sizes.put(RUNTIME_DATA, saturatedAdd(sizes.get(RUNTIME_DATA), sourceCacheBytes()));
+        boolean logSizeUnavailable = false;
+        try {
+            sizes.put(LOGS, Math.max(0L, logCacheAccess.bytes()));
+        } catch (RuntimeException error) {
+            // 日志库暂时不可读时，仍允许用户清理其它独立的缓存分类。
+            logSizeUnavailable = true;
+        }
 
         List<Entry> entries = new ArrayList<>(DEFINITIONS.length);
         long total = 0L;
         long clearable = 0L;
         for (Definition definition : DEFINITIONS) {
             long size = sizes.get(definition.id);
-            entries.add(new Entry(definition.id, definition.title, definition.description,
-                    size, definition.clearable));
+            boolean logError = logSizeUnavailable && LOGS.equals(definition.id);
+            entries.add(new Entry(definition.id, definition.title,
+                    logError ? "日志大小读取失败，请稍后重试" : definition.description,
+                    size, definition.clearable && !logError));
             total = saturatedAdd(total, size);
-            if (definition.clearable) clearable = saturatedAdd(clearable, size);
+            if (definition.clearable && !logError) clearable = saturatedAdd(clearable, size);
         }
-        return new Snapshot(entries, total, clearable, Math.max(0L, total - clearable));
+        return new Snapshot(entries, total, clearable,
+                Math.max(0L, total - clearable), logSizeUnavailable);
     }
 
     /** Source JARs and downloaded subscription snapshots live in filesDir for offline fallback. */
@@ -140,6 +170,13 @@ public final class CacheCatalog {
                 int failed = deleteStaleFiles();
                 if (failed == 0) cleared.add(id);
                 else failures.put(id, "有 " + failed + " 项未能清理，请重试");
+            } else if (LOGS.equals(id)) {
+                try {
+                    if (logCacheAccess.clear()) cleared.add(id);
+                    else failures.put(id, "有日志未能清理，请重试");
+                } catch (RuntimeException error) {
+                    failures.put(id, "运行日志清理失败：" + safeMessage(error));
+                }
             } else {
                 failures.put(id == null ? "" : id, "此类数据不可清理");
             }
@@ -319,6 +356,7 @@ public final class CacheCatalog {
     }
 
     interface ImageCacheEvictor { void evict() throws IOException; }
+    interface LogCacheAccess { long bytes(); boolean clear(); }
     private interface FileVisitor { void visit(File file, String category); }
     private interface ScanError { void failed(String topName, boolean external); }
 
@@ -361,11 +399,14 @@ public final class CacheCatalog {
     public static final class Snapshot {
         public final List<Entry> entries;
         public final long totalBytes, clearableBytes, protectedBytes;
-        Snapshot(List<Entry> entries, long totalBytes, long clearableBytes, long protectedBytes) {
+        public final boolean logSizeUnavailable;
+        Snapshot(List<Entry> entries, long totalBytes, long clearableBytes,
+                 long protectedBytes, boolean logSizeUnavailable) {
             this.entries = Collections.unmodifiableList(new ArrayList<>(entries));
             this.totalBytes = totalBytes;
             this.clearableBytes = clearableBytes;
             this.protectedBytes = protectedBytes;
+            this.logSizeUnavailable = logSizeUnavailable;
         }
     }
 

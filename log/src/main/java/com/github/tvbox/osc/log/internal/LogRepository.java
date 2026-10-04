@@ -35,6 +35,7 @@ public final class LogRepository {
     private static final int MAX_ROWS = 20_000;
     private static final long DAY_MS = 24L * 3600 * 1000;
     private static final long QUERY_TIMEOUT_MS = 5_000;
+    private static final long CLEAR_TIMEOUT_MS = 10_000;
 
     private final LogDatabase db;
 
@@ -164,6 +165,44 @@ public final class LogRepository {
         });
     }
 
+    /** 缓存管理页专用：在写队列中清空并等待完成，随后尽力回收本日志库空闲页。 */
+    public boolean clearAllBlocking() {
+        if (db == null) return true;
+        if (Thread.currentThread() == writeThread) return clearAndCompact();
+        try {
+            return writeExecutor.submit(this::clearAndCompact)
+                    .get(CLEAR_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            return false;
+        } catch (Throwable error) {
+            Log.e("LogRepository", "等待业务日志清空失败", error);
+            return false;
+        }
+    }
+
+    private boolean clearAndCompact() {
+        try {
+            db.logDao().clearAll();
+        } catch (Throwable error) {
+            Log.e("LogRepository", "业务日志清空失败", error);
+            return false;
+        }
+        try {
+            // 只操作本模块的 tvbox_log.db；Room 数据库保持打开，绝不删除活跃 DB 文件。
+            db.getOpenHelper().getWritableDatabase().execSQL("VACUUM");
+            try (android.database.Cursor cursor = db.getOpenHelper().getWritableDatabase()
+                    .query("PRAGMA wal_checkpoint(TRUNCATE)")) {
+                if (cursor.moveToFirst() && cursor.getInt(0) != 0)
+                    Log.w("LogRepository", "日志数据库 WAL 暂时无法截断");
+            }
+        } catch (Throwable error) {
+            // 内容已清空；压缩失败不把清空结果误报成失败，后续 SQLite 仍可复用空闲页。
+            Log.w("LogRepository", "日志记录已清空，数据库文件压缩暂未完成", error);
+        }
+        return true;
+    }
+
     // ------------------------------------------------------------------
     // 读通道（同步阻塞至结果；页面调用建议放后台线程）
     // ------------------------------------------------------------------
@@ -182,6 +221,13 @@ public final class LogRepository {
     public List<LogEntry> queryByTask(String taskKey, int limit, int offset) {
         if (db == null) return null;
         return await(() -> db.logDao().queryByTask(taskKey, limit, offset));
+    }
+
+    /** 逻辑内容大小，必须由后台调用；查询失败返回 null，不能误报 0 字节。 */
+    @Nullable
+    public Long contentBytes() {
+        if (db == null) return 0L;
+        return await(() -> db.logDao().contentBytes());
     }
 
     private <T> T await(Callable<T> callable) {

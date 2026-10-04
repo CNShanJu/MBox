@@ -763,11 +763,14 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
         val catalog = CacheCatalog(applicationContext)
         val pageRef = WeakReference(this)
         HeavyTaskUtil.getBigTaskExecutorService().execute {
-            val size = runCatching { catalog.scan().totalBytes }
+            val size = runCatching { catalog.scan() }
             Handler(Looper.getMainLooper()).post {
                 val page = pageRef.get() ?: return@post
                 if (epoch == page.cacheSizeEpoch && !page.isFinishing && !page.isDestroyed) {
-                    page.mBinding.tvCacheSize.text = size.fold(CacheSizeText::format) { "读取失败" }
+                    page.mBinding.tvCacheSize.text = size.fold(
+                        { if (it.logSizeUnavailable) "部分读取失败" else CacheSizeText.format(it.totalBytes) },
+                        { "读取失败" }
+                    )
                 }
             }
         }
