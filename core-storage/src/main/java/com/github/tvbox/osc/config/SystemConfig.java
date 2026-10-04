@@ -44,7 +44,8 @@ public final class SystemConfig {
     static final String KEY_SSL_EXCEPTION_HOST = "ssl_exception_host";
     private static final String KEY_LAN_SERVER_ENABLE = "lan_server_enable";
     private static final String KEY_LAN_PAIRING_CODE = "lan_pairing_code";
-    private static final String KEY_INTERNAL_RESTART_AT = "internal_restart_at";
+    private static final String KEY_INTERNAL_RESTART_AT = "_private_internal_restart_at";
+    private static final String KEY_LEGACY_INTERNAL_RESTART_AT = "internal_restart_at";
     private static final String KEY_THEME_RESTART_CACHE_AT = "_private_theme_restart_cache_at";
     private static final String KEY_AUTO_UPDATE_PROMPT_VERSION = "auto_update_prompt_version";
     private static final String KEY_AUTO_UPDATE_PROMPT_AT = "auto_update_prompt_at";
@@ -274,17 +275,34 @@ public final class SystemConfig {
         return code;
     }
 
-    /** 标记由设置/订阅/还原触发的应用内部重启，不把它当成一次新的启动更新检查。 */
+    /** 标记由配置变更、还原或系统恢复触发的内部重启；一次性来源不进入用户备份。 */
     public static void markInternalRestart() {
         PrefsDataStore.put(KEY_INTERNAL_RESTART_AT, System.currentTimeMillis());
     }
 
-    /** 消费短时重启标记；过期标记不影响用户下次主动打开应用。 */
+    /** 在主页创建时消费短时重启标记；三项启动动作只读取主页保存的同一份来源。 */
     public static synchronized boolean consumeInternalRestart() {
-        long markedAt = PrefsDataStore.getLong(KEY_INTERNAL_RESTART_AT, 0L);
-        PrefsDataStore.delete(KEY_INTERNAL_RESTART_AT);
+        long current = PrefsDataStore.getLong(KEY_INTERNAL_RESTART_AT, 0L);
+        long legacy = PrefsDataStore.getLong(KEY_LEGACY_INTERNAL_RESTART_AT, 0L);
+        long markedAt = Math.max(current, legacy);
+        if (PrefsDataStore.contains(KEY_INTERNAL_RESTART_AT)) {
+            PrefsDataStore.delete(KEY_INTERNAL_RESTART_AT);
+        }
+        if (PrefsDataStore.contains(KEY_LEGACY_INTERNAL_RESTART_AT)) {
+            PrefsDataStore.delete(KEY_LEGACY_INTERNAL_RESTART_AT);
+        }
         long elapsed = System.currentTimeMillis() - markedAt;
         return markedAt > 0 && elapsed >= 0 && elapsed <= 120_000L;
+    }
+
+    /** 发起重启失败时撤销标记，下一次用户手动打开仍按主动启动处理。 */
+    public static synchronized void clearInternalRestart() {
+        if (PrefsDataStore.contains(KEY_INTERNAL_RESTART_AT)) {
+            PrefsDataStore.delete(KEY_INTERNAL_RESTART_AT);
+        }
+        if (PrefsDataStore.contains(KEY_LEGACY_INTERNAL_RESTART_AT)) {
+            PrefsDataStore.delete(KEY_LEGACY_INTERNAL_RESTART_AT);
+        }
     }
 
     /** 主题只改变外观；真重启后的首页可优先读取现有订阅配置与爬虫包缓存。 */

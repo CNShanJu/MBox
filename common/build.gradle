@@ -39,4 +39,5 @@ dependencies {
     implementation 'com.google.code.gson:gson:2.10.1'
     // 原 :state —— 系统状态监听里写业务日志
     implementation project(':log')
+    testImplementation 'junit:junit:4.13.2'
 }

@@ -263,6 +263,9 @@ class LanServiceActivity : BaseVbActivity<ActivityLanServiceBinding>() {
             Log.w("MBox-Lan", "重启应用失败，尝试兜底方式", error)
         }
         try { AppUtils.relaunchApp(true) }
-        catch (error: Throwable) { AppBubble.toast("重启失败，请手动重开应用") }
+        catch (error: Throwable) {
+            com.github.tvbox.osc.config.SystemConfig.clearInternalRestart()
+            AppBubble.toast("重启失败，请手动重开应用")
+        }
     }
 }

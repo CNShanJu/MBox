@@ -137,6 +137,8 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
         } catch (Throwable ignored) {
         }
         if (!App.getInstance().isNormalStart){
+            // 系统直接恢复页面时由框架补走启动页；这不是用户主动重开 App。
+            com.github.tvbox.osc.config.SystemConfig.markInternalRestart();
             AppUtils.relaunchApp(true);
         }
         // 暂停页面创建时的主题诊断与按需全树采集。

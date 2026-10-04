@@ -812,6 +812,74 @@ task generateThemeColors {
     }
 }
 preBuild.dependsOn generateThemeColors
+
+// 节日显示名允许公历/农历自然撞日；同一历法重复写同一个日期则在打包前直接失败。
+// 这里校验 JSON 定义本身，不依赖 app 编译/单测，因此 debug 和 release 的 preBuild 都会执行。
+def holidayCatalogAsset = file('src/main/assets/calendar/holidays.json')
+tasks.register('validateHolidayCatalog') {
+    inputs.file(holidayCatalogAsset)
+    doLast {
+        def root = new groovy.json.JsonSlurper().parseText(holidayCatalogAsset.getText('UTF-8'))
+        if (!(root instanceof Map) || root.version != 1 || !(root.holidays instanceof List)) {
+            throw new GradleException('节日 JSON 必须包含 version=1 与 holidays 数组')
+        }
+        def visible = []
+        root.holidays.eachWithIndex { holiday, index ->
+            if (!(holiday instanceof Map) || !(holiday.display instanceof Boolean)) {
+                throw new GradleException("节日 JSON 第 ${index + 1} 条缺少布尔 display")
+            }
+            if (!holiday.display) return
+            def id = holiday.id ?: "第 ${index + 1} 条"
+            if (!(holiday.type in ['solar', 'lunar']) || !(holiday.month instanceof Integer)
+                    || holiday.month < 1 || holiday.month > 12) {
+                throw new GradleException("节日 ${id} 的 type/month 无效")
+            }
+            if (holiday.dateRule == 'fixed') {
+                if (!(holiday.day instanceof Integer) || !(holiday.endDay instanceof Integer)
+                        || holiday.day < 1 || holiday.endDay > 31 || holiday.day > holiday.endDay) {
+                    throw new GradleException("节日 ${id} 的 fixed 日期区间无效")
+                }
+            } else if (holiday.dateRule == 'last_day') {
+                if (holiday.day != 0 || holiday.endDay != 0) {
+                    throw new GradleException("节日 ${id} 的 last_day 须使用 day=endDay=0")
+                }
+            } else if (holiday.dateRule == 'solar_term') {
+                if (holiday.type != 'solar' || holiday.day != 0 || holiday.endDay != 0
+                        || !(holiday.term instanceof String) || holiday.term.trim().isEmpty()) {
+                    throw new GradleException("节日 ${id} 的 solar_term 定义无效")
+                }
+            } else {
+                throw new GradleException("节日 ${id} 的 dateRule 无效")
+            }
+            visible.each { prior ->
+                if (prior.type != holiday.type) return
+                boolean duplicate = false
+                if (prior.dateRule == 'solar_term' && holiday.dateRule == 'solar_term') {
+                    duplicate = prior.term == holiday.term
+                } else if (prior.month == holiday.month) {
+                    if (prior.dateRule == 'fixed' && holiday.dateRule == 'fixed') {
+                        duplicate = prior.day <= holiday.endDay && holiday.day <= prior.endDay
+                    } else if (prior.dateRule == 'last_day' && holiday.dateRule == 'last_day') {
+                        duplicate = true
+                    } else if ((prior.dateRule == 'fixed' && holiday.dateRule == 'last_day')
+                            || (prior.dateRule == 'last_day' && holiday.dateRule == 'fixed')) {
+                        def fixed = prior.dateRule == 'fixed' ? prior : holiday
+                        def possibleLastDays = holiday.type == 'lunar' ? [29, 30]
+                                : holiday.month == 2 ? [28, 29]
+                                : holiday.month in [4, 6, 9, 11] ? [30] : [31]
+                        duplicate = possibleLastDays.any { fixed.day <= it && it <= fixed.endDay }
+                    }
+                }
+                if (duplicate) {
+                    throw new GradleException("同一历法的节日显示日期重复: ${prior.id} 与 ${id}"
+                            + " (${holiday.type} ${holiday.month} 月)")
+                }
+            }
+            visible << holiday
+        }
+    }
+}
+preBuild.dependsOn validateHolidayCatalog
 android.sourceSets.main.res.srcDirs += themeColorsDir
 android.sourceSets.main.res.srcDirs += themeShapesDir
 // 生成的 theme/generated 与 theme/radius 资产和手写预设一起合并进 APK。

@@ -1,8 +1,14 @@
 package com.github.tvbox.osc.ui.fragment;
 
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.net.Uri;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.TextUtils;
+import android.view.View;
 
 import com.blankj.utilcode.util.AppUtils;
 import com.blankj.utilcode.util.ClipboardUtils;
@@ -24,6 +30,8 @@ import com.github.tvbox.osc.ui.dialog.DialogStyle;
 import com.github.tvbox.osc.ui.dialog.PopupKeyboardPolicy;
 import com.github.tvbox.osc.update.UpdateCheck;
 import com.github.tvbox.osc.update.UpdateInfo;
+import com.github.tvbox.osc.util.BroadcastUtils;
+import com.github.tvbox.osc.viewmodel.HolidayDisplayViewModel;
 import com.hjq.permissions.OnPermissionCallback;
 import com.hjq.permissions.Permission;
 import com.hjq.permissions.XXPermissions;
@@ -31,7 +39,10 @@ import com.lxj.xpopup.XPopup;
 import com.lxj.xpopup.core.BasePopupView;
 import com.lxj.xpopup.interfaces.SimpleCallback;
 
+import androidx.lifecycle.ViewModelProvider;
+
 import java.util.Arrays;
+import java.util.Calendar;
 import java.util.List;
 
 /**
@@ -42,10 +53,29 @@ import java.util.List;
 public class MyFragment extends BaseVbFragment<FragmentMyBinding> {
 
     private boolean updateCheckInProgress;
+    private HolidayDisplayViewModel holidayDisplayViewModel;
+    private final Handler calendarHandler = new Handler(Looper.getMainLooper());
+    private final Runnable calendarDayRollover = () -> {
+        refreshCalendar();
+        scheduleCalendarMidnight();
+    };
+    private final BroadcastReceiver calendarClockReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            refreshCalendar();
+            scheduleCalendarMidnight();
+        }
+    };
+    private Context calendarReceiverContext;
 
     @Override
     protected void init() {
         mBinding.tvVersion.setText("v"+ AppUtils.getAppVersionName());
+        holidayDisplayViewModel = new ViewModelProvider(this,
+                new HolidayDisplayViewModel.Factory(requireContext()))
+                .get(HolidayDisplayViewModel.class);
+        holidayDisplayViewModel.getHolidayName().observe(getViewLifecycleOwner(), this::showHolidayName);
+        refreshCalendar();
 
         mBinding.addrPlay.setOnClickListener(v ->{
             new XPopup.Builder(getContext())
@@ -94,6 +124,71 @@ public class MyFragment extends BaseVbFragment<FragmentMyBinding> {
             // 结果是同一个抽屉面板在不同入口下弹出位置/底边观感不一致(用户口径:"关于的抽屉圆角和别的抽屉不一致")。
             DialogCoordinator.bottom(mActivity, new AboutDialog(mActivity), 0).show();
         });
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        refreshCalendar();
+        startCalendarUpdates();
+    }
+
+    @Override
+    public void onPause() {
+        stopCalendarUpdates();
+        super.onPause();
+    }
+
+    @Override
+    public void onDestroyView() {
+        stopCalendarUpdates();
+        super.onDestroyView();
+    }
+
+    private void refreshCalendar() {
+        if (holidayDisplayViewModel != null) holidayDisplayViewModel.refresh();
+    }
+
+    private void showHolidayName(String holiday) {
+        if (getView() == null) return;
+        boolean visible = !TextUtils.isEmpty(holiday);
+        mBinding.tvCalendarFestival.setText(visible ? holiday : "");
+        mBinding.tvCalendarFestival.setVisibility(visible ? View.VISIBLE : View.GONE);
+    }
+
+    private void startCalendarUpdates() {
+        if (calendarReceiverContext == null) {
+            IntentFilter filter = new IntentFilter();
+            filter.addAction(Intent.ACTION_DATE_CHANGED);
+            filter.addAction(Intent.ACTION_TIME_CHANGED);
+            filter.addAction(Intent.ACTION_TIMEZONE_CHANGED);
+            Context context = requireContext();
+            BroadcastUtils.registerReceiverNotExported(context, calendarClockReceiver, filter);
+            calendarReceiverContext = context;
+        }
+        scheduleCalendarMidnight();
+    }
+
+    private void scheduleCalendarMidnight() {
+        calendarHandler.removeCallbacks(calendarDayRollover);
+        if (calendarReceiverContext == null) return;
+        Calendar now = Calendar.getInstance();
+        Calendar next = (Calendar) now.clone();
+        next.add(Calendar.DAY_OF_MONTH, 1);
+        next.set(Calendar.HOUR_OF_DAY, 0);
+        next.set(Calendar.MINUTE, 0);
+        next.set(Calendar.SECOND, 0);
+        next.set(Calendar.MILLISECOND, 0);
+        calendarHandler.postDelayed(calendarDayRollover,
+                Math.max(1000L, next.getTimeInMillis() - now.getTimeInMillis() + 1000L));
+    }
+
+    private void stopCalendarUpdates() {
+        calendarHandler.removeCallbacks(calendarDayRollover);
+        if (calendarReceiverContext != null) {
+            calendarReceiverContext.unregisterReceiver(calendarClockReceiver);
+            calendarReceiverContext = null;
+        }
     }
 
     private void checkUpdate() {

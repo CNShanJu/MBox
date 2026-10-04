@@ -304,7 +304,7 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
 
         // 启动自动检查更新:挂在首页数据初始化上(而不是"有上次播放记录"那支),
         // 否则无痕浏览/本机无历史时"上次看到"气泡不弹,自动检查就永远不跑。
-        // 内部按"气泡展示时长"延时并做进程级去重(见 scheduleAutoUpdateCheck)。
+        // 仅用户主动启动才排队，内部按"气泡展示时长"延时并做进程级去重。
         scheduleAutoUpdateCheck()
 
         if (!hasSubscription) {
@@ -374,7 +374,8 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
     }
 
     private fun requestStartupHistoryOnce() {
-        if (startupHistoryRequested || onlyConfigChanged || !isAdded) return
+        if (startupHistoryRequested || onlyConfigChanged || !isAdded ||
+            (activity as? MainActivity)?.isUserInitiatedLaunch() != true) return
         if (!isResumed) {
             startupHistoryPending = true
             return
@@ -433,7 +434,7 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
                     override fun success() {
                         jarInitOk = true
                         continueInit()
-                        if (!onlyConfigChanged && isAdded) queryHistory()
+                        requestStartupHistoryOnce()
                     }
 
                     override fun retry() {}
@@ -818,6 +819,7 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
     }
 
     private fun queryHistory() {
+        if ((activity as? MainActivity)?.isUserInitiatedLaunch() != true) return
         lifecycleScope.launch {
             val vodInfoList = withContext(Dispatchers.IO) {
                 // 上次观看保留旧订阅的记录；点击不可用来源时进入当前订阅同名搜索。
@@ -852,7 +854,8 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
     }
 
     private fun showLastViewedBubble(host: MainActivity, vod: VodInfo) {
-        if (!canShowStartupUi(host, view) || !host.isOnlineContentVisible() ||
+        if (!host.isUserInitiatedLaunch() || !canShowStartupUi(host, view) ||
+            !host.isOnlineContentVisible() ||
             host.isStartupSplashVisible() || autoCheckStarted ||
             lastViewedBubble?.isShow == true) return
         val shownAt = android.os.SystemClock.uptimeMillis()
@@ -883,7 +886,8 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
     }
 
     private fun rescheduleAutoUpdateCheckAfterBubble() {
-        if (!com.github.tvbox.osc.config.SystemConfig.isAutoCheckUpdate()) return
+        if ((activity as? MainActivity)?.isUserInitiatedLaunch() != true ||
+            !SystemConfig.isAutoCheckUpdate()) return
         mHandler.removeCallbacks(pendingAutoCheck)
         mHandler.postDelayed(pendingAutoCheck, CHECK_AFTER_BUBBLE_MS)
     }
@@ -894,12 +898,13 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
      * <p>
      * 受"自动检查更新"开关控制(设置页,默认开);无痕浏览/本机无历史时气泡不弹,这里按默认延时照常检查
      * (不能挂在"有历史记录"分支里,否则那种情况下自动检查永远不生效)。
-     * 检查本身由 UpdateCheck 做进程级去重,每次启动最多一次;重复排队时只保留最后一次。
+     * 仅用户主动启动时排队；检查本身由 UpdateCheck 做进程级去重,每次启动最多一次;
+     * 重复排队时只保留最后一次。
      */
     private fun scheduleAutoUpdateCheck() {
-        if (!com.github.tvbox.osc.config.SystemConfig.isAutoCheckUpdate()) return
         mHandler.removeCallbacks(pendingAutoCheck)
         val host = activity as? MainActivity
+        if (host?.isUserInitiatedLaunch() != true || !SystemConfig.isAutoCheckUpdate()) return
         if (host?.isStartupSplashVisible() == true) {
             val expectedView = view
             host.runAfterStartupSplash(Runnable {
@@ -917,8 +922,9 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
 
     /** 真正执行自动检查(主线程):进程级去重与开关判定在 UpdateCheck 内 */
     private fun runAutoUpdateCheck() {
-        val act = activity ?: return
-        if (act is MainActivity && act.isStartupSplashVisible()) {
+        val act = activity as? MainActivity ?: return
+        if (!act.isUserInitiatedLaunch()) return
+        if (act.isStartupSplashVisible()) {
             scheduleAutoUpdateCheck()
             return
         }

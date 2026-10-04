@@ -6,6 +6,7 @@ import android.os.Handler;
 import android.os.Looper;
 
 import com.github.tvbox.osc.config.SystemConfig;
+import com.github.tvbox.osc.ui.startup.UserStartupGate;
 import com.github.tvbox.osc.ui.dialog.UpdateNoteDialog;
 import com.github.tvbox.osc.util.AppBubble;
 
@@ -102,14 +103,15 @@ public final class UpdateCheck {
     }
 
     /**
-     * 启动自动检查(受"自动检查更新"开关控制,默认开):
+     * 用户主动启动时的自动检查(受"自动检查更新"开关控制,默认开):
      * 每个进程只跑一次;无新版本/失败都不提示,只在真的发现新版本时弹更新说明弹窗。
      *
      * @param onFinished 检查结束(无论结果)后回调,可为 null
      */
     public static void autoCheckOnce(final Context context, final Runnable onFinished) {
         if (context == null) return;
-        if (SystemConfig.consumeInternalRestart()) {
+        if (!(context instanceof UserStartupGate)
+                || !((UserStartupGate) context).isUserInitiatedLaunch()) {
             if (onFinished != null) onFinished.run();
             return;
         }

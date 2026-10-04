@@ -1,0 +1,1079 @@
+{
+  "desc": {
+    "version": "配置格式版本，当前为 1。",
+    "holidays": "节日与二十四节气条目数组；公历和农历条目使用完全相同的字段。",
+    "id": "稳定且唯一的规则标识，供日志、记录和排查使用；不要随意改名。",
+    "name": "显示在“我的”页顶部的名称；同日多个可显示名称用“·”连接。",
+    "entry.desc": "单条节日或节气的简短介绍，不参与日期计算。",
+    "type": "日期历法：solar 为公历，lunar 为农历；仅匹配算法不同，其余配置结构相同。",
+    "month": "月份，1 到 12；solar 按公历月，lunar 按农历月。",
+    "day": "起始日；fixed 使用 1 起的日数，last_day 和 solar_term 固定为 0。",
+    "endDay": "结束日（包含）；单日与 day 相同，范围节日可大于 day；last_day 和 solar_term 为 0。",
+    "dateRule": "匹配规则：fixed 为日期/日期范围，last_day 为当月最后一天，solar_term 为节气算法日期。",
+    "term": "solar_term 时填写节气名称，其他规则填写空字符串。",
+    "includeLeapMonth": "农历闰月是否也匹配；当前条目均为 false，公历条目同样保留此字段。",
+    "display": "是否在“我的”页顶部显示名称；false 仍可参与烟花或后续开屏规则。",
+    "displayPriority": "同日多个名称的排列优先级，数字越大越靠前；同优先级按 JSON 顺序。",
+    "fireworks.enabled": "真正启动 App 且开屏结束后是否尝试播放底栏烟花；二十四节气即使设为 true 也会被程序强制忽略。",
+    "fireworks.maxLaunchesPerDay": "每个本地自然日最多触发的启动轮数；0 表示不限次数。",
+    "fireworks.cooldownHours": "距上一轮实际发射至少间隔的整小时数，允许 1 到 23；缺失、非整数或越界一律按 1 小时。",
+    "fireworks.cooldownEnabled": "是否启用上述冷却间隔；false 表示不受间隔限制。",
+    "splash.enabled": "是否启用节日专属开屏素材；目前各条均为 false，继续使用默认开屏。",
+    "splash.mediaType": "素材类型：none 表示无，lottie 可由现有播放器使用，image/video 为后续扩展预留。",
+    "splash.asset": "应用 assets 中的素材路径；未启用时为空字符串。",
+    "rules": "同一历法重复日期规则在构建时拦截；公历与农历真实撞日允许，“我的”页按 displayPriority 拼接全部名称，烟花独立选择一条有效规则且同次启动只发一轮。"
+  },
+  "version": 1,
+  "holidays": [
+    {
+      "id": "new_year",
+      "name": "元旦",
+      "desc": "公历新年的第一天。",
+      "type": "solar",
+      "month": 1,
+      "day": 1,
+      "endDay": 1,
+      "dateRule": "fixed",
+      "term": "",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 50,
+      "fireworks": {
+        "enabled": true,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 2,
+        "cooldownEnabled": true
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "womens_day",
+      "name": "妇女节",
+      "desc": "国际妇女节，致敬女性。",
+      "type": "solar",
+      "month": 3,
+      "day": 8,
+      "endDay": 8,
+      "dateRule": "fixed",
+      "term": "",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 50,
+      "fireworks": {
+        "enabled": false,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 1,
+        "cooldownEnabled": false
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "qingming",
+      "name": "清明",
+      "desc": "清明节气，也是缅怀先人的传统节日。",
+      "type": "solar",
+      "month": 4,
+      "day": 0,
+      "endDay": 0,
+      "dateRule": "solar_term",
+      "term": "清明",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 50,
+      "fireworks": {
+        "enabled": false,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 1,
+        "cooldownEnabled": false
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "labor_day",
+      "name": "劳动节",
+      "desc": "国际劳动节，致敬劳动者。",
+      "type": "solar",
+      "month": 5,
+      "day": 1,
+      "endDay": 1,
+      "dateRule": "fixed",
+      "term": "",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 50,
+      "fireworks": {
+        "enabled": false,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 1,
+        "cooldownEnabled": false
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "youth_day",
+      "name": "青年节",
+      "desc": "五四青年节，纪念青年运动。",
+      "type": "solar",
+      "month": 5,
+      "day": 4,
+      "endDay": 4,
+      "dateRule": "fixed",
+      "term": "",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 50,
+      "fireworks": {
+        "enabled": false,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 1,
+        "cooldownEnabled": false
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "childrens_day",
+      "name": "儿童节",
+      "desc": "国际儿童节，祝孩子们快乐成长。",
+      "type": "solar",
+      "month": 6,
+      "day": 1,
+      "endDay": 1,
+      "dateRule": "fixed",
+      "term": "",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 50,
+      "fireworks": {
+        "enabled": false,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 1,
+        "cooldownEnabled": false
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "victory_day",
+      "name": "抗战胜利纪念日",
+      "desc": "中国人民抗日战争胜利纪念日。",
+      "type": "solar",
+      "month": 9,
+      "day": 3,
+      "endDay": 3,
+      "dateRule": "fixed",
+      "term": "",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 50,
+      "fireworks": {
+        "enabled": false,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 1,
+        "cooldownEnabled": false
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "teachers_day",
+      "name": "教师节",
+      "desc": "教师节，感谢教书育人的老师。",
+      "type": "solar",
+      "month": 9,
+      "day": 10,
+      "endDay": 10,
+      "dateRule": "fixed",
+      "term": "",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 50,
+      "fireworks": {
+        "enabled": false,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 1,
+        "cooldownEnabled": false
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "national_day",
+      "name": "国庆节",
+      "desc": "中华人民共和国国庆节。",
+      "type": "solar",
+      "month": 10,
+      "day": 1,
+      "endDay": 1,
+      "dateRule": "fixed",
+      "term": "",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 50,
+      "fireworks": {
+        "enabled": true,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 2,
+        "cooldownEnabled": true
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "memorial_day",
+      "name": "国家公祭日",
+      "desc": "南京大屠杀死难者国家公祭日。",
+      "type": "solar",
+      "month": 12,
+      "day": 13,
+      "endDay": 13,
+      "dateRule": "fixed",
+      "term": "",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 50,
+      "fireworks": {
+        "enabled": false,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 1,
+        "cooldownEnabled": false
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "spring_festival",
+      "name": "春节",
+      "desc": "农历正月初一，春节。",
+      "type": "lunar",
+      "month": 1,
+      "day": 1,
+      "endDay": 1,
+      "dateRule": "fixed",
+      "term": "",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 100,
+      "fireworks": {
+        "enabled": true,
+        "maxLaunchesPerDay": 0,
+        "cooldownHours": 1,
+        "cooldownEnabled": false
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "spring_festival_days_2_to_10",
+      "name": "春节初二至初十",
+      "desc": "农历正月初二至初十的春节期间。",
+      "type": "lunar",
+      "month": 1,
+      "day": 2,
+      "endDay": 10,
+      "dateRule": "fixed",
+      "term": "",
+      "includeLeapMonth": false,
+      "display": false,
+      "displayPriority": 0,
+      "fireworks": {
+        "enabled": true,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 2,
+        "cooldownEnabled": true
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "lantern_festival",
+      "name": "元宵节",
+      "desc": "农历正月十五，元宵节。",
+      "type": "lunar",
+      "month": 1,
+      "day": 15,
+      "endDay": 15,
+      "dateRule": "fixed",
+      "term": "",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 100,
+      "fireworks": {
+        "enabled": false,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 1,
+        "cooldownEnabled": false
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "dragon_boat",
+      "name": "端午节",
+      "desc": "农历五月初五，端午节。",
+      "type": "lunar",
+      "month": 5,
+      "day": 5,
+      "endDay": 5,
+      "dateRule": "fixed",
+      "term": "",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 100,
+      "fireworks": {
+        "enabled": false,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 1,
+        "cooldownEnabled": false
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "qixi",
+      "name": "七夕节",
+      "desc": "农历七月初七，七夕节。",
+      "type": "lunar",
+      "month": 7,
+      "day": 7,
+      "endDay": 7,
+      "dateRule": "fixed",
+      "term": "",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 100,
+      "fireworks": {
+        "enabled": false,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 1,
+        "cooldownEnabled": false
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "mid_autumn",
+      "name": "中秋节",
+      "desc": "农历八月十五，中秋节。",
+      "type": "lunar",
+      "month": 8,
+      "day": 15,
+      "endDay": 15,
+      "dateRule": "fixed",
+      "term": "",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 100,
+      "fireworks": {
+        "enabled": false,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 1,
+        "cooldownEnabled": false
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "double_ninth",
+      "name": "重阳节",
+      "desc": "农历九月初九，重阳节。",
+      "type": "lunar",
+      "month": 9,
+      "day": 9,
+      "endDay": 9,
+      "dateRule": "fixed",
+      "term": "",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 100,
+      "fireworks": {
+        "enabled": false,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 1,
+        "cooldownEnabled": false
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "laba",
+      "name": "腊八节",
+      "desc": "农历腊月初八，腊八节。",
+      "type": "lunar",
+      "month": 12,
+      "day": 8,
+      "endDay": 8,
+      "dateRule": "fixed",
+      "term": "",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 100,
+      "fireworks": {
+        "enabled": false,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 1,
+        "cooldownEnabled": false
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "new_years_eve",
+      "name": "除夕",
+      "desc": "农历年的最后一天，除夕。",
+      "type": "lunar",
+      "month": 12,
+      "day": 0,
+      "endDay": 0,
+      "dateRule": "last_day",
+      "term": "",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 100,
+      "fireworks": {
+        "enabled": true,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 2,
+        "cooldownEnabled": true
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "solar_term_xiaohan",
+      "name": "小寒",
+      "desc": "天气渐寒，进入小寒时节。",
+      "type": "solar",
+      "month": 1,
+      "day": 0,
+      "endDay": 0,
+      "dateRule": "solar_term",
+      "term": "小寒",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 10,
+      "fireworks": {
+        "enabled": false,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 1,
+        "cooldownEnabled": false
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "solar_term_dahan",
+      "name": "大寒",
+      "desc": "寒气最盛，进入大寒时节。",
+      "type": "solar",
+      "month": 1,
+      "day": 0,
+      "endDay": 0,
+      "dateRule": "solar_term",
+      "term": "大寒",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 10,
+      "fireworks": {
+        "enabled": false,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 1,
+        "cooldownEnabled": false
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "solar_term_lichun",
+      "name": "立春",
+      "desc": "春季开始，万物渐次复苏。",
+      "type": "solar",
+      "month": 2,
+      "day": 0,
+      "endDay": 0,
+      "dateRule": "solar_term",
+      "term": "立春",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 10,
+      "fireworks": {
+        "enabled": false,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 1,
+        "cooldownEnabled": false
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "solar_term_yushui",
+      "name": "雨水",
+      "desc": "降水渐增，春意渐浓。",
+      "type": "solar",
+      "month": 2,
+      "day": 0,
+      "endDay": 0,
+      "dateRule": "solar_term",
+      "term": "雨水",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 10,
+      "fireworks": {
+        "enabled": false,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 1,
+        "cooldownEnabled": false
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "solar_term_jingzhe",
+      "name": "惊蛰",
+      "desc": "春雷渐起，蛰虫苏醒。",
+      "type": "solar",
+      "month": 3,
+      "day": 0,
+      "endDay": 0,
+      "dateRule": "solar_term",
+      "term": "惊蛰",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 10,
+      "fireworks": {
+        "enabled": false,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 1,
+        "cooldownEnabled": false
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "solar_term_chunfen",
+      "name": "春分",
+      "desc": "昼夜大致平分，春季过半。",
+      "type": "solar",
+      "month": 3,
+      "day": 0,
+      "endDay": 0,
+      "dateRule": "solar_term",
+      "term": "春分",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 10,
+      "fireworks": {
+        "enabled": false,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 1,
+        "cooldownEnabled": false
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "solar_term_guyu",
+      "name": "谷雨",
+      "desc": "雨水滋润谷物生长。",
+      "type": "solar",
+      "month": 4,
+      "day": 0,
+      "endDay": 0,
+      "dateRule": "solar_term",
+      "term": "谷雨",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 10,
+      "fireworks": {
+        "enabled": false,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 1,
+        "cooldownEnabled": false
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "solar_term_lixia",
+      "name": "立夏",
+      "desc": "夏季开始，万物繁茂。",
+      "type": "solar",
+      "month": 5,
+      "day": 0,
+      "endDay": 0,
+      "dateRule": "solar_term",
+      "term": "立夏",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 10,
+      "fireworks": {
+        "enabled": false,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 1,
+        "cooldownEnabled": false
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "solar_term_xiaoman",
+      "name": "小满",
+      "desc": "夏熟作物籽粒渐满。",
+      "type": "solar",
+      "month": 5,
+      "day": 0,
+      "endDay": 0,
+      "dateRule": "solar_term",
+      "term": "小满",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 10,
+      "fireworks": {
+        "enabled": false,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 1,
+        "cooldownEnabled": false
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "solar_term_mangzhong",
+      "name": "芒种",
+      "desc": "有芒作物进入忙种时节。",
+      "type": "solar",
+      "month": 6,
+      "day": 0,
+      "endDay": 0,
+      "dateRule": "solar_term",
+      "term": "芒种",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 10,
+      "fireworks": {
+        "enabled": false,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 1,
+        "cooldownEnabled": false
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "solar_term_xiazhi",
+      "name": "夏至",
+      "desc": "北半球白昼接近全年最长。",
+      "type": "solar",
+      "month": 6,
+      "day": 0,
+      "endDay": 0,
+      "dateRule": "solar_term",
+      "term": "夏至",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 10,
+      "fireworks": {
+        "enabled": false,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 1,
+        "cooldownEnabled": false
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "solar_term_xiaoshu",
+      "name": "小暑",
+      "desc": "暑热渐起，进入小暑时节。",
+      "type": "solar",
+      "month": 7,
+      "day": 0,
+      "endDay": 0,
+      "dateRule": "solar_term",
+      "term": "小暑",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 10,
+      "fireworks": {
+        "enabled": false,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 1,
+        "cooldownEnabled": false
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "solar_term_dashu",
+      "name": "大暑",
+      "desc": "炎热达到盛夏高峰。",
+      "type": "solar",
+      "month": 7,
+      "day": 0,
+      "endDay": 0,
+      "dateRule": "solar_term",
+      "term": "大暑",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 10,
+      "fireworks": {
+        "enabled": false,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 1,
+        "cooldownEnabled": false
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "solar_term_liqiu",
+      "name": "立秋",
+      "desc": "秋季开始，暑气渐退。",
+      "type": "solar",
+      "month": 8,
+      "day": 0,
+      "endDay": 0,
+      "dateRule": "solar_term",
+      "term": "立秋",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 10,
+      "fireworks": {
+        "enabled": false,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 1,
+        "cooldownEnabled": false
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "solar_term_chushu",
+      "name": "处暑",
+      "desc": "暑热逐渐消退。",
+      "type": "solar",
+      "month": 8,
+      "day": 0,
+      "endDay": 0,
+      "dateRule": "solar_term",
+      "term": "处暑",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 10,
+      "fireworks": {
+        "enabled": false,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 1,
+        "cooldownEnabled": false
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "solar_term_bailu",
+      "name": "白露",
+      "desc": "早晚渐凉，草木可见白露。",
+      "type": "solar",
+      "month": 9,
+      "day": 0,
+      "endDay": 0,
+      "dateRule": "solar_term",
+      "term": "白露",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 10,
+      "fireworks": {
+        "enabled": false,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 1,
+        "cooldownEnabled": false
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "solar_term_qiufen",
+      "name": "秋分",
+      "desc": "昼夜大致平分，秋季过半。",
+      "type": "solar",
+      "month": 9,
+      "day": 0,
+      "endDay": 0,
+      "dateRule": "solar_term",
+      "term": "秋分",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 10,
+      "fireworks": {
+        "enabled": false,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 1,
+        "cooldownEnabled": false
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "solar_term_hanlu",
+      "name": "寒露",
+      "desc": "露水更寒，秋意加深。",
+      "type": "solar",
+      "month": 10,
+      "day": 0,
+      "endDay": 0,
+      "dateRule": "solar_term",
+      "term": "寒露",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 10,
+      "fireworks": {
+        "enabled": false,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 1,
+        "cooldownEnabled": false
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "solar_term_shuangjiang",
+      "name": "霜降",
+      "desc": "天气渐冷，霜降时节到来。",
+      "type": "solar",
+      "month": 10,
+      "day": 0,
+      "endDay": 0,
+      "dateRule": "solar_term",
+      "term": "霜降",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 10,
+      "fireworks": {
+        "enabled": false,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 1,
+        "cooldownEnabled": false
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "solar_term_lidong",
+      "name": "立冬",
+      "desc": "冬季开始，万物渐藏。",
+      "type": "solar",
+      "month": 11,
+      "day": 0,
+      "endDay": 0,
+      "dateRule": "solar_term",
+      "term": "立冬",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 10,
+      "fireworks": {
+        "enabled": false,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 1,
+        "cooldownEnabled": false
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "solar_term_xiaoxue",
+      "name": "小雪",
+      "desc": "气温下降，开始可能见雪。",
+      "type": "solar",
+      "month": 11,
+      "day": 0,
+      "endDay": 0,
+      "dateRule": "solar_term",
+      "term": "小雪",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 10,
+      "fireworks": {
+        "enabled": false,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 1,
+        "cooldownEnabled": false
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "solar_term_daxue",
+      "name": "大雪",
+      "desc": "天气更冷，降雪机会增多。",
+      "type": "solar",
+      "month": 12,
+      "day": 0,
+      "endDay": 0,
+      "dateRule": "solar_term",
+      "term": "大雪",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 10,
+      "fireworks": {
+        "enabled": false,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 1,
+        "cooldownEnabled": false
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    },
+    {
+      "id": "solar_term_dongzhi",
+      "name": "冬至",
+      "desc": "北半球白昼接近全年最短。",
+      "type": "solar",
+      "month": 12,
+      "day": 0,
+      "endDay": 0,
+      "dateRule": "solar_term",
+      "term": "冬至",
+      "includeLeapMonth": false,
+      "display": true,
+      "displayPriority": 10,
+      "fireworks": {
+        "enabled": false,
+        "maxLaunchesPerDay": 3,
+        "cooldownHours": 1,
+        "cooldownEnabled": false
+      },
+      "splash": {
+        "enabled": false,
+        "mediaType": "none",
+        "asset": ""
+      }
+    }
+  ]
+}

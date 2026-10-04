@@ -247,6 +247,8 @@ public class BackupDialog extends AppBottomPopupView {
         try {
             AppUtils.relaunchApp(true);
         } catch (Throwable ignored) {
+            com.github.tvbox.osc.config.SystemConfig.clearInternalRestart();
+            AppBubble.toast("重启失败，请手动重开应用");
         }
     }
 

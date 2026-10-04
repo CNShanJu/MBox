@@ -10,18 +10,42 @@
             android:id="@+id/my_surface_card"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="40dp"
-            android:padding="20dp">
+            android:layout_marginTop="28dp"
+            android:layout_marginBottom="8dp"
+            android:baselineAligned="false"
+            android:gravity="bottom"
+            android:minHeight="76dp"
+            android:orientation="horizontal"
+            android:paddingStart="40dp"
+            android:paddingTop="8dp"
+            android:paddingEnd="26dp"
+            android:paddingBottom="14dp">
 
         <TextView
+                android:id="@+id/tvMyAppName"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_gravity="bottom"
-                android:layout_marginLeft="20dp"
-                android:layout_marginBottom="4dp"
+                android:layout_marginEnd="16dp"
+                android:ellipsize="end"
+                android:includeFontPadding="false"
+                android:singleLine="true"
                 android:text="@string/app_name"
                 android:textColor="@color/text_foreground"
-                android:textSize="22sp"/>
+                android:textSize="24sp"
+                android:textStyle="bold"/>
+
+        <TextView
+                android:id="@+id/tvCalendarFestival"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:gravity="end"
+                android:includeFontPadding="false"
+                android:textColor="@color/text_highlight"
+                android:textSize="12sp"
+                android:visibility="gone"
+                tools:text="春节"
+                tools:visibility="visible"/>
     </LinearLayout>
 
     <!-- 中间选项区:高度固定=吃满标题与底部版本号之间的剩余空间;选项行超出时在卡片内部滚动,

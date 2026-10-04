@@ -23,13 +23,19 @@ import com.github.tvbox.osc.base.App
 import com.github.tvbox.osc.base.BaseVbActivity
 import com.github.tvbox.osc.bean.AbsSortXml
 import com.github.tvbox.osc.bean.MovieSort
+import com.github.tvbox.osc.calendar.HolidayCatalog
 import com.github.tvbox.osc.constant.IntentKey
 import com.github.tvbox.osc.config.SystemConfig
 import com.github.tvbox.osc.databinding.ActivityMainBinding
 import com.github.tvbox.osc.databinding.MainHomeShellBinding
+import com.github.tvbox.osc.log.Category
+import com.github.tvbox.osc.log.LogStore
 import com.github.tvbox.osc.ui.fragment.GridFragment
 import com.github.tvbox.osc.ui.fragment.HomeFragment
 import com.github.tvbox.osc.ui.fragment.MyFragment
+import com.github.tvbox.osc.ui.kit.FireworksView
+import com.github.tvbox.osc.ui.startup.AppLaunchSource
+import com.github.tvbox.osc.ui.startup.UserStartupGate
 import com.github.tvbox.osc.spiderapi.SourceConfigProviders
 import com.github.tvbox.osc.spiderapi.SourceLoaderApi
 import com.github.tvbox.osc.spiderapi.SourceLoaderProviders
@@ -38,11 +44,15 @@ import com.github.tvbox.osc.ui.splash.SplashContent
 import com.github.tvbox.osc.ui.splash.SplashContentSelector
 import com.github.tvbox.osc.util.HomeHotPreloader
 import com.github.tvbox.osc.util.DefaultConfig
+import com.github.tvbox.osc.util.HeavyTaskUtil
 import com.github.tvbox.osc.util.SubscriptionConfig
+import com.github.tvbox.osc.util.holiday.HolidayCalendarClock
+import com.github.tvbox.osc.util.holiday.HolidayCatalogRepository
+import com.github.tvbox.osc.util.holiday.HolidayFireworksLaunchCoordinator
 import com.github.tvbox.osc.viewmodel.SourceViewModel
 import kotlin.system.exitProcess
 
-class MainActivity : BaseVbActivity<ActivityMainBinding>() {
+class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
 
     companion object {
         const val EXTRA_STARTUP_SPLASH = "com.github.tvbox.osc.STARTUP_SPLASH"
@@ -56,6 +66,9 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>() {
     var useCacheConfig = false
     private var exitTime = 0L
     private var showStartupSplashOnCreate = false
+    private var launchSource = AppLaunchSource.OTHER
+    private var holidayFireworksCheckedForLaunch = false
+    private val holidayCatalogRepository by lazy { HolidayCatalogRepository(applicationContext) }
     private var startupSplashVisible = false
     private var startupContentReady = false
     private var startupAnimationEnded = false
@@ -116,6 +129,10 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>() {
                 pendingStartupUiDispatch = false
                 if (showStartupSplashOnCreate) {
                     com.github.tvbox.osc.update.UpdateFloatIndicator.get(this).attach(this)
+                    if (isUserInitiatedLaunch() && !holidayFireworksCheckedForLaunch) {
+                        holidayFireworksCheckedForLaunch = true
+                        mainShellBinding?.bottomNav?.post { maybeLaunchHolidayFireworks() }
+                    }
                 }
                 val actions = pendingAfterStartupSplash.toList()
                 pendingAfterStartupSplash.clear()
@@ -131,6 +148,9 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>() {
     /** 开屏、首页首帧和首次声明结束前，启动提示都应继续等待。 */
     fun isStartupSplashVisible(): Boolean =
         startupSplashVisible || pendingStartupUiDispatch || !SystemConfig.isDisclaimerAccepted()
+
+    /** 启动专属动作统一使用这次主页创建时确定的来源，不再各自消费重启标记。 */
+    override fun isUserInitiatedLaunch(): Boolean = launchSource.allowsStartupActions()
 
     /** 开屏阶段的数据预取结果由首页首次装配消费，避免重新拉取订阅和分类。 */
     fun hasStartupHomePrefetch(): Boolean = startupHomePrefetchActive
@@ -180,8 +200,12 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // FragmentPagerAdapter 会恢复旧 Fragment；重建时不能把回调挂到新建的 fragments[0]。
+        val fromStartupPage = intent.getBooleanExtra(EXTRA_STARTUP_SPLASH, false)
+        launchSource = AppLaunchSource.resolve(
+            fromStartupPage, savedInstanceState != null, SystemConfig.consumeInternalRestart()
+        )
         showStartupSplashOnCreate = savedInstanceState == null &&
-            intent.getBooleanExtra(EXTRA_STARTUP_SPLASH, false)
+            fromStartupPage
         if (showStartupSplashOnCreate) {
             window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
         }
@@ -189,6 +213,8 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>() {
     }
 
     override fun init() {
+
+        LogStore.log(Category.SYSTEM, "应用启动来源: $launchSource")
 
         // 主题真重启会清空 Intent 标志；只在下一进程的一次主页创建中复用磁盘配置缓存。
         if (SystemConfig.consumeThemeRestartUseCache()) {
@@ -199,6 +225,9 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>() {
         intent.removeExtra(EXTRA_STARTUP_SPLASH)
         if (showStartupSplashOnCreate) {
             showStartupSplash()
+            HeavyTaskUtil.executeBigTask {
+                HolidayFireworksLaunchCoordinator.clearPreviousDay()
+            }
         } else {
             inflateMainShell()
             attachHomePager()
@@ -209,6 +238,79 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>() {
             pendingStartupUiDispatch = true
             mBinding.root.post(dispatchAfterStartupSplash)
         }
+    }
+
+    private fun maybeLaunchHolidayFireworks() {
+        if (!isUserInitiatedLaunch() || !showStartupSplashOnCreate ||
+            pendingStartupUiDispatch || !startupUiForeground ||
+            startupSplashVisible || startupFirstHomeFramePending || isFinishing || isDestroyed ||
+            mainShellBinding?.bottomNav?.isShown != true) {
+            LogStore.log(Category.SYSTEM, "节日烟花: 启动界面未就绪，本次不检查发射")
+            return
+        }
+        HeavyTaskUtil.executeBigTask {
+            val claim = try {
+                val catalog: HolidayCatalog? = holidayCatalogRepository.getOrLoad()
+                HolidayFireworksLaunchCoordinator.claim(catalog)
+            } catch (error: Throwable) {
+                LogStore.fail(Category.SYSTEM, "节日烟花: 检查启动资格失败，原因=${error.javaClass.simpleName}")
+                return@executeBigTask
+            } ?: return@executeBigTask
+            runOnUiThread {
+                val nav = mainShellBinding?.bottomNav
+                val launchClock = HolidayCalendarClock.now()
+                val sameDay = HolidayFireworksLaunchCoordinator.isClaimForDate(claim, launchClock)
+                val groupCount = if (startupUiForeground && !startupSplashVisible &&
+                    !startupFirstHomeFramePending && !isFinishing && !isDestroyed &&
+                    sameDay && nav != null && nav.isShown) try {
+                    launchHolidayGroupsFromNav(nav)
+                } catch (error: Throwable) {
+                    LogStore.fail(Category.SYSTEM, "节日烟花: 发射失败，原因=${error.javaClass.simpleName}")
+                    0
+                } else 0
+                val started = groupCount > 0
+                if (!started) {
+                    LogStore.log(Category.SYSTEM, if (sameDay)
+                        "节日烟花: 底栏或动画不可用，本次未发射" else
+                        "节日烟花: 检查后跨日，本次未发射")
+                }
+                val fireAtMillis = if (started) launchClock.timeInMillis else 0L
+                HeavyTaskUtil.executeBigTask {
+                    try {
+                        HolidayFireworksLaunchCoordinator.finish(claim, started, fireAtMillis, groupCount)
+                    } catch (error: Throwable) {
+                        LogStore.fail(Category.SYSTEM, "节日烟花: 确认发射记录失败，原因=${error.javaClass.simpleName}")
+                    }
+                }
+            }
+        }
+    }
+
+    private fun launchHolidayGroupsFromNav(nav: View): Int {
+        val home = nav.findViewById<View>(R.id.navigation_home)
+        val mine = nav.findViewById<View>(R.id.navigation_dashboard)
+        if (home == null || mine == null) return 0
+        val iconId = com.google.android.material.R.id.navigation_bar_item_icon_view
+        val homeIcon = home.findViewById<View>(iconId)?.takeIf { it.width > 0 && it.height > 0 } ?: home
+        val myIcon = mine.findViewById<View>(iconId)?.takeIf { it.width > 0 && it.height > 0 } ?: mine
+        val navPosition = IntArray(2)
+        val homePosition = IntArray(2)
+        val myPosition = IntArray(2)
+        nav.getLocationOnScreen(navPosition)
+        homeIcon.getLocationOnScreen(homePosition)
+        myIcon.getLocationOnScreen(myPosition)
+        val homeX = homePosition[0] - navPosition[0] + homeIcon.width / 2f
+        val myX = myPosition[0] - navPosition[0] + myIcon.width / 2f
+        val iconY = (homePosition[1] + homeIcon.height / 2f +
+            myPosition[1] + myIcon.height / 2f) / 2f - navPosition[1]
+        val middleX = (homeX + myX) / 2f
+        val widthDp = nav.width / nav.resources.displayMetrics.density
+        val launchXs = if (widthDp >= 600f) {
+            floatArrayOf(homeX / 2f, homeX, middleX, myX, (myX + nav.width) / 2f)
+        } else {
+            floatArrayOf(homeX, middleX, myX)
+        }
+        return if (FireworksView.celebrateGroups(nav, launchXs, iconY)) launchXs.size else 0
     }
 
     private fun inflateMainShell(): MainHomeShellBinding {
@@ -421,7 +523,18 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>() {
         // 仅对素材解析加兜底；正常播放不被超时截断。
         overlay.postDelayed(animationLoadTimeout, ANIMATION_LOAD_TIMEOUT_MS)
         val hasBackgroundImage = SystemConfig.getPageBackgroundPath().isNotEmpty()
-        when (val content = SplashContentSelector.select(themeBackground, hasBackgroundImage)) {
+        // 不等待 JSON I/O，开屏素材立即开始；目录后台预热供节日显示与烟花准入。
+        holidayCatalogRepository.loadAsync(null)
+        val content = SplashContentSelector.select(
+            themeBackground, hasBackgroundImage,
+            holidayCatalogRepository.getCached(), HolidayCalendarClock.now()
+        )
+        startStartupSplashContent(content)
+    }
+
+    private fun startStartupSplashContent(content: SplashContent) {
+        val overlay = mBinding.startupSplashOverlay
+        when (content) {
             is SplashContent.Lottie -> {
                 overlay.setBackgroundColor(content.backgroundColor)
                 mBinding.startupSplashAnimation.apply {

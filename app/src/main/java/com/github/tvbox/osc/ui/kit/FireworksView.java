@@ -16,13 +16,14 @@ import android.view.animation.AnimationUtils;
 import java.util.Random;
 
 /**
- * 一次性烟花层:长按底栏时,<b>从手指按下的位置</b>错峰升起 3 发,各炸成一球(一簇)。
+ * 一次性烟花层:长按底栏时从按点错峰升起 3 发;启动入场时从底栏 3 或 5 个位置各升起一组。
  * <p>
  * 定位:纯装饰,不参与交互 —— 铺在窗口内容容器({@code android.R.id.content})最上层,不可点击、
  * 不可聚焦,自己不消费触摸(命中返回 false 沿子视图链回落),所以底栏点击/滑动照旧。
  * <p>
- * 用法只有 {@link #celebrate(View, float, float)} 一个入口(anchor 传被长按的条目视图,后两个参数是手指
- * 在该条目内的按点),同一窗口复用同一个实例;动画放完自己从父容器摘掉,不留常驻视图、不持有 Activity。
+ * 长按使用 {@link #celebrate(View, float, float)}(anchor 传被长按的视图,后两个参数是手指按点),
+ * 入场使用 {@link #celebrateGroups(View, float[], float)};同一窗口复用同一个实例,
+ * 动画放完自己从父容器摘掉,不留常驻视图、不持有 Activity。
  * 系统"动画时长"被关掉时不放(无障碍设置)。
  * <p>
  * 实现要点:物理量一律以 <b>dp</b> 为单位(绘制时 {@code canvas.scale(density)}),换分辨率/换密度
@@ -34,8 +35,9 @@ public class FireworksView extends View {
 
     private static final String TAG = "mbox_fireworks";
 
-    /** 粒子池大小:一簇 3 发 × (球体 ~60 + 尾迹 ~20) 的上限,池满时覆盖最旧的粒子 */
-    private static final int POOL_SIZE = 320;
+    /** 五组各 3 发可在空中重叠;池满时只覆盖最旧粒子,不覆盖仍在升空的火箭 */
+    private static final int POOL_SIZE = 2048;
+    private static final int ROCKET_CAPACITY = 48;
 
     /** 重力(dp/s²):决定升空高度与炸开后下坠的弧度 */
     private static final float GRAVITY = 1700f;
@@ -51,8 +53,8 @@ public class FireworksView extends View {
     private final Random random = new Random();
     private final float[] hsv = new float[3];       // HSVToColor 的入参,复用避免热路径分配
     private final Particle[] pool = new Particle[POOL_SIZE];
-    private final Rocket[] rockets = new Rocket[3];
-    private final Flash[] flashes = new Flash[3];
+    private final Rocket[] rockets = new Rocket[ROCKET_CAPACITY];
+    private final Flash[] flashes = new Flash[ROCKET_CAPACITY];
     private int poolCursor;
 
     private final float density;
@@ -89,14 +91,44 @@ public class FireworksView extends View {
      * @param localY 手指按点在 anchor 内的纵坐标;NaN 同上
      */
     public static void celebrate(View anchor, float localX, float localY) {
-        if (anchor == null) return;
+        FireworksView view = overlayFor(anchor);
+        if (view == null) return;
+        view.burstFrom(anchor, localX, localY);
+    }
+
+    /** 三组入场烟花的兼容入口:三个位置各做一次长按式的 3 发动作。 */
+    public static boolean celebrateTriple(View navAnchor, float leftX, float middleX,
+                                          float rightX, float localY) {
+        return celebrateGroups(navAnchor, new float[]{leftX, middleX, rightX}, localY);
+    }
+
+    /**
+     * 从底栏 3 或 5 个位置各做一次长按式的 3 发动作,总计 9 或 15 发。
+     * 第一组立即开始,之后每组比前一组随机晚 100–500ms,允许组间重叠。
+     * 坐标均相对 navAnchor;返回 true 表示全部火箭已排入同一动画层。
+     */
+    public static boolean celebrateGroups(View navAnchor, float[] localXs, float localY) {
+        if (navAnchor == null || !navAnchor.isShown()
+                || navAnchor.getWindowVisibility() != VISIBLE
+                || navAnchor.getWidth() <= 0 || navAnchor.getHeight() <= 0
+                || localXs == null || (localXs.length != 3 && localXs.length != 5)
+                || Float.isNaN(localY) || Float.isInfinite(localY)) return false;
+        for (float localX : localXs) {
+            if (Float.isNaN(localX) || Float.isInfinite(localX)) return false;
+        }
+        FireworksView view = overlayFor(navAnchor);
+        return view != null && view.burstGroupsFrom(navAnchor, localXs, localY);
+    }
+
+    private static FireworksView overlayFor(View anchor) {
+        if (anchor == null) return null;
         // 无障碍/开发者选项里把动画关掉时不放烟花
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !ValueAnimator.areAnimatorsEnabled()) return;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !ValueAnimator.areAnimatorsEnabled()) return null;
         View root = anchor.getRootView();
         // 已挂到窗口上、且能拿到页面内容容器时才有地方铺:拿不到就不放,宁可没有动画
-        if (!anchor.isAttachedToWindow() || !(root instanceof ViewGroup)) return;
+        if (!anchor.isAttachedToWindow() || !(root instanceof ViewGroup)) return null;
         ViewGroup host = ((ViewGroup) root).findViewById(android.R.id.content);
-        if (host == null) return;
+        if (host == null) return null;
         View found = host.findViewWithTag(TAG);
         FireworksView view = found instanceof FireworksView ? (FireworksView) found : null;
         if (view == null) {
@@ -105,7 +137,7 @@ public class FireworksView extends View {
             host.addView(view, new ViewGroup.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         }
-        view.burstFrom(anchor, localX, localY);
+        return view;
     }
 
     /** 发射点=手指按点(拿不到手指时取条目中心);本层铺满内容容器,故"容器坐标 = 本层坐标" */
@@ -124,21 +156,75 @@ public class FireworksView extends View {
         launch(cx, cy);
     }
 
+    private boolean burstGroupsFrom(View anchor, float[] localXs, float localY) {
+        ViewParent parent = getParent();
+        if (!(parent instanceof View)) return false;
+        View host = (View) parent;
+        int[] a = new int[2];
+        int[] h = new int[2];
+        anchor.getLocationOnScreen(a);
+        host.getLocationOnScreen(h);
+        float offsetX = (a[0] - h[0]) / density;
+        float cy = (a[1] - h[1] + localY) / density;
+        return launchGroups(localXs, offsetX, cy);
+    }
+
     /** 一簇:3 发错峰升空(左右散开、各自一个色调),每发到最高点炸开 */
     private void launch(float cx, float cy) {
-        int start = random.nextInt(HUES.length);
-        for (int i = 0; i < rockets.length; i++) {
-            Rocket r = rockets[i];
-            r.alive = true;
-            r.delay = i * 150f + random.nextInt(40);                            // 错峰(ms)
-            r.x = r.prevX = cx + (i - 1) * (26f + random.nextInt(14));          // 左右拉开一点
-            r.y = r.prevY = cy;
-            r.vx = (random.nextFloat() - 0.5f) * 40f;                           // 轻微横飘(dp/s)
-            r.vy = -(ROCKET_SPEED + random.nextInt(120));
-            r.hue = HUES[(start + i * 2) % HUES.length];                        // 同簇近似色
-            r.sparkTimer = 0f;
+        if (!hasFreeRockets(3)) return;
+        seedGroup(cx, cy, 0f, false);
+        start();
+    }
+
+    /** 预留足够槽位后一次性入队,防止重复触发时覆盖仍在空中的火箭。 */
+    private boolean launchGroups(float[] localXs, float offsetX, float cy) {
+        if (!hasFreeRockets(localXs.length * 3)) return false;
+        int[] order = new int[localXs.length];
+        for (int i = 0; i < order.length; i++) order[i] = i;
+        // 每轮独立洗牌,发射点各用一次,不改调用方传入的位置数组。
+        for (int i = order.length - 1; i > 0; i--) {
+            int j = random.nextInt(i + 1);
+            int swap = order[i];
+            order[i] = order[j];
+            order[j] = swap;
+        }
+        float groupDelayMs = 0f;
+        for (int i = 0; i < order.length; i++) {
+            if (i > 0) groupDelayMs += 100f + random.nextInt(401);
+            seedGroup(offsetX + localXs[order[i]] / density, cy, groupDelayMs, true);
         }
         start();
+        return true;
+    }
+
+    private boolean hasFreeRockets(int count) {
+        for (Rocket rocket : rockets) {
+            if (!rocket.alive && --count == 0) return true;
+        }
+        return false;
+    }
+
+    private Rocket freeRocket() {
+        for (Rocket rocket : rockets) {
+            if (!rocket.alive) return rocket;
+        }
+        throw new IllegalStateException("Firework rocket reservation lost");
+    }
+
+    private void seedGroup(float cx, float cy, float groupDelayMs, boolean immediateFirst) {
+        int hueStart = random.nextInt(HUES.length);
+        for (int i = 0; i < 3; i++) {
+            Rocket r = freeRocket();
+            r.alive = true;
+            r.delay = groupDelayMs + i * 150f
+                    + (i == 0 && immediateFirst ? 0 : random.nextInt(40));     // 组内错峰(ms)
+            r.x = r.prevX = cx + (i - 1) * (26f + random.nextInt(14));         // 左右拉开一点
+            r.y = r.prevY = cy;
+            r.vx = (random.nextFloat() - 0.5f) * 40f;                          // 轻微横飘(dp/s)
+            r.vy = -(ROCKET_SPEED + random.nextInt(120));
+            r.hue = HUES[(hueStart + i * 2) % HUES.length];                     // 同簇近似色
+            r.sparkTimer = 0f;
+        }
     }
 
     private void start() {
