@@ -120,6 +120,7 @@ public abstract class BaseController extends BaseVideoController implements Gest
     private boolean mSeeking;
     private boolean mPausedBeforeSeeking;
     private boolean mSuppressPlayFeedback;
+    private boolean mPictureInPicture;
     private int mReservedProgressTimeChars = -1;
     private static final long PLAY_FEEDBACK_DURATION_MS = 2500L;
     private final Runnable mHidePlayFeedback = () -> {
@@ -358,8 +359,23 @@ public abstract class BaseController extends BaseVideoController implements Gest
         if (mCenterPlaybackStatus != null) mCenterPlaybackStatus.setVisibility(GONE);
     }
 
+    /** 系统画中画只保留视频画面和系统播放操作。 */
+    public final void setPictureInPicture(boolean active) {
+        if (mPictureInPicture == active) return;
+        mPictureInPicture = active;
+        if (active) {
+            hideCenterPlaybackStatus();
+        } else if (mCurPlayState == VideoView.STATE_PAUSED && !mSeeking) {
+            showCenterPlaybackStatus(false);
+        }
+    }
+
     private void showCenterPlaybackStatus(boolean playingFeedback) {
         if (mCenterPlaybackStatus == null || mCenterPlaybackIcon == null) return;
+        if (mPictureInPicture) {
+            hideCenterPlaybackStatus();
+            return;
+        }
         mHandler.removeCallbacks(mHidePlayFeedback);
         mCenterPlaybackIcon.setImageResource(playingFeedback ? R.drawable.ic_pause : R.drawable.ic_play);
         mCenterPlaybackStatus.setContentDescription(playingFeedback ? "暂停播放" : "继续播放");

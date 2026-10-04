@@ -1,5 +1,9 @@
 package com.github.tvbox.osc.util;
 
+import java.net.URI;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
 /**
  * m3u8 清单净化(纯逻辑,无 UI/播放器依赖;下沉到 :common 后**播放与下载共用同一份实现**)。
  *
@@ -18,6 +22,7 @@ package com.github.tvbox.osc.util;
  * —— 播放与下载的这一步口径必须一致,否则又会出现两边清单不一样。
  */
 public final class M3u8Purifier {
+    private static final Pattern URI_ATTRIBUTE = Pattern.compile("URI=\"([^\"]*)\"");
 
     private M3u8Purifier() {
     }
@@ -29,6 +34,49 @@ public final class M3u8Purifier {
         int i = 0;
         while (i < s.length() && Character.isWhitespace(s.charAt(i))) i++;
         return i == 0 ? s : s.substring(i);
+    }
+
+    /**
+     * Strip a BOM without applying ad filtering, then resolve every playlist URI against its origin.
+     * The local loopback endpoint cannot safely serve relative URIs because they would resolve locally.
+     * Returns null for malformed URIs so callers can fall back to the origin.
+     */
+    public static String normalizeForLocalPlayback(String playlistUrl, String playlistText) {
+        String content = stripBom(playlistText);
+        if (!content.startsWith("#EXTM3U")) return null;
+        final URI base;
+        try {
+            base = URI.create(playlistUrl);
+            if (!base.isAbsolute()) return null;
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+        String newline = content.contains("\r\n") ? "\r\n" : "\n";
+        String[] lines = content.split("\\r?\\n", -1);
+        StringBuilder result = new StringBuilder(content.length() + 128);
+        try {
+            for (int i = 0; i < lines.length; i++) {
+                if (i > 0) result.append(newline);
+                String line = lines[i];
+                if (line.startsWith("#EXT-X-")) {
+                    Matcher matcher = URI_ATTRIBUTE.matcher(line);
+                    StringBuffer replacement = new StringBuffer();
+                    while (matcher.find()) {
+                        String absolute = base.resolve(URI.create(matcher.group(1))).toString();
+                        matcher.appendReplacement(replacement, Matcher.quoteReplacement("URI=\"" + absolute + "\""));
+                    }
+                    matcher.appendTail(replacement);
+                    result.append(replacement);
+                } else if (!line.trim().isEmpty() && !line.trim().startsWith("#")) {
+                    result.append(base.resolve(URI.create(line.trim())));
+                } else {
+                    result.append(line);
+                }
+            }
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+        return result.toString();
     }
 
     /**

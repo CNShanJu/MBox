@@ -1285,12 +1285,19 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode) {
         if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O) return;
         super.onPictureInPictureModeChanged(isInPictureInPictureMode);
+        if (playFragment != null && playFragment.getController() != null) {
+            playFragment.getController().setPictureInPicture(isInPictureInPictureMode);
+        }
         if (pipHelper != null) pipHelper.onPictureInPictureModeChanged(isInPictureInPictureMode);
     }
 
     @Override
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O
+                && playFragment != null && playFragment.getController() != null) {
+            playFragment.getController().setPictureInPicture(isInPictureInPictureMode());
+        }
         // 兜底:本设备上点X关闭不触发 onPictureInPictureModeChanged(false),只触发配置变化,
         // 由 PipHelper 统一延迟判断"放大/点X关闭"
         pipHelper.onConfigurationChanged();

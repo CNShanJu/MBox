@@ -531,7 +531,8 @@ public class PlayFragment extends BaseLazyFragment {
         final long generation = mPlaybackGeneration.incrementAndGet();
         mResolvedPlayback = null;
         final HashMap<String, String> requestHeaders = headers == null ? null : new HashMap<>(headers);
-        if (!PlayConfig.isVideoPurify()) {
+        final boolean purifyEnabled = PlayConfig.isVideoPurify();
+        if (!purifyEnabled && autoRetryCount == 0) {
             logManifestProbe("入口", "净化关闭，直接播放", null, null);
             startPlayUrl(url, requestHeaders, generation, url);
             return;
@@ -555,6 +556,7 @@ public class PlayFragment extends BaseLazyFragment {
             @Override
             public void onSuccess(String content) {
                 if (!isCurrentPlayback(generation)) return;
+                boolean hadBom = content != null && content.startsWith("\uFEFF");
                 // 先剥 BOM:带 BOM 的清单原来会被下面的 startsWith 判否 → 静默放弃广告过滤
                 content = com.github.tvbox.osc.util.M3u8Purifier.stripBom(content);
                 if (!content.startsWith("#EXTM3U")) {
@@ -563,6 +565,23 @@ public class PlayFragment extends BaseLazyFragment {
                     return;
                 }
                 PlaylistShape firstShape = PlaylistShape.inspect(content);
+                if (com.github.tvbox.osc.util.player.HlsPlaybackPolicy.isRefreshingMedia(content)) {
+                    // A static /purify.m3u8 response would freeze the live window after its first segments.
+                    logManifestProbe("首级", "动态媒体清单，播放原地址", firstShape, null);
+                    startPlayUrl(url, requestHeaders, generation, url);
+                    return;
+                }
+                if (!purifyEnabled) {
+                    String localManifest = hadBom ? com.github.tvbox.osc.util.M3u8Purifier
+                            .normalizeForLocalPlayback(url, content) : null;
+                    if (localManifest != null) {
+                        RemoteServer.m3u8Content = localManifest;
+                        startPlayUrl(purifyUrl(), requestHeaders, generation, url);
+                    } else {
+                        startPlayUrl(url, requestHeaders, generation, url);
+                    }
+                    return;
+                }
 
                 String[] lines = null;
                 if (content.contains("\r\n"))
@@ -606,10 +625,27 @@ public class PlayFragment extends BaseLazyFragment {
                     }
                 }
                 if ("".equals(forwardurl)) {
+                    if (com.github.tvbox.osc.util.player.HlsPlaybackPolicy.isMaster(content)) {
+                        // Multiple variants must remain with the origin so the player can choose and refresh them.
+                        logManifestProbe("首级", "多码率主清单，播放原地址", firstShape, null);
+                        String localManifest = hadBom ? com.github.tvbox.osc.util.M3u8Purifier
+                                .normalizeForLocalPlayback(url, content) : null;
+                        if (localManifest != null) {
+                            RemoteServer.m3u8Content = localManifest;
+                            startPlayUrl(purifyUrl(), requestHeaders, generation, url);
+                        } else {
+                            startPlayUrl(url, requestHeaders, generation, url);
+                        }
+                        return;
+                    }
                     int ilast = url.lastIndexOf('/');
 
                     String purified = com.github.tvbox.osc.util.M3u8Purifier
                             .removeMinorityUrl(url.substring(0, ilast + 1), content);
+                    if (purified == null && hadBom) {
+                        purified = com.github.tvbox.osc.util.M3u8Purifier
+                                .normalizeForLocalPlayback(url, content);
+                    }
                     RemoteServer.m3u8Content = purified;
                     logManifestProbe("首级", "直接处理", firstShape, PlaylistShape.inspect(purified));
                     if (RemoteServer.m3u8Content == null)
@@ -626,11 +662,22 @@ public class PlayFragment extends BaseLazyFragment {
                     @Override
                     public void onSuccess(String content) {
                         if (!isCurrentPlayback(generation)) return;
+                        boolean hadBom = content != null && content.startsWith("\uFEFF");
                         content = com.github.tvbox.osc.util.M3u8Purifier.stripBom(content);
                         PlaylistShape lowerShape = PlaylistShape.inspect(content);
+                        if (com.github.tvbox.osc.util.player.HlsPlaybackPolicy.isRefreshingMedia(content)
+                                || com.github.tvbox.osc.util.player.HlsPlaybackPolicy.isMaster(content)) {
+                            logManifestProbe("下级", "动态或主清单，播放原地址", lowerShape, null);
+                            startPlayUrl(finalforwardurl, requestHeaders, generation, url);
+                            return;
+                        }
                         int ilast = finalforwardurl.lastIndexOf('/');
                         String purified = com.github.tvbox.osc.util.M3u8Purifier
                                 .removeMinorityUrl(finalforwardurl.substring(0, ilast + 1), content);
+                        if (purified == null && hadBom) {
+                            purified = com.github.tvbox.osc.util.M3u8Purifier
+                                    .normalizeForLocalPlayback(finalforwardurl, content);
+                        }
                         RemoteServer.m3u8Content = purified;
                         logManifestProbe("下级", lowerShape == null ? "非 HLS 清单，直接播放" : "直接处理",
                                 lowerShape, PlaylistShape.inspect(purified));
@@ -752,9 +799,6 @@ public class PlayFragment extends BaseLazyFragment {
 
     void startPlayUrl(String url, HashMap<String, String> headers, long generation, String sourceUrl) {
         if (!isCurrentPlayback(generation)) return;
-        if (autoRetryCount > 0 && url.contains(".m3u8")) {
-            url = "http://home.jundie.top:666/unBom.php?m3u8=" + url;// 尝试去bom头再次播放
-        }
         String finalUrl = url;
         HashMap<String, String> playbackHeaders = headers == null ? null : new HashMap<>(headers);
         if (mActivity == null || !isAdded())
@@ -1128,6 +1172,7 @@ public class PlayFragment extends BaseLazyFragment {
     }
 
     private int autoRetryCount = 0;
+    private String autoRetryEpisodeKey;
 
     boolean autoRetry() {
         if (mParseEngine != null && mParseEngine.hasFoundVideo()) {
@@ -1180,6 +1225,10 @@ public class PlayFragment extends BaseLazyFragment {
                 .of(mVodInfo, vs);
         // 播放请求上下文收敛:键单一来源 PlayRequest;playResult 回调不再经 proKey/subtKey 回写
         progressKey = playRequest.progressKey();
+        if (!TextUtils.equals(autoRetryEpisodeKey, progressKey)) {
+            autoRetryEpisodeKey = progressKey;
+            autoRetryCount = 0;
+        }
         subtitleCacheKey = playRequest.subtitleCacheKey();
         mRequestedPlayUrl = playRequest.url();
         // SourceViewModel 原样回传 proKey；加入代数后，同一集重试的旧响应也会被过滤。

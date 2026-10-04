@@ -476,12 +476,16 @@ public class LocalPlayActivity extends BaseVbActivity<ActivityLocalPlayBinding> 
     public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode) {
         if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O) return;
         super.onPictureInPictureModeChanged(isInPictureInPictureMode);
+        if (mController != null) mController.setPictureInPicture(isInPictureInPictureMode);
         if (pipHelper != null) pipHelper.onPictureInPictureModeChanged(isInPictureInPictureMode);
     }
 
     @Override
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O && mController != null) {
+            mController.setPictureInPicture(isInPictureInPictureMode());
+        }
         // 兜底:部分设备点X关闭不触发 onPictureInPictureModeChanged(false),由 PipHelper 延迟判断
         if (pipHelper != null) pipHelper.onConfigurationChanged();
         mBinding.getRoot().post(this::restoreFullscreenBars);
