@@ -13,11 +13,13 @@ import androidx.core.content.FileProvider;
 import com.github.tvbox.osc.di.AppCompositionRoot;
 import com.github.tvbox.osc.util.HeavyTaskUtil;
 import com.github.tvbox.osc.util.LOG;
+import com.github.tvbox.osc.util.OkGoHelper;
 
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -117,6 +119,7 @@ public final class UpdateManager {
             if (state == State.DOWNLOADING || state == State.PAUSED) return;
             long workerEpoch = epochs.next();
             File previousTarget = this.targetFile;
+            UpdateInfo previousInfo = this.info;
             this.appContext = context.getApplicationContext();
             this.info = info;
             this.callback = cb;
@@ -127,7 +130,10 @@ public final class UpdateManager {
             this.total = info == null ? -1 : info.apkSize;
             this.targetFile = info == null ? null : apkFile(context, info);
             this.currentDownloadUrl = null;
-            if (previousTarget == null || !previousTarget.equals(this.targetFile)) sourcePolicy.reset();
+            if (previousTarget == null || !previousTarget.equals(this.targetFile)
+                    || previousInfo == null || info == null
+                    || !Objects.equals(previousInfo.versionTag, info.versionTag)
+                    || previousInfo.apkSize != info.apkSize) sourcePolicy.reset();
             // 断点续传起点
             if (targetFile != null && targetFile.exists()) {
                 this.downloaded = targetFile.length();
@@ -181,6 +187,7 @@ public final class UpdateManager {
             errMsg = null;
             currentDownloadUrl = null;
             sourcePolicy.reset();
+            UpdatePartialSourceStore.clear(targetFile);
             notifyListeners();
         }
     }
@@ -198,7 +205,7 @@ public final class UpdateManager {
         return ok;
     }
 
-    /** 应用启动清理:后台删除已安装版本的 APK 与损坏半成品。 */
+    /** 应用启动清理:后台删除已安装版本的 APK，保留可续传的半成品。 */
     public static void cleanupOnAppStart(Context context) {
         if (context == null) return;
         Context app = context.getApplicationContext();
@@ -222,27 +229,26 @@ public final class UpdateManager {
             }
             int deleted = 0;
             for (File f : files) {
-                if (f.isDirectory()) continue;
+                if (f.isDirectory() || !f.getName().toLowerCase(java.util.Locale.ROOT).endsWith(".apk")) continue;
                 if ((state == State.DOWNLOADING || state == State.PAUSED)
                         && f.equals(targetFile)) continue;
                 try {
-                    int apkCode = readApkVersionCode(context, f.getAbsolutePath());
+                    // Debug 与正式包可并存；清理时只认当前安装包的精确包名。
+                    int apkCode = readApkVersionCode(context, f.getAbsolutePath(), false);
                     if (apkCode > 0 && apkCode == installed) {
                         if (f.delete()) {
+                            UpdatePartialSourceStore.clear(f);
                             deleted++;
                             LOG.i(TAG, "启动清理: 删除已安装版本安装包 " + f.getName() + " (vc=" + apkCode + ")");
                         }
                     } else if (apkCode < 0) {
-                        // 非 APK/损坏:半成品,删除
-                        if (f.delete()) {
-                            deleted++;
-                            LOG.i(TAG, "启动清理: 删除损坏/半成品 " + f.getName());
-                        }
+                        // 未下完的 APK 可能暂时无法解析；不能在用户重试前抹掉断点。
+                        LOG.i(TAG, "启动清理: 保留未完成或无法解析的安装包 " + f.getName());
                     } else {
                         LOG.i(TAG, "启动清理: 保留未安装版本缓存 " + f.getName() + " (vc=" + apkCode + " != " + installed + ")");
                     }
                 } catch (Throwable e) {
-                    if (f.delete()) deleted++;
+                    LOG.e(TAG, "启动清理: 无法检查安装包,保留文件 " + f.getName() + ": " + e);
                 }
             }
             LOG.i(TAG, "启动清理: 完成,删除 " + deleted + " 个,保留其余缓存");
@@ -256,7 +262,7 @@ public final class UpdateManager {
     // ── 内部 ──
 
     /** 单次候选下载结果 */
-    private enum DownloadResult { COMPLETE, FAIL, STOPPED }
+    private enum DownloadResult { COMPLETE, FAIL, RETRYABLE, STOPPED }
 
     private void startDownload(long workerEpoch) {
         final Context ctx = appContext;
@@ -267,6 +273,10 @@ public final class UpdateManager {
             errMsg = ui != null && dest == null ? "安装包文件名无效" : "更新信息不完整";
             notifyListeners(workerEpoch);
             fireError(workerEpoch);
+            return;
+        }
+        if (!UpdateDownloadService.start(ctx, workerEpoch)) {
+            onForegroundServiceStartFailed(workerEpoch);
             return;
         }
         WorkerRun worker = new WorkerRun();
@@ -285,6 +295,10 @@ public final class UpdateManager {
                         if (!epochs.isCurrent(workerEpoch)) return;
                         downloaded = dest.length();
                     }
+                }
+                if (!completes && dest.exists() && dest.length() > 0) {
+                    String savedSource = UpdatePartialSourceStore.restore(dest, ui);
+                    if (savedSource != null) sourcePolicy.restore(savedSource);
                 }
                 OkHttpClient client = completes ? null : AppCompositionRoot.network().general();
                 // 有可归属的片段时先续传其来源；失败后按原顺序回退其它候选。
@@ -305,6 +319,12 @@ public final class UpdateManager {
                             errMsg = "下载文件不是完整的 APK";
                         }
                     } else if (dr == DownloadResult.STOPPED) {
+                        break;
+                    } else if (dr == DownloadResult.RETRYABLE) {
+                        // 临时断网/中途断流仍归当前来源，留待用户联网后从原偏移续传。
+                        lastErr = downloaded > 0
+                                ? "下载暂时中断，已保留进度；稍后重试（" + errMsg + "）"
+                                : "连接暂时不可用；稍后重试（" + errMsg + "）";
                         break;
                     }
                     lastErr = errMsg; // FAIL:记录本次错误,切换下一候选
@@ -337,9 +357,9 @@ public final class UpdateManager {
                             fireError(workerEpoch);
                         }
                     } else {
-                        // 所有候选源均失败
+                        // 候选源用尽，或暂时故障使本轮停下以保留断点。
                         state = State.FAILED;
-                        errMsg = failure == null ? "下载失败" : ("下载失败: " + failure);
+                        errMsg = failure == null ? "未知错误" : failure;
                         LOG.e(TAG, "下载失败: " + errMsg);
                         notifyListeners(workerEpoch);
                         fireError(workerEpoch);
@@ -386,6 +406,7 @@ public final class UpdateManager {
                 downloaded = existingBytes;
             }
             currentDownloadUrl = url;
+            UpdatePartialSourceStore.remember(dest, ui, url);
             notifyListeners(workerEpoch);
             return true;
         }
@@ -406,6 +427,7 @@ public final class UpdateManager {
         OutputStream fos = null;
         InputStream is = null;
         okhttp3.Call call = null;
+        long responseExpectedTotal = -1;
         try {
             Request.Builder rb = new Request.Builder().url(url);
             if (startFrom > 0) {
@@ -424,22 +446,13 @@ public final class UpdateManager {
                 if (workerStopped(workerEpoch)) return DownloadResult.STOPPED;
                 boolean invalidRange = startFrom > 0 && resp.code() == 206
                         && !UpdateDownloadSourcePolicy.matchesContentRangeStart(
-                                resp.header("Content-Range"), startFrom);
+                                resp.header("Content-Range"), startFrom, ui.apkSize);
                 boolean retriedWithoutRange = resp.code() == 416 || invalidRange;
                 if (retriedWithoutRange) {
                     // 416 = Range 起点超出资源长度(服务端换了文件/不接受 Range 时常见)。
-                    // 206 的 Content-Range 缺失/错位时也不能把响应追加到旧片段。
-                    // 两种情况都先丢弃片段，再不带 Range 重试同一候选一次。
+                    // 206 的 Content-Range 缺失/错位时也不能直接追加到旧片段。
+                    // 不带 Range 再取一次完整响应，核对已有前缀后才能续写。
                     resp.close();
-                    synchronized (this) {
-                        if (workerStopped(workerEpoch)) return DownloadResult.STOPPED;
-                        if (dest.exists() && !dest.delete()) {
-                            errMsg = "无法清除旧下载片段";
-                            return DownloadResult.FAIL;
-                        }
-                        downloaded = 0;
-                        total = ui.apkSize;
-                    }
                     Request retryReq = com.github.tvbox.osc.util.NetworkGuardInterceptor
                             .markQuiet(new Request.Builder().url(url).build());
                     call = client.newCall(retryReq);
@@ -449,8 +462,8 @@ public final class UpdateManager {
                     }
                     resp = call.execute();
                     LOG.i(TAG, invalidRange
-                            ? "Content-Range 与续传起点不符,已改为不带 Range 重下"
-                            : "Range 不被接受(416),已改为不带 Range 重下");
+                            ? "Content-Range 与续传起点不符，核对完整响应后续传"
+                            : "Range 不被接受(416)，核对完整响应后续传");
                 }
                 if (workerStopped(workerEpoch)) return DownloadResult.STOPPED;
                 if (!resp.isSuccessful() || resp.body() == null) {
@@ -459,37 +472,57 @@ public final class UpdateManager {
                         if (workerStopped(workerEpoch)) return DownloadResult.STOPPED;
                         errMsg = "HTTP " + resp.code();
                     }
+                    if (UpdateDownloadFailurePolicy.keepSourceForRetry(resp.code(), startFrom)) {
+                        return DownloadResult.RETRYABLE;
+                    }
                     return DownloadResult.FAIL;
                 } else if (resp.code() == 206 && (retriedWithoutRange || startFrom <= 0)) {
                     // 无 Range 请求收到的 206 不是完整文件，不能作为新的下载起点。
                     synchronized (this) {
                         if (workerStopped(workerEpoch)) return DownloadResult.STOPPED;
-                        errMsg = "无 Range 请求收到不完整响应(HTTP 206)";
+                        errMsg = "无 Range 请求仍收到不完整响应(HTTP 206)，已保留进度";
                     }
-                    return DownloadResult.FAIL;
-                } else if (startFrom > 0 && !retriedWithoutRange && resp.code() != 206) {
-                    // 服务端忽略 Range(返回 200):重新从头写
-                    synchronized (this) {
-                        if (workerStopped(workerEpoch)) return DownloadResult.STOPPED;
-                        if (dest.exists() && !dest.delete()) {
-                            errMsg = "无法清除旧下载片段";
-                            return DownloadResult.FAIL;
-                        }
-                        downloaded = 0;
-                        total = ui.apkSize;
-                    }
+                    return startFrom > 0 ? DownloadResult.RETRYABLE : DownloadResult.FAIL;
                 }
                 long bodyLen = resp.body() == null ? 0 : resp.body().contentLength();
+                boolean fullResponse = startFrom > 0 && resp.code() == 200;
+                if (fullResponse) {
+                    // 有些镜像忽略 Range。逐字节核对整包的前缀后，只把剩余部分追加到原文件。
+                    // 网络仍需重新传输前缀，但本地进度不会倒退，也不会把不同内容拼在一起。
+                    if (ui.apkSize > 0 && bodyLen > 0 && bodyLen != ui.apkSize) {
+                        synchronized (this) {
+                            if (workerStopped(workerEpoch)) return DownloadResult.STOPPED;
+                            errMsg = "源忽略断点请求且返回大小不符，已保留进度";
+                        }
+                        return DownloadResult.RETRYABLE;
+                    }
+                    is = resp.body().byteStream();
+                    if (!UpdateDownloadSourcePolicy.consumeMatchingPrefix(dest, is, startFrom)) {
+                        synchronized (this) {
+                            if (workerStopped(workerEpoch)) return DownloadResult.STOPPED;
+                            errMsg = "源内容已变化，旧片段无法续传";
+                            sourcePolicy.reset();
+                            UpdatePartialSourceStore.clear(dest);
+                            if (dest.exists() && !dest.delete()) {
+                                errMsg += "，且无法清除旧片段";
+                                return DownloadResult.RETRYABLE;
+                            }
+                            downloaded = 0;
+                        }
+                        return DownloadResult.FAIL;
+                    }
+                }
                 synchronized (this) {
                     if (workerStopped(workerEpoch)) return DownloadResult.STOPPED;
                     if (bodyLen > 0) {
-                        total = (downloaded == 0) ? bodyLen : downloaded + bodyLen;
+                        responseExpectedTotal = fullResponse ? bodyLen : downloaded + bodyLen;
+                        total = ui.apkSize > 0 ? ui.apkSize : responseExpectedTotal;
                     } else if (total <= 0) {
                         total = -1;
                     }
                     fos = new FileOutputStream(dest, downloaded > 0);
                 }
-                is = resp.body() == null ? null : resp.body().byteStream();
+                if (is == null) is = resp.body().byteStream();
                 if (is != null) {
                     byte[] buf = new byte[8192];
                     int len;
@@ -514,17 +547,27 @@ public final class UpdateManager {
             }
 
             if (workerStopped(workerEpoch)) return DownloadResult.STOPPED;
+            if (fos != null) {
+                fos.close();
+                fos = null;
+            }
 
             // 体积校验:已知 apkSize 且下载大小不符(代理可能返回错误页/截断)→ 判本候选失败,换下一候选
             if (ui.apkSize > 0 && dest.exists() && dest.length() != ui.apkSize) {
-                // 响应已结束仍不符预期，可能是完整错误页；重试不能从它的末尾续传。
-                if (fos != null) {
-                    try { fos.close(); } catch (Throwable ignored) { }
-                    fos = null;
+                long received = dest.length();
+                if (received < ui.apkSize
+                        && (responseExpectedTotal < 0 || received < responseExpectedTotal)
+                        && UpdateArchivePolicy.isLikelyInterruptedApk(dest)) {
+                    synchronized (this) {
+                        if (workerStopped(workerEpoch)) return DownloadResult.STOPPED;
+                        errMsg = "连接提前结束，已保留下载进度";
+                    }
+                    return DownloadResult.RETRYABLE;
                 }
+                // 完整错误页或另一份 APK 不能作为该资源的断点。
                 synchronized (this) {
                     if (workerStopped(workerEpoch)) return DownloadResult.STOPPED;
-                    errMsg = "下载大小不符(" + dest.length() + " != " + ui.apkSize + ")";
+                    errMsg = "下载大小不符(" + received + " != " + ui.apkSize + ")";
                     sourcePolicy.reset();
                     if (!dest.delete()) errMsg += "，且无法清除损坏片段";
                     else downloaded = 0;
@@ -532,6 +575,14 @@ public final class UpdateManager {
                 return DownloadResult.FAIL;
             }
             return DownloadResult.COMPLETE;
+        } catch (java.io.IOException t) {
+            synchronized (this) {
+                if (workerStopped(workerEpoch)) return DownloadResult.STOPPED;
+                errMsg = t.getMessage() == null ? t.getClass().getSimpleName() : t.getMessage();
+            }
+            if (UpdateDownloadFailurePolicy.keepSourceForRetry(dest.exists() ? dest.length() : 0,
+                    OkGoHelper.hasNetwork())) return DownloadResult.RETRYABLE;
+            return DownloadResult.FAIL;
         } catch (Throwable t) {
             synchronized (this) {
                 if (workerStopped(workerEpoch)) return DownloadResult.STOPPED;
@@ -549,6 +600,21 @@ public final class UpdateManager {
 
     private boolean workerStopped(long workerEpoch) {
         return !epochs.isCurrent(workerEpoch) || cancelFlag || pausedFlag;
+    }
+
+    boolean isActiveDownload(long workerEpoch) {
+        return epochs.isCurrent(workerEpoch) && state == State.DOWNLOADING;
+    }
+
+    /** Foreground protection is required for this download; surface startup failures to the UI. */
+    synchronized void onForegroundServiceStartFailed(long workerEpoch) {
+        if (!isActiveDownload(workerEpoch)) return;
+        long failedEpoch = epochs.next();
+        cancelCurrentCall();
+        state = State.FAILED;
+        errMsg = "无法启动后台下载服务，请检查系统限制后重试；已下载的进度仍保留";
+        notifyListeners(failedEpoch);
+        fireError(failedEpoch);
     }
 
     private void cancelCurrentCall() {
@@ -662,21 +728,29 @@ public final class UpdateManager {
     private boolean isCachedComplete(Context context, File file, UpdateInfo info, long workerEpoch) {
         if (workerStopped(workerEpoch) || file == null || !file.exists() || file.length() <= 0) return false;
         if (info != null && info.apkSize > 0 && file.length() != info.apkSize) return false;
-        int archiveVersion = readApkVersionCode(context, file.getAbsolutePath());
+        if (info != null && info.apkSize <= 0
+                && UpdatePartialSourceStore.restore(file, info) != null
+                && UpdateArchivePolicy.isLikelyInterruptedApk(file)) return false;
+        int archiveVersion = readApkVersionCode(context, file.getAbsolutePath(), true);
         synchronized (this) {
             if (workerStopped(workerEpoch)) return false;
             if (UpdateArchivePolicy.acceptsVersion(info == null ? -1 : info.versionCode,
-                    archiveVersion)) return true;
+                    archiveVersion)) {
+                UpdatePartialSourceStore.clear(file);
+                return true;
+            }
             LOG.i(TAG, "缓存 APK 不完整、损坏或版本不符,删除后重新下载: " + file.getName());
             if (file.exists() && !file.delete()) throw new IllegalStateException("无法清除损坏的 APK 缓存");
             sourcePolicy.reset();
+            UpdatePartialSourceStore.clear(file);
             downloaded = 0;
             return false;
         }
     }
 
     /** 读取 APK 包 versionCode;非 APK/损坏返回 -1 */
-    private static int readApkVersionCode(Context context, String path) {
+    private static int readApkVersionCode(Context context, String path,
+                                          boolean allowReleaseFromDebug) {
         try {
             PackageManager pm = context.getPackageManager();
             android.content.pm.PackageInfo pi;
@@ -685,7 +759,10 @@ public final class UpdateManager {
             } else {
                 pi = pm.getPackageArchiveInfo(path, 0);
             }
-            return pi == null || !context.getPackageName().equals(pi.packageName)
+            boolean samePackage = pi != null && context.getPackageName().equals(pi.packageName);
+            boolean updatePackage = allowReleaseFromDebug && pi != null
+                    && UpdateArchivePolicy.acceptsPackageName(context.getPackageName(), pi.packageName);
+            return !samePackage && !updatePackage
                     ? -1 : pi.versionCode;
         } catch (Throwable t) {
             return -1;

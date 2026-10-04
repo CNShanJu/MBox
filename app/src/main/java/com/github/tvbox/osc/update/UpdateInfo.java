@@ -24,7 +24,7 @@ public final class UpdateInfo {
     /** 主 APK 下载地址(候选列表 {@link #downloadUrls} 的第一个;向后兼容) */
     public final String downloadUrl;
 
-    /** APK 下载候选地址列表(依序尝试:代理优先,直连兜底;下载失败自动切换到下一个) */
+    /** APK 下载候选地址列表(镜像、代理、直连；仅当前来源确实失效时切换) */
     public final List<String> downloadUrls;
 
     /** APK 文件名(用于本地落盘与展示;可为空) */

@@ -4,11 +4,39 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.assertEquals;
 
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 
+import java.io.ByteArrayInputStream;
+import java.io.EOFException;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.util.Arrays;
 
 public class UpdateDownloadSourcePolicyTest {
+    @Rule public TemporaryFolder temp = new TemporaryFolder();
+
+    @Test
+    public void rangeIgnoringSourceReusesOnlyAnIdenticalSavedPrefix() throws Exception {
+        File partial = temp.newFile("partial.apk");
+        try (FileOutputStream output = new FileOutputStream(partial)) {
+            output.write(new byte[]{1, 2, 3, 4});
+        }
+        ByteArrayInputStream matching = new ByteArrayInputStream(new byte[]{1, 2, 3, 4, 5, 6});
+        assertTrue(UpdateDownloadSourcePolicy.consumeMatchingPrefix(partial, matching, 4));
+        assertEquals(5, matching.read());
+        assertFalse(UpdateDownloadSourcePolicy.consumeMatchingPrefix(partial,
+                new ByteArrayInputStream(new byte[]{1, 2, 9, 4, 5}), 4));
+        try {
+            UpdateDownloadSourcePolicy.consumeMatchingPrefix(partial,
+                    new ByteArrayInputStream(new byte[]{1, 2}), 4);
+            org.junit.Assert.fail("truncated response must keep the saved partial");
+        } catch (EOFException expected) {
+            // The caller will retry the same source without deleting its bytes.
+        }
+    }
+
     @Test
     public void sameCandidateCanResumeButFallbackMustDiscardItsBytes() {
         UpdateDownloadSourcePolicy policy = new UpdateDownloadSourcePolicy();
@@ -59,5 +87,11 @@ public class UpdateDownloadSourcePolicyTest {
         assertFalse(UpdateDownloadSourcePolicy.matchesContentRangeStart("bytes 1024-999/4096", 1024));
         assertFalse(UpdateDownloadSourcePolicy.matchesContentRangeStart("bytes 1024-2047/2047", 1024));
         assertFalse(UpdateDownloadSourcePolicy.matchesContentRangeStart("bytes 1024-2047/4096", 0));
+        assertTrue(UpdateDownloadSourcePolicy.matchesContentRangeStart(
+                "bytes 1024-2047/4096", 1024, 4096));
+        assertFalse(UpdateDownloadSourcePolicy.matchesContentRangeStart(
+                "bytes 1024-2047/4096", 1024, 8192));
+        assertFalse(UpdateDownloadSourcePolicy.matchesContentRangeStart(
+                "bytes 1024-2047/*", 1024, 4096));
     }
 }
