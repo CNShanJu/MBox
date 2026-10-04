@@ -4,7 +4,7 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:paddingTop="20dp"
-    android:paddingBottom="24dp"
+    android:paddingBottom="20dp"
     android:paddingHorizontal="20dp">
 
     <!-- 行1: 标题 + 控件(关闭) -->
@@ -41,7 +41,7 @@
         android:layout_height="wrap_content"
         android:clipToPadding="false"
         android:paddingTop="8dp"
-        android:paddingBottom="4dp"
+        android:paddingBottom="8dp"
         android:overScrollMode="always"
         app:layout_constrainedHeight="true"
         app:layout_constraintHeight_max="@dimen/dp_480"

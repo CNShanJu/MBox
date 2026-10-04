@@ -8,7 +8,7 @@
     android:orientation="vertical"
     android:background="@color/bg_float"
     android:paddingTop="16dp"
-    android:paddingBottom="12dp">
+    android:paddingBottom="16dp">
 
     <!-- box1: 标题 + 已选计数 -->
     <LinearLayout

@@ -6,7 +6,7 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:paddingTop="8dp"
+    android:paddingTop="12dp"
     android:paddingBottom="12dp">
 
     <!-- 拖拽热区(手势条):内含细横条视觉,整块可按住上下拖动调整弹窗高度 -->

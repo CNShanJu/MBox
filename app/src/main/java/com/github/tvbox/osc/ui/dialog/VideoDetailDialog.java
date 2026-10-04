@@ -149,14 +149,16 @@ public class VideoDetailDialog extends SheetResizableBottomPopup {
             descFullH = Math.max(lineH, lineCount * lineH);
             desc5H = Math.min(descFullH, DESC_MIN_LINES * lineH);
 
-            // 高度口径(收起/展开两态共用):抽屉顶 → 简介区顶(固定头) + ScrollView 上下内边距
-            // + 文字 + 内容容器的底部内边距。
-            // 以前漏了 ScrollView 的 8+8dp:算出来的高度比实际需要矮 16dp,收起态那 5 行就装不下
+            // 高度口径(收起/展开两态共用):抽屉顶 → 简介区顶(含顶部间距) + ScrollView 上下内边距
+            // + 文字 + ScrollView 底部间距及内容容器底距(从布局读取,避免调整留白后计算仍用旧值)。
+            // 以前漏了 ScrollView 的上下留白:算出来的高度比实际需要矮,收起态那 5 行就装不下
             // ——底部被截、还能滑(ScrollView 的 setEnabled(false) 其实挡不住触摸滚动,
             //  "收起态不可滚动"只能靠高度算对、内容正好装下来保证)
             headerToDescH = mScroll.getTop();
             int scrollPad = mScroll.getPaddingTop() + mScroll.getPaddingBottom();
-            int bottomPad = Math.round(18 * density);
+            View descriptionContent = (View) mTvDes.getParent();
+            int bottomPad = ((android.view.ViewGroup.MarginLayoutParams) mScroll.getLayoutParams()).bottomMargin
+                    + descriptionContent.getPaddingBottom();
             int expandedPx = Math.round(ScreenUtils.getScreenHeight()
                     * DialogHeightPolicy.SHEET_RATIO_EXPANDED);
             int foldRowH = Math.round(24 * density);

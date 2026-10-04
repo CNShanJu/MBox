@@ -9,7 +9,7 @@
     android:background="@color/bg_float"
     android:orientation="vertical"
     android:paddingTop="20dp"
-    android:paddingBottom="10dp"
+    android:paddingBottom="20dp"
     android:gravity="center_horizontal">
 
 

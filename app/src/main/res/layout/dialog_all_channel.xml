@@ -8,7 +8,7 @@
     android:layout_gravity="center"
     android:background="@color/bg_float"
     android:paddingTop="20dp"
-    android:paddingBottom="10dp"
+    android:paddingBottom="20dp"
     android:gravity="center_horizontal">
 
     <androidx.recyclerview.widget.RecyclerView

@@ -3,6 +3,7 @@ package com.github.tvbox.osc.ui.dialog;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.view.View;
+import android.view.ViewGroup;
 
 import androidx.annotation.NonNull;
 
@@ -144,5 +145,24 @@ public class QuickSearchDialog extends AppBottomPopupView {
             }
         });
         searchWordAdapter.setNewData(new ArrayList<>());
+        // 词条异步加载后会改变结果区的起点，必须在每次完成布局后重算可用高度。
+        ((View) mGridView.getParent()).getViewTreeObserver()
+                .addOnGlobalLayoutListener(this::fitResultsWithinPanel);
+    }
+
+    /** 矮屏上结果区让出标题、词条和底距，避免固定 400dp 列表被弹窗高度上限截断。 */
+    private void fitResultsWithinPanel() {
+        if (mGridView == null || mGridView.getTop() <= 0) return;
+        View content = (View) mGridView.getParent();
+        int maxHeight = getMaxHeight();
+        if (content == null || maxHeight <= 0) return;
+        int available = maxHeight - mGridView.getTop() - content.getPaddingBottom();
+        int targetHeight = Math.min(getResources().getDimensionPixelSize(R.dimen.dp_400),
+                Math.max(1, available));
+        ViewGroup.LayoutParams params = mGridView.getLayoutParams();
+        if (params.height != targetHeight) {
+            params.height = targetHeight;
+            mGridView.setLayoutParams(params);
+        }
     }
 }

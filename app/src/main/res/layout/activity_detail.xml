@@ -166,6 +166,7 @@
                             android:id="@+id/tvDownload"
                             android:layout_width="wrap_content"
                             android:layout_height="@dimen/dp_40"
+                            android:background="@null"
                             android:drawableRight="@drawable/ic_download_18"
                             app:drawableTint="@color/text_foreground"
                             app:drawableIconSize="18dp"
