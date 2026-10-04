@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 收藏卡片:沿用 3:4 海报，长按多选时左上角来源徽标换成圆形勾选标记。 -->
+<com.github.tvbox.osc.ui.kit.RatioShadowLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_margin="3dp"
+    app:hl_cornerRadius="@dimen/radius_card"
+    app:hl_layoutBackground="@android:color/transparent"
+    >
+
+    <RelativeLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+
+        <ImageView
+            android:id="@+id/ivThumb"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="@drawable/placeholder_poster"
+            android:clipToOutline="true"
+            android:scaleType="centerCrop" />
+
+        <ImageView
+            android:id="@+id/iv_select"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:layout_alignParentStart="true"
+            android:layout_alignParentTop="true"
+            android:layout_margin="8dp"
+            android:src="@drawable/ic_select_ring"
+            android:visibility="gone"
+            tools:visibility="visible" />
+
+        <com.lihang.ShadowLayout
+            android:id="@+id/layout_source"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            app:hl_layoutBackground="@color/poster_badge_bg"
+            app:hl_cornerRadius_rightBottom="8dp">
+            <TextView
+                android:id="@+id/tvYear"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:maxWidth="70dp"
+                android:ellipsize="end"
+                android:padding="5dp"
+                android:singleLine="true"
+                tools:text="1970"
+                android:textColor="@color/white"
+                android:textSize="10dp" />
+        </com.lihang.ShadowLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom"
+            android:orientation="vertical"
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="6dp"
+            android:layout_alignParentBottom="true"
+            android:background="@drawable/bg_gradient_black_b2t">
+
+            <TextView
+                android:id="@+id/tvNote"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom"
+                android:ellipsize="end"
+                android:gravity="center"
+                android:singleLine="true"
+                android:textColor="@color/white"
+                tools:text="更新至10集"
+                android:textSize="12sp"
+                android:drawablePadding="4dp"
+                />
+
+            <TextView
+                android:id="@+id/tvName"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="marquee"
+                android:marqueeRepeatLimit="marquee_forever"
+                android:layout_marginTop="4dp"
+                android:textColor="@color/white"
+                tools:text="爱上大大"
+                android:singleLine="true"/>
+
+        </LinearLayout>
+    </RelativeLayout>
+
+</com.github.tvbox.osc.ui.kit.RatioShadowLayout>

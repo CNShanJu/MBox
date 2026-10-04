@@ -4,127 +4,189 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.os.Bundle
 import android.view.View
+import android.widget.TextView
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
 import com.chad.library.adapter.base.BaseQuickAdapter
-import com.github.tvbox.osc.R
 import com.github.tvbox.osc.base.BaseVbActivity
-import com.github.tvbox.osc.bean.VodInfo
-import com.github.tvbox.osc.cache.VodCollect
 import com.github.tvbox.osc.databinding.ActivityCollectBinding
+import com.github.tvbox.osc.log.Category
+import com.github.tvbox.osc.log.LogStore
+import com.github.tvbox.osc.repo.HistoryRepositories
+import com.github.tvbox.osc.spiderapi.SourceConfigProviders
 import com.github.tvbox.osc.ui.adapter.CollectAdapter
+import com.github.tvbox.osc.ui.dialog.ConfirmDialog
+import com.github.tvbox.osc.ui.kit.SelectActionBar
+import com.github.tvbox.osc.util.AppBubble
 import com.github.tvbox.osc.util.FastClickCheckUtil
 import com.github.tvbox.osc.util.Utils
-import com.lxj.xpopup.XPopup
-import com.owen.tvrecyclerview.widget.V7GridLayoutManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class CollectActivity : BaseVbActivity<ActivityCollectBinding>() {
 
-    private var collectAdapter  = CollectAdapter()
+    private val collectAdapter = CollectAdapter()
+    private lateinit var deleteAction: TextView
+    private var deleting = false
+
     override fun init() {
         initView()
-        initData()
     }
 
     private fun initView() {
-        // 空态使用显式视图(与历史/订阅/下载页统一),不再依赖 LoadSir
+        mBinding.titleBar.setOnBackClickListener { onBackPressed() }
         mBinding.mGridView.setHasFixedSize(true)
-        // 列数自适应:单卡宽度不超过 GRID_CARD_MAX_WIDTH_DP,屏幕越宽列数越多
-        mBinding.mGridView.setLayoutManager(GridLayoutManager(this, Utils.getAdaptiveGridSpan(Utils.GRID_CARD_MAX_WIDTH_DP)))
-        mBinding.mGridView.setAdapter(collectAdapter)
-        // 标题栏右侧"清空"图标:沿用 AppTitleBar 触区，图标使用危险色。
-        mBinding.titleBar.setRightDangerIcon(R.drawable.ic_clear, 16f) {
-            // 统一主题化确认弹窗(替代 XPopup 默认 asConfirm 库样式)
-            com.github.tvbox.osc.ui.dialog.ConfirmDialog.showDanger(this, "提示", "确定清空全部收藏?", "清空", {
+        mBinding.mGridView.layoutManager = GridLayoutManager(
+            this, Utils.getAdaptiveGridSpan(Utils.GRID_CARD_MAX_WIDTH_DP)
+        )
+        mBinding.mGridView.adapter = collectAdapter
+
+        collectAdapter.onItemLongClickListener = BaseQuickAdapter.OnItemLongClickListener { _, _, position ->
+            if (!deleting) {
+                if (!collectAdapter.isSelectMode) collectAdapter.enterSelectMode(position)
+                else collectAdapter.selectItem(position)
+                mBinding.selectActionBar.visibility = View.VISIBLE
+                updateDeleteAction()
+            }
+            true
+        }
+        collectAdapter.onItemClickListener = BaseQuickAdapter.OnItemClickListener { _, view, position ->
+            if (deleting) return@OnItemClickListener
+            if (collectAdapter.isSelectMode) {
+                collectAdapter.toggleSelection(position)
+                updateDeleteAction()
+                return@OnItemClickListener
+            }
+            FastClickCheckUtil.check(view)
+            val item = collectAdapter.data.getOrNull(position) ?: return@OnItemClickListener
+            if (SourceConfigProviders.get().getSource(item.sourceKey) != null) {
+                val bundle = Bundle()
+                bundle.putString("id", item.vodId)
+                bundle.putString("sourceKey", item.sourceKey)
+                bundle.putString("vodName", item.name)
+                jumpActivity(DetailActivity::class.java, bundle)
+            } else {
+                val intent = Intent(mContext, FastSearchActivity::class.java)
+                intent.putExtra("title", item.name)
+                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                startActivity(intent)
+            }
+        }
+
+        mBinding.selectActionBar.addAction("全选", SelectActionBar.Kind.NORMAL) { view ->
+            if (deleting) return@addAction
+            FastClickCheckUtil.check(view)
+            collectAdapter.selectAll()
+            updateDeleteAction()
+        }
+        deleteAction = mBinding.selectActionBar.addAction("删除", SelectActionBar.Kind.DANGER) { view ->
+            FastClickCheckUtil.check(view)
+            confirmDeleteSelection()
+        }
+        mBinding.selectActionBar.addAction("取消全选", SelectActionBar.Kind.NORMAL) { view ->
+            if (deleting) return@addAction
+            FastClickCheckUtil.check(view)
+            collectAdapter.cancelAllSelection()
+            updateDeleteAction()
+        }
+        updateDeleteAction()
+    }
+
+    private fun updateDeleteAction() {
+        mBinding.selectActionBar.setActionEnabled(
+            deleteAction, !deleting && collectAdapter.selectedCount() > 0
+        )
+    }
+
+    private fun confirmDeleteSelection() {
+        if (deleting) return
+        val selectedIds = collectAdapter.selectedIdSnapshot()
+        if (selectedIds.isEmpty()) return
+        ConfirmDialog.showDanger(
+            this, "提示", "确定移除所选 ${selectedIds.size} 个收藏吗？", "删除", {
+                deleting = true
+                updateDeleteAction()
                 showLoadingDialog()
                 lifecycleScope.launch(Dispatchers.IO) {
-                    com.github.tvbox.osc.repo.HistoryRepositories.collect().clear()
-                    withContext(Dispatchers.Main) {
-                        dismissLoadingDialog()
-                        collectAdapter.setNewData(ArrayList())
-                        mBinding.topTip.visibility = View.GONE
-                        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM, "清空全部收藏")
-                        updateEmptyState()
-                    }
-                }
-            })
-        }
-        collectAdapter.onItemLongClickListener =
-            BaseQuickAdapter.OnItemLongClickListener { adapter: BaseQuickAdapter<*, *>?, view: View?, position: Int ->
-                val vodInfo = collectAdapter.data[position]
-                if (vodInfo != null) {
-                    val name = vodInfo.name
-                    com.github.tvbox.osc.ui.dialog.ConfirmDialog.showDanger(this, "提示", "取消收藏《" + name + "》?", "取消收藏", {
-                        collectAdapter.remove(position)
-                        com.github.tvbox.osc.repo.HistoryRepositories.collect().deleteById(vodInfo.id)
-                        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM, "取消收藏: " + name)
-                        if (collectAdapter.data.isEmpty()) {
-                            mBinding.topTip.visibility = View.GONE
+                    try {
+                        val repository = HistoryRepositories.collect()
+                        selectedIds.forEach(repository::deleteById)
+                        val remaining = ArrayList(repository.query())
+                        withContext(Dispatchers.Main) {
+                            collectAdapter.exitSelectMode()
+                            collectAdapter.setNewData(remaining)
+                            mBinding.selectActionBar.visibility = View.GONE
+                            updateEmptyState()
+                            LogStore.log(Category.SYSTEM, "移除收藏 ${selectedIds.size} 项")
                         }
-                        updateEmptyState()
-                    })
-                }
-                true
-            }
-        collectAdapter.onItemClickListener =
-            BaseQuickAdapter.OnItemClickListener { adapter, view, position ->
-                FastClickCheckUtil.check(view)
-                val vodInfo = collectAdapter.data[position]
-                if (vodInfo != null) {
-                    if (com.github.tvbox.osc.spiderapi.SourceConfigProviders.get().getSource(vodInfo.sourceKey) != null) {
-                        val bundle = Bundle()
-                        bundle.putString("id", vodInfo.vodId)
-                        bundle.putString("sourceKey", vodInfo.sourceKey)
-                        bundle.putString("vodName", vodInfo.name)
-                        jumpActivity(DetailActivity::class.java, bundle)
-                    } else {
-//                            Intent newIntent = new Intent(mContext, SearchActivity.class);
-                        val newIntent = Intent(mContext, FastSearchActivity::class.java)
-                        newIntent.putExtra("title", vodInfo.name)
-                        newIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                        startActivity(newIntent)
+                    } catch (error: Exception) {
+                        // 已成功删除的记录不能在异常后继续显示为仍被收藏。
+                        val remaining = runCatching {
+                            ArrayList(HistoryRepositories.collect().query())
+                        }.getOrNull()
+                        withContext(Dispatchers.Main) {
+                            if (remaining != null) {
+                                collectAdapter.exitSelectMode()
+                                collectAdapter.setNewData(remaining)
+                                mBinding.selectActionBar.visibility = View.GONE
+                                updateEmptyState()
+                            }
+                            AppBubble.toast("删除收藏未完成，请重试")
+                        }
+                    } finally {
+                        withContext(Dispatchers.Main) {
+                            deleting = false
+                            dismissLoadingDialog()
+                            updateDeleteAction()
+                        }
                     }
                 }
             }
+        )
     }
 
-    private fun initData() {
+    override fun onResume() {
+        super.onResume()
         lifecycleScope.launch(Dispatchers.IO) {
-            val allVodRecord = com.github.tvbox.osc.repo.HistoryRepositories.collect().query()
-            val vodInfoList: MutableList<VodCollect> = ArrayList()
-            for (vodInfo in allVodRecord) {
-                vodInfoList.add(vodInfo)
-            }
+            val items = ArrayList(HistoryRepositories.collect().query())
             withContext(Dispatchers.Main) {
-                collectAdapter.setNewData(vodInfoList)
-                if (vodInfoList.isNotEmpty()) {
-                    mBinding.topTip.visibility = View.VISIBLE
-                } else {
-                    mBinding.topTip.visibility = View.GONE
-                }
+                if (deleting || collectAdapter.isSelectMode) return@withContext
+                collectAdapter.exitSelectMode()
+                collectAdapter.setNewData(items)
+                mBinding.selectActionBar.visibility = View.GONE
                 updateEmptyState()
+                updateDeleteAction()
             }
         }
     }
 
-    /** 收藏列表空态:无收藏时展示空态占位,否则展示列表 */
     private fun updateEmptyState() {
         val empty = collectAdapter.data.isEmpty()
         mBinding.mGridView.visibility = if (empty) View.GONE else View.VISIBLE
         mBinding.llEmpty.root.visibility = if (empty) View.VISIBLE else View.GONE
+        mBinding.topTip.visibility = if (empty) View.GONE else View.VISIBLE
     }
 
-    /**
-     * 屏幕旋转 / 窗口尺寸变化(大屏横竖屏切换)时,按新宽度重算列数并刷新
-     */
+    override fun onBackPressed() {
+        if (deleting) return
+        if (collectAdapter.isSelectMode) {
+            if (collectAdapter.selectedCount() > 0) collectAdapter.cancelAllSelection()
+            else {
+                collectAdapter.exitSelectMode()
+                mBinding.selectActionBar.visibility = View.GONE
+            }
+            updateDeleteAction()
+        } else {
+            super.onBackPressed()
+        }
+    }
+
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        val lm = mBinding.mGridView.layoutManager
-        if (lm is GridLayoutManager) {
-            lm.spanCount = Utils.getAdaptiveGridSpan(Utils.GRID_CARD_MAX_WIDTH_DP)
+        val layoutManager = mBinding.mGridView.layoutManager
+        if (layoutManager is GridLayoutManager) {
+            layoutManager.spanCount = Utils.getAdaptiveGridSpan(Utils.GRID_CARD_MAX_WIDTH_DP)
         }
     }
 }
