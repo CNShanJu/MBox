@@ -72,4 +72,12 @@ public interface LiveChannelConfigApi {
 
     /** 用直播源 json(lives 数组)重建频道分组 */
     void loadLives(JsonArray livesArray);
+
+    /** 在模块共享执行器上构建频道模型，主线程整体发布后回调。 */
+    void loadLivesAsync(JsonArray livesArray, LoadCallback callback);
+
+    interface LoadCallback {
+        boolean isCurrent();
+        void onResult(boolean success);
+    }
 }

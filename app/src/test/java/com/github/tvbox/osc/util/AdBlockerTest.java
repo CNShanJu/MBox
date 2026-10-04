@@ -7,6 +7,7 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.Collections;
 
 /**
@@ -85,5 +86,20 @@ public class AdBlockerTest {
         AdBlocker.setSourceHosts(Arrays.asList("", "   "));
         assertTrue(AdBlocker.isEmpty());
         assertFalse(AdBlocker.isAd(null));
+    }
+
+    @Test
+    public void preparedSourceHostsStayInactiveUntilPublicationAndCopyInput() {
+        AdBlocker.setSourceHosts(Collections.singletonList("old.example"));
+        ArrayList<String> input = new ArrayList<>(Collections.singletonList(" NEW.Example "));
+        AdBlocker.SourceHosts prepared = AdBlocker.prepareSourceHosts(input);
+        input.clear();
+
+        assertTrue(AdBlocker.isAd("https://old.example/ad"));
+        assertFalse(AdBlocker.isAd("https://new.example/ad"));
+
+        AdBlocker.replaceSourceHosts(prepared);
+        assertFalse(AdBlocker.isAd("https://old.example/ad"));
+        assertTrue(AdBlocker.isAd("https://new.example/ad"));
     }
 }

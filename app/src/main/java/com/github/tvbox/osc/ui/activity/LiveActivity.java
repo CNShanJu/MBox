@@ -1,6 +1,5 @@
 package com.github.tvbox.osc.ui.activity;
 
-import android.content.Context;
 import android.content.res.Configuration;
 import android.net.Uri;
 import android.os.Handler;
@@ -54,6 +53,7 @@ import com.github.tvbox.osc.util.FastClickCheckUtil;
 import com.github.tvbox.osc.util.BackgroundPlaySettings;
 import com.github.tvbox.osc.util.HCallBack;
 import com.github.tvbox.osc.util.HttpClient;
+import com.github.tvbox.osc.util.HeavyTaskUtil;
 import com.github.tvbox.osc.util.LiveConfig;
 import com.github.tvbox.osc.util.live.TxtSubscribe;
 import com.google.gson.JsonArray;
@@ -79,7 +79,6 @@ import xyz.doikki.videoplayer.player.VideoView;
  * @description:
  */
 public class LiveActivity extends BaseActivity implements LiveLineSelectHost, LiveSettingHost {
-    public static Context context;
     private VideoView mVideoView;
     private TextView tvChannelInfo;
     private LinearLayout tvLeftChannelListLayout;
@@ -107,6 +106,7 @@ public class LiveActivity extends BaseActivity implements LiveLineSelectHost, Li
     public String epgStringAddress ="";
 
     private boolean isBack = false;
+    private volatile int liveLoadEpoch = 0;
     private LiveSideControlView mSideControlView;
     private LiveNormalControlView mNormalControlView;
     private BasePopupView mSettingRightDialog;
@@ -160,7 +160,6 @@ public class LiveActivity extends BaseActivity implements LiveLineSelectHost, Li
                 .hideBar(BarHide.FLAG_HIDE_NAVIGATION_BAR)
                 .init();
         applySystemBarsPadding();
-        context = this;
         epgStringAddress = LiveConfig.epgUrl();
         if(epgStringAddress == null || epgStringAddress.length()<5)
             epgStringAddress = "http://epg.51zmt.top:8000/api/diyp/";
@@ -353,6 +352,7 @@ public class LiveActivity extends BaseActivity implements LiveLineSelectHost, Li
 
     @Override
     protected void onDestroy() {
+        liveLoadEpoch++;
         mHandler.removeCallbacksAndMessages(null);
         super.onDestroy();
         if (mVideoView != null) {
@@ -691,6 +691,7 @@ public class LiveActivity extends BaseActivity implements LiveLineSelectHost, Li
      *                 <b>主直播源优先</b>:用户配的直播源能用就绝不碰订阅源的直播。
      */
     public void loadProxyLives(String url, List<LiveChannelGroup> fallback) {
+        final int requestEpoch = ++liveLoadEpoch;
         try {
             Uri parsedUrl = Uri.parse(url);
             url = new String(Base64.decode(parsedUrl.getQueryParameter("ext"), Base64.DEFAULT | Base64.URL_SAFE | Base64.NO_WRAP), "UTF-8");
@@ -703,43 +704,63 @@ public class LiveActivity extends BaseActivity implements LiveLineSelectHost, Li
 
             @Override
             public void onSuccess(String content) {
-                try {
-                    JsonArray livesArray;
-                    LinkedHashMap<String, LinkedHashMap<String, ArrayList<String>>> linkedHashMap = new LinkedHashMap<>();
-                    TxtSubscribe.parse(linkedHashMap, content);
-                    livesArray = TxtSubscribe.live2JsonArray(linkedHashMap);
+                HeavyTaskUtil.executeBigTask(() -> {
+                    if (requestEpoch != liveLoadEpoch) return;
+                    try {
+                        LinkedHashMap<String, LinkedHashMap<String, ArrayList<String>>> parsed = new LinkedHashMap<>();
+                        TxtSubscribe.parse(parsed, content);
+                        JsonArray livesArray = TxtSubscribe.live2JsonArray(parsed);
+                        if (requestEpoch != liveLoadEpoch) return;
+                        mHandler.post(() -> {
+                            if (!isLiveLoadCurrent(requestEpoch)) return;
+                            com.github.tvbox.osc.spiderapi.LiveChannelConfigProviders.get().loadLivesAsync(livesArray,
+                                    new com.github.tvbox.osc.spiderapi.LiveChannelConfigApi.LoadCallback() {
+                                        @Override
+                                        public boolean isCurrent() {
+                                            return isLiveLoadCurrent(requestEpoch);
+                                        }
 
-                    com.github.tvbox.osc.spiderapi.LiveChannelConfigProviders.get().loadLives(livesArray);
-                    List<LiveChannelGroup> list = com.github.tvbox.osc.spiderapi.LiveChannelConfigProviders.get().getChannelGroupList();
-                    if (list.isEmpty()) {
-                        useFallbackOrFail(fallback, "频道列表为空");
-                        return;
+                                        @Override
+                                        public void onResult(boolean success) {
+                                            if (!success) {
+                                                useFallbackOrFail(fallback, "直播源解析失败,请检查订阅中的直播源");
+                                                return;
+                                            }
+                                            List<LiveChannelGroup> list = com.github.tvbox.osc.spiderapi.LiveChannelConfigProviders.get().getChannelGroupList();
+                                            if (list.isEmpty()) {
+                                                useFallbackOrFail(fallback, "频道列表为空");
+                                                return;
+                                            }
+                                            liveChannelGroupList.clear();
+                                            liveChannelGroupList.addAll(list);
+                                            showSuccess();
+                                            initLiveState();
+                                        }
+                                    });
+                        });
+                    } catch (Throwable th) {
+                        mHandler.post(() -> {
+                            if (!isLiveLoadCurrent(requestEpoch)) return;
+                            com.github.tvbox.osc.log.LogStore.fail(com.github.tvbox.osc.log.Category.OTHER,
+                                    "直播: 直播源解析失败: " + th.getMessage());
+                            useFallbackOrFail(fallback, "直播源解析失败,请检查订阅中的直播源");
+                        });
                     }
-                    liveChannelGroupList.clear();
-                    liveChannelGroupList.addAll(list);
-
-                    mHandler.post(new Runnable() {
-                        @Override
-                        public void run() {
-                            LiveActivity.this.showSuccess();
-                            initLiveState();
-                        }
-                    });
-                } catch (Throwable th) {
-                    th.printStackTrace();
-                    com.github.tvbox.osc.log.LogStore.fail(com.github.tvbox.osc.log.Category.OTHER,
-                            "直播: 直播源解析失败: " + th.getMessage());
-                    useFallbackOrFail(fallback, "直播源解析失败,请检查订阅中的直播源");
-                }
+                });
             }
 
             @Override
             public void onError(Throwable e) {
+                if (!isLiveLoadCurrent(requestEpoch)) return;
                 com.github.tvbox.osc.log.LogStore.fail(com.github.tvbox.osc.log.Category.OTHER,
                         "直播: 直播源加载失败: " + (e == null ? "null" : e.getMessage()));
                 useFallbackOrFail(fallback, "直播源加载失败,请检查网络或直播源");
             }
         });
+    }
+
+    private boolean isLiveLoadCurrent(int requestEpoch) {
+        return requestEpoch == liveLoadEpoch && !isFinishing() && !isDestroyed();
     }
 
     /**

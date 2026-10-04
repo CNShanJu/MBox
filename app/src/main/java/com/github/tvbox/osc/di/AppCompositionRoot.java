@@ -95,6 +95,12 @@ public final class AppCompositionRoot {
             public void loadLives(com.google.gson.JsonArray livesArray) {
                 com.github.tvbox.osc.api.ApiConfig.get().loadLives(livesArray);
             }
+
+            @Override
+            public void loadLivesAsync(com.google.gson.JsonArray livesArray,
+                    com.github.tvbox.osc.spiderapi.LiveChannelConfigApi.LoadCallback callback) {
+                com.github.tvbox.osc.api.ApiConfig.get().loadLivesAsync(livesArray, callback);
+            }
         });
         // 源/订阅加载器契约:订阅配置/jar 加载触发,桥接 ApiConfig(回调语义一致)
         com.github.tvbox.osc.spiderapi.SourceLoaderProviders.set(new com.github.tvbox.osc.spiderapi.SourceLoaderApi() {

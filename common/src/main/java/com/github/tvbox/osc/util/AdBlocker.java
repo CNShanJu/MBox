@@ -34,8 +34,17 @@ public class AdBlocker {
     /** 应用内置广告域名(只加一次;写时复制,读线程无需加锁) */
     private static final List<String> DEFAULT_HOSTS = new CopyOnWriteArrayList<>();
 
-    /** 当前源的广告域名(整体替换,故 volatile + 不可变列表) */
-    private static volatile List<String> SOURCE_HOSTS = Collections.emptyList();
+    /** 当前源的广告域名(整体替换,故 volatile + 不可变快照) */
+    private static volatile SourceHosts SOURCE_HOSTS = new SourceHosts(Collections.emptyList());
+
+    /** 后台构建完成后可以直接发布的源域名快照。 */
+    public static final class SourceHosts {
+        private final List<String> hosts;
+
+        private SourceHosts(List<String> hosts) {
+            this.hosts = hosts;
+        }
+    }
 
     private AdBlocker() {
     }
@@ -55,28 +64,37 @@ public class AdBlocker {
      * 设置<b>当前源</b>的广告域名(整体替换,传 null/空即清空)。
      * 每次解析订阅配置后调用,保证切源后不残留上一个源的拦截名单。
      */
-    public static void setSourceHosts(Collection<String> hosts) {
+    public static SourceHosts prepareSourceHosts(Collection<String> hosts) {
         if (hosts == null || hosts.isEmpty()) {
-            SOURCE_HOSTS = Collections.emptyList();
-            return;
+            return new SourceHosts(Collections.emptyList());
         }
         Set<String> set = new LinkedHashSet<>();
         for (String host : hosts) {
             String h = normalize(host);
             if (h != null) set.add(h);
         }
-        SOURCE_HOSTS = Collections.unmodifiableList(new ArrayList<>(set));
+        return new SourceHosts(Collections.unmodifiableList(new ArrayList<>(set)));
+    }
+
+    /** O(1) publication of a previously prepared, immutable source list. */
+    public static void replaceSourceHosts(SourceHosts hosts) {
+        SOURCE_HOSTS = hosts == null ? new SourceHosts(Collections.emptyList()) : hosts;
+    }
+
+    /** Legacy entry point: prepare and publish in one call. */
+    public static void setSourceHosts(Collection<String> hosts) {
+        replaceSourceHosts(prepareSourceHosts(hosts));
     }
 
     /** 名单是否为空(默认 + 当前源) */
     public static boolean isEmpty() {
-        return DEFAULT_HOSTS.isEmpty() && SOURCE_HOSTS.isEmpty();
+        return DEFAULT_HOSTS.isEmpty() && SOURCE_HOSTS.hosts.isEmpty();
     }
 
     /** 清空全部名单(默认 + 源)。仅供测试/重置使用,业务侧请用 ensureDefaultHosts/setSourceHosts */
     public static void clear() {
         DEFAULT_HOSTS.clear();
-        SOURCE_HOSTS = Collections.emptyList();
+        SOURCE_HOSTS = new SourceHosts(Collections.emptyList());
     }
 
     /** 该地址是否命中广告域名(大小写不敏感;url/host 为空时一律不命中) */
@@ -86,7 +104,8 @@ public class AdBlocker {
         for (String host : DEFAULT_HOSTS) {
             if (lower.contains(host)) return true;
         }
-        for (String host : SOURCE_HOSTS) {
+        SourceHosts source = SOURCE_HOSTS;
+        for (String host : source.hosts) {
             if (lower.contains(host)) return true;
         }
         return false;

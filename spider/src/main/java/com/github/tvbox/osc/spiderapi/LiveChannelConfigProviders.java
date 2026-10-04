@@ -40,6 +40,11 @@ public final class LiveChannelConfigProviders {
         @Override
         public void loadLives(JsonArray livesArray) {
         }
+
+        @Override
+        public void loadLivesAsync(JsonArray livesArray, LoadCallback callback) {
+            if (callback != null) callback.onResult(false);
+        }
     };
 
     private LiveChannelConfigProviders() {

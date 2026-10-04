@@ -8,6 +8,10 @@ import java.io.StringReader;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.HashSet;
+import java.util.HashMap;
+import java.util.IdentityHashMap;
+import java.util.Map;
 
 /**
  * 直播源解析:兼容 txt(频道名,url[#url2...]/分组#genre#)与 M3U(#EXTINF 频道名 + 独立 URL 行)两种格式。
@@ -20,6 +24,7 @@ public class TxtSubscribe {
             BufferedReader reader = new BufferedReader(new StringReader(str));
             LinkedHashMap<String, ArrayList<String>> ungrouped = new LinkedHashMap<>();
             LinkedHashMap<String, ArrayList<String>> currentGroup = ungrouped;
+            IdentityHashMap<LinkedHashMap<String, ArrayList<String>>, Map<String, HashSet<String>>> seen = new IdentityHashMap<>();
             String pendingName = null; // M3U #EXTINF 之后待使用的频道名
             String line;
             while ((line = reader.readLine()) != null) {
@@ -60,7 +65,7 @@ public class TxtSubscribe {
                         for (String s : urlPart.split("#")) {
                             String url = s.trim();
                             if (isLiveUrl(url)) {
-                                addChannel(currentGroup, name, url);
+                                addChannel(currentGroup, seen, name, url);
                                 added = true;
                             }
                         }
@@ -71,7 +76,7 @@ public class TxtSubscribe {
 
                 // M3U 格式: 独立 URL 行,使用 #EXTINF 提供的频道名
                 if (isLiveUrl(t)) {
-                    addChannel(currentGroup, pendingName != null ? pendingName : "未命名", t);
+                    addChannel(currentGroup, seen, pendingName != null ? pendingName : "未命名", t);
                     pendingName = null;
                 }
             }
@@ -86,13 +91,25 @@ public class TxtSubscribe {
                 || u.startsWith("rtmp://") || u.startsWith("udp://");
     }
 
-    private static void addChannel(LinkedHashMap<String, ArrayList<String>> group, String name, String url) {
+    private static void addChannel(LinkedHashMap<String, ArrayList<String>> group,
+                                   IdentityHashMap<LinkedHashMap<String, ArrayList<String>>, Map<String, HashSet<String>>> seen,
+                                   String name, String url) {
         ArrayList<String> urls = group.get(name);
         if (urls == null) {
             urls = new ArrayList<>();
             group.put(name, urls);
         }
-        if (!urls.contains(url)) urls.add(url);
+        Map<String, HashSet<String>> groupSeen = seen.get(group);
+        if (groupSeen == null) {
+            groupSeen = new HashMap<>();
+            seen.put(group, groupSeen);
+        }
+        HashSet<String> channelSeen = groupSeen.get(name);
+        if (channelSeen == null) {
+            channelSeen = new HashSet<>();
+            groupSeen.put(name, channelSeen);
+        }
+        if (channelSeen.add(url)) urls.add(url);
     }
 
     public static JsonArray live2JsonArray(LinkedHashMap<String, LinkedHashMap<String, ArrayList<String>>> linkedHashMap) {
