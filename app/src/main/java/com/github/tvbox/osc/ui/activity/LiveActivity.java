@@ -56,6 +56,7 @@ import com.github.tvbox.osc.util.HttpClient;
 import com.github.tvbox.osc.util.HeavyTaskUtil;
 import com.github.tvbox.osc.util.LiveConfig;
 import com.github.tvbox.osc.util.live.TxtSubscribe;
+import xyz.doikki.videoplayer.player.PlaybackErrorReporter;
 import com.google.gson.JsonArray;
 import com.gyf.immersionbar.BarHide;
 import com.gyf.immersionbar.ImmersionBar;
@@ -765,13 +766,13 @@ public class LiveActivity extends BaseActivity implements LiveLineSelectHost, Li
 
     /**
      * 主直播源(设置里配置的直播源)没内容 / 加载失败时:退到<b>订阅源自带的直播</b>(只兜底一层,不再递归);
-     * 连兜底都没有才进空态。会 toast 说明"改用订阅源的直播",避免用户以为配的直播源在生效。
+     * 连兜底都没有才进空态；回退过程只记录日志。
      */
     private void useFallbackOrFail(List<LiveChannelGroup> fallback, String msg) {
         if (fallback != null && !fallback.isEmpty()) {
-            AppBubble.toast("直播源不可用,改用订阅源的直播");
             com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.OTHER,
                     "直播: 主直播源不可用, 回退订阅源直播");
+            android.util.Log.i("MBoxPlayer", "直播: 主直播源不可用, 回退订阅源直播");
             if (isProxyOnly(fallback)) {
                 loadProxyLives(fallback.get(0).getGroupName(), null);
             } else {
@@ -788,7 +789,13 @@ public class LiveActivity extends BaseActivity implements LiveLineSelectHost, Li
     /** 直播源加载失败:提示并进入空态,避免一直停留在加载中 */
     private void onLiveLoadFail(String msg) {
         try {
-            AppBubble.toast(msg);
+            String detail = "直播加载失败: " + PlaybackErrorReporter.safeDiagnosticText(msg);
+            com.github.tvbox.osc.log.LogStore.fail(com.github.tvbox.osc.log.Category.OTHER, detail);
+            android.util.Log.e("MBoxPlayer", detail);
+            String tip = "频道列表为空".equals(msg) ? "暂无频道，请更换直播源"
+                    : "直播源解析失败,请检查订阅中的直播源".equals(msg) ? "直播源不可用，请更换直播源"
+                    : "直播加载失败，请检查网络或更换直播源";
+            AppBubble.toast(tip);
             if (!isFinishing() && !isDestroyed()) {
                 showEmpty();
             }

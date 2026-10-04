@@ -543,10 +543,24 @@ public class JsSpider extends Spider {
         if (res == null) return proxyError(502, "proxy() 未返回有效结果");
         String contentType = res.getContentType();
         if (TextUtils.isEmpty(contentType)) contentType = "application/octet-stream";
-        Object[] result = new Object[3];
-        result[0] = 200;
+        Map<String, String> responseHeaders = res.getHeader();
+        String location = null;
+        for (Map.Entry<String, String> entry : responseHeaders.entrySet()) {
+            if ("location".equalsIgnoreCase(entry.getKey())) {
+                location = entry.getValue();
+                break;
+            }
+        }
+        Object[] result = new Object[TextUtils.isEmpty(location) ? 3 : 4];
+        // JS 返回的 4xx/5xx 不能伪装成 200，否则错误正文会被 Media3 当成 M3U8 解析。
+        result[0] = res.getCode();
         result[1] = contentType;
         result[2] = res.getStream();
+        if (!TextUtils.isEmpty(location)) {
+            HashMap<String, String> forwarded = new HashMap<>();
+            forwarded.put("Location", location);
+            result[3] = forwarded;
+        }
         return result;
     }
 

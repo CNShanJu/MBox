@@ -35,4 +35,5 @@ dependencies {
     implementation 'com.google.code.gson:gson:2.10.1'
     implementation project(':log') // 系统配置变更业务日志(LogStore 便捷方法)
     implementation project(':core-storage') // config 包(PrefsDataStore/SystemConfig/HawkConfig)由 core-storage 提供
+    testImplementation 'junit:junit:4.13.2'
 }

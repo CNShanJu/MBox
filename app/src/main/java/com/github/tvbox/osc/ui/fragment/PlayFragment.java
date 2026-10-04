@@ -39,9 +39,11 @@ import com.github.tvbox.osc.ui.dialog.PlayingControlRightDialog;
 import com.github.tvbox.osc.util.HCallBack;
 import com.github.tvbox.osc.util.HttpClient;
 import com.github.tvbox.osc.util.LoadingAnim;
+import com.github.tvbox.osc.util.PlaybackConnectionProbe;
 import com.github.tvbox.osc.util.PlayerHelper;
 import com.github.tvbox.osc.util.player.PlayHistoryRepository;
 import com.github.tvbox.osc.util.player.PlayParseCoordinator;
+import com.github.tvbox.osc.util.player.ProxyDirectFallback;
 import com.github.tvbox.osc.util.thunder.Jianpian;
 import com.github.tvbox.osc.spiderapi.SourceConfigProviders;
 import com.github.tvbox.osc.util.thunder.Thunder;
@@ -62,8 +64,12 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 
 import xyz.doikki.videoplayer.player.ProgressManager;
+import xyz.doikki.videoplayer.player.PlaybackFailureKind;
+import xyz.doikki.videoplayer.player.PlaybackErrorReporter;
 
 public class PlayFragment extends BaseLazyFragment {
+    private static final String PLAYBACK_FAILURE_TIP = "播放失败，请更换线路重试";
+    private static final String CONNECTION_FAILURE_TIP = "播放失败，请检查网络或更换线路";
     /** 宿主同步接口(详情预览页选集高亮/播放配置回写;屏内直调,替代历史 EventBus TYPE_REFRESH 屏内事件) */
     public interface PlaySyncHost {
         void onEpisodeSelected(int index);
@@ -72,6 +78,12 @@ public class PlayFragment extends BaseLazyFragment {
 
         /** 返回 true 表示地址已交给外部设备，本机播放器无需起播。 */
         default boolean onPlaybackResolved(String title, String url) { return false; }
+
+        /** 返回 true 表示宿主正在等待同源详情刷新，暂缓默认失败处理。 */
+        default boolean onPlaybackFailed(long generation, String episodeUrl, String error,
+                                         boolean finish, boolean autoSwitchPlayer) {
+            return false;
+        }
     }
 
     private PlaySyncHost mSyncHost;
@@ -108,8 +120,26 @@ public class PlayFragment extends BaseLazyFragment {
     /** 选集与地址解析共用代数，晚到的旧回调不能覆盖当前播放。 */
     private final AtomicLong mPlaybackGeneration = new AtomicLong();
     private volatile PlaybackSnapshot mResolvedPlayback;
+    private final Object mAddressProbeLock = new Object();
+    private AddressProbe mAddressProbe;
     private String mRequestedPlayUrl;
     private String mPlayResultToken;
+
+    /** Call 创建与换集取消可能并发；占位状态保证晚到的 Call 仍会被取消。 */
+    private static final class AddressProbe {
+        final long generation;
+        final String url;
+        final PlaybackConnectionProbe.Mode mode;
+        okhttp3.Call call;
+        boolean canceled;
+        boolean checked;
+
+        AddressProbe(long generation, String url, PlaybackConnectionProbe.Mode mode) {
+            this.generation = generation;
+            this.url = url;
+            this.mode = mode;
+        }
+    }
 
     private static final class PlaybackSnapshot {
         final long generation;
@@ -129,6 +159,10 @@ public class PlayFragment extends BaseLazyFragment {
         return generation == mPlaybackGeneration.get();
     }
 
+    public boolean isPlaybackRequestCurrent(long generation, String episodeUrl) {
+        return isCurrentPlayback(generation) && TextUtils.equals(mRequestedPlayUrl, episodeUrl);
+    }
+
     private PlaybackSnapshot currentPlaybackSnapshot() {
         PlaybackSnapshot snapshot = mResolvedPlayback;
         return snapshot != null && isCurrentPlayback(snapshot.generation) ? snapshot : null;
@@ -143,7 +177,7 @@ public class PlayFragment extends BaseLazyFragment {
      */
     private BasePopupView mPlayingControlRightDialog;
     /**
-     * 视频播放出错时,自动切换另一个播放器,这个开关避免多次切换
+     * 明确的格式/解码兼容失败时，最多自动切换一次播放器。
      */
     boolean retriedSwitchPlayer = false;
 
@@ -310,7 +344,7 @@ public class PlayFragment extends BaseLazyFragment {
             public void showSetting() {
                 // 预览控件先于影片详情创建；setData() 尚未送达时没有可修改的播放配置。
                 if (mVodInfo == null || mVodPlayerCfg == null) {
-                    AppBubble.toast("播放信息加载中，请稍后再试");
+                    AppBubble.toast("加载中，请稍后再试");
                     return;
                 }
                 // 按当前方向决定形态: 横屏右侧抽屉; 竖屏底部弹层(AppBottomPopupView 自带高度上限)
@@ -352,6 +386,10 @@ public class PlayFragment extends BaseLazyFragment {
                 new com.github.tvbox.osc.util.player.PlayParseCoordinator.Callback() {
                     @Override
                     public void onShowTip(String msg, boolean loading, boolean err) {
+                        if (err) {
+                            PlaybackErrorReporter.failure("地址解析", "失败",
+                                    PlaybackErrorReporter.source(mRequestedPlayUrl), msg);
+                        }
                         PlayFragment.this.setTip(msg, loading, err);
                     }
 
@@ -476,30 +514,80 @@ public class PlayFragment extends BaseLazyFragment {
     }
 
     void setTip(String msg, boolean loading, boolean err) {
+        setTip(msg, loading, err, false);
+    }
+
+    private void setTip(String msg, boolean loading, boolean err, boolean autoSwitchPlayer) {
         if (!isAdded())
             return;
-        // 影魔
         requireActivity().runOnUiThread(() -> {
-            mPlayLoadTip.setText(msg);
-            mPlayLoadTip.setVisibility(View.VISIBLE);
-            mPlayLoading.setVisibility(loading ? View.VISIBLE : View.GONE);
+            if (!isAdded() || mPlayLoadTip == null) return;
+            // 自动恢复尚未结束，失败文案等最后一次尝试结束后再显示。
+            if (autoSwitchPlayer && !retriedSwitchPlayer) {
+                logPlaybackProgress("格式或解码不兼容，自动切换播放器");
+                retriedSwitchPlayer = true;
+                showPlaybackLoading();
+                mController.mPlayerBtn.performClick();
+                return;
+            }
+            if (loading) {
+                logPlaybackProgress(msg);
+                showPlaybackLoading();
+                return;
+            }
+            String tip = err ? playbackErrorTip(msg) : msg;
+            mPlayLoadTip.setText(tip);
+            mPlayLoadTip.setVisibility(TextUtils.isEmpty(tip) ? View.GONE : View.VISIBLE);
+            mPlayLoading.setVisibility(View.GONE);
             mPlayLoadErr.setVisibility(err ? View.VISIBLE : View.GONE);
 
-            if ("视频播放出错".equals(msg)) {
-                if (!retriedSwitchPlayer) {
-                    AppBubble.toast("播放出错,正在尝试切换播放器");
-                    retriedSwitchPlayer = true;
-                    mController.mPlayerBtn.performClick();
-                } else {
-                    SpanUtils.with(mPlayLoadTip)
-                            .append("视频播放出错，")
-                            .append("切换播放器")
-                            .setClickSpan(ColorUtils.getColor(R.color.orange), false, view -> {
-                                mController.mPlayerBtn.performClick();
-                            }).create();
-                }
+            if (autoSwitchPlayer) {
+                SpanUtils.with(mPlayLoadTip)
+                        .append("播放失败，")
+                        .append("切换播放器")
+                        .setClickSpan(ColorUtils.getColor(R.color.orange), false, view -> {
+                            mController.mPlayerBtn.performClick();
+                        }).create();
             }
         });
+    }
+
+    /** 加载与自动恢复只显示动画，具体步骤进入日志。 */
+    private void showPlaybackLoading() {
+        if (!isAdded()) return;
+        requireActivity().runOnUiThread(() -> {
+            if (!isAdded() || mPlayLoadTip == null) return;
+            mPlayLoadTip.setText("");
+            mPlayLoadTip.setVisibility(View.GONE);
+            mPlayLoading.setVisibility(View.VISIBLE);
+            mPlayLoadErr.setVisibility(View.GONE);
+        });
+    }
+
+    private void logPlaybackProgress(String message) {
+        if (TextUtils.isEmpty(message)) return;
+        String detail = "播放过程: " + PlaybackErrorReporter.safeDiagnosticText(message);
+        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.PLAYER, detail);
+        android.util.Log.i("MBoxPlayer", detail);
+    }
+
+    private static String playbackErrorTip(String message) {
+        if (TextUtils.isEmpty(message)) return PLAYBACK_FAILURE_TIP;
+        switch (message) {
+            case "视频播放出错":
+            case "获取播放信息错误":
+            case "解析错误":
+            case "解析异常":
+            case "嗅探错误":
+            case "下载出错":
+                return PLAYBACK_FAILURE_TIP;
+            case "解析下载超时":
+                return "加载超时，请稍后重试";
+            case "拒绝的网络连接":
+                return CONNECTION_FAILURE_TIP;
+            default:
+                return message.startsWith("ErrorCode=") ? PLAYBACK_FAILURE_TIP : message;
+        }
     }
 
     void hideTip() {
@@ -509,28 +597,121 @@ public class PlayFragment extends BaseLazyFragment {
     }
 
     void errorWithRetry(String err, boolean finish) {
-        String detail = "点播失败: 源=" + sourceKey + "，内核="
-                + (mVodPlayerCfg == null ? -1 : mVodPlayerCfg.optInt("pl", -1)) + "，原因=" + err;
+        PlaybackSnapshot failedPlayback = currentPlaybackSnapshot();
+        String failedUrl = failedPlayback == null ? mRequestedPlayUrl : failedPlayback.sourceUrl;
+        PlaybackFailureKind failureKind = failedPlayback != null && "视频播放出错".equals(err)
+                && mPlaySession != null ? mPlaySession.playbackFailureKind() : PlaybackFailureKind.UNKNOWN;
+        boolean connectionFailure = failureKind == PlaybackFailureKind.SOURCE_CONNECTION;
+        boolean autoSwitchPlayer = failureKind == PlaybackFailureKind.ENGINE_COMPATIBILITY;
+        String finalError = connectionFailure ? CONNECTION_FAILURE_TIP : err;
+        String detail = "点播失败: 源=" + PlaybackErrorReporter.safeDiagnosticText(sourceKey) + "，内核="
+                + (mVodPlayerCfg == null ? -1 : mVodPlayerCfg.optInt("pl", -1))
+                + "，原因=" + PlaybackErrorReporter.safeDiagnosticText(err)
+                + "，失败类型=" + failureKind + "，地址=" + PlaybackErrorReporter.source(failedUrl);
+        if (connectionFailure) detail += "，同址重试与自动换内核=跳过";
+        if (failedPlayback != null && !TextUtils.equals(failedPlayback.url, failedUrl)) {
+            detail += "，播放请求=" + PlaybackErrorReporter.source(failedPlayback.url);
+        }
         com.github.tvbox.osc.log.LogStore.fail(com.github.tvbox.osc.log.Category.PLAYER, detail);
-        if (!autoRetry() && isAdded()) {
+        // 解析失败尚未进入内核；净化播放时内核只知道本机地址，需补上原始源地址。
+        if (failedPlayback == null || !TextUtils.equals(failedPlayback.url, failedUrl)) {
+            android.util.Log.e("MBoxPlayer", detail);
+        }
+        // 本机代理失败时，原地址可能仍可直接播放。每集只尝试一次，
+        // 并保留代理 URL 中的源请求头；直连确认为连接失败时不再重试/换内核。
+        if (retryProxyTargetDirectly(failedPlayback)) return;
+        if ((connectionFailure || !autoRetry()) && isAdded()) {
+            long failedGeneration = mPlaybackGeneration.get();
+            String failedEpisodeUrl = mRequestedPlayUrl;
             requireActivity().runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
-                    if (finish) {
-                        AppBubble.toast(err);
-                        hideTip();
-                    } else {
-                        setTip(err, false, true);
-                    }
+                    if (!isPlaybackRequestCurrent(failedGeneration, failedEpisodeUrl)) return;
+                    boolean waitingForDetail = mSyncHost != null
+                            && mSyncHost.onPlaybackFailed(failedGeneration, failedEpisodeUrl,
+                            finalError, finish, autoSwitchPlayer);
+                    if (!isPlaybackRequestCurrent(failedGeneration, failedEpisodeUrl)) return;
+                    if (waitingForDetail) setTip("播放失败，等待详情地址刷新", true, false);
+                    else showFinalPlaybackError(finalError, finish, autoSwitchPlayer);
                 }
             });
         }
     }
 
+    private boolean retryProxyTargetDirectly(PlaybackSnapshot failedPlayback) {
+        if (mProxyDirectFallbackAttempted || failedPlayback == null || !isAdded()) return false;
+        ProxyDirectFallback.Candidate candidate = ProxyDirectFallback.from(
+                failedPlayback.sourceUrl, failedPlayback.headers);
+        if (candidate == null) return false;
+        mProxyDirectFallbackAttempted = true;
+        mProxyDirectOverrideSource = failedPlayback.sourceUrl;
+        mProxyDirectOverride = candidate;
+        String detail = "本机代理播放失败，尝试直连: 地址="
+                + PlaybackErrorReporter.source(candidate.url);
+        com.github.tvbox.osc.log.LogStore.fail(com.github.tvbox.osc.log.Category.PLAYER, detail);
+        android.util.Log.e("MBoxPlayer", detail);
+        showPlaybackLoading();
+        // 直连回退走原始 HLS 清单，不再经净化探针或本机 /purify.m3u8 改写。
+        long generation = mPlaybackGeneration.incrementAndGet();
+        mResolvedPlayback = null;
+        startPlayUrl(candidate.url, candidate.headers, generation, candidate.url);
+        return true;
+    }
+
+    /** 明确的 DNS、建连或 TLS 失败在内核前拦截；地址与原因进入业务及 Logcat。 */
+    private void failBeforePlayback(long generation, String url, String sourceUrl,
+                                    String tip, String reason) {
+        if (!isCurrentPlayback(generation) || !isAdded()) return;
+        String detail = PlaybackErrorReporter.safeDiagnosticText(reason)
+                + "，后续=不启动内核、不自动换内核";
+        if (sourceUrl != null && !TextUtils.equals(url, sourceUrl)) {
+            detail += "，播放入口=" + PlaybackErrorReporter.source(sourceUrl);
+        }
+        PlaybackErrorReporter.failure("播放地址预检", "拦截", PlaybackErrorReporter.source(url),
+                detail);
+        String episodeUrl = mRequestedPlayUrl;
+        requireActivity().runOnUiThread(() -> {
+            if (!isPlaybackRequestCurrent(generation, episodeUrl)) return;
+            if (mPlaySession != null) mPlaySession.release();
+            boolean waitingForDetail = mSyncHost != null
+                    && mSyncHost.onPlaybackFailed(generation, episodeUrl, tip, false, false);
+            if (!isPlaybackRequestCurrent(generation, episodeUrl)) return;
+            if (waitingForDetail) setTip("播放地址不可用，等待详情地址刷新", true, false);
+            else showFinalPlaybackError(tip, false, false);
+        });
+    }
+
+    public void showFinalPlaybackError(String err, boolean finish, boolean autoSwitchPlayer) {
+        if (!isAdded()) return;
+        if (finish) {
+            AppBubble.toast(playbackErrorTip(err));
+            hideTip();
+        } else {
+            setTip(err, false, true, autoSwitchPlayer);
+        }
+    }
+
     void playUrl(String url, HashMap<String, String> headers) {
         final long generation = mPlaybackGeneration.incrementAndGet();
+        cancelAddressProbe();
         mResolvedPlayback = null;
+        // 同集自动重试、自动切换内核重新解析到相同坏代理时，继续使用已选定的直连地址。
+        if (mProxyDirectOverride != null && TextUtils.equals(url, mProxyDirectOverrideSource)) {
+            com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.PLAYER,
+                    "代理直连复用: 地址=" + PlaybackErrorReporter.source(mProxyDirectOverride.url));
+            startPlayUrl(mProxyDirectOverride.url, mProxyDirectOverride.headers,
+                    generation, mProxyDirectOverride.url);
+            return;
+        }
         final HashMap<String, String> requestHeaders = headers == null ? null : new HashMap<>(headers);
+        // 爬虫/地址解析已给出真实播放入口；先建连，再让后续清单处理请求此地址。
+        checkAddressConnection(url, requestHeaders, generation, url, true,
+                () -> playUrlAfterConnectionCheck(url, requestHeaders, generation));
+    }
+
+    private void playUrlAfterConnectionCheck(String url, HashMap<String, String> requestHeaders,
+                                             long generation) {
+        if (!isCurrentPlayback(generation)) return;
         final boolean purifyEnabled = PlayConfig.isVideoPurify();
         if (!purifyEnabled && autoRetryCount == 0) {
             logManifestProbe("入口", "净化关闭，直接播放", null, null);
@@ -797,7 +978,131 @@ public class PlayFragment extends BaseLazyFragment {
         });
     }
 
+    private void cancelAddressProbe() {
+        okhttp3.Call call;
+        synchronized (mAddressProbeLock) {
+            AddressProbe probe = mAddressProbe;
+            mAddressProbe = null;
+            if (probe == null) return;
+            probe.canceled = true;
+            call = probe.call;
+        }
+        if (call != null) call.cancel();
+    }
+
+    private boolean cancelAddressProbeIfCurrent(long generation) {
+        okhttp3.Call call = null;
+        synchronized (mAddressProbeLock) {
+            if (!isCurrentPlayback(generation)) return false;
+            AddressProbe probe = mAddressProbe;
+            mAddressProbe = null;
+            if (probe != null) {
+                probe.canceled = true;
+                call = probe.call;
+            }
+        }
+        if (call != null) call.cancel();
+        return true;
+    }
+
+    private boolean isCurrentAddressProbe(long generation, AddressProbe probe) {
+        synchronized (mAddressProbeLock) {
+            return isCurrentPlayback(generation) && mAddressProbe == probe && !probe.canceled;
+        }
+    }
+
     void startPlayUrl(String url, HashMap<String, String> headers, long generation, String sourceUrl) {
+        checkAddressConnection(url, headers, generation, sourceUrl, false,
+                () -> startPlayUrlUnchecked(url, headers, generation, sourceUrl));
+    }
+
+    private void checkAddressConnection(String url, HashMap<String, String> headers,
+                                        long generation, String sourceUrl, boolean beforeManifest,
+                                        Runnable onReady) {
+        if (!isCurrentPlayback(generation)) return;
+        boolean httpUrl = url != null && (url.regionMatches(true, 0, "http://", 0, 7)
+                || url.regionMatches(true, 0, "https://", 0, 8));
+        int playerType = mVodPlayerCfg == null ? PlayConfig.getPlayType()
+                : mVodPlayerCfg.optInt("pl", PlayConfig.getPlayType());
+        // 外部播放器有自己的网络链路；本机内核按各自取流路线判断连接失败。
+        if (!httpUrl || playerType >= 10) {
+            if (!cancelAddressProbeIfCurrent(generation)) return;
+            onReady.run();
+            return;
+        }
+        PlaybackConnectionProbe.Mode probeMode = beforeManifest || playerType == 2
+                ? PlaybackConnectionProbe.Mode.MEDIA3 : PlaybackConnectionProbe.Mode.IJK_NATIVE;
+        AddressProbe probe = new AddressProbe(generation, url, probeMode);
+        okhttp3.Call previousCall = null;
+        boolean alreadyChecked;
+        synchronized (mAddressProbeLock) {
+            if (!isCurrentPlayback(generation)) return;
+            AddressProbe previous = mAddressProbe;
+            alreadyChecked = previous != null && !previous.canceled && previous.checked
+                    && previous.generation == generation && previous.mode == probeMode
+                    && TextUtils.equals(previous.url, url);
+            if (!alreadyChecked) mAddressProbe = probe;
+            if (!alreadyChecked && previous != null) {
+                previous.canceled = true;
+                previousCall = previous.call;
+            }
+        }
+        if (alreadyChecked) {
+            onReady.run();
+            return;
+        }
+        if (previousCall != null) previousCall.cancel();
+        okhttp3.Call call = PlaybackConnectionProbe.probe(
+                beforeManifest ? HttpClient.getClient() : App.playbackHttpClient(), url, probeMode,
+                (result, error) -> {
+                    android.app.Activity host = getActivity();
+                    if (host == null) return;
+                    host.runOnUiThread(() -> {
+                        if (!isCurrentAddressProbe(generation, probe) || !isAdded()) return;
+                        if (result == PlaybackConnectionProbe.Result.CONNECTION_FAILED) {
+                            if (beforeManifest && playerType != 2) {
+                                // 清单请求走 OkHttp，原生内核可能有不同的 TLS/路由；
+                                // 跳过已确认会失败的清单请求，交给原生路线再判断。
+                                String detail = "清单连接失败，改由原生内核检查: 地址="
+                                        + PlaybackErrorReporter.source(url) + "，原因="
+                                        + PlaybackErrorReporter.cause(error);
+                                com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.PLAYER, detail);
+                                android.util.Log.w("MBoxPlayer", detail);
+                                startPlayUrl(url, headers, generation, sourceUrl);
+                                return;
+                            }
+                            PlaybackSnapshot failed = new PlaybackSnapshot(generation, url, sourceUrl, headers);
+                            if (retryProxyTargetDirectly(failed)) return;
+                            failBeforePlayback(generation, url, sourceUrl,
+                                    CONNECTION_FAILURE_TIP, PlaybackErrorReporter.cause(error));
+                            return;
+                        }
+                        if (result == PlaybackConnectionProbe.Result.INCONCLUSIVE && error != null) {
+                            String detail = "播放地址预检未判定，交给"
+                                    + (beforeManifest ? "清单处理" : PlayerHelper.getPlayerName(playerType))
+                                    + ": 地址=" + PlaybackErrorReporter.source(url)
+                                    + "，原因=" + PlaybackErrorReporter.cause(error);
+                            com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.PLAYER, detail);
+                            android.util.Log.w("MBoxPlayer", detail);
+                        }
+                        synchronized (mAddressProbeLock) {
+                            if (mAddressProbe != probe || probe.canceled
+                                    || !isCurrentPlayback(generation)) return;
+                            probe.checked = true;
+                        }
+                        onReady.run();
+                    });
+                });
+        boolean cancelCall;
+        synchronized (mAddressProbeLock) {
+            cancelCall = mAddressProbe != probe || probe.canceled || !isCurrentPlayback(generation);
+            if (!cancelCall) probe.call = call;
+        }
+        if (cancelCall && call != null) call.cancel();
+    }
+
+    private void startPlayUrlUnchecked(String url, HashMap<String, String> headers,
+                                       long generation, String sourceUrl) {
         if (!isCurrentPlayback(generation)) return;
         String finalUrl = url;
         HashMap<String, String> playbackHeaders = headers == null ? null : new HashMap<>(headers);
@@ -826,8 +1131,9 @@ public class PlayFragment extends BaseLazyFragment {
                         if (host == null) return;
                         callResult = PlayerHelper.runExternalPlayer(playerType, host, finalUrl, playTitle,
                                 playSubtitle, playbackHeaders, progress);
-                        setTip("调用外部播放器" + PlayerHelper.getPlayerName(playerType) + (callResult ? "成功" : "失败"),
-                                callResult, !callResult);
+                        String playerName = PlayerHelper.getPlayerName(playerType);
+                        logPlaybackProgress("调用外部播放器" + playerName + (callResult ? "成功" : "失败"));
+                        setTip((callResult ? "已打开" : "无法打开") + playerName, false, !callResult);
                         return;
                     }
                 } catch (JSONException e) {
@@ -1102,6 +1408,9 @@ public class PlayFragment extends BaseLazyFragment {
         playbackReady = false;
         pendingReadyAction = null;
         mPlaybackGeneration.incrementAndGet();
+        cancelAddressProbe();
+        HttpClient.cancel("m3u8-1");
+        HttpClient.cancel("m3u8-2");
         mResolvedPlayback = null;
         mRequestedPlayUrl = null;
         mPlayResultToken = null;
@@ -1173,14 +1482,20 @@ public class PlayFragment extends BaseLazyFragment {
 
     private int autoRetryCount = 0;
     private String autoRetryEpisodeKey;
+    private volatile boolean mProxyDirectFallbackAttempted;
+    private volatile String mProxyDirectOverrideSource;
+    private volatile ProxyDirectFallback.Candidate mProxyDirectOverride;
 
     boolean autoRetry() {
         if (mParseEngine != null && mParseEngine.hasFoundVideo()) {
+            logPlaybackProgress("播放失败，尝试下一个候选地址");
+            showPlaybackLoading();
             autoRetryFromLoadFoundVideoUrls();
             return true;
         }
         if (autoRetryCount < 1) {
             autoRetryCount++;
+            logPlaybackProgress("播放失败，自动重试一次");
             play(false);
             return true;
         } else {
@@ -1204,6 +1519,9 @@ public class PlayFragment extends BaseLazyFragment {
         if (mVodInfo == null)
             return;
         long requestGeneration = mPlaybackGeneration.incrementAndGet();
+        cancelAddressProbe();
+        HttpClient.cancel("m3u8-1");
+        HttpClient.cancel("m3u8-2");
         mResolvedPlayback = null;
         mRequestedPlayUrl = null;
         mPlayResultToken = null;
@@ -1228,6 +1546,9 @@ public class PlayFragment extends BaseLazyFragment {
         if (!TextUtils.equals(autoRetryEpisodeKey, progressKey)) {
             autoRetryEpisodeKey = progressKey;
             autoRetryCount = 0;
+            mProxyDirectFallbackAttempted = false;
+            mProxyDirectOverrideSource = null;
+            mProxyDirectOverride = null;
         }
         subtitleCacheKey = playRequest.subtitleCacheKey();
         mRequestedPlayUrl = playRequest.url();
@@ -1253,6 +1574,8 @@ public class PlayFragment extends BaseLazyFragment {
             public void status(int code, String info) {
                 if (!isCurrentPlayback(requestGeneration)) return;
                 if (code < 0) {
+                    PlaybackErrorReporter.failure("磁力播放", "失败",
+                            PlaybackErrorReporter.source(vs.url), info);
                     setTip(info, false, true);
                 } else {
                     setTip(info, true, false);

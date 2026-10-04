@@ -10,6 +10,8 @@ import android.view.Surface;
 import android.view.SurfaceHolder;
 
 import java.util.Map;
+import java.util.HashMap;
+import java.util.Iterator;
 
 import tv.danmaku.ijk.media.player.IMediaPlayer;
 import tv.danmaku.ijk.media.player.IjkMediaPlayer;
@@ -17,6 +19,7 @@ import tv.danmaku.ijk.media.player.misc.ITrackInfo;
 import tv.danmaku.ijk.media.player.misc.IjkTrackInfo;
 import xyz.doikki.videoplayer.player.AbstractPlayer;
 import xyz.doikki.videoplayer.player.PlaybackErrorReporter;
+import xyz.doikki.videoplayer.player.PlaybackFailureKind;
 import xyz.doikki.videoplayer.player.VideoViewManager;
 
 public class IjkPlayer extends AbstractPlayer implements IMediaPlayer.OnErrorListener,
@@ -25,6 +28,7 @@ public class IjkPlayer extends AbstractPlayer implements IMediaPlayer.OnErrorLis
         IMediaPlayer.OnVideoSizeChangedListener, IjkMediaPlayer.OnNativeInvokeListener {
 
     protected IjkMediaPlayer mMediaPlayer;
+    private volatile PlaybackFailureKind failureKind = PlaybackFailureKind.UNKNOWN;
     private int mBufferedPercent;
     private final Context mAppContext;
     private String sourceSummary = "未知来源";
@@ -55,6 +59,7 @@ public class IjkPlayer extends AbstractPlayer implements IMediaPlayer.OnErrorLis
 
     @Override
     public void setDataSource(String path, Map<String, String> headers) {
+        failureKind = PlaybackFailureKind.UNKNOWN;
         sourceSummary = PlaybackErrorReporter.source(path);
         try {
             Uri uri = Uri.parse(path);
@@ -62,16 +67,22 @@ public class IjkPlayer extends AbstractPlayer implements IMediaPlayer.OnErrorLis
                 RawDataSourceProvider rawDataSourceProvider = RawDataSourceProvider.create(mAppContext, uri);
                 mMediaPlayer.setDataSource(rawDataSourceProvider);
             } else {
-                //处理UA问题
-                if (headers != null) {
-                    String userAgent = headers.get("User-Agent");
+                // IJK 的 UA 需要单独设置；只改本次请求头副本，不能删掉会话保存的头。
+                Map<String, String> requestHeaders = headers == null ? null : new HashMap<>(headers);
+                if (requestHeaders != null) {
+                    String userAgent = null;
+                    for (Iterator<Map.Entry<String, String>> it = requestHeaders.entrySet().iterator(); it.hasNext(); ) {
+                        Map.Entry<String, String> entry = it.next();
+                        if ("User-Agent".equalsIgnoreCase(entry.getKey())) {
+                            if (!TextUtils.isEmpty(entry.getValue())) userAgent = entry.getValue();
+                            it.remove();
+                        }
+                    }
                     if (!TextUtils.isEmpty(userAgent)) {
                         mMediaPlayer.setOption(IjkMediaPlayer.OPT_CATEGORY_FORMAT, "user_agent", userAgent);
-                        // 移除header中的User-Agent，防止重复
-                        headers.remove("User-Agent");
                     }
                 }
-                mMediaPlayer.setDataSource(mAppContext, uri, headers);
+                mMediaPlayer.setDataSource(mAppContext, uri, requestHeaders);
             }
         } catch (Exception e) {
             PlaybackErrorReporter.failure("IJK", "设置播放地址", sourceSummary, e);
@@ -81,6 +92,7 @@ public class IjkPlayer extends AbstractPlayer implements IMediaPlayer.OnErrorLis
 
     @Override
     public void setDataSource(AssetFileDescriptor fd) {
+        failureKind = PlaybackFailureKind.UNKNOWN;
         sourceSummary = "本地文件描述符";
         try {
             mMediaPlayer.setDataSource(new RawDataSourceProvider(fd));
@@ -132,6 +144,7 @@ public class IjkPlayer extends AbstractPlayer implements IMediaPlayer.OnErrorLis
 
     @Override
     public void reset() {
+        failureKind = PlaybackFailureKind.UNKNOWN;
         mMediaPlayer.reset();
         mMediaPlayer.setOnVideoSizeChangedListener(this);
         setOptions();
@@ -154,6 +167,7 @@ public class IjkPlayer extends AbstractPlayer implements IMediaPlayer.OnErrorLis
 
     @Override
     public void release() {
+        failureKind = PlaybackFailureKind.UNKNOWN;
         // 先抓本地引用:释放是异步的(见 releaseAsync),匿名类里直接读字段会读到"之后新建的那一个"
         // (VideoView 每次起播都会 new 一个新内核实例),把新内核释放掉 —— 表现就是换源/切集后起不来。
         final IjkMediaPlayer player = mMediaPlayer;
@@ -240,11 +254,22 @@ public class IjkPlayer extends AbstractPlayer implements IMediaPlayer.OnErrorLis
     }
 
     @Override
+    public PlaybackFailureKind playbackFailureKind() {
+        return failureKind;
+    }
+
+    @Override
     public boolean onError(IMediaPlayer mp, int what, int extra) {
+        failureKind = classifyFailure(what);
         PlaybackErrorReporter.failure("IJK", "播放回调", sourceSummary,
                 "what=" + what + "(" + errorName(what) + "), extra=" + extra);
         mPlayerEventListener.onError();
         return true;
+    }
+
+    static PlaybackFailureKind classifyFailure(int what) {
+        return what == IMediaPlayer.MEDIA_ERROR_UNSUPPORTED
+                ? PlaybackFailureKind.ENGINE_COMPATIBILITY : PlaybackFailureKind.UNKNOWN;
     }
 
     private static String errorName(int what) {
@@ -278,6 +303,7 @@ public class IjkPlayer extends AbstractPlayer implements IMediaPlayer.OnErrorLis
 
     @Override
     public void onPrepared(IMediaPlayer mp) {
+        failureKind = PlaybackFailureKind.UNKNOWN;
         mPlayerEventListener.onPrepared();
         // 修复播放纯音频时状态出错问题
         if (!isVideo()) {

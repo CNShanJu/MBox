@@ -20,6 +20,7 @@ import com.github.tvbox.osc.config.HawkConfig;
 import com.github.tvbox.osc.util.LOG;
 import com.github.tvbox.osc.util.OkGoHelper;
 import com.github.tvbox.osc.util.PlayerHelper;
+import com.github.tvbox.osc.util.player.PlaybackConnectionDiagnostics;
 import com.github.tvbox.osc.util.SubscriptionConfig;
 import com.github.tvbox.osc.util.Utils;
 import com.kingja.loadsir.core.LoadSir;
@@ -511,9 +512,12 @@ public class App extends MultiDexApplication {
         OkHttpClient.Builder builder = previous != null
                 ? previous.newBuilder()
                 : OkGoHelper.newBaseBuilder().retryOnConnectionFailure(true);
+        OkGoHelper.removeHttpLoggingInterceptor(builder);
         builder.followRedirects(true);
         builder.followSslRedirects(true);
         builder.dns(OkGoHelper.currentDns());
+        builder.eventListenerFactory(call -> new PlaybackConnectionDiagnostics(
+                call.request().url().toString()));
         OkHttpClient c = builder.build();
         try {
             xyz.doikki.videoplayer.exo.ExoMediaSourceHelper.getInstance(instance).setOkClient(c);

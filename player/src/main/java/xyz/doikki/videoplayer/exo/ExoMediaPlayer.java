@@ -2,6 +2,7 @@ package xyz.doikki.videoplayer.exo;
 
 import android.content.Context;
 import android.content.res.AssetFileDescriptor;
+import android.net.Uri;
 import android.net.TrafficStats;
 import android.view.Surface;
 import android.view.SurfaceHolder;
@@ -13,6 +14,7 @@ import androidx.media3.common.util.UnstableApi;
 
 import androidx.media3.exoplayer.DefaultLoadControl;
 import androidx.media3.exoplayer.DefaultRenderersFactory;
+import androidx.media3.exoplayer.ExoPlaybackException;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.LoadControl;
 import androidx.media3.common.PlaybackException;
@@ -23,9 +25,11 @@ import androidx.media3.exoplayer.analytics.AnalyticsListener;
 import androidx.media3.common.Tracks;
 import androidx.media3.exoplayer.source.MediaLoadData;
 import androidx.media3.exoplayer.source.MediaSource;
+import androidx.media3.exoplayer.source.LoadEventInfo;
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector;
 import androidx.media3.common.VideoSize;
 
+import java.io.IOException;
 import java.util.Map;
 
 import com.github.tvbox.osc.log.Category;
@@ -33,6 +37,7 @@ import com.github.tvbox.osc.log.LogStore;
 
 import xyz.doikki.videoplayer.player.AbstractPlayer;
 import xyz.doikki.videoplayer.player.PlaybackErrorReporter;
+import xyz.doikki.videoplayer.player.PlaybackFailureKind;
 
 /** DKVideoPlayer 的 Media3 ExoPlayer 内核，沿用类名以兼容现有工厂。 */
 @UnstableApi
@@ -53,12 +58,25 @@ public class ExoMediaPlayer extends AbstractPlayer implements Player.Listener {
     private int errorCode = -100;
     private String path;
     private String sourceSummary = "未知来源";
+    private String failedLoadUrl;
+    private volatile PlaybackFailureKind failureKind = PlaybackFailureKind.UNKNOWN;
     private Map<String, String> headers;
     private String lastVideoFormatProbe;
     private String lastRenderedVideoProbe;
     private String lastAvailableTracksProbe;
-    /** 实际加载的视频格式可随 HLS 自适应切换，去重后记入唯一的业务日志通道。 */
-    private final AnalyticsListener qualityProbe = new AnalyticsListener() {
+    /** 记录实际失败请求；视频格式变化去重后写入业务日志。 */
+    private final AnalyticsListener playbackProbe = new AnalyticsListener() {
+        @Override
+        public void onLoadError(EventTime eventTime, LoadEventInfo loadEventInfo,
+                                MediaLoadData mediaLoadData, IOException error, boolean wasCanceled) {
+            if (wasCanceled) return;
+            Uri loadedUri = loadEventInfo.uri;
+            if (loadedUri == null || loadedUri.toString().isEmpty()) {
+                loadedUri = loadEventInfo.dataSpec == null ? null : loadEventInfo.dataSpec.uri;
+            }
+            if (loadedUri != null) failedLoadUrl = loadedUri.toString();
+        }
+
         @Override
         public void onDownstreamFormatChanged(EventTime eventTime, MediaLoadData mediaLoadData) {
             if (mediaLoadData.trackType != C.TRACK_TYPE_VIDEO || mediaLoadData.trackFormat == null) return;
@@ -115,7 +133,7 @@ public class ExoMediaPlayer extends AbstractPlayer implements Player.Listener {
         setOptions();
 
         mMediaPlayer.addListener(this);
-        mMediaPlayer.addAnalyticsListener(qualityProbe);
+        mMediaPlayer.addAnalyticsListener(playbackProbe);
     }
 
     public DefaultTrackSelector getTrackSelector() {
@@ -124,12 +142,14 @@ public class ExoMediaPlayer extends AbstractPlayer implements Player.Listener {
 
     @Override
     public void setDataSource(String path, Map<String, String> headers) {
+        failureKind = PlaybackFailureKind.UNKNOWN;
         this.path = path;
         this.sourceSummary = PlaybackErrorReporter.source(path);
         this.headers = headers;
         lastVideoFormatProbe = null;
         lastRenderedVideoProbe = null;
         lastAvailableTracksProbe = null;
+        failedLoadUrl = null;
         mMediaSource = null;
         mMediaSource = mMediaSourceHelper.getMediaSource(path, headers, false, errorCode);
         LogStore.log(Category.PLAYER, "Media3 播放输入: 类型=" + mMediaSource.getClass().getSimpleName()
@@ -148,6 +168,7 @@ public class ExoMediaPlayer extends AbstractPlayer implements Player.Listener {
 
     @Override
     public void setDataSource(AssetFileDescriptor fd) {
+        failureKind = PlaybackFailureKind.UNKNOWN;
         path = null;
         headers = null;
         sourceSummary = "本地文件描述符";
@@ -199,6 +220,7 @@ public class ExoMediaPlayer extends AbstractPlayer implements Player.Listener {
 
     @Override
     public void reset() {
+        failureKind = PlaybackFailureKind.UNKNOWN;
         if (mMediaPlayer != null) {
             mMediaPlayer.stop();
             mMediaPlayer.clearMediaItems();
@@ -208,6 +230,7 @@ public class ExoMediaPlayer extends AbstractPlayer implements Player.Listener {
         lastVideoFormatProbe = null;
         lastRenderedVideoProbe = null;
         lastAvailableTracksProbe = null;
+        failedLoadUrl = null;
     }
 
     @Override
@@ -235,9 +258,10 @@ public class ExoMediaPlayer extends AbstractPlayer implements Player.Listener {
 
     @Override
     public void release() {
+        failureKind = PlaybackFailureKind.UNKNOWN;
         if (mMediaPlayer != null) {
             mMediaPlayer.removeListener(this);
-            mMediaPlayer.removeAnalyticsListener(qualityProbe);
+            mMediaPlayer.removeAnalyticsListener(playbackProbe);
             mMediaPlayer.release();
             mMediaPlayer = null;
         }
@@ -249,6 +273,7 @@ public class ExoMediaPlayer extends AbstractPlayer implements Player.Listener {
         lastVideoFormatProbe = null;
         lastRenderedVideoProbe = null;
         lastAvailableTracksProbe = null;
+        failedLoadUrl = null;
     }
 
     @Override
@@ -391,6 +416,7 @@ public class ExoMediaPlayer extends AbstractPlayer implements Player.Listener {
         if (mPlayerEventListener == null) return;
         if (mIsPreparing) {
             if (playbackState == Player.STATE_READY) {
+                failureKind = PlaybackFailureKind.UNKNOWN;
                 mPlayerEventListener.onPrepared();
                 mPlayerEventListener.onInfo(MEDIA_INFO_RENDERING_START, 0);
                 mIsPreparing = false;
@@ -415,12 +441,13 @@ public class ExoMediaPlayer extends AbstractPlayer implements Player.Listener {
     @Override
     public void onPlayerError(@NonNull PlaybackException error) {
         errorCode = error.errorCode;
+        failureKind = PlaybackFailureKind.UNKNOWN;
         // 只有瞬时/可自愈的错误才值得再请求一次;403/404(状态码错误)、解析、解码、不支持类错误
         // 重试必然同样失败,且会把真实原因盖掉,必须直接透传。
         // path 在重试后被置空,天然保证"同一地址最多重试一次"。
         if (path != null && isRetryableError(error.errorCode)) {
             // 重试前留下原因:否则日志里只能看到最终那次失败,看不出"中途重试过"
-            PlaybackErrorReporter.retrying("Media3", sourceSummary, describeError(error));
+            PlaybackErrorReporter.retrying("Media3", failureSource(error), describeFailure(error));
             String retryPath = path;
             try {
                 setDataSource(retryPath, headers);
@@ -434,7 +461,8 @@ public class ExoMediaPlayer extends AbstractPlayer implements Player.Listener {
             }
             return;
         }
-        PlaybackErrorReporter.failure("Media3", "播放回调", sourceSummary, describeError(error));
+        failureKind = classifyFailure(error.errorCode);
+        PlaybackErrorReporter.failure("Media3", "播放回调", failureSource(error), describeFailure(error));
         if (mPlayerEventListener != null) {
             mPlayerEventListener.onError();
         }
@@ -470,6 +498,43 @@ public class ExoMediaPlayer extends AbstractPlayer implements Player.Listener {
         Throwable cause = error.getCause();
         if (cause != null) sb.append(' ').append(PlaybackErrorReporter.cause(cause));
         return sb.toString();
+    }
+
+    /** 仅按明确的 Media3 错误码分类；泛化 IO 与清单损坏不等于连接不可达。 */
+    static PlaybackFailureKind classifyFailure(int errorCode) {
+        switch (errorCode) {
+            case PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED:
+            case PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT:
+                return PlaybackFailureKind.SOURCE_CONNECTION;
+            case PlaybackException.ERROR_CODE_DECODER_INIT_FAILED:
+            case PlaybackException.ERROR_CODE_DECODER_QUERY_FAILED:
+            case PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES:
+            case PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED:
+                return PlaybackFailureKind.ENGINE_COMPATIBILITY;
+            default:
+                return PlaybackFailureKind.UNKNOWN;
+        }
+    }
+
+    @Override
+    public PlaybackFailureKind playbackFailureKind() {
+        return failureKind;
+    }
+
+    /** 优先记录本次实际加载失败的清单/分片地址，非取流错误仍使用播放入口。 */
+    private String failureSource(@NonNull PlaybackException error) {
+        if (error instanceof ExoPlaybackException
+                && ((ExoPlaybackException) error).type == ExoPlaybackException.TYPE_SOURCE
+                && failedLoadUrl != null) {
+            return PlaybackErrorReporter.source(failedLoadUrl);
+        }
+        return sourceSummary;
+    }
+
+    private String describeFailure(@NonNull PlaybackException error) {
+        String reason = describeError(error);
+        String failedSource = failureSource(error);
+        return failedSource.equals(sourceSummary) ? reason : reason + "，播放入口=" + sourceSummary;
     }
 
     @Override

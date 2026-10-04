@@ -36,13 +36,13 @@ import com.github.tvbox.osc.config.SystemConfig;
 import com.github.tvbox.osc.spiderapi.ParseConfigProviders;
 import com.github.tvbox.osc.spiderapi.SpiderManualCheckProviders;
 import com.github.tvbox.osc.util.AdBlocker;
-import com.github.tvbox.osc.util.AppBubble;
 import com.github.tvbox.osc.util.DefaultConfig;
 import com.github.tvbox.osc.util.HCallBack;
 import com.github.tvbox.osc.util.HttpClient;
 import com.github.tvbox.osc.util.LOG;
 import com.github.tvbox.osc.util.ParseBeanUrls;
 import com.github.tvbox.osc.util.VideoParseRuler;
+import xyz.doikki.videoplayer.player.PlaybackErrorReporter;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -347,7 +347,7 @@ public class PlayParseCoordinator {
                         }
                         if (parseEpoch != parseTaskEpoch.get()) return;
                         if (rs.has("jxFrom")) {
-                            AppBubble.toast("解析来自:" + rs.optString("jxFrom"));
+                            logParseOrigin(rs.optString("jxFrom"));
                         }
                         boolean parseWV = rs.optInt("parse", 0) == 1;
                         if (parseWV) {
@@ -418,7 +418,7 @@ public class PlayParseCoordinator {
                             }
                             if (parseEpoch != parseTaskEpoch.get()) return;
                             if (rs.has("jxFrom")) {
-                                AppBubble.toast("解析来自:" + rs.optString("jxFrom"));
+                                logParseOrigin(rs.optString("jxFrom"));
                             }
                             callback.onPlayUrl(rs.optString("url", ""), headers);
                         }
@@ -426,6 +426,12 @@ public class PlayParseCoordinator {
                 }
             });
         }
+    }
+
+    private void logParseOrigin(String origin) {
+        String detail = "播放解析来源: " + PlaybackErrorReporter.safeDiagnosticText(origin);
+        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.PLAYER, detail);
+        android.util.Log.i("MBoxPlayer", detail);
     }
 
     /** 停止当前解析/嗅探(原 stopParse):作废任务代数、停止 WebView、取消 json 请求、取消超时 */

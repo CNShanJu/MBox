@@ -23,12 +23,15 @@ import com.github.tvbox.osc.transfer.ConfigDataExchange;
 import com.github.tvbox.osc.transfer.ConfigBundle;
 import com.github.tvbox.osc.util.FileUtils;
 import com.github.tvbox.osc.util.OkGoHelper;
+import com.github.tvbox.osc.util.DiagnosticLogLimiter;
+import xyz.doikki.videoplayer.player.PlaybackErrorReporter;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FilterInputStream;
@@ -118,6 +121,11 @@ public class RemoteServer extends NanoHTTPD {
     private static final Pattern CAST_MEDIA_ID = Pattern.compile("[0-9a-f]{32}");
     private static final Pattern CAST_MEDIA_RANGE = Pattern.compile("bytes=(?:\\d+-\\d*|-\\d+)");
     private static final long SLOW_CAST_READ_MS = 3000;
+    // NanoHTTPD 2.3.1 的 Status 枚举没有 502，插件代理返回空清单时单独定义网关错误。
+    private static final Response.IStatus PROXY_BAD_GATEWAY = new Response.IStatus() {
+        @Override public int getRequestStatus() { return 502; }
+        @Override public String getDescription() { return "502 Bad Gateway"; }
+    };
 
     private static String deviceRef(LanDevice device) {
         return device.id.substring(0, Math.min(8, device.id.length()));
@@ -565,6 +573,33 @@ public class RemoteServer extends NanoHTTPD {
                 || "m3u8".equalsIgnoreCase(proxyMode);
     }
 
+    private static boolean isProxyPlaylistResponse(Map<String, String> params, String mime) {
+        String target = params.get("url");
+        return (target != null && target.toLowerCase(Locale.ROOT).contains(".m3u8"))
+                || isPlaylistMime(mime, null);
+    }
+
+    private static void logProxyPlaylistFailure(Map<String, String> params, int code, String mime,
+                                             String bodyKind) {
+        String target = params.get("url");
+        String from = params.get("from");
+        String siteKey = params.get("siteKey");
+        String mode = params.get("do");
+        String branch = "js".equals(mode)
+                ? ("catvod".equals(from) ? "proxy2" : "proxy1") : "jar";
+        String detail = "本机代理清单异常: 地址="
+                + (target == null ? "未提供 url" : PlaybackErrorReporter.source(target))
+                + "，模式=" + PlaybackErrorReporter.safeDiagnosticText(mode)
+                + "，分支=" + branch
+                + "，站点=" + (siteKey == null ? "未提供" : PlaybackErrorReporter.safeDiagnosticText(siteKey))
+                + "，代理返回HTTP=" + code
+                + "，MIME=" + PlaybackErrorReporter.safeDiagnosticText(mime)
+                + "，正文类型=" + PlaybackErrorReporter.safeDiagnosticText(bodyKind);
+        if (!DiagnosticLogLimiter.SHARED.allow("proxy:" + detail, android.os.SystemClock.elapsedRealtime())) return;
+        LogStore.fail(Category.PLAYER, detail);
+        android.util.Log.e("MBoxProxy", detail);
+    }
+
     private static byte[] readCastPlaylist(InputStream stream) throws IOException {
         try (InputStream source = stream; ByteArrayOutputStream output = new ByteArrayOutputStream()) {
             byte[] buffer = new byte[8192];
@@ -792,6 +827,9 @@ public class RemoteServer extends NanoHTTPD {
                     // 直接返回错误响应, 避免 rs[0] 读 null 数组崩溃
                     if (rs == null || rs.length < 2) {
                         if (castViewer != null) logMediaFailure(castViewer, "proxy_unavailable");
+                        if (isProxyPlaylistResponse(params, null)) {
+                            logProxyPlaylistFailure(params, 500, "text/plain", "proxy_unavailable");
+                        }
                         return NanoHTTPD.newFixedLengthResponse(
                                 NanoHTTPD.Response.Status.INTERNAL_ERROR,
                                 "text/plain",
@@ -802,13 +840,38 @@ public class RemoteServer extends NanoHTTPD {
                     //}
                     int code = (int) rs[0];
                     String mime = (String) rs[1];
+                    Response.Status proxyStatus = Response.Status.lookup(code);
+                    if (proxyStatus == null) proxyStatus = Response.Status.INTERNAL_ERROR;
+                    boolean proxyPlaylist = isProxyPlaylistResponse(params, mime);
                     // 越界防护:原实现 rs==null||length<2 只保证 rs[0]/rs[1], 后面却直接读 rs[2];
                     // 长度不足 3 或响应体为 null 时返回空响应体
                     if (rs.length < 3 || !(rs[2] instanceof InputStream)) {
+                        if (proxyPlaylist) logProxyPlaylistFailure(params, code, mime, "missing_stream");
+                        if (proxyPlaylist && code >= 200 && code < 300) {
+                            return NanoHTTPD.newFixedLengthResponse(
+                                    PROXY_BAD_GATEWAY, "text/plain", "proxy playlist missing");
+                        }
                         return NanoHTTPD.newFixedLengthResponse(
-                                NanoHTTPD.Response.Status.lookup(code), mime, "");
+                                proxyStatus, mime, "");
                     }
                     InputStream stream = (InputStream) rs[2];
+                    if (proxyPlaylist) {
+                        if (!stream.markSupported()) stream = new BufferedInputStream(stream, 128);
+                        try {
+                            String bodyKind = ProxyPlaylistDiagnostics.bodyKind(stream);
+                            if (code >= 400 || (code >= 200 && code < 300 && !"m3u8".equals(bodyKind))) {
+                                logProxyPlaylistFailure(params, code, mime, bodyKind);
+                            }
+                            if (code >= 200 && code < 300 && "empty".equals(bodyKind)) {
+                                try { stream.close(); } catch (IOException ignored) { }
+                                return NanoHTTPD.newFixedLengthResponse(
+                                        PROXY_BAD_GATEWAY, "text/plain", "proxy playlist empty");
+                            }
+                        } catch (IOException error) {
+                            logProxyPlaylistFailure(params, code, mime,
+                                    "read_error:" + error.getClass().getSimpleName());
+                        }
+                    }
                     boolean rewrittenPlaylist = castBrowser && isPlaylistMime(mime, params.get("do"));
                     if (rewrittenPlaylist) {
                         try {
@@ -827,7 +890,7 @@ public class RemoteServer extends NanoHTTPD {
                         }
                     }
                     Response response = NanoHTTPD.newChunkedResponse(
-                            NanoHTTPD.Response.Status.lookup(code),
+                            proxyStatus,
                             mime,
                             stream);
                     if (castBrowser) response.addHeader("Cache-Control", "no-store");

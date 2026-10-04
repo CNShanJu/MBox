@@ -119,9 +119,11 @@ public final class NetworkIssueRouter {
 
     /** 网络层回调（可能在任意请求线程）：切主线程再决定是否弹 */
     private static void onNetworkIssue(String reason) {
-        // 一行"网络层报了问题"的日志:排查"为什么没跳页"时先看有没有这一行 ——
-        // 没有 = 请求没走收口客户端(或不是网络类失败);有 = 再看下面"不弹页: xxx"的原因
-        android.util.Log.i(TAG, "网络层报告: " + reason);
+        // 首次失败保留"网络层报了问题"与路由结果；自动重试的同类报告短期限频。
+        if (DiagnosticLogLimiter.SHARED.allow("network_report:" + reason,
+                SystemClock.elapsedRealtime())) {
+            android.util.Log.i(TAG, "网络层报告: " + reason);
+        }
         MAIN.post(() -> show(reason));
     }
 
@@ -234,6 +236,9 @@ public final class NetworkIssueRouter {
 
     /** 不弹页的原因写进日志:否则"断网了为什么没跳"只能靠猜 */
     private static void logSkip(String why) {
-        android.util.Log.i(TAG, "不弹无网络页: " + why);
+        if (DiagnosticLogLimiter.SHARED.allow("network_skip:" + why,
+                SystemClock.elapsedRealtime())) {
+            android.util.Log.i(TAG, "不弹无网络页: " + why);
+        }
     }
 }

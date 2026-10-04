@@ -98,4 +98,11 @@ public final class PlayerSession {
     public xyz.doikki.videoplayer.player.AbstractPlayer kernel() {
         return video == null ? null : video.getMediaPlayer();
     }
+
+    /** 当前内核最后一次播放失败的类型；播放器未就绪或尚未失败时为 UNKNOWN。 */
+    public xyz.doikki.videoplayer.player.PlaybackFailureKind playbackFailureKind() {
+        xyz.doikki.videoplayer.player.AbstractPlayer player = kernel();
+        return player == null ? xyz.doikki.videoplayer.player.PlaybackFailureKind.UNKNOWN
+                : player.playbackFailureKind();
+    }
 }

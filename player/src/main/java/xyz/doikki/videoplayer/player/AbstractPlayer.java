@@ -193,6 +193,15 @@ public abstract class AbstractPlayer {
      */
     public abstract long getTcpSpeed();
 
+    /** 最近一次失败的类别；新来源、重置或成功准备后应清除旧类别。 */
+    public PlaybackFailureKind playbackFailureKind() {
+        return PlaybackFailureKind.UNKNOWN;
+    }
+
+    public final boolean isSourceConnectionFailure() {
+        return playbackFailureKind() == PlaybackFailureKind.SOURCE_CONNECTION;
+    }
+
     /**
      * 绑定VideoView
      */

@@ -325,9 +325,7 @@ public class OkGoHelper {
         builder.followSslRedirects(false);
         noRedirectClient = builder.build();
         OkHttpClient.Builder mediaBuilder = noRedirectClient.newBuilder();
-        for (Iterator<Interceptor> it = mediaBuilder.interceptors().iterator(); it.hasNext(); ) {
-            if (it.next() instanceof HttpLoggingInterceptor) it.remove();
-        }
+        removeHttpLoggingInterceptor(mediaBuilder);
         // API 的 10 秒读超时会截断慢速媒体分片;保留连接/DNS/TLS/UA/网络守卫策略。
         mediaRelayClient = mediaBuilder.readTimeout(30, TimeUnit.SECONDS).build();
         // 图片客户端派生自 defaultClient(共享连接池),置空即可:下次取用时按新根重建
@@ -336,6 +334,13 @@ public class OkGoHelper {
 
     public static OkHttpClient getDefaultClient() {
         return defaultClient;
+    }
+
+    /** 媒体流只保留故障摘要，避免调试开关把分片正文和鉴权请求头写进 Logcat。 */
+    public static void removeHttpLoggingInterceptor(OkHttpClient.Builder builder) {
+        for (Iterator<Interceptor> it = builder.interceptors().iterator(); it.hasNext(); ) {
+            if (it.next() instanceof HttpLoggingInterceptor) it.remove();
+        }
     }
 
     public static OkHttpClient getNoRedirectClient() {

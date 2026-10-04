@@ -312,10 +312,6 @@ public class OkHttpDataSource extends BaseDataSource implements HttpDataSource {
             } catch (IOException e) {
                 errorResponseBody = Util.EMPTY_BYTE_ARRAY;
             }
-            if (responseCode >= 400) {
-                android.util.Log.w("TVBox-Player", "HTTP " + responseCode + " url=" + dataSpec.uri
-                        + " sentHeaders=" + response.request().headers());
-            }
             Map<String, List<String>> headers = response.headers().toMultimap();
             closeConnectionQuietly();
             @Nullable
