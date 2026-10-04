@@ -7,6 +7,7 @@ import org.junit.Test;
 import java.io.File;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.nio.charset.StandardCharsets;
 
@@ -65,6 +66,51 @@ public class CastMediaRulesTest {
         assertTrue(rewritten.contains("URI=\"http://192.168.1.5:12345/media/capability/bin\""));
         assertTrue(rewritten.contains("http://192.168.1.5:12345/media/capability/ts"));
         assertFalse(rewritten.contains("\nseg.ts\n"));
+    }
+
+    @Test public void loopbackProxyPlaylistKeepsNestedMediaOnTheSameDevice() {
+        String source = "http://127.0.0.1:9978/proxy?do=m3u8&siteKey=source";
+        String key = "http://127.0.0.1:9978/proxy?do=key&siteKey=source&id=1";
+        String segment = "http://127.0.0.1:9978/proxy?do=ts&siteKey=source&id=1";
+        String playlist = "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"" + key + "\"\n"
+                + "#EXTINF:6,\n" + segment + "\n"
+                + "#EXTINF:6,\nhttp://127.0.0.1:9978/api/lan/data\n";
+        Map<String, LanCastRelayRules.ResourceKind> registered = new LinkedHashMap<>();
+
+        String rewritten = LanCastRelayRules.rewriteWithResourceHint(playlist, source,
+                (child, role) -> {
+                    if (!CastMediaRules.allowedChild(source, child, 9978)) return null;
+                    registered.put(child, role);
+                    return "http://127.0.0.1:12345/media/" + registered.size();
+                });
+
+        assertEquals(LanCastRelayRules.ResourceKind.KEY, registered.get(key));
+        assertEquals(LanCastRelayRules.ResourceKind.SEGMENT, registered.get(segment));
+        assertEquals(2, registered.size());
+        assertTrue(rewritten.contains("URI=\"http://127.0.0.1:12345/media/1\""));
+        assertTrue(rewritten.contains("\nhttp://127.0.0.1:12345/media/2\n"));
+        assertTrue(rewritten.contains("\nabout:blank\n"));
+        assertFalse(rewritten.contains("127.0.0.1:9978/proxy"));
+    }
+
+    @Test public void proxyChildHeadersKeepCredentialsButNotClientRange() {
+        String source = "http://127.0.0.1:9978/proxy?do=m3u8&siteKey=source";
+        String child = "http://127.0.0.1:9978/proxy?do=ts&siteKey=source";
+        Map<String, String> supplied = new LinkedHashMap<>();
+        supplied.put("Cookie", "session=secret");
+        supplied.put("Referer", "https://source.example/watch");
+        supplied.put("User-Agent", "MBox");
+        supplied.put("Range", "bytes=0-1023");
+        supplied.put("Host", "source.example");
+        Map<String, String> snapshot = CastMediaRules.snapshotHeaders(supplied);
+
+        assertEquals("session=secret", CastMediaRules.headersForChild(source, child, snapshot).get("Cookie"));
+        assertEquals("https://source.example/watch",
+                CastMediaRules.headersForChild(source, child, snapshot).get("Referer"));
+        assertFalse(snapshot.containsKey("Range"));
+        assertFalse(snapshot.containsKey("Host"));
+        assertEquals(Collections.singletonMap("User-Agent", "MBox"),
+                CastMediaRules.headersForChild(source, "https://cdn.example/segment.ts", snapshot));
     }
 
     @Test public void purifiedPlaylistKeepsItsSelectedPrivateSourceOrigin() {
