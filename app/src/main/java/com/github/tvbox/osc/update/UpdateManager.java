@@ -113,10 +113,20 @@ public final class UpdateManager {
      */
     public void start(Context context, UpdateInfo info, Updater.Callback cb) {
         if (context == null) return;
-        LOG.i(TAG, "开始下载 version=" + (info == null ? "?" : info.versionName)
-                + " size=" + (info == null ? "?" : info.apkSize));
         synchronized (this) {
-            if (state == State.DOWNLOADING || state == State.PAUSED) return;
+            if (state == State.DOWNLOADING || state == State.PAUSED) {
+                final String message = state == State.DOWNLOADING
+                        ? "已有更新正在下载，请查看当前进度"
+                        : "更新下载已暂停，请查看当前进度";
+                if (cb != null) {
+                    MAIN.post(() -> {
+                        try { cb.onError(message); } catch (Throwable ignored) {}
+                    });
+                }
+                return;
+            }
+            LOG.i(TAG, "开始下载 version=" + (info == null ? "?" : info.versionName)
+                    + " size=" + (info == null ? "?" : info.apkSize));
             long workerEpoch = epochs.next();
             File previousTarget = this.targetFile;
             UpdateInfo previousInfo = this.info;
@@ -140,7 +150,7 @@ public final class UpdateManager {
             }
             this.state = State.DOWNLOADING;
             notifyListeners();
-            startDownload(workerEpoch);
+            startDownload(workerEpoch, true);
         }
     }
 
@@ -162,7 +172,7 @@ public final class UpdateManager {
             currentDownloadUrl = null;
             state = State.DOWNLOADING;
             notifyListeners();
-            startDownload(workerEpoch);
+            startDownload(workerEpoch, false);
         }
     }
 
@@ -264,7 +274,7 @@ public final class UpdateManager {
     /** 单次候选下载结果 */
     private enum DownloadResult { COMPLETE, FAIL, RETRYABLE, STOPPED }
 
-    private void startDownload(long workerEpoch) {
+    private void startDownload(long workerEpoch, boolean notifyStart) {
         final Context ctx = appContext;
         final UpdateInfo ui = info;
         final File dest = targetFile;
@@ -279,6 +289,7 @@ public final class UpdateManager {
             onForegroundServiceStartFailed(workerEpoch);
             return;
         }
+        if (notifyStart) fireStarted(workerEpoch);
         WorkerRun worker = new WorkerRun();
         activeWorker = worker;
         HeavyTaskUtil.getBigTaskExecutorService().execute(() -> {
@@ -654,6 +665,16 @@ public final class UpdateManager {
             }
             for (Listener l : listeners) {
                 try { l.onUpdate(State.DOWNLOADING, d, t, info); } catch (Throwable ignored) {}
+            }
+        });
+    }
+
+    private void fireStarted(long workerEpoch) {
+        MAIN.post(() -> {
+            if (!epochs.isCurrent(workerEpoch)) return;
+            Updater.Callback cb = callback;
+            if (cb != null) {
+                try { cb.onDownloadStart(); } catch (Throwable ignored) {}
             }
         });
     }

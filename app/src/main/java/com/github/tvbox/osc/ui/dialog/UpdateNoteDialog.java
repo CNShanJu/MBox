@@ -13,12 +13,16 @@ import androidx.annotation.NonNull;
 import com.blankj.utilcode.util.ScreenUtils;
 import com.github.tvbox.osc.R;
 import com.github.tvbox.osc.update.UpdateInfo;
+import com.github.tvbox.osc.update.UpdatePromptPolicy.Action;
 import com.github.tvbox.osc.util.MdText;
 import com.github.tvbox.osc.util.Utils;
 import com.lxj.xpopup.XPopup;
 import com.lxj.xpopup.core.BasePopupView;
+import com.lxj.xpopup.interfaces.XPopupCallback;
 
 import org.jetbrains.annotations.NotNull;
+
+import java.util.Objects;
 
 /**
  * 更新确认弹窗。标题和操作按钮固定在说明区外；说明过长时只有说明区滚动。
@@ -34,9 +38,26 @@ public class UpdateNoteDialog extends AppCenterPopupView {
     }
 
     private final UpdateInfo mInfo;
-    private final Runnable mOnUpdate;
+    public interface ActionListener {
+        void onAction(Action action);
+    }
+
+    private final ActionListener mOnUpdate;
+    private Action action = Action.DOWNLOAD;
+    private CharSequence actionLabel = "立即更新";
+    private CharSequence actionStatus;
+    private TextView updateButton;
+    private TextView laterButton;
+    private TextView statusView;
+    private boolean actionCommitted;
 
     public UpdateNoteDialog(@NonNull @NotNull Context context, UpdateInfo info, Runnable onUpdate) {
+        this(context, info, action -> {
+            if (onUpdate != null) onUpdate.run();
+        });
+    }
+
+    public UpdateNoteDialog(@NonNull @NotNull Context context, UpdateInfo info, ActionListener onUpdate) {
         super(context);
         mInfo = info;
         mOnUpdate = onUpdate;
@@ -81,16 +102,46 @@ public class UpdateNoteDialog extends AppCenterPopupView {
         body.setText(note != null && !note.trim().isEmpty()
                 ? MdText.render(note) : "是否立即下载并安装?");
 
+        updateButton = findViewById(R.id.note_update);
+        laterButton = findViewById(R.id.note_later);
+        statusView = findViewById(R.id.note_status);
+        bindUpdateAction();
+
         // onCreate 早于 XPopup 的首次布局及其 applyPopupSize 回调。
         // 现在就固定滚动区高度，弹窗的自然高度不会再超过可见窗口。
         sizeBodyBeforeFirstMeasure();
 
         findViewById(R.id.note_close).setOnClickListener(v -> dismiss());
         findViewById(R.id.note_later).setOnClickListener(v -> dismiss());
-        findViewById(R.id.note_update).setOnClickListener(v -> {
-            dismiss();
-            if (mOnUpdate != null) mOnUpdate.run();
+        updateButton.setOnClickListener(v -> {
+            if (actionCommitted) return;
+            actionCommitted = true;
+            Action selected = action;
+            v.setEnabled(false);
+            dismissWith(() -> {
+                if (mOnUpdate != null) mOnUpdate.onAction(selected);
+            });
         });
+    }
+
+    /** 状态由更新入口传入,弹窗不访问下载控制器。须在主线程调用。 */
+    public void setUpdateAction(Action action, CharSequence label, CharSequence status) {
+        this.action = action;
+        if (Objects.equals(actionLabel, label) && Objects.equals(actionStatus, status)) return;
+        actionLabel = label;
+        actionStatus = status;
+        if (updateButton != null) {
+            bindUpdateAction();
+            sizeBodyBeforeFirstMeasure();
+        }
+    }
+
+    private void bindUpdateAction() {
+        updateButton.setText(actionLabel);
+        boolean hasStatus = actionStatus != null && actionStatus.length() > 0;
+        statusView.setText(hasStatus ? actionStatus : "");
+        statusView.setVisibility(hasStatus ? View.VISIBLE : View.GONE);
+        laterButton.setText(hasStatus ? "关闭" : "稍后");
     }
 
     private void sizeBodyBeforeFirstMeasure() {
@@ -175,10 +226,15 @@ public class UpdateNoteDialog extends AppCenterPopupView {
     @Override
     public BasePopupView show() {
         if (popupInfo == null) {
-            return new XPopup.Builder(getContext())
-                    .isDarkTheme(Utils.isAppDarkTheme())
-                    .asCustom(this).show();
+            return show(null);
         }
         return super.show();
+    }
+
+    public BasePopupView show(XPopupCallback callback) {
+        XPopup.Builder builder = new XPopup.Builder(getContext())
+                .isDarkTheme(Utils.isAppDarkTheme());
+        if (callback != null) builder.setPopupCallback(callback);
+        return builder.asCustom(this).show();
     }
 }

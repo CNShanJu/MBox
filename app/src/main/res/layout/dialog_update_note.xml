@@ -34,6 +34,17 @@
             app:tint="@color/text_foreground" />
     </LinearLayout>
 
+    <TextView
+        android:id="@+id/note_status"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:ellipsize="end"
+        android:singleLine="true"
+        android:textColor="@color/text_sub_foreground"
+        android:textSize="13sp"
+        android:visibility="gone" />
+
     <!-- 说明区的高度由 UpdateNoteDialog 在首次测量前按可用窗口高度设定；
          标题和按钮保持在滚动区外，长说明只在这里滚动。 -->
     <ScrollView

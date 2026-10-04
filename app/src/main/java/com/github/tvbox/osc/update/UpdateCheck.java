@@ -5,10 +5,16 @@ import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
 
+import androidx.lifecycle.Lifecycle;
+import androidx.lifecycle.LifecycleEventObserver;
+import androidx.lifecycle.LifecycleOwner;
+
 import com.github.tvbox.osc.config.SystemConfig;
 import com.github.tvbox.osc.ui.startup.UserStartupGate;
 import com.github.tvbox.osc.ui.dialog.UpdateNoteDialog;
 import com.github.tvbox.osc.util.AppBubble;
+import com.lxj.xpopup.core.BasePopupView;
+import com.lxj.xpopup.interfaces.SimpleCallback;
 
 /**
  * 更新检查的共用入口:把"检查 → 发现新版本弹更新说明 → 用户点立即更新开始下载"这段固定动作收在一处,
@@ -99,7 +105,101 @@ public final class UpdateCheck {
     public static void showNote(final Context context, final UpdateInfo info) {
         if (context == null || info == null) return;
         final Updater updater = UpdaterProvider.get();
-        UpdateNoteDialog.show(context, info, () -> startDownload(context, updater, info));
+        final UpdateManager manager = UpdateManager.get();
+        UpdateNoteDialog dialog = new UpdateNoteDialog(context, info,
+                action -> performUpdateAction(context, updater, info, action));
+        UpdateManager.Listener listener = (state, downloaded, total, current) ->
+                bindNoteAction(dialog, info, state, current);
+        LifecycleEventObserver cleanup = removeListenerOnDestroy(dialog, manager, listener);
+        bindNoteAction(dialog, info, manager.getState(), manager.getInfo());
+        dialog.show(new SimpleCallback() {
+            @Override
+            public void onShow(BasePopupView popupView) {
+                manager.addListener(listener);
+                bindNoteAction(dialog, info, manager.getState(), manager.getInfo());
+            }
+
+            @Override
+            public void onDismiss(BasePopupView popupView) {
+                manager.removeListener(listener);
+                dialog.getLifecycle().removeObserver(cleanup);
+            }
+        });
+    }
+
+    private static LifecycleEventObserver removeListenerOnDestroy(LifecycleOwner owner,
+                                                                  UpdateManager manager,
+                                                                  UpdateManager.Listener listener) {
+        LifecycleEventObserver cleanup = new LifecycleEventObserver() {
+            @Override
+            public void onStateChanged(LifecycleOwner source, Lifecycle.Event event) {
+                // XPopup 的宿主销毁路径不一定调用 onDismiss。
+                if (event == Lifecycle.Event.ON_DESTROY) {
+                    manager.removeListener(listener);
+                    source.getLifecycle().removeObserver(this);
+                }
+            }
+        };
+        owner.getLifecycle().addObserver(cleanup);
+        return cleanup;
+    }
+
+    private static void bindNoteAction(UpdateNoteDialog dialog, UpdateInfo requested,
+                                       UpdateManager.State state, UpdateInfo current) {
+        String label;
+        String status = null;
+        UpdatePromptPolicy.Action action = UpdatePromptPolicy.action(state, current, requested);
+        switch (action) {
+            case VIEW_PROGRESS:
+                label = "查看进度";
+                String version = current == null || current.versionName == null
+                        ? "" : " v" + current.versionName;
+                status = (state == UpdateManager.State.PAUSED ? "更新下载已暂停" : "正在下载更新") + version;
+                break;
+            case INSTALL:
+                label = "立即安装";
+                status = "安装包已下载完成";
+                break;
+            case RETRY:
+                label = "重试下载";
+                status = "上次下载失败，可重试下载";
+                break;
+            default:
+                label = "立即更新";
+                break;
+        }
+        dialog.setUpdateAction(action, label, status);
+    }
+
+    private static void performUpdateAction(Context context, Updater updater, UpdateInfo info,
+                                           UpdatePromptPolicy.Action selected) {
+        if (context instanceof Activity) {
+            Activity activity = (Activity) context;
+            if (activity.isFinishing() || activity.isDestroyed()) return;
+        }
+        UpdateManager manager = UpdateManager.get();
+        // 弹窗显示到点击之间状态可能变化,按实际执行时的状态再次判断。
+        switch (UpdatePromptPolicy.actionAtExecution(selected, manager.getState(), manager.getInfo(), info)) {
+            case VIEW_PROGRESS:
+                if (manager.getInfo() != null) {
+                    UpdateIndicatorDialog progress = new UpdateIndicatorDialog(context);
+                    removeListenerOnDestroy(progress, manager, progress);
+                    progress.show();
+                } else {
+                    AppBubble.toast("当前更新任务已结束");
+                }
+                break;
+            case INSTALL:
+                if (manager.installCurrent(context)) AppBubble.toast("正在安装新版...");
+                else AppBubble.toast("暂时无法安装，请检查安装权限后重试");
+                break;
+            case UNAVAILABLE:
+                AppBubble.toast("安装包状态已变化，请重新检查更新");
+                break;
+            default:
+                startDownload(context, updater, info);
+                break;
+        }
     }
 
     /**
@@ -162,8 +262,12 @@ public final class UpdateCheck {
     /** 下载并安装:进度与控制交全局悬浮圈(UpdateFloatIndicator),与"关于"页手动更新动作一致 */
     private static void startDownload(final Context context, final Updater updater, final UpdateInfo info) {
         if (context == null || updater == null || info == null) return;
-        AppBubble.toast("下载已开始，长按气泡管理");
         updater.downloadAndInstall(context, info, new Updater.Callback() {
+            @Override
+            public void onDownloadStart() {
+                AppBubble.toast("下载已开始，长按气泡管理");
+            }
+
             @Override
             public void onCheckStart() {
             }

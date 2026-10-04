@@ -37,6 +37,10 @@ public interface Updater {
          */
         void onCheckResult(UpdateInfo newVersion);
 
+        /** 下载任务已实际接受并启动;兼容未关注启动提示的调用方。 */
+        default void onDownloadStart() {
+        }
+
         /** 下载进度(百分比语义由调用方换算;total<=0 表示未知) */
         void onDownloadProgress(long current, long total);
 
