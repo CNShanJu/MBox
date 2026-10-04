@@ -11,6 +11,8 @@ import android.content.res.ColorStateList;
 import android.content.res.Configuration;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 
 import androidx.annotation.Nullable;
 import android.text.TextUtils;
@@ -104,6 +106,7 @@ import java.util.Map;
 
 public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
         implements DownloadDialogCoordinator.Host, VideoDetailDialog.Host, PlayFragment.PlaySyncHost {
+    private static final long HISTORY_REFRESH_TIMEOUT_MS = 15_000L;
     private static final String EXTERNAL_DOWNLOADER_PACKAGE = "idm.internet.download.manager.plus";
     private static final String EXTERNAL_DOWNLOADER_ACTIVITY = "idm.internet.download.manager.Downloader";
     private PlayFragment playFragment = null;
@@ -124,6 +127,17 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     private AbsXml pendingDetail;
     private boolean historyQuickPlayback;
     private boolean historySnapshotShown;
+    private boolean historyDetailCompleted;
+    private boolean historyDetailRefreshed;
+    private boolean historyRefreshRetryUsed;
+    private String historySnapshotEpisodeUrl;
+    private String failedHistoryEpisodeUrl;
+    private String failedHistoryError;
+    private boolean failedHistoryFinish;
+    private boolean failedHistoryAutoSwitchPlayer;
+    private long failedHistoryGeneration = -1;
+    private final Handler historyRefreshHandler = new Handler(Looper.getMainLooper());
+    private final Runnable historyRefreshTimeout = this::finishPendingHistoryFailure;
     private int detailRequestEpoch;
     private final String lanCastOwner = java.util.UUID.randomUUID().toString();
     public SeriesFlagAdapter seriesFlagAdapter;
@@ -782,6 +796,7 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     }
 
     private void applyDetailResult(AbsXml absXml) {
+        historyDetailCompleted = true;
         if (absXml == null || absXml.movie == null || absXml.movie.videoList == null
                 || absXml.movie.videoList.isEmpty()) {
             // 快照已起播时，详情刷新失败不应把当前播放器和选集盖成空态。
@@ -790,13 +805,17 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
                 mBinding.previewPlayerPlace.setVisibility(View.GONE);
                 mBinding.previewPlayer.setVisibility(View.GONE);
             }
+            finishPendingHistoryFailure();
             return;
         }
         Movie.Video video = absXml.movie.videoList.get(0);
         VodInfo fresh = new VodInfo();
         fresh.setVideo(video);
         fresh.sourceKey = video.sourceKey;
-        if (historySnapshotShown && (fresh.seriesMap == null || fresh.seriesMap.isEmpty())) return;
+        if (historySnapshotShown && (fresh.seriesMap == null || fresh.seriesMap.isEmpty())) {
+            finishPendingHistoryFailure();
+            return;
+        }
         if (historyRecord != null) {
             fresh.playIndex = Math.max(historyRecord.playIndex, 0);
             fresh.playFlag = historyRecord.playFlag;
@@ -804,35 +823,48 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
             fresh.reverseSort = historyRecord.reverseSort;
         }
         if (fresh.reverseSort && fresh.seriesMap != null) fresh.reverse();
-        if (historyQuickPlayback && !matchCurrentEpisode(fresh, vodInfo)) return;
+        if (historyQuickPlayback && !HistoryEntryNavigator.matchCurrentEpisode(fresh, vodInfo)) {
+            finishPendingHistoryFailure();
+            return;
+        }
         showVodInfo(fresh, historyQuickPlayback);
+        historyDetailRefreshed = historyQuickPlayback;
         if (historySnapshotShown) insertVod(sourceKey, fresh);
         historyRecord = fresh;
+        if (!retryRefreshedHistoryIfNeeded()) finishPendingHistoryFailure();
     }
 
-    /** 网络刷新后按地址、再按集名定位当前集；正在播的流不因详情返回而重启。 */
-    private static boolean matchCurrentEpisode(VodInfo fresh, VodInfo playing) {
-        if (!HistoryEntryNavigator.hasPlayableSnapshot(playing) || fresh.seriesMap == null) return false;
-        VodInfo.VodSeries current = playing.seriesMap.get(playing.playFlag).get(playing.playIndex);
-        List<VodInfo.VodSeries> episodes = fresh.seriesMap.get(playing.playFlag);
-        if (episodes == null) return false;
-        int byName = -1;
-        for (int i = 0; i < episodes.size(); i++) {
-            VodInfo.VodSeries episode = episodes.get(i);
-            if (episode == null) continue;
-            if (TextUtils.equals(episode.url, current.url)) {
-                fresh.playFlag = playing.playFlag;
-                fresh.playIndex = i;
-                return true;
-            }
-            if (byName < 0 && TextUtils.equals(episode.name, current.name)) byName = i;
+    private boolean retryRefreshedHistoryIfNeeded() {
+        if (!historyQuickPlayback || !historyDetailRefreshed || historyRefreshRetryUsed
+                || failedHistoryEpisodeUrl == null || playFragment == null
+                || !playFragment.isPlaybackRequestCurrent(failedHistoryGeneration, failedHistoryEpisodeUrl)
+                || !HistoryEntryNavigator.hasPlayableSnapshot(vodInfo)) return false;
+        String freshUrl = vodInfo.seriesMap.get(vodInfo.playFlag).get(vodInfo.playIndex).url;
+        if (TextUtils.equals(freshUrl, failedHistoryEpisodeUrl)) return false;
+        historyRefreshRetryUsed = true;
+        historyRefreshHandler.removeCallbacks(historyRefreshTimeout);
+        failedHistoryEpisodeUrl = null;
+        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.PLAYER,
+                "历史快照播放失败，使用刷新后的剧集地址重试一次");
+        playFragment.play(false);
+        return true;
+    }
+
+    private void finishPendingHistoryFailure() {
+        if (failedHistoryEpisodeUrl == null) return;
+        historyRefreshHandler.removeCallbacks(historyRefreshTimeout);
+        String episodeUrl = failedHistoryEpisodeUrl;
+        String error = failedHistoryError;
+        boolean finish = failedHistoryFinish;
+        boolean autoSwitchPlayer = failedHistoryAutoSwitchPlayer;
+        long generation = failedHistoryGeneration;
+        failedHistoryEpisodeUrl = null;
+        failedHistoryError = null;
+        failedHistoryGeneration = -1;
+        historyRefreshRetryUsed = true;
+        if (playFragment != null && playFragment.isPlaybackRequestCurrent(generation, episodeUrl)) {
+            playFragment.showFinalPlaybackError(error, finish, autoSwitchPlayer);
         }
-        if (byName >= 0) {
-            fresh.playFlag = playing.playFlag;
-            fresh.playIndex = byName;
-            return true;
-        }
-        return false;
     }
 
     private void showVodInfo(VodInfo info, boolean keepPlaying) {
@@ -955,6 +987,15 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
             pendingDetailReady = false;
             historyQuickPlayback = false;
             historySnapshotShown = snapshot != null;
+            historyDetailCompleted = false;
+            historyDetailRefreshed = false;
+            historyRefreshRetryUsed = false;
+            historySnapshotEpisodeUrl = HistoryEntryNavigator.hasPlayableSnapshot(snapshot)
+                    ? snapshot.seriesMap.get(snapshot.playFlag).get(snapshot.playIndex).url : null;
+            historyRefreshHandler.removeCallbacks(historyRefreshTimeout);
+            failedHistoryEpisodeUrl = null;
+            failedHistoryError = null;
+            failedHistoryGeneration = -1;
             if (snapshot != null && showPreview && playFragment != null) {
                 // Activity.onCreate 期间 Fragment 事务虽已提交，播放器的懒初始化仍未完成。
                 // 就绪后先起播，再请求同源详情，避免刷新任务占住播放解析队列。
@@ -1051,6 +1092,28 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
         return true;
     }
 
+    @Override
+    public boolean onPlaybackFailed(long generation, String episodeUrl, String error,
+                                    boolean finish, boolean autoSwitchPlayer) {
+        if (!historyQuickPlayback || historyRefreshRetryUsed || historySnapshotEpisodeUrl == null
+                || !TextUtils.equals(historySnapshotEpisodeUrl, episodeUrl) || playFragment == null
+                || !playFragment.isPlaybackRequestCurrent(generation, episodeUrl)) return false;
+        failedHistoryGeneration = generation;
+        failedHistoryEpisodeUrl = episodeUrl;
+        failedHistoryError = error;
+        failedHistoryFinish = finish;
+        failedHistoryAutoSwitchPlayer = autoSwitchPlayer;
+        if (historyDetailCompleted) {
+            if (retryRefreshedHistoryIfNeeded()) return true;
+            failedHistoryEpisodeUrl = null;
+            historyRefreshRetryUsed = true;
+            return false;
+        }
+        historyRefreshHandler.removeCallbacks(historyRefreshTimeout);
+        historyRefreshHandler.postDelayed(historyRefreshTimeout, HISTORY_REFRESH_TIMEOUT_MS);
+        return true;
+    }
+
     private List<String> currentCastEpisodeNames() {
         List<String> names = new ArrayList<>();
         if (vodInfo == null || vodInfo.seriesMap == null) return names;
@@ -1081,6 +1144,7 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
 
     @Override
     protected void onDestroy() {
+        historyRefreshHandler.removeCallbacks(historyRefreshTimeout);
         ControlManager.get().clearEpisodeCast(lanCastOwner);
         sourceViewModel.setQuickSearchBatchListener(null); // 断开 quick 结果直调,防悬垂
         if (playFragment != null) playFragment.setPlaySyncHost(null); // 断开屏内直调
