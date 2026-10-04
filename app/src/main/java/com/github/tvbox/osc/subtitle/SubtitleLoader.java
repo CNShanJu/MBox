@@ -25,7 +25,6 @@
 
 package com.github.tvbox.osc.subtitle;
 
-import android.net.Uri;
 import android.text.TextUtils;
 import android.util.Log;
 
@@ -46,16 +45,17 @@ import com.github.tvbox.osc.util.UnicodeReader;
 import org.apache.commons.io.input.ReaderInputStream;
 
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.Reader;
-import java.net.URLDecoder;
 import java.nio.charset.Charset;
 import java.util.HashMap;
 import java.util.Map;
 
 import okhttp3.Response;
+import okhttp3.ResponseBody;
 
 /**
  * @author AveryZhong.
@@ -63,6 +63,7 @@ import okhttp3.Response;
 
 public class SubtitleLoader {
     private static final String TAG = SubtitleLoader.class.getSimpleName();
+    private static final int MAX_REMOTE_SUBTITLE_BYTES = 8 * 1024 * 1024;
 
     private SubtitleLoader() {
         throw new AssertionError("No instance for you.");
@@ -163,7 +164,7 @@ public class SubtitleLoader {
 
     private static SubtitleLoadSuccessResult loadFromRemote(final String remoteSubtitlePath)
             throws IOException, FatalParsingException, Exception {
-        Log.d(TAG, "parseRemote: remoteSubtitlePath = " + remoteSubtitlePath);
+        Log.d(TAG, "parseRemote: loading remote subtitle");
         String referer = "";
         if (remoteSubtitlePath.contains("alicloud") || remoteSubtitlePath.contains("aliyundrive")) {
             referer = "https://www.aliyundrive.com/";
@@ -175,37 +176,24 @@ public class SubtitleLoader {
         headers.put("Referer", referer);
         headers.put("User-Agent", ua);
         Response response = HttpClient.getResponseSync(remoteSubtitlePath, headers);
+        if (response == null) throw new IOException("Subtitle response is empty");
         try {
-            byte[] bytes = response.body().bytes();
+            ResponseBody body = response.body();
+            if (!response.isSuccessful() || body == null) {
+                throw new IOException("Subtitle request failed: HTTP " + response.code());
+            }
+            byte[] bytes = readLimited(body.byteStream(), body.contentLength(), MAX_REMOTE_SUBTITLE_BYTES);
             // 字符集探测统一走 CharsetUtils(UniversalDetector + 中文常用字回退;探测失败不再 NPE)
             String content = new String(bytes, CharsetUtils.detect(bytes));
             InputStream is = new ByteArrayInputStream(content.getBytes());
-            String filename = "";
-            String contentDispostion = response.header("content-disposition", "");
-            String[] cd = contentDispostion.split(";");
-            if (cd.length > 1) {
-                String filenameInfo = cd[1];
-                filenameInfo = filenameInfo.trim();
-                if (filenameInfo.startsWith("filename=")) {
-                    filename = filenameInfo.replace("filename=", "");
-                    filename = filename.replace("\"", "");
-                } else if (filenameInfo.startsWith("filename*=")) {
-                    filename = filenameInfo.substring(filenameInfo.lastIndexOf("''")+2);
-                }
-                filename = filename.trim();
-                filename = URLDecoder.decode(filename);
-        }
-        String filePath = filename;
-        if (filename == null || filename.length() < 1) {
-            Uri uri = Uri.parse(remoteSubtitlePath);
-            filePath = uri.getPath();
-        }
-        SubtitleLoadSuccessResult subtitleLoadSuccessResult = new SubtitleLoadSuccessResult();
-        subtitleLoadSuccessResult.timedTextObject = loadAndParse(is, filePath);
-        subtitleLoadSuccessResult.fileName = filename;
-        subtitleLoadSuccessResult.content = content;
-        subtitleLoadSuccessResult.subtitlePath = remoteSubtitlePath;
-        return subtitleLoadSuccessResult;
+            String filename = SubtitleFilePolicy.suggestedName(
+                    response.header("content-disposition", ""), remoteSubtitlePath);
+            SubtitleLoadSuccessResult subtitleLoadSuccessResult = new SubtitleLoadSuccessResult();
+            subtitleLoadSuccessResult.timedTextObject = loadAndParse(is, filename);
+            subtitleLoadSuccessResult.fileName = filename;
+            subtitleLoadSuccessResult.content = content;
+            subtitleLoadSuccessResult.subtitlePath = remoteSubtitlePath;
+            return subtitleLoadSuccessResult;
         } finally {
             response.close();
         }
@@ -303,6 +291,18 @@ public class SubtitleLoader {
             bos.write(buf, 0, n);
         }
         return bos.toByteArray();
+    }
+
+    static byte[] readLimited(InputStream in, long declaredLength, int maxBytes) throws IOException {
+        if (declaredLength > maxBytes) throw new IOException("Remote subtitle exceeds size limit");
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        byte[] buffer = new byte[8192];
+        int count;
+        while ((count = in.read(buffer)) != -1) {
+            if (count > maxBytes - out.size()) throw new IOException("Remote subtitle exceeds size limit");
+            out.write(buffer, 0, count);
+        }
+        return out.toByteArray();
     }
 
     public interface Callback {

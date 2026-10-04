@@ -30,20 +30,24 @@ import android.os.HandlerThread;
 import android.os.Message;
 import androidx.annotation.Nullable;
 import android.text.TextUtils;
+import android.util.AtomicFile;
 import android.util.Log;
 
 import com.github.tvbox.osc.base.App;
-import com.github.tvbox.osc.cache.CacheManager;
 import com.github.tvbox.osc.subtitle.model.Subtitle;
 import com.github.tvbox.osc.subtitle.model.Time;
-import com.github.tvbox.osc.util.FileUtils;
+import com.github.tvbox.osc.subtitle.runtime.AppTaskExecutor;
 import com.github.tvbox.osc.util.MD5;
 import com.github.tvbox.osc.util.SubtitleHelper;
 
 import java.io.File;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.TreeMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 import xyz.doikki.videoplayer.player.AbstractPlayer;
 
@@ -55,6 +59,7 @@ public class DefaultSubtitleEngine implements SubtitleEngine {
     private static final String TAG = DefaultSubtitleEngine.class.getSimpleName();
     private static final int MSG_REFRESH = 0x888;
     private static final int REFRESH_INTERVAL = 100;
+    private static final Object REMOTE_CACHE_WRITE_LOCK = new Object();
 
     @Nullable
     private HandlerThread mHandlerThread;
@@ -66,6 +71,8 @@ public class DefaultSubtitleEngine implements SubtitleEngine {
     private AbstractPlayer mMediaPlayer;
     private OnSubtitlePreparedListener mOnSubtitlePreparedListener;
     private OnSubtitleChangeListener mOnSubtitleChangeListener;
+    private final AtomicLong mLoadEpoch = new AtomicLong();
+    private String playSubtitleCacheKey;
 
     public DefaultSubtitleEngine() {
 
@@ -80,6 +87,8 @@ public class DefaultSubtitleEngine implements SubtitleEngine {
     public void setSubtitlePath(final String path) {
         initWorkThread();
         reset();
+        final long loadEpoch = mLoadEpoch.get();
+        final String cacheKey = playSubtitleCacheKey;
         if (TextUtils.isEmpty(path)) {
             Log.w(TAG, "loadSubtitleFromRemote: path is null.");
             return;
@@ -88,6 +97,7 @@ public class DefaultSubtitleEngine implements SubtitleEngine {
         SubtitleLoader.loadSubtitle(path, new SubtitleLoader.Callback() {
             @Override
             public void onSuccess(final SubtitleLoadSuccessResult subtitleLoadSuccessResult) {
+                if (loadEpoch != mLoadEpoch.get()) return;
                 if (subtitleLoadSuccessResult == null) {
                     Log.d(TAG, "onSuccess: subtitleLoadSuccessResult is null.");
                     return;
@@ -104,30 +114,59 @@ public class DefaultSubtitleEngine implements SubtitleEngine {
                 mSubtitles = new ArrayList<>(captions.values());
                 setSubtitleDelay(SubtitleHelper.getTimeDelay());
                 notifyPrepared();
+                if (loadEpoch != mLoadEpoch.get() || TextUtils.isEmpty(cacheKey)) return;
 
                 String subtitlePath = subtitleLoadSuccessResult.subtitlePath;
                 if (subtitlePath.startsWith("http://") || subtitlePath.startsWith("https://")) {
-                    String subtitleFileCacheDir = App.getInstance().getCacheDir().getAbsolutePath() + "/zimu/";
-                    File cacheDir = new File(subtitleFileCacheDir);
-                    if (!cacheDir.exists()) {
-                        cacheDir.mkdirs();
-                    }
-                    String subtitleFile = subtitleFileCacheDir + subtitleLoadSuccessResult.fileName;
-                    File cacheSubtitleFile = new File(subtitleFile);
-                    boolean writeResult = FileUtils.writeSimple(subtitleLoadSuccessResult.content.getBytes(), cacheSubtitleFile);
-                    if (writeResult) {
-                        com.github.tvbox.osc.repo.HistoryRepositories.cache().save(MD5.string2MD5(getPlaySubtitleCacheKey()), subtitleFile);
-                    }
+                    AppTaskExecutor.deskIO().execute(() -> cacheRemoteSubtitle(
+                            subtitlePath, subtitleLoadSuccessResult.fileName,
+                            subtitleLoadSuccessResult.content, cacheKey, loadEpoch));
                 } else {
-                    com.github.tvbox.osc.repo.HistoryRepositories.cache().save(MD5.string2MD5(getPlaySubtitleCacheKey()), path);
+                    com.github.tvbox.osc.repo.HistoryRepositories.cache().save(MD5.string2MD5(cacheKey), path);
                 }
             }
 
             @Override
             public void onError(final Exception exception) {
-                Log.e(TAG, "onError: " + exception.getMessage());
+                if (loadEpoch == mLoadEpoch.get()) Log.e(TAG, "Subtitle load failed", exception);
             }
         });
+    }
+
+    private void cacheRemoteSubtitle(String url, String suggestedName, String content,
+                                     String cacheKey, long loadEpoch) {
+        if (loadEpoch != mLoadEpoch.get() || content == null) return;
+        synchronized (REMOTE_CACHE_WRITE_LOCK) {
+            if (loadEpoch != mLoadEpoch.get()) return;
+            File cacheDir = new File(App.getInstance().getCacheDir(), "zimu");
+            if (!cacheDir.isDirectory() && !cacheDir.mkdirs()) {
+                Log.w(TAG, "Unable to create subtitle cache directory");
+                return;
+            }
+            File target = new File(cacheDir, SubtitleFilePolicy.cacheName(url, suggestedName));
+            try {
+                // The name is URL-derived; this check also rejects a future unsafe naming regression.
+                if (!cacheDir.getCanonicalFile().equals(target.getCanonicalFile().getParentFile())) {
+                    throw new IOException("Subtitle cache path escaped its directory");
+                }
+                AtomicFile atomicFile = new AtomicFile(target);
+                FileOutputStream stream = null;
+                try {
+                    stream = atomicFile.startWrite();
+                    stream.write(content.getBytes(StandardCharsets.UTF_8));
+                    atomicFile.finishWrite(stream);
+                } catch (IOException e) {
+                    if (stream != null) atomicFile.failWrite(stream);
+                    throw e;
+                }
+                if (loadEpoch == mLoadEpoch.get()) {
+                    com.github.tvbox.osc.repo.HistoryRepositories.cache().save(
+                            MD5.string2MD5(cacheKey), target.getAbsolutePath());
+                }
+            } catch (IOException e) {
+                Log.e(TAG, "Unable to cache remote subtitle", e);
+            }
+        }
     }
 
     @Override
@@ -158,8 +197,8 @@ public class DefaultSubtitleEngine implements SubtitleEngine {
         mSubtitles = thisSubtitles;
     }
 
-    private static String playSubtitleCacheKey;
     public void setPlaySubtitleCacheKey(String cacheKey) {
+        if (!TextUtils.equals(playSubtitleCacheKey, cacheKey)) reset();
         playSubtitleCacheKey = cacheKey;
     }
 
@@ -169,6 +208,7 @@ public class DefaultSubtitleEngine implements SubtitleEngine {
 
     @Override
     public void reset() {
+        mLoadEpoch.incrementAndGet();
         stop();
         mSubtitles = null;
         mUIRenderTask = null;
@@ -259,7 +299,7 @@ public class DefaultSubtitleEngine implements SubtitleEngine {
 
     private void notifyRefreshUI(final Subtitle subtitle) {
         if (mUIRenderTask == null) {
-            mUIRenderTask = new UIRenderTask(mOnSubtitleChangeListener);
+            mUIRenderTask = new UIRenderTask(mOnSubtitleChangeListener, mLoadEpoch::get);
         }
         mUIRenderTask.execute(subtitle);
     }
@@ -278,6 +318,7 @@ public class DefaultSubtitleEngine implements SubtitleEngine {
     @Override
     public void setOnSubtitleChangeListener(final OnSubtitleChangeListener listener) {
         mOnSubtitleChangeListener = listener;
+        mUIRenderTask = null;
     }
 
 }
