@@ -44,7 +44,6 @@ public final class PrefsDataStore {
             if (store != null) return;
             RxDataStore<Preferences> ds = new RxPreferenceDataStoreBuilder(
                     context == null ? null : context.getApplicationContext(), FILE_NAME).build();
-            store = ds;
             try {
                 Preferences prefs = ds.data().blockingFirst();
                 if (prefs != null) {
@@ -58,6 +57,8 @@ public final class PrefsDataStore {
             } catch (Throwable th) {
                 th.printStackTrace();
             }
+            // Do not expose a writable store until its initial disk snapshot is published.
+            store = ds;
         }
     }
 
@@ -111,8 +112,7 @@ public final class PrefsDataStore {
     }
 
     private static void putString(String key, String v) {
-        cache.put(key, v);
-        write(p -> {
+        write(key, v, p -> {
             MutablePreferences m = p.toMutablePreferences();
             m.set(PreferencesKeys.stringKey(key), v);
             return m;
@@ -120,8 +120,7 @@ public final class PrefsDataStore {
     }
 
     private static void putBoolean(String key, boolean v) {
-        cache.put(key, v);
-        write(p -> {
+        write(key, v, p -> {
             MutablePreferences m = p.toMutablePreferences();
             m.set(PreferencesKeys.booleanKey(key), v);
             return m;
@@ -129,8 +128,7 @@ public final class PrefsDataStore {
     }
 
     private static void putInt(String key, int v) {
-        cache.put(key, v);
-        write(p -> {
+        write(key, v, p -> {
             MutablePreferences m = p.toMutablePreferences();
             m.set(PreferencesKeys.intKey(key), v);
             return m;
@@ -138,8 +136,7 @@ public final class PrefsDataStore {
     }
 
     private static void putFloat(String key, float v) {
-        cache.put(key, v);
-        write(p -> {
+        write(key, v, p -> {
             MutablePreferences m = p.toMutablePreferences();
             m.set(PreferencesKeys.floatKey(key), v);
             return m;
@@ -147,8 +144,7 @@ public final class PrefsDataStore {
     }
 
     private static void putLong(String key, long v) {
-        cache.put(key, v);
-        write(p -> {
+        write(key, v, p -> {
             MutablePreferences m = p.toMutablePreferences();
             m.set(PreferencesKeys.longKey(key), v);
             return m;
@@ -159,20 +155,11 @@ public final class PrefsDataStore {
     public static void putJson(String key, Object value) {
         if (value == null) return;
         String s = GSON.toJson(value);
-        cache.put(key, s);
-        RxDataStore<Preferences> st = store;
-        if (st == null) return;
-        synchronized (WRITE_LOCK) {
-            try {
-                st.updateDataAsync(prefs -> {
-                    MutablePreferences m = prefs.toMutablePreferences();
-                    m.set(PreferencesKeys.stringKey(key), s);
-                    return io.reactivex.rxjava3.core.Single.just(m);
-                }).blockingGet();
-            } catch (Throwable th) {
-                th.printStackTrace();
-            }
-        }
+        write(key, s, prefs -> {
+            MutablePreferences m = prefs.toMutablePreferences();
+            m.set(PreferencesKeys.stringKey(key), s);
+            return m;
+        });
     }
 
     /** 读取 JSON 文本对象;缺失/解析失败返回 defValue */
@@ -189,10 +176,9 @@ public final class PrefsDataStore {
 
     /** 删除键(无论原存储类型;整表扫描移除同名校验值) */
     public static void delete(String key) {
-        cache.remove(key);
-        RxDataStore<Preferences> s = store;
-        if (s == null) return;
         synchronized (WRITE_LOCK) {
+            RxDataStore<Preferences> s = store;
+            if (s == null) return;
             try {
                 s.updateDataAsync(prefs -> {
                     MutablePreferences mutable = prefs.toMutablePreferences();
@@ -203,6 +189,7 @@ public final class PrefsDataStore {
                     }
                     return io.reactivex.rxjava3.core.Single.just(mutable);
                 }).blockingGet();
+                cache.remove(key);
             } catch (Throwable ignored) {
             }
         }
@@ -319,13 +306,16 @@ public final class PrefsDataStore {
         }
     }
 
-    private static void write(java.util.function.Function<Preferences, MutablePreferences> fn) {
-        RxDataStore<Preferences> s = store;
-        if (s == null) return; // init 前 put 丢弃(装配先 init)
+    private static void write(String key, Object value,
+                              java.util.function.Function<Preferences, MutablePreferences> fn) {
         synchronized (WRITE_LOCK) {
+            RxDataStore<Preferences> s = store;
+            if (s == null) return; // init 前 put 丢弃(装配先 init)
             try {
                 s.updateDataAsync(prefs -> io.reactivex.rxjava3.core.Single.just(fn.apply(prefs)))
                         .blockingGet();
+                // Keep disk order and in-memory order identical for concurrent writers.
+                cache.put(key, value);
             } catch (Throwable th) {
                 th.printStackTrace();
             }
