@@ -52,12 +52,14 @@ class LanServiceActivity : BaseVbActivity<ActivityLanServiceBinding>() {
         }
         mBinding.llLanServer.setOnClickListener { view ->
             FastClickCheckUtil.check(view)
-            if (SystemConfig.isLanServerEnabled()) {
+            val enabled = SystemConfig.isLanServerEnabled()
+            // 仅撤销尚未生效的开启设置时，直接关闭；真实对外监听仍需确认断开设备。
+            if (enabled && ControlManager.get().isLanServing) {
                 ConfirmDialog.show(this, "关闭局域网服务",
                     "关闭会清除已配对设备，并立即停止局域网访问；本机回环服务会继续运行。",
                     "确认关闭") { updateLanServerEnabled(false) }
             } else {
-                updateLanServerEnabled(true)
+                updateLanServerEnabled(!enabled)
             }
         }
         mBinding.panelLanConsole.setOnClickListener { openConsole() }
