@@ -52,7 +52,7 @@
                     android:orientation="vertical">
 
                 <LinearLayout
-                        android:id="@+id/llSubscription"
+                        android:id="@+id/tvHistory"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:orientation="horizontal"
@@ -65,7 +65,7 @@
                             android:layout_width="28dp"
                             android:layout_height="28dp"
                             android:layout_gravity="center"
-                            android:src="@drawable/ic_database_48"/>
+                            android:src="@drawable/ic_history_48"/>
 
                     <TextView
                             android:layout_width="wrap_content"
@@ -75,7 +75,7 @@
                             android:focusable="false"
                             android:focusableInTouchMode="false"
                             android:gravity="center"
-                            android:text="订阅管理"
+                            android:text="观看历史"
                             android:textAlignment="gravity"
                             android:textColor="@color/text_foreground"
                             android:textSize="16sp"/>
@@ -97,7 +97,7 @@
 
 
                 <LinearLayout
-                        android:id="@+id/tvHistory"
+                        android:id="@+id/llCollect"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:orientation="horizontal"
@@ -109,7 +109,7 @@
                             android:layout_width="28dp"
                             android:layout_height="28dp"
                             android:layout_gravity="center"
-                            android:src="@drawable/ic_history_48"/>
+                            android:src="@drawable/ic_collect_48"/>
 
                     <TextView
                             android:layout_width="wrap_content"
@@ -119,7 +119,7 @@
                             android:focusable="false"
                             android:focusableInTouchMode="false"
                             android:gravity="center"
-                            android:text="观看历史"
+                            android:text="收藏"
                             android:textAlignment="gravity"
                             android:textColor="@color/text_foreground"
                             android:textSize="16sp"/>

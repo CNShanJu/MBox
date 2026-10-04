@@ -41,6 +41,32 @@
                 android:paddingVertical="20dp"
                 android:background="@drawable/bg_large_round_float">
                 <LinearLayout
+                    android:id="@+id/llSubscription"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/dp_60"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="40dp"
+                    android:foreground="?android:selectableItemBackground">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="订阅管理"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="16sp"/>
+
+                    <ImageView
+                        android:layout_width="13dp"
+                        android:layout_height="13dp"
+                        android:layout_gravity="center"
+                        android:alpha="0.75"
+                        android:src="@drawable/ic_seek_right"
+                        app:tint="@color/text_foreground"/>
+                </LinearLayout>
+                <LinearLayout
                     android:id="@+id/llHomeRec"
                     android:layout_width="match_parent"
                     android:layout_height="@dimen/dp_60"

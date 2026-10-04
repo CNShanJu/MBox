@@ -81,6 +81,9 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
 
         // 返回键与系统返回同一口径(统一头部的返回行为在这里接管)
         mBinding.titleBar.setOnBackClickListener { onBackPressed() }
+        mBinding.llSubscription.setOnClickListener {
+            jumpActivity(SubscriptionActivity::class.java)
+        }
         mBinding.tvMediaCodec.text = PlayConfig.getIjkCodec()
 
         // 下载设置:仅WiFi / 并发数 / 保存位置(与下载页标题栏齿轮共用 DownloadConfig,单一事实源)
