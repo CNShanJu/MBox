@@ -2,7 +2,6 @@ package com.github.tvbox.osc.ui.kit;
 
 import android.content.Context;
 import android.util.AttributeSet;
-import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.widget.LinearLayout;
@@ -86,7 +85,7 @@ public class SelectActionBar extends LinearLayout {
         action.setGravity(Gravity.CENTER);
         action.setSingleLine(true);
         action.setTag(TAG_KIND, k);
-        action.setBackgroundResource(selectableBorderlessRes());
+        action.setBackgroundColor(android.graphics.Color.TRANSPARENT);
         action.setTextColor(colorOf(k, true));
         LayoutParams lp = new LayoutParams(0, dp(ACTION_HEIGHT_DP), 1f);
         mRow.addView(action, lp);
@@ -128,14 +127,6 @@ public class SelectActionBar extends LinearLayout {
             res = R.color.btn_plain_text;
         }
         return ContextCompat.getColor(getContext(), res);
-    }
-
-    /** 系统"无边界涟漪"资源(?selectableItemBackgroundBorderless),与布局里原来写的保持同一观感 */
-    private int selectableBorderlessRes() {
-        TypedValue tv = new TypedValue();
-        getContext().getTheme().resolveAttribute(
-                android.R.attr.selectableItemBackgroundBorderless, tv, true);
-        return tv.resourceId;
     }
 
     private int dp(int value) {

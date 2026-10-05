@@ -51,6 +51,7 @@
 -keep public class * extends android.support.v7.**
 -keep public class * extends android.support.annotation.**
 
+# AppSlider's Material 1.9 tooltip color bridge also relies on BaseSlider.labels.
 -keep class com.google.android.material.** { *; }
 -dontwarn com.google.android.material.**
 -dontnote com.google.android.material.**

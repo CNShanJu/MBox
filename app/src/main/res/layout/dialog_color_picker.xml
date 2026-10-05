@@ -114,7 +114,7 @@
             android:textColor="@color/text_sub_foreground"
             android:textSize="12sp" />
 
-        <com.google.android.material.slider.Slider
+        <com.github.tvbox.osc.ui.kit.AppSlider
             android:id="@+id/slider_alpha"
             android:layout_width="0dp"
             android:layout_height="wrap_content"

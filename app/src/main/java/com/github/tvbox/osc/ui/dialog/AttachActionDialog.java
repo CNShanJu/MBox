@@ -110,10 +110,7 @@ public class AttachActionDialog extends AttachPopupView {
         tv.setText(text);
         tv.setTextColor(androidx.core.content.ContextCompat.getColor(getContext(),
                 kind == DANGER ? R.color.text_danger : R.color.text_foreground));
-        // 触摸反馈用主题点击态(与其它可点条目一致),不要另开一套颜色。
-        // 必须走 ThemeDrawables 这条主题入口:setBackgroundResource 取的是**编译期**那份 drawable,
-        // 自定义主题下这一行的底会停在内置色(ThemeDrawables 的类注释里记的就是这个坑)。
-        com.github.tvbox.osc.theme.ThemeDrawables.applyBackground(tv, R.drawable.ripple_round_background);
+        tv.setBackgroundColor(android.graphics.Color.TRANSPARENT);
         tv.setOnClickListener(v -> {
             FastClickCheckUtil.check(v);
             int pos = position;

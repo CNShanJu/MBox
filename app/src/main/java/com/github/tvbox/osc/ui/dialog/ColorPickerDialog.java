@@ -15,10 +15,10 @@ import com.github.tvbox.osc.R;
 import com.github.tvbox.osc.bean.theme.ThemePalette;
 import com.github.tvbox.osc.bean.theme.ThemeShapePalette;
 import com.github.tvbox.osc.theme.ThemeRuntime;
+import com.github.tvbox.osc.ui.kit.AppSlider;
 import com.github.tvbox.osc.ui.kit.ColorPlateView;
 import com.github.tvbox.osc.ui.kit.HueBarView;
 import com.github.tvbox.osc.util.Utils;
-import com.google.android.material.slider.Slider;
 import com.lxj.xpopup.XPopup;
 import com.lxj.xpopup.core.BasePopupView;
 import com.lxj.xpopup.interfaces.XPopupCallback;
@@ -52,7 +52,7 @@ public class ColorPickerDialog extends AppCenterPopupView {
     private HueBarView hueBar;
     private EditText hexInput;
     private TextView alphaLabel;
-    private Slider alphaSlider;
+    private AppSlider alphaSlider;
     private View preview;
 
     /** 当前 RGB(不含 alpha)与 alpha(0-255)分开维护:色板只管 RGB */

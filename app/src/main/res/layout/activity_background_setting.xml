@@ -38,7 +38,7 @@
                 android:id="@+id/tv_pick"
                 android:layout_width="wrap_content"
                 android:layout_height="match_parent"
-                android:background="@drawable/ripple_round_background"
+                android:background="@android:color/transparent"
                 android:gravity="center"
                 android:paddingHorizontal="12dp"
                 android:text="更换图片"
@@ -221,7 +221,7 @@
                                     android:textColor="@color/text_foreground"
                                     android:textSize="14sp" />
 
-                                <com.google.android.material.slider.Slider
+                                <com.github.tvbox.osc.ui.kit.AppSlider
                                     android:id="@+id/slider_alpha"
                                     android:layout_width="0dp"
                                     android:layout_height="wrap_content"

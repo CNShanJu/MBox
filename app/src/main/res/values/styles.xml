@@ -174,7 +174,7 @@
     </style>
 
     <!-- ③ 纯文字按钮:背景透明、**无描边**,只剩文字(复制/展开/选集下载这类"本质是文字的动作")。
-         文字色 btn_plain_text 派生自 brand(文字主色),随主题走;圆角仍写 radius_btn(按下态才看得见形状)。 -->
+         文字色 btn_plain_text 派生自 brand(文字主色),随主题走;按下也不显示背景或波纹。 -->
     <style name="BtnGhost" parent="@style/Widget.Material3.Button.TextButton">
         <item name="android:textColor">@color/btn_plain_text</item>
         <item name="android:textSize">14sp</item>
@@ -185,16 +185,17 @@
         <item name="android:stateListAnimator">@null</item>
         <item name="android:background">@drawable/theme_btn_ghost</item>
         <item name="backgroundTint">@null</item>
+        <item name="rippleColor">@android:color/transparent</item>
     </style>
 
     <!-- 纯文字按钮(TextView 版):给"本质就是一行文字"的键用 —— 复制 / 展开 / 选集 / 下载。
          与 ③ BtnGhost 同一档观感(无底色、无描边、只有文字),这里补的是裸 TextView 缺的东西:
-         **点击反馈**(selectableItemBackgroundBorderless)与**最小可点尺寸/内边距**。
+         **可点击/聚焦**与**最小可点尺寸/内边距**，点击不显示圆形波纹背景。
          文字色默认 btn_plain_text(= 文字主色),需要强调的地方(如"复制"走高亮色)在布局里单独覆盖。 -->
     <style name="TextButton">
         <item name="android:clickable">true</item>
         <item name="android:focusable">true</item>
-        <item name="android:background">?android:attr/selectableItemBackgroundBorderless</item>
+        <item name="android:background">@android:color/transparent</item>
         <item name="android:gravity">center</item>
         <item name="android:minHeight">32dp</item>
         <item name="android:paddingStart">8dp</item>
@@ -251,7 +252,31 @@
     <style name="SubtitleTextButton" parent="Widget.MaterialComponents.Button.TextButton">
         <item name="backgroundTint">@android:color/transparent</item>
         <item name="strokeColor">@android:color/transparent</item>
+        <item name="rippleColor">@android:color/transparent</item>
         <item name="android:textColor">@color/text_foreground</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:textAllCaps">false</item>
+        <item name="android:minWidth">0dp</item>
+        <item name="android:minHeight">48dp</item>
+        <item name="android:paddingStart">8dp</item>
+        <item name="android:paddingEnd">8dp</item>
+        <item name="android:paddingTop">12dp</item>
+        <item name="android:paddingBottom">12dp</item>
+        <item name="android:insetTop">0dp</item>
+        <item name="android:insetBottom">0dp</item>
+        <item name="android:singleLine">false</item>
+        <item name="android:ellipsize">@null</item>
+    </style>
+
+    <style name="SubtitleSourceButton" parent="BtnSecondary">
+        <item name="android:minWidth">0dp</item>
+        <item name="android:minHeight">48dp</item>
+        <item name="android:paddingStart">8dp</item>
+        <item name="android:paddingEnd">8dp</item>
+        <item name="android:paddingTop">12dp</item>
+        <item name="android:paddingBottom">12dp</item>
+        <item name="android:singleLine">false</item>
+        <item name="android:ellipsize">@null</item>
     </style>
 
     <!-- 底部导航选中项:移除背景色,只保留 icon/文字颜色高亮 -->

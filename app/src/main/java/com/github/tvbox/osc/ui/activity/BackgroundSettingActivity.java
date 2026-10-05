@@ -10,11 +10,13 @@ import android.view.ViewGroup;
 import android.widget.TextView;
 
 import com.blankj.utilcode.util.ScreenUtils;
+import com.github.tvbox.osc.R;
 import com.github.tvbox.osc.base.BaseVbActivity;
 import com.github.tvbox.osc.bean.theme.ThemeDef;
 import com.github.tvbox.osc.config.SystemConfig;
 import com.github.tvbox.osc.databinding.ActivityBackgroundSettingBinding;
 import com.github.tvbox.osc.storage.theme.ThemeStore;
+import com.github.tvbox.osc.ui.kit.AppSlider;
 import com.github.tvbox.osc.ui.kit.BackgroundTuneView;
 import com.github.tvbox.osc.ui.kit.PageBackgroundView;
 import com.github.tvbox.osc.util.AppBubble;
@@ -23,7 +25,6 @@ import com.github.tvbox.osc.util.BgImageTransform;
 import com.github.tvbox.osc.util.FastClickCheckUtil;
 import com.github.tvbox.osc.util.HeavyTaskUtil;
 import com.github.tvbox.osc.util.PageBackgroundStore;
-import com.google.android.material.slider.Slider;
 
 /**
  * 背景图设置(二级页,入口:设置 - 主题颜色 - 设置背景图)。
@@ -273,9 +274,8 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
             chip.setAlpha(alpha);
         }
         // 滑杆是**连续**控件:没图时保持禁用(按住拖动本来就没有"一下"可提示,
-        // 用触摸监听接管反而会吃掉"从这一行起手滚动面板"的手势),它的压暗 + 上面那行提示已足够
+        // 用触摸监听接管反而会吃掉"从这一行起手滚动面板"的手势);禁用色由 AppSlider 统一处理，避免重复压暗
         mBinding.sliderAlpha.setEnabled(hasImage);
-        mBinding.sliderAlpha.setAlpha(alpha);
         mBinding.llScrim.setAlpha(alpha);
         mBinding.switchScrim.setEnabled(hasImage);
         mBinding.switchScrim.setAlpha(alpha);
@@ -585,7 +585,8 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
 
     /** 背景图透明度滑杆:直接就是背景图自身的不透明度(100=原图) */
     private void initAlphaSlider() {
-        Slider slider = mBinding.sliderAlpha;
+        AppSlider slider = mBinding.sliderAlpha;
+        slider.setPanelColorResource(R.color.bg_surface);
         slider.setValueFrom(0f);
         slider.setValueTo(100f);
         slider.setStepSize(1f);

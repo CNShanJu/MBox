@@ -31,7 +31,7 @@
     "radius": "radius_btn",
     "states": {
       "disabled": { "fill": "transparent" },
-      "pressed": { "fill": "press_overlay" },
+      "pressed": { "fill": "transparent" },
       "default": { "fill": "transparent" }
     }
   },
