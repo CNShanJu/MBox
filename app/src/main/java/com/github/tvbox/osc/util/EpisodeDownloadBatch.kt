@@ -19,6 +19,9 @@ object EpisodeDownloadBatch {
 
     /** 当前播放剧集上下文(仅"当前集"复用播放器解析;不在播放该集时返回 null 均可) */
     interface CurrentEpisode {
+        /** 详情线路中的精确剧集标识；同名集也只能复用当前这一集。 */
+        fun episodeId(): String?
+
         /** 播放器最终解析地址;无则返回 null */
         fun finalUrl(): String?
 
@@ -110,6 +113,13 @@ object EpisodeDownloadBatch {
         return 0
     }
 
+    /** 同名剧集可能存在于一条线路中，播放器地址只属于匹配 ID 的那一个。 */
+    @JvmStatic
+    fun mayReusePlaybackUrl(
+        selectedName: String?, selectedId: String?, currentName: String?, currentId: String?
+    ): Boolean = !selectedName.isNullOrEmpty() && selectedName == currentName
+        && !selectedId.isNullOrEmpty() && selectedId == currentId
+
     /**
      * 入队结果归类:ok=true → added;
      * ok=false 按"已下载完成(状态1)"/"已在任务中"分别计入 downloadedExisted/existedInQueue。
@@ -183,7 +193,8 @@ object EpisodeDownloadBatch {
             try {
                 // 解析真实地址 + 源要求的请求头(防盗链源下载必须携带,否则"能播不能下")
                 var rr: ResolveResult? = null
-                if (s.name != null && s.name == currentName && current != null) {
+                if (current != null && mayReusePlaybackUrl(s.name, s.episodeId,
+                        currentName, current.episodeId())) {
                     val finalUrl = playbackUrl
                     if (!finalUrl.isNullOrEmpty()) {
                         // 当前集:解析失败回退播放地址,解析结果无头时补播放器 UA/Referer

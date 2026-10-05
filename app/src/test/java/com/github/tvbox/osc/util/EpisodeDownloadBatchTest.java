@@ -42,6 +42,14 @@ public class EpisodeDownloadBatchTest {
     }
 
     @Test
+    public void playbackUrlReuseRequiresEpisodeIdEvenForDuplicateNames() {
+        assertTrue(EpisodeDownloadBatch.mayReusePlaybackUrl("Episode", "line-a-1", "Episode", "line-a-1"));
+        assertFalse(EpisodeDownloadBatch.mayReusePlaybackUrl("Episode", "line-a-2", "Episode", "line-a-1"));
+        assertFalse(EpisodeDownloadBatch.mayReusePlaybackUrl("Episode", "line-b-1", "Episode", "line-a-1"));
+        assertFalse(EpisodeDownloadBatch.mayReusePlaybackUrl("Episode", null, "Episode", "line-a-1"));
+    }
+
+    @Test
     public void countEnqueueOutcome_classifies() {
         EpisodeDownloadBatch.Outcome out = new EpisodeDownloadBatch.Outcome();
         EpisodeDownloadBatch.countEnqueueOutcome(true, 1, out);      // added

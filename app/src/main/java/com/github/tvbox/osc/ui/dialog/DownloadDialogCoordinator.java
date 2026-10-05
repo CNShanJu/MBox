@@ -16,8 +16,11 @@ import com.hjq.permissions.Permission;
 import com.hjq.permissions.XXPermissions;
 import com.lxj.xpopup.core.BasePopupView;
 
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 详情页"选择下载剧集"弹窗协调器(自 DetailActivity 下载弹窗状态层等值搬移):
@@ -31,6 +34,9 @@ public final class DownloadDialogCoordinator {
     /** 宿主回调:DetailActivity 提供需与自身/View 强绑定的能力 */
     public interface Host {
         VodInfo currentVodInfo();
+
+        /** 当前实际预览播放的剧集；浏览其他线路时仍返回原播放线路。 */
+        default VodInfo currentPlaybackVodInfo() { return null; }
 
         /** 剧名兜底(入口传入名/tvName),详情接口无名称时下载命名用 */
         String downloadVodName();
@@ -67,6 +73,11 @@ public final class DownloadDialogCoordinator {
     /** 下载选择弹窗防重入:短时间内多次点"下载"只弹一个抽屉(延迟链 + 弹窗引用双重保护) */
     private boolean isDownloadDialogShowing = false;
     private BasePopupView mDownloadDialog = null;
+    /** 主线程更新；异步结果只允许回到发起时的详情、弹窗和最近一次查询。 */
+    private long dialogEpoch = 0;
+    private long dataRequestSerial = 0;
+    /** 正常关闭下载弹窗不取消已由用户确认的下载；仅页面/线路变更才取消。 */
+    private long selectionEpoch = 0;
 
     /** 下载状态变化监听(DownloadFacade 去抖 500ms 回调,主线程): 弹窗仍显示则重查并填充(底部+右侧抽屉共用) */
     private final DownloadFacade.DownloadStatusListener downloadStatusListener = () -> {
@@ -95,6 +106,26 @@ public final class DownloadDialogCoordinator {
     public DownloadDialogCoordinator(android.content.Context context, Host host) {
         this.context = context;
         this.host = host;
+    }
+
+    /** 详情或浏览线路改变时关闭旧弹窗，并作废其排队中的打开及查询回调。 */
+    public void invalidate() {
+        dialogEpoch++;
+        dataRequestSerial++;
+        selectionEpoch++;
+        BasePopupView old = mDownloadDialog;
+        mDownloadDialog = null;
+        isDownloadDialogShowing = false;
+        unregisterStatusListener();
+        if (old != null) old.dismiss();
+    }
+
+    /** 宿主退出全屏后延迟打开时使用；若期间详情或线路改变则不再打开旧请求。 */
+    public Runnable pendingBottomOpenAction() {
+        final long expectedEpoch = selectionEpoch;
+        return () -> {
+            if (expectedEpoch == selectionEpoch) showDownloadSeriesDialogInner();
+        };
     }
 
     /**
@@ -150,18 +181,8 @@ public final class DownloadDialogCoordinator {
         // 实时刷新: 右侧抽屉同样订阅下载状态变化(全屏下载期间进度/完成/失败即时反映到勾选态)
         registerStatusListener();
         // 后台准备数据(选集副本 + 下载状态批量查询),完成后主线程填充抽屉
-        final String sourceName = getDownloadSourceName();
-        final String vodName = host.downloadVodName();
-        // 本地任务(选集副本 + 下载状态批量查询,纯 DB),走应用级共享大池,不占用爬虫分道
-        com.github.tvbox.osc.util.HeavyTaskUtil.getBigTaskExecutorService().execute(() -> {
-            List<VodInfo.VodSeries> copy = buildDownloadSeriesCopy();
-            int[] states = buildDownloadStates(copy, sourceName, vodName);
-            host.runOnUi(() -> {
-                if (mDownloadDialog instanceof DownloadSeriesRightDialog && mDownloadDialog.isShow()) {
-                    ((DownloadSeriesRightDialog) mDownloadDialog).setData(copy, states);
-                }
-            });
-        });
+        // 右侧抽屉同样先在主线程固定页面快照，后台只做纯数据/DB 工作。
+        refreshDownloadDialogStates(false);
     }
 
     /** 弹窗主体(退全屏完成后调用):立即弹窗(loading),数据后台准备完成后填充 */
@@ -239,13 +260,16 @@ public final class DownloadDialogCoordinator {
             @Override
             public void onShow(BasePopupView popupView) {
                 // 懒加载:抽屉真正展开后再查下载状态(每次打开都会查一次;进详情页不预载)
-                if (popupView instanceof DownloadSeriesDialog) {
+                if (popupView == mDownloadDialog && popupView instanceof DownloadSeriesDialog) {
                     refreshDownloadDialogStates();
                 }
             }
 
             @Override
             public void onDismiss(BasePopupView popupView) {
+                if (popupView != mDownloadDialog) return;
+                dialogEpoch++;
+                dataRequestSerial++;
                 isDownloadDialogShowing = false;
                 mDownloadDialog = null;
                 // 实时刷新: 弹窗关闭后注销下载状态订阅(与注册成对)
@@ -279,20 +303,21 @@ public final class DownloadDialogCoordinator {
      * 构建下载选择弹窗的选集副本(带统一剧集标识),供底部弹窗与全屏右侧抽屉复用;
      * 保留弹窗当前已勾选的集(按集名匹配, 排序/刷新均不丢选中)。纯逻辑见 DownloadSeriesModel
      */
-    private List<VodInfo.VodSeries> buildDownloadSeriesCopy() {
-        List<VodInfo.VodSeries> shown = null;
-        if (mDownloadDialog != null) {
-            if (mDownloadDialog instanceof DownloadSeriesDialog) {
-                shown = ((DownloadSeriesDialog) mDownloadDialog).getCurrentList();
-            } else if (mDownloadDialog instanceof DownloadSeriesRightDialog) {
-                shown = ((DownloadSeriesRightDialog) mDownloadDialog).getCurrentList();
-            }
-        }
-        VodInfo vodInfo = host.currentVodInfo();
-        java.util.Set<String> selectedNames = DownloadSeriesModel.collectSelectedNames(shown);
+    private List<VodInfo.VodSeries> buildDownloadSeriesCopy(VodInfo vodInfo, Set<String> selectedNames) {
         List<VodInfo.VodSeries> master = vodInfo.seriesMap.get(vodInfo.playFlag);
         return DownloadSeriesModel.rebuildCopy(master, selectedNames,
                 idx -> DownloadFacade.get().buildEpisodeId(vodInfo.sourceKey, vodInfo.id, vodInfo.playFlag, idx));
+    }
+
+    /** 仅在主线程读取弹窗当前勾选；异步查询不能持有或迭代可变的 View 列表。 */
+    private List<VodInfo.VodSeries> currentDialogList(BasePopupView popup) {
+        if (popup instanceof DownloadSeriesDialog) {
+            return ((DownloadSeriesDialog) popup).getCurrentList();
+        }
+        if (popup instanceof DownloadSeriesRightDialog) {
+            return ((DownloadSeriesRightDialog) popup).getCurrentList();
+        }
+        return null;
     }
 
     /** 构建下载状态数组:0=可下载,1=已下载,2=下载中/排队(批量查询,一次快照避免逐集拷贝任务列表) */
@@ -302,27 +327,41 @@ public final class DownloadDialogCoordinator {
     }
 
     /** 把选集副本+状态数组填充到当前弹窗(底部弹窗/右侧抽屉两种形态统一处理) */
-    private void applyDataToDialog(List<VodInfo.VodSeries> copy, int[] states) {
-        if (mDownloadDialog == null || !mDownloadDialog.isShow())
+    private void applyDataToDialog(BasePopupView popup, long epoch, long requestSerial,
+                                   List<VodInfo.VodSeries> copy, int[] states) {
+        if (popup != mDownloadDialog || epoch != dialogEpoch || requestSerial != dataRequestSerial
+                || !popup.isShow())
             return;
-        if (mDownloadDialog instanceof DownloadSeriesDialog) {
-            ((DownloadSeriesDialog) mDownloadDialog).setData(copy, states);
-        } else if (mDownloadDialog instanceof DownloadSeriesRightDialog) {
-            ((DownloadSeriesRightDialog) mDownloadDialog).setData(copy, states);
+        if (popup instanceof DownloadSeriesDialog) {
+            ((DownloadSeriesDialog) popup).setData(copy, states);
+        } else if (popup instanceof DownloadSeriesRightDialog) {
+            ((DownloadSeriesRightDialog) popup).setData(copy, states);
         }
     }
 
     /** 后台准备弹窗数据(选集副本 + 下载状态批量查询),完成后主线程填充弹窗 */
     private void refreshDownloadDialogStates() {
-        final String sourceName = getDownloadSourceName();
+        refreshDownloadDialogStates(true);
+    }
+
+    private void refreshDownloadDialogStates(boolean removeOrphans) {
+        final BasePopupView popup = mDownloadDialog;
+        final VodInfo vodInfo = host.currentVodInfo();
+        if (popup == null || vodInfo == null || vodInfo.seriesMap == null
+                || vodInfo.seriesMap.get(vodInfo.playFlag) == null) return;
+        final long epoch = dialogEpoch;
+        final long requestSerial = ++dataRequestSerial;
+        final Set<String> selectedNames = new HashSet<>(
+                DownloadSeriesModel.collectSelectedNames(currentDialogList(popup)));
+        final String sourceName = getDownloadSourceName(vodInfo);
         final String vodName = host.downloadVodName();
         // 本地任务(孤儿档案清理 + 选集副本 + 下载状态批量查询,纯 DB),走共享大池,不占用爬虫分道
         com.github.tvbox.osc.util.HeavyTaskUtil.getBigTaskExecutorService().execute(() -> {
             // 先清理该剧的文件不存在档案(本地删文件后, 打开抽屉立即恢复"未下载")
-            DownloadFacade.get().removeArchiveOrphansByVod(vodName, sourceName);
-            List<VodInfo.VodSeries> copy = buildDownloadSeriesCopy();
+            if (removeOrphans) DownloadFacade.get().removeArchiveOrphansByVod(vodName, sourceName);
+            List<VodInfo.VodSeries> copy = buildDownloadSeriesCopy(vodInfo, selectedNames);
             int[] states = buildDownloadStates(copy, sourceName, vodName);
-            host.runOnUi(() -> applyDataToDialog(copy, states));
+            host.runOnUi(() -> applyDataToDialog(popup, epoch, requestSerial, copy, states));
         });
     }
 
@@ -336,31 +375,87 @@ public final class DownloadDialogCoordinator {
             host.toast("请先选择要下载的剧集");
             return;
         }
+        final DownloadSelection request = captureSelection(selected);
+        if (request == null) {
+            host.toast("剧集已更新，请重新选择");
+            return;
+        }
         // 存储权限硬门槛:无权限时弹确认弹窗并拉起系统授权(与"我的-本地视频"入口一致),
         // 避免逐集解析后才提示用户去设置,体验更好
         if (!DownloadFacade.get().hasStoragePermission()) {
-            showStoragePermissionDialog(selected);
+            showStoragePermissionDialog(request);
             return;
         }
-        doStartDownloads(selected);
+        doStartDownloads(request);
+    }
+
+    /** 点击时固定页面与勾选快照；按当前列表位置重建 ID，避免排序后的旧弹窗 ID 指向别集。 */
+    private DownloadSelection captureSelection(List<VodInfo.VodSeries> selected) {
+        VodInfo vodInfo = host.currentVodInfo();
+        if (vodInfo == null || vodInfo.seriesMap == null) return null;
+        List<VodInfo.VodSeries> master = vodInfo.seriesMap.get(vodInfo.playFlag);
+        if (master == null || master.isEmpty()) return null;
+        boolean[] used = new boolean[master.size()];
+        List<VodInfo.VodSeries> copies = new ArrayList<>(selected.size());
+        for (VodInfo.VodSeries item : selected) {
+            if (item == null) return null;
+            int index = -1;
+            for (int i = 0; i < master.size(); i++) {
+                VodInfo.VodSeries candidate = master.get(i);
+                if (!used[i] && candidate != null && TextUtils.equals(item.name, candidate.name)
+                        && TextUtils.equals(item.url, candidate.url)) {
+                    index = i;
+                    break;
+                }
+            }
+            if (index < 0) return null;
+            used[index] = true;
+            VodInfo.VodSeries copy = new VodInfo.VodSeries(item.name, item.url);
+            copy.selected = true;
+            copy.episodeId = DownloadFacade.get().buildEpisodeId(
+                    vodInfo.sourceKey, vodInfo.id, vodInfo.playFlag, index);
+            copies.add(copy);
+        }
+        return new DownloadSelection(vodInfo, copies, getDownloadSourceName(vodInfo),
+                host.downloadVodName(), selectionEpoch);
+    }
+
+    private static final class DownloadSelection {
+        final VodInfo vodInfo;
+        final List<VodInfo.VodSeries> episodes;
+        final String sourceName;
+        final String vodName;
+        final long epoch;
+
+        DownloadSelection(VodInfo vodInfo, List<VodInfo.VodSeries> episodes,
+                          String sourceName, String vodName, long epoch) {
+            this.vodInfo = vodInfo;
+            this.episodes = episodes;
+            this.sourceName = sourceName;
+            this.vodName = vodName;
+            this.epoch = epoch;
+        }
     }
 
     /** 存储权限确认弹窗:文案与"我的-本地视频"入口保持一致,确认后拉起系统授权 */
-    private void showStoragePermissionDialog(List<VodInfo.VodSeries> selected) {
+    private void showStoragePermissionDialog(DownloadSelection request) {
         ConfirmDialog.showInHostView(context, "提示",
                 "为了下载视频到本地,我们需要访问您设备文件的读写权限", "去授权",
-                () -> requestStoragePermission(selected));
+                () -> {
+                    if (request.epoch == selectionEpoch) requestStoragePermission(request);
+                });
     }
 
     /** 拉起系统「所有文件访问」授权;授权成功后继续下载,拒绝则提示并按需跳转设置页 */
-    private void requestStoragePermission(List<VodInfo.VodSeries> selected) {
+    private void requestStoragePermission(DownloadSelection request) {
         XXPermissions.with(context)
                 .permission(Permission.MANAGE_EXTERNAL_STORAGE)
                 .request(new OnPermissionCallback() {
                     @Override
                     public void onGranted(List<String> permissions, boolean all) {
+                        if (request.epoch != selectionEpoch) return;
                         if (all) {
-                            doStartDownloads(selected);
+                            doStartDownloads(request);
                         } else {
                             host.toast("部分权限未正常授予,请授权");
                         }
@@ -368,6 +463,7 @@ public final class DownloadDialogCoordinator {
 
                     @Override
                     public void onDenied(List<String> permissions, boolean never) {
+                        if (request.epoch != selectionEpoch) return;
                         if (never) {
                             host.toast("读写文件权限被永久拒绝,请手动授权");
                             XXPermissions.startPermissionActivity(context, permissions);
@@ -378,7 +474,8 @@ public final class DownloadDialogCoordinator {
                 });
     }
 
-    private void doStartDownloads(List<VodInfo.VodSeries> selected) {
+    private void doStartDownloads(DownloadSelection request) {
+        if (request.epoch != selectionEpoch) return;
         // 仅Wi-Fi为硬性限制:当前为移动网络时不开始(与下载页"仅Wi-Fi"开关语义一致);
         // 需用流量请先在下载设置里改为"Wi-Fi+流量",或连接 Wi-Fi。
         // 放在本入口(而非 startDownloads)是为了让"存储权限授权成功后回调"同样受约束
@@ -386,7 +483,7 @@ public final class DownloadDialogCoordinator {
             host.toast("已开启仅Wi-Fi下载。");
             return;
         }
-        VodInfo vodInfo = host.currentVodInfo();
+        final VodInfo vodInfo = request.vodInfo;
         List<VodInfo.VodSeries> seriesList = vodInfo.seriesMap == null
                 ? null
                 : vodInfo.seriesMap.get(vodInfo.playFlag);
@@ -394,20 +491,27 @@ public final class DownloadDialogCoordinator {
             host.toast("资源异常,请稍后重试");
             return;
         }
-        final String sourceName = getDownloadSourceName();
-        final String vodName = host.downloadVodName();
-        final String playFlag = vodInfo.playFlag;
-        final String vodId = vodInfo.id;
-        final int playIndex = vodInfo.playIndex;
-        final String currentName = playIndex >= 0 && playIndex < seriesList.size()
-                ? seriesList.get(playIndex).name
-                : null;
+        final String sourceName = request.sourceName;
+        final String vodName = request.vodName;
+        final VodInfo playing = host.currentPlaybackVodInfo();
         final PlayFragment playFragment = host.currentPlayFragment();
+        final boolean matchingPlayback = playFragment != null
+                && DownloadPlaybackMatch.matches(vodInfo, playing);
+        final int playIndex = vodInfo.playIndex;
+        final VodInfo.VodSeries currentSeries = matchingPlayback ? seriesList.get(playIndex) : null;
+        final String currentName = currentSeries == null ? null : currentSeries.name;
+        final String currentEpisodeId = currentSeries == null ? null : DownloadFacade.get().buildEpisodeId(
+                vodInfo.sourceKey, vodInfo.id, vodInfo.playFlag, playIndex);
+        // 播放器快照也须在主线程读取；后台只使用不可变的地址和请求头副本。
+        final String finalUrl = matchingPlayback ? playFragment.getFinalUrl() : null;
+        final Map<String, String> rawPlayHeaders = matchingPlayback ? playFragment.getPlayHeaders() : null;
+        final Map<String, String> playHeaders = rawPlayHeaders == null
+                ? null : new java.util.HashMap<>(rawPlayHeaders);
         // 当前播放视频的分辨率标签(由播放器画面尺寸归类),不可用则不拼分辨率
-        final String resLabel = (playFragment != null && playFragment.getPlayer() != null)
+        final String resLabel = (matchingPlayback && playFragment.getPlayer() != null)
                 ? EpisodeDownloadBatch.resolutionLabel(playFragment.getPlayer().getVideoSize())
                 : null;
-        android.util.Log.i("TVBox-Download", "startDownloads: 已选 " + selected.size() + " 集, 来源=" + sourceName
+        android.util.Log.i("TVBox-Download", "startDownloads: 已选 " + request.episodes.size() + " 集, 来源=" + sourceName
                 + ", 剧名=" + vodName + ", 当前集=" + currentName + ", 分辨率=" + resLabel);
         host.toast("正在解析下载地址,请稍候...");
         // 批量入队**不能**先占住源道(旧写法 SpiderApi.executeSerial):批内每集解析是经 spider 契约
@@ -415,21 +519,27 @@ public final class DownloadDialogCoordinator {
         // 只会提示"所选剧集地址无效",还把该源的播放/首页/详情一起堵到批末。
         // 这里投应用级共享大池:每集解析时才短暂占用源道(同源串行语义由道本身保证),不同源可并行。
         HeavyTaskUtil.getBigTaskExecutorService().execute(() -> {
-            EpisodeDownloadBatch.Outcome r = EpisodeDownloadBatch.enqueue(selected, vodInfo, sourceName,
+            EpisodeDownloadBatch.Outcome r = EpisodeDownloadBatch.enqueue(request.episodes, vodInfo, sourceName,
                     vodName, currentName, resLabel,
-                    playFragment == null ? null : new EpisodeDownloadBatch.CurrentEpisode() {
+                    finalUrl == null || finalUrl.isEmpty() ? null : new EpisodeDownloadBatch.CurrentEpisode() {
+                        @Override
+                        public String episodeId() {
+                            return currentEpisodeId;
+                        }
+
                         @Override
                         public String finalUrl() {
-                            return playFragment.getFinalUrl();
+                            return finalUrl;
                         }
 
                         @Override
                         public Map<String, String> playHeaders() {
-                            return playFragment.getPlayHeaders();
+                            return playHeaders;
                         }
                     });
             final String msg = EpisodeDownloadBatch.toastMessage(r);
             host.runOnUi(() -> {
+                if (request.epoch != selectionEpoch) return;
                 if (msg != null) {
                     host.toast(msg);
                 } else {
@@ -440,10 +550,9 @@ public final class DownloadDialogCoordinator {
     }
 
     /** 来源名(一级目录,取自订阅里配置的源名) */
-    private String getDownloadSourceName() {
+    private String getDownloadSourceName(VodInfo vodInfo) {
         String sourceName = "未分类";
         try {
-            VodInfo vodInfo = host.currentVodInfo();
             SourceBean sb = SourceConfigProviders.get().getSource(vodInfo.sourceKey);
             if (sb != null && !TextUtils.isEmpty(sb.getName())) {
                 sourceName = sb.getName();
