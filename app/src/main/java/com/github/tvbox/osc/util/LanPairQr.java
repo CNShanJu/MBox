@@ -18,7 +18,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.EnumMap;
 import java.util.Map;
 
-/** A QR handoff for one local MBox server. The scanned value only fills the connection form. */
+/** A QR handoff for one local MBox server. The host validates it before connecting. */
 public final class LanPairQr {
     private static final String SCHEME = "mbox";
     private static final String HOST = "lan-pair";

@@ -1,7 +1,16 @@
 package com.github.tvbox.osc.ui.activity
 
+import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.ResultReceiver
+import android.provider.Settings
 import android.util.Log
 import android.view.Gravity
 import android.view.View
@@ -9,6 +18,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
 import com.blankj.utilcode.util.AppUtils
 import com.blankj.utilcode.util.ClipboardUtils
 import com.github.tvbox.osc.R
@@ -25,6 +35,7 @@ import com.github.tvbox.osc.ui.dialog.LanPairQrDialog
 import com.github.tvbox.osc.ui.dialog.TextTipDialog
 import com.github.tvbox.osc.util.AppBubble
 import com.github.tvbox.osc.util.FastClickCheckUtil
+import com.github.tvbox.osc.util.HeavyTaskUtil
 import com.github.tvbox.osc.util.LanPairQr
 import com.lxj.xpopup.XPopup
 
@@ -37,12 +48,25 @@ class LanServiceActivity : BaseVbActivity<ActivityLanServiceBinding>() {
     private val importListener = ConfigImportSession.Listener { renderImportConnection() }
     private var scanDraftAddress = ""
     private var scanDraftCode = ""
+    private var importNavigationToken = 0L
+    private var lanStartToken = 0L
+    private var lanStartInFlight = false
+    private var lanStartTimeout: Runnable? = null
+    private val lanStateListener = LanServerService.StateListener {
+        if (!isFinishing && !isDestroyed) renderStatus()
+    }
     private val scanLanQr = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        ++importNavigationToken
         val raw = if (result.resultCode == Activity.RESULT_OK)
             result.data?.getStringExtra(LanQrScanActivity.EXTRA_QR_RESULT) else null
         val pair = raw?.let(LanPairQr::decode)
         if (raw != null && pair == null) AppBubble.toast("二维码不是有效的 MBox 连接信息")
-        openConnectDialog(pair?.address ?: scanDraftAddress, pair?.code ?: scanDraftCode)
+        if (pair == null) openConnectDialog(scanDraftAddress, scanDraftCode)
+        else openConnectDialog(pair.address, pair.code, connectImmediately = true)
+    }
+    private val requestLanNotification = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) enableLanWithNotification() else showNotificationSettingsNeeded()
     }
 
     override fun init() {
@@ -62,7 +86,6 @@ class LanServiceActivity : BaseVbActivity<ActivityLanServiceBinding>() {
                 updateLanServerEnabled(!enabled)
             }
         }
-        mBinding.panelLanConsole.setOnClickListener { openConsole() }
         mBinding.btnOpenLanConsole.setOnClickListener { openConsole() }
         mBinding.btnRotatePairingCode.setOnClickListener {
             ConfirmDialog.show(this, "更新配对码",
@@ -74,6 +97,7 @@ class LanServiceActivity : BaseVbActivity<ActivityLanServiceBinding>() {
             }
         }
         mBinding.btnLanImport.setOnClickListener {
+            ++importNavigationToken
             if (importSession.hasConnection()) {
                 openImportPage()
             } else {
@@ -85,7 +109,7 @@ class LanServiceActivity : BaseVbActivity<ActivityLanServiceBinding>() {
             val urls = ControlManager.get().lanAccessUrls
             val code = ControlManager.get().pairingCode
             if (!ControlManager.get().isLanServing || urls.isEmpty() || code.isEmpty()) {
-                AppBubble.toast("请先开启局域网服务并重启应用")
+                AppBubble.toast("请先开启局域网服务")
             } else {
                 XPopup.Builder(this).asCustom(TextTipDialog(this, "导出配置",
                     "在另一台 MBox 打开「局域网配置导入导出」并连接本机，输入下方地址和配对码，然后选择要导入的配置。\n\n地址：${urls.first()}\n配对码：$code\n\n选中的配置会在传输时打包为 ZIP。"
@@ -101,18 +125,36 @@ class LanServiceActivity : BaseVbActivity<ActivityLanServiceBinding>() {
 
     override fun onResume() {
         super.onResume()
+        if (SystemConfig.isLanServerEnabled() && !LanServerService.canShowNotification(this)) {
+            ++lanStartToken
+            lanStartInFlight = false
+            lanStartTimeout?.let { mBinding.root.removeCallbacks(it) }
+            lanStartTimeout = null
+            LanServerService.disable(this)
+            AppBubble.toast(if (ControlManager.get().lanState() == ControlManager.LAN_PENDING_CLOSE)
+                "通知不可见，局域网监听关闭异常，请重启应用" else "通知不可见，局域网服务已关闭")
+        }
         renderStatus()
         renderImportConnection()
     }
 
     override fun onStart() {
         super.onStart()
+        LanServerService.addStateListener(lanStateListener)
         importSession.addListener(importListener)
     }
 
     override fun onStop() {
+        ++importNavigationToken
+        LanServerService.removeStateListener(lanStateListener)
         importSession.removeListener(importListener)
         super.onStop()
+    }
+
+    override fun onDestroy() {
+        lanStartTimeout?.let { mBinding.root.removeCallbacks(it) }
+        lanStartTimeout = null
+        super.onDestroy()
     }
 
     private fun openImportPage() {
@@ -123,11 +165,21 @@ class LanServiceActivity : BaseVbActivity<ActivityLanServiceBinding>() {
         startActivity(Intent(this, LanDevicesActivity::class.java))
     }
 
-    private fun openConnectDialog(address: String = "", code: String = "") {
+    private fun openConnectDialog(address: String = "", code: String = "",
+                                  connectImmediately: Boolean = false) {
+        val navigationToken = ++importNavigationToken
         if (isFinishing || isDestroyed) return
-        val dialog = LanImportDialog(this, address, code,
-            Runnable { if (!isFinishing && !isDestroyed) openImportPage() },
+        val dialog = LanImportDialog(this, address, code, connectImmediately,
+            Runnable {
+                if (navigationToken == importNavigationToken &&
+                    lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) &&
+                    !isFinishing && !isDestroyed &&
+                    importSession.state() == ConfigImportSession.State.CONNECTED) {
+                    openImportPage()
+                }
+            },
             LanImportDialog.ScanRequest { draftAddress, draftCode ->
+                ++importNavigationToken
                 scanDraftAddress = draftAddress
                 scanDraftCode = draftCode
                 scanLanQr.launch(Intent(this, LanQrScanActivity::class.java))
@@ -140,7 +192,7 @@ class LanServiceActivity : BaseVbActivity<ActivityLanServiceBinding>() {
         val addresses = manager.lanAccessUrls
         val code = manager.pairingCode
         if (!manager.isLanServing || addresses.isEmpty() || code.isEmpty()) {
-            AppBubble.toast("请先开启局域网服务并重启应用")
+            AppBubble.toast("请先开启局域网服务")
             return
         }
         DialogCoordinator.center(this, LanPairQrDialog(this, addresses.toList(), code)).show()
@@ -165,7 +217,7 @@ class LanServiceActivity : BaseVbActivity<ActivityLanServiceBinding>() {
         mBinding.switchLanServer.setChecked(SystemConfig.isLanServerEnabled())
         val showServiceCards = state == ControlManager.LAN_ACTIVE
         mBinding.panelLanAccess.visibility = if (showServiceCards) View.VISIBLE else View.GONE
-        mBinding.panelLanConsole.visibility = if (showServiceCards) View.VISIBLE else View.GONE
+        mBinding.btnOpenLanConsole.visibility = if (showServiceCards) View.VISIBLE else View.GONE
         mBinding.tvLanState.text = when (state) {
             ControlManager.LAN_ACTIVE -> getString(R.string.lan_server_state_active)
             ControlManager.LAN_PENDING_RESTART -> getString(R.string.lan_server_state_pending)
@@ -216,11 +268,9 @@ class LanServiceActivity : BaseVbActivity<ActivityLanServiceBinding>() {
                 AppBubble.toast("已复制配对码")
             }
         }
-        mBinding.btnLanRestart.visibility = if (state == ControlManager.LAN_PENDING_RESTART
-            || state == ControlManager.LAN_PENDING_CLOSE) View.VISIBLE else View.GONE
-        mBinding.tvLanConsoleSummary.text = if (manager.isLanServing)
-            "已配对 ${manager.pairedDevices().size} 台设备，查看连接与管理配对。"
-        else "开启局域网服务后，可在这里查看和管理已配对设备。"
+        mBinding.btnLanRestart.visibility = if ((state == ControlManager.LAN_PENDING_RESTART
+            && !lanStartInFlight) || state == ControlManager.LAN_PENDING_CLOSE)
+            View.VISIBLE else View.GONE
     }
 
     private fun label(text: String, primary: Boolean) = TextView(this).apply {
@@ -233,25 +283,125 @@ class LanServiceActivity : BaseVbActivity<ActivityLanServiceBinding>() {
     private fun dp(value: Int) = (value * resources.displayMetrics.density + 0.5f).toInt()
 
     private fun updateLanServerEnabled(enabled: Boolean) {
-        if (!enabled) {
-            LanServerService.disable(this)
-        } else {
-            SystemConfig.setLanServerEnabled(true)
+        if (enabled) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                    != PackageManager.PERMISSION_GRANTED) {
+                requestLanNotification.launch(Manifest.permission.POST_NOTIFICATIONS)
+                return
+            }
+            enableLanWithNotification()
+            return
         }
+        ++lanStartToken
+        lanStartInFlight = false
+        lanStartTimeout?.let { mBinding.root.removeCallbacks(it) }
+        lanStartTimeout = null
+        LanServerService.disable(this)
         renderStatus()
-        if (!enabled) {
-            AppBubble.toast(if (ControlManager.get().lanState() == ControlManager.LAN_PENDING_CLOSE)
-                "局域网监听未能停止，请重启应用" else "局域网服务已关闭")
+        AppBubble.toast(if (ControlManager.get().lanState() == ControlManager.LAN_PENDING_CLOSE)
+            "局域网监听未能停止，请重启应用" else "局域网服务已关闭")
+    }
+
+    private fun enableLanWithNotification() {
+        if (!LanServerService.canShowNotification(this)) {
+            showNotificationSettingsNeeded()
+            return
+        }
+        val startToken = ++lanStartToken
+        lanStartInFlight = true
+        val timeout = Runnable {
+            if (startToken == lanStartToken && lanStartInFlight && !isFinishing && !isDestroyed) {
+                ++lanStartToken
+                lanStartInFlight = false
+                lanStartTimeout = null
+                HeavyTaskUtil.executeBigTask {
+                    try {
+                        LanServerService.disable(applicationContext)
+                    } catch (error: RuntimeException) {
+                        Log.w("MBox-Lan", "启动超时后停止局域网服务失败", error)
+                    }
+                    runOnUiThread {
+                        if (!isFinishing && !isDestroyed) {
+                            renderStatus()
+                            AppBubble.toast(if (ControlManager.get().lanState() == ControlManager.LAN_PENDING_CLOSE)
+                                "局域网监听关闭异常，请重启应用" else "局域网服务启动超时，已保持关闭")
+                        }
+                    }
+                }
+            }
+        }
+        lanStartTimeout = timeout
+        mBinding.root.postDelayed(timeout, 15_000L)
+        SystemConfig.setLanServerEnabled(true)
+        LanServerService.start(this, object : ResultReceiver(Handler(Looper.getMainLooper())) {
+            override fun onReceiveResult(resultCode: Int, resultData: Bundle?) {
+                if (startToken != lanStartToken || isFinishing || isDestroyed) return
+                lanStartInFlight = false
+                mBinding.root.removeCallbacks(timeout)
+                lanStartTimeout = null
+                renderStatus()
+                if (resultCode != LanServerService.START_ACTIVE) {
+                    AppBubble.toast(if (ControlManager.get().lanState() == ControlManager.LAN_PENDING_CLOSE)
+                        "局域网监听关闭异常，请重启应用" else "局域网服务启动失败，已保持关闭")
+                }
+            }
+        })
+        renderStatus()
+    }
+
+    private fun showNotificationSettingsNeeded() {
+        LanServerService.canShowNotification(this) // 确保目标频道已创建，系统设置可直接定位。
+        renderStatus()
+        ConfirmDialog.show(this, "需要显示局域网服务通知",
+            "开启前请允许 MBox 通知，并让“局域网服务”频道显示状态栏图标；频道关闭或最小化时无法持续提醒。",
+            "去系统设置") {
+            try {
+                val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    val manager = getSystemService(android.app.NotificationManager::class.java)
+                    val appBlocked = manager?.areNotificationsEnabled() != true ||
+                        (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                            ContextCompat.checkSelfPermission(this,
+                                Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+                    if (appBlocked) {
+                        Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                            .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                    } else {
+                        Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                            .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                            .putExtra(Settings.EXTRA_CHANNEL_ID, LanServerService.CHANNEL_ID)
+                    }
+                } else {
+                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.parse("package:$packageName"))
+                }
+                startActivity(intent)
+            } catch (error: RuntimeException) {
+                try {
+                    startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.parse("package:$packageName")))
+                } catch (fallback: RuntimeException) {
+                    AppBubble.toast("无法打开系统通知设置，请在应用信息中开启通知")
+                }
+            }
         }
     }
 
     private fun restartAppForLan() {
         com.github.tvbox.osc.config.SystemConfig.markInternalRestart()
         try {
-            LanServerService.stop(this)
             ControlManager.get().stopServer()
+            if (ControlManager.get().isLanServing) {
+                com.github.tvbox.osc.config.SystemConfig.clearInternalRestart()
+                AppBubble.toast("局域网监听未能停止，请稍后再试")
+                return
+            }
+            LanServerService.stop(this)
         } catch (error: Throwable) {
             Log.w("MBox-Lan", "重启前停止服务失败", error)
+            com.github.tvbox.osc.config.SystemConfig.clearInternalRestart()
+            AppBubble.toast("局域网监听未能停止，请稍后再试")
+            return
         }
         try {
             val launch = packageManager.getLaunchIntentForPackage(packageName)

@@ -5,8 +5,10 @@ import android.animation.AnimatorListenerAdapter
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
 import android.os.Looper
 import android.os.Process
+import android.os.ResultReceiver
 import android.view.MenuItem
 import android.view.View
 import android.view.ViewTreeObserver
@@ -30,6 +32,8 @@ import com.github.tvbox.osc.databinding.ActivityMainBinding
 import com.github.tvbox.osc.databinding.MainHomeShellBinding
 import com.github.tvbox.osc.log.Category
 import com.github.tvbox.osc.log.LogStore
+import com.github.tvbox.osc.server.ControlManager
+import com.github.tvbox.osc.service.LanServerService
 import com.github.tvbox.osc.ui.fragment.GridFragment
 import com.github.tvbox.osc.ui.fragment.HomeFragment
 import com.github.tvbox.osc.ui.fragment.MyFragment
@@ -51,6 +55,7 @@ import com.github.tvbox.osc.util.holiday.HolidayCatalogRepository
 import com.github.tvbox.osc.util.holiday.HolidayFireworksLaunchCoordinator
 import com.github.tvbox.osc.viewmodel.SourceViewModel
 import kotlin.system.exitProcess
+import java.util.concurrent.atomic.AtomicBoolean
 
 class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
 
@@ -90,8 +95,13 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
     private var startupFirstGridSourceKey: String? = null
     private var startupFirstGridReady = true
     private var startupFirstGridPrefetchActive = false
+    private var startupLanTimeout: Runnable? = null
     private val pendingAfterStartupSplash = ArrayList<Runnable>()
-    private val startStartupHomePrefetch = Runnable { startStartupHomePrefetch() }
+    private val startStartupHomePrefetch = Runnable {
+        // 目录解析与 Lottie 首次装配错开，至少先让开屏画出一帧。
+        holidayCatalogRepository.loadAsync(null)
+        startStartupHomePrefetch()
+    }
     private val attachHomePagerAfterSplash = Runnable {
         if (!isFinishing && !isDestroyed) {
             inflateMainShell()
@@ -238,6 +248,9 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
             pendingStartupUiDispatch = true
             mBinding.root.post(dispatchAfterStartupSplash)
         }
+        runAfterStartupSplash(Runnable {
+            com.github.tvbox.osc.transfer.LocalBackupRepository.cleanupOnStartup(applicationContext)
+        })
     }
 
     private fun maybeLaunchHolidayFireworks() {
@@ -403,7 +416,62 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
                 preloader.start()
             }
         }
-        loadStartupConfig(sourceViewModel)
+        // 局域网监听由前台服务在通知就绪后启动；配置预取等待它完成绑定。
+        if (SystemConfig.isLanServerEnabled()) {
+            val completed = AtomicBoolean(false)
+            val timeout = Runnable {
+                if (completed.compareAndSet(false, true) && startupHomePrefetchActive &&
+                    !isFinishing && !isDestroyed) {
+                    startupLanTimeout = null
+                    // 等待端口绑定和关闭都在共享后台池完成，避免超时回调卡住开屏主线程。
+                    HeavyTaskUtil.executeBigTask {
+                        try {
+                            LanServerService.disable(applicationContext)
+                            ControlManager.get().startServer()
+                        } catch (error: RuntimeException) {
+                            android.util.Log.e("TVBox-Server", "局域网启动超时后恢复回环失败", error)
+                        }
+                        runOnUiThread { loadStartupConfigIfActive(sourceViewModel) }
+                    }
+                }
+            }
+            startupLanTimeout = timeout
+            mBinding.root.postDelayed(timeout, 15_000L)
+            LanServerService.start(this, object : ResultReceiver(Handler(Looper.getMainLooper())) {
+                override fun onReceiveResult(resultCode: Int, resultData: Bundle?) {
+                    if (!completed.compareAndSet(false, true)) return
+                    mBinding.root.removeCallbacks(timeout)
+                    startupLanTimeout = null
+                    if (resultCode == LanServerService.START_ACTIVE) {
+                        loadStartupConfigIfActive(sourceViewModel)
+                    } else {
+                        startLoopbackThenLoad(sourceViewModel)
+                    }
+                }
+            })
+            return
+        }
+        startLoopbackThenLoad(sourceViewModel)
+    }
+
+    private fun startLoopbackThenLoad(sourceViewModel: SourceViewModel) {
+        // 本地订阅需先等回环服务监听成功；端口绑定放到共享执行器。
+        HeavyTaskUtil.executeBigTask {
+            try {
+                ControlManager.get().startServer()
+            } catch (error: Throwable) {
+                android.util.Log.e("TVBox-Server", "开屏预取启动本机服务失败", error)
+            }
+            runOnUiThread {
+                loadStartupConfigIfActive(sourceViewModel)
+            }
+        }
+    }
+
+    private fun loadStartupConfigIfActive(sourceViewModel: SourceViewModel) {
+        if (startupHomePrefetchActive && !startupHomeDataReady && !isFinishing && !isDestroyed) {
+            loadStartupConfig(sourceViewModel)
+        }
     }
 
     private fun loadStartupConfig(sourceViewModel: SourceViewModel) {
@@ -523,8 +591,7 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
         // 仅对素材解析加兜底；正常播放不被超时截断。
         overlay.postDelayed(animationLoadTimeout, ANIMATION_LOAD_TIMEOUT_MS)
         val hasBackgroundImage = SystemConfig.getPageBackgroundPath().isNotEmpty()
-        // 不等待 JSON I/O，开屏素材立即开始；目录后台预热供节日显示与烟花准入。
-        holidayCatalogRepository.loadAsync(null)
+        // 开屏素材立即开始；节日目录在首帧后由预取任务后台加载。
         val content = SplashContentSelector.select(
             themeBackground, hasBackgroundImage,
             holidayCatalogRepository.getCached(), HolidayCalendarClock.now()
@@ -632,6 +699,8 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
     override fun onDestroy() {
         dismissStartupSplash(false)
         startupHomePrefetchActive = false
+        startupLanTimeout?.let { mBinding.root.removeCallbacks(it) }
+        startupLanTimeout = null
         startupSplashPreDraw?.let { listener ->
             val observer = mBinding.startupSplashOverlay.viewTreeObserver
             if (observer.isAlive) observer.removeOnPreDrawListener(listener)

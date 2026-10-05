@@ -6,6 +6,7 @@ import android.util.Log;
 import com.github.tvbox.osc.config.SystemConfig;
 import com.github.tvbox.osc.log.Category;
 import com.github.tvbox.osc.log.LogStore;
+import com.github.tvbox.osc.service.LanServerService;
 
 import java.io.IOException;
 import java.util.regex.Matcher;
@@ -19,8 +20,8 @@ import tv.danmaku.ijk.media.player.IjkMediaPlayer;
  * @description:
  */
 public class ControlManager {
-    private static ControlManager instance;
-    private RemoteServer mServer = null;
+    private static volatile ControlManager instance;
+    private volatile RemoteServer mServer = null;
     public static Context mContext;
 
     /** 局域网服务状态:未开启 */
@@ -130,9 +131,15 @@ public class ControlManager {
 
     public boolean pushToBrowser(String deviceId, String title, String url,
                                  java.util.Map<String, String> headers) {
+        return pushToBrowser(deviceId, title, url, headers, null);
+    }
+
+    /** 净化播放地址仍用于推送；原始来源仅供服务端中转清单子资源。 */
+    public boolean pushToBrowser(String deviceId, String title, String url,
+                                 java.util.Map<String, String> headers, String headerOrigin) {
         RemoteServer server = mServer;
         return server != null && server.isStarting() && lanBound
-                && server.publishBrowserPlayback(deviceId, title, url, headers);
+                && server.publishBrowserPlayback(deviceId, title, url, headers, headerOrigin);
     }
 
     public String pushFailureMessage(String deviceId, String url) {
@@ -181,9 +188,15 @@ public class ControlManager {
     public boolean updateEpisodeCast(String owner, String title, String url, int selectedIndex,
                                      java.util.List<String> episodes,
                                      java.util.Map<String, String> headers) {
+        return updateEpisodeCast(owner, title, url, selectedIndex, episodes, headers, null);
+    }
+
+    public boolean updateEpisodeCast(String owner, String title, String url, int selectedIndex,
+                                     java.util.List<String> episodes,
+                                     java.util.Map<String, String> headers, String headerOrigin) {
         RemoteServer server = mServer;
         return server != null && server.isStarting() && lanBound
-                && server.updateEpisodeCast(owner, title, url, selectedIndex, episodes, headers);
+                && server.updateEpisodeCast(owner, title, url, selectedIndex, episodes, headers, headerOrigin);
     }
 
     public void markEpisodeAdvancing(String owner) {
@@ -201,8 +214,12 @@ public class ControlManager {
         if (server != null) server.clearEpisodeCast(owner);
     }
 
-    public void startServer() {
-        boolean lanEnabled = SystemConfig.isLanServerEnabled();
+    public synchronized void startServer() {
+        // 对外监听必须晚于前台通知就绪；预取、Activity 重建等入口只能先开回环。
+        boolean lanEnabled = SystemConfig.isLanServerEnabled()
+                && LanServerService.isForegroundReady()
+                && mContext != null
+                && LanServerService.canShowNotification(mContext);
         RemoteServer running = mServer;
         if (running != null) {
             // 已在跑且绑定方式就是当前配置:复用(本方法是幂等的,首页每次 init 都会调用)
@@ -297,7 +314,7 @@ public class ControlManager {
      * 局域网服务后)用的是同一个进程 —— 引用留着会让新首页的 startServer 判定"已存在"而直接返回,
      * 服务就一直是停的(订阅/本地播放/proxy 全部失效,直到用户手动杀掉进程)。
      */
-    public void stopServer() {
+    public synchronized void stopServer() {
         RemoteServer s = mServer;
         boolean wasLanBound = lanBound;
         if (s != null && s.isStarting()) {
@@ -317,5 +334,10 @@ public class ControlManager {
             com.github.tvbox.osc.util.OkGoHelper.clearLocalFileReadAccess();
         }
         if (wasLanBound) LogStore.log(Category.SYSTEM, "局域网服务已停止");
+    }
+
+    /** 服务通知消失后串行等待在途绑定，并关闭可能刚刚建成的对外监听。 */
+    public synchronized void stopLanWhenNotificationGone() {
+        if (!LanServerService.isForegroundReady() && lanBound) stopServer();
     }
 }

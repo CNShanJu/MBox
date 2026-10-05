@@ -48,37 +48,62 @@
                     android:focusable="true"
                     android:foreground="?android:selectableItemBackground"
                     android:gravity="center_vertical"
-                    android:orientation="horizontal">
+                    android:orientation="vertical">
 
                     <LinearLayout
-                        android:layout_width="0dp"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:orientation="vertical">
+                        android:baselineAligned="true"
+                        android:gravity="bottom"
+                        android:minHeight="40dp"
+                        android:orientation="horizontal">
 
                         <TextView
-                            android:layout_width="match_parent"
+                            android:layout_width="0dp"
                             android:layout_height="wrap_content"
+                            android:layout_weight="1"
                             android:text="允许局域网访问"
                             android:textColor="@color/text_foreground"
                             android:textSize="16sp"
                             android:textStyle="bold" />
 
                         <TextView
-                            android:layout_width="match_parent"
+                            android:id="@+id/btnOpenLanConsole"
+                            style="@style/TextButton"
+                            android:layout_width="wrap_content"
+                            android:layout_height="40dp"
+                            android:layout_marginStart="8dp"
+                            android:gravity="end|center_vertical"
+                            android:minWidth="48dp"
+                            android:paddingEnd="0dp"
+                            android:text="控制台"
+                            android:textColor="@color/text_highlight"
+                            android:textSize="12sp"
+                            android:visibility="gone" />
+                    </LinearLayout>
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="5dp"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:layout_width="0dp"
                             android:layout_height="wrap_content"
-                            android:layout_marginTop="5dp"
+                            android:layout_weight="1"
                             android:text="开启后需重启应用才能访问；关闭后立即停止局域网访问。"
                             android:textColor="@color/text_sub_foreground"
                             android:textSize="12sp" />
-                    </LinearLayout>
 
-                    <com.github.tvbox.osc.ui.kit.AppSwitch
-                        android:id="@+id/switchLanServer"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="12dp"
-                        android:clickable="false" />
+                        <com.github.tvbox.osc.ui.kit.AppSwitch
+                            android:id="@+id/switchLanServer"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:clickable="false" />
+                    </LinearLayout>
                 </LinearLayout>
 
                 <TextView
@@ -187,49 +212,6 @@
                         android:textColor="@color/text_highlight"
                         android:visibility="gone" />
                 </LinearLayout>
-            </LinearLayout>
-
-            <LinearLayout
-                android:id="@+id/panelLanConsole"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="12dp"
-                android:background="@drawable/bg_large_round_float"
-                android:orientation="vertical"
-                android:padding="16dp"
-                android:visibility="gone">
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal">
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="MBox 局域网控制台"
-                        android:textColor="@color/text_foreground"
-                        android:textSize="16sp"
-                        android:textStyle="bold" />
-
-                    <TextView
-                        android:id="@+id/btnOpenLanConsole"
-                        style="@style/TextButton"
-                        android:layout_width="wrap_content"
-                        android:layout_height="40dp"
-                        android:text="查看"
-                        android:textColor="@color/text_highlight" />
-                </LinearLayout>
-
-                <TextView
-                    android:id="@+id/tvLanConsoleSummary"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="5dp"
-                    android:textColor="@color/text_sub_foreground"
-                    android:textSize="13sp" />
             </LinearLayout>
 
             <LinearLayout

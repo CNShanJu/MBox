@@ -174,7 +174,10 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
     var onlyConfigChanged = false
 
     override fun init() {
-        ControlManager.get().startServer()
+        // 开屏预取已在共享执行器启动服务并等待就绪；首页提前入场时不要在主线程抢跑。
+        if ((activity as? MainActivity)?.hasStartupHomePrefetch() != true) {
+            ControlManager.get().startServer()
+        }
         if (SystemConfig.isLanServerEnabled()) LanServerService.start(requireContext())
         // 搜索框是 Fragment 内的自定义视图；显式应用主题令牌，避免 inflater 未覆盖时停在包内配色。
         com.github.tvbox.osc.theme.ThemeDrawables.applyBackground(

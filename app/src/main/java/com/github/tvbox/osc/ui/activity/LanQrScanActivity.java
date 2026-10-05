@@ -49,7 +49,7 @@ import java.util.EnumMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/** Camera QR scanner for LAN pairing. Returns text to the connection form; it never connects itself. */
+/** Camera QR scanner for LAN pairing. Returns validated text; the host starts the connection. */
 public final class LanQrScanActivity extends BaseVbActivity<ActivityLanQrScanBinding> {
     public static final String EXTRA_QR_RESULT = "lan_qr_result";
 

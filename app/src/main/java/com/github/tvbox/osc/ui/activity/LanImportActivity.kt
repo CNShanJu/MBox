@@ -8,12 +8,18 @@ import android.widget.CheckBox
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import com.blankj.utilcode.util.AppUtils
 import com.github.tvbox.osc.R
 import com.github.tvbox.osc.base.BaseVbActivity
+import com.github.tvbox.osc.config.SystemConfig
 import com.github.tvbox.osc.databinding.ActivityLanImportBinding
+import com.github.tvbox.osc.log.Category
+import com.github.tvbox.osc.log.LogStore
 import com.github.tvbox.osc.transfer.ConfigImportSession
 import com.github.tvbox.osc.ui.dialog.ConfirmDialog
+import com.github.tvbox.osc.util.AppBubble
 import com.google.gson.JsonObject
+import java.lang.ref.WeakReference
 
 /** 成功连接后展示的配置选择页；连接归 ConfigImportSession 管理。 */
 class LanImportActivity : BaseVbActivity<ActivityLanImportBinding>() {
@@ -60,7 +66,8 @@ class LanImportActivity : BaseVbActivity<ActivityLanImportBinding>() {
             ConfigImportSession.State.KICKED -> R.color.text_danger
             else -> R.color.text_sub_foreground
         }))
-        mBinding.btnImportSelected.isEnabled = !importing && session.state() == ConfigImportSession.State.CONNECTED
+        mBinding.btnImportSelected.isEnabled = !importing && !session.isImporting &&
+            session.state() == ConfigImportSession.State.CONNECTED
     }
 
     private fun showCategories(catalog: JsonObject?) {
@@ -102,6 +109,7 @@ class LanImportActivity : BaseVbActivity<ActivityLanImportBinding>() {
     }
 
     private fun confirmImport() {
+        if (importing || session.isImporting) return
         val selected = mutableSetOf<String>()
         for (index in 0 until mBinding.llCategories.childCount) {
             val check = mBinding.llCategories.getChildAt(index) as? CheckBox ?: continue
@@ -114,20 +122,43 @@ class LanImportActivity : BaseVbActivity<ActivityLanImportBinding>() {
         val impact = if ("settings" in selected)
             "所选内容会合并到本机；我的设置会覆盖对应的现有设置。"
         else "所选内容会合并到本机，已有记录会保留。"
-        ConfirmDialog.show(this, "确认导入", impact + "导入完成后建议重启应用。", "开始导入") {
+        ConfirmDialog.show(this, "确认导入", impact + "导入失败会恢复之前的记录和配置，成功后会自动重启应用。", "开始导入") {
             importSelected(selected)
         }
     }
 
     private fun importSelected(selected: Set<String>) {
+        if (importing || session.isImporting) return
         importing = true
         renderConnection()
         mBinding.tvImportStatus.text = "正在导入所选配置…"
-        session.importSelected(selected) { result, error ->
-            if (isFinishing || isDestroyed) return@importSelected
-            importing = false
-            renderConnection()
-            mBinding.tvImportStatus.text = if (error == null) result else "导入中断：$error"
+        val activityRef = WeakReference(this)
+        session.importSelected(selected) completion@{ result, error ->
+            val activity = activityRef.get()?.takeUnless { it.isFinishing || it.isDestroyed }
+            if (error != null || result == null) {
+                activity?.apply {
+                    importing = false
+                    renderConnection()
+                    mBinding.tvImportStatus.text = "导入中断：${error ?: "未返回导入结果"}"
+                }
+                return@completion
+            }
+            activity?.mBinding?.tvImportStatus?.text = "导入完成，正在重启应用…"
+            // 导入已同步落盘。即使用户离开本页，也要重新装配订阅、主题和网络配置。
+            LogStore.log(Category.SYSTEM, "局域网配置导入: 完成，发起内部重启")
+            try {
+                SystemConfig.markInternalRestart()
+                AppUtils.relaunchApp(true)
+            } catch (failure: Throwable) {
+                SystemConfig.clearInternalRestart()
+                LogStore.fail(Category.SYSTEM, "局域网配置导入: 重启失败，原因=${failure.javaClass.simpleName}")
+                activity?.apply {
+                    importing = false
+                    renderConnection()
+                    mBinding.tvImportStatus.text = "导入完成，但重启失败，请手动重开应用"
+                }
+                AppBubble.toast("导入完成，但重启失败，请手动重开应用")
+            }
         }
     }
 

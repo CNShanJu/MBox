@@ -56,19 +56,19 @@
         \n电脑或另一台设备需要输入手机上显示的配对码；服务重启后配对码会更新。
         \n开启后会显示常驻通知，手机退到后台或锁屏仍可访问；为保持连接会增加耗电，使用完建议关闭。
         \n关闭时服务只监听 127.0.0.1，仅本机可访问 —— 订阅、本地播放、代理都不受影响。
-        \n开启服务需要重启应用；关闭会立即停止局域网访问。换网络后本机 IP 会变，回这里看一眼新地址即可。
+        \n允许通知后服务会立即开启；关闭会立即停止局域网访问。换网络后本机 IP 会变，回这里看一眼新地址即可。
              </string>
 
     <!-- 局域网服务二级页:地址、状态、配对码。 -->
     <string name="lan_server_title">局域网服务</string>
     <string name="lan_server_state_active">已开启 · 局域网设备现在就能访问</string>
-    <string name="lan_server_state_pending">已开启 · 重启应用后才生效</string>
+    <string name="lan_server_state_pending">正在开启 · 请稍候</string>
     <string name="lan_server_state_pending_close">关闭异常 · 局域网监听仍在运行</string>
     <string name="lan_server_state_off">未开启 · 仅本机可访问</string>
     <string name="lan_server_lead">同一 Wi-Fi 下，在其他设备的浏览器打开地址：</string>
     <!-- 其余三种状态下地址"现在能不能用"不一样,文案必须跟着变(否则等于把没生效的地址说成能用) -->
-    <string name="lan_server_lead_pending">重启应用后，可在其他设备的浏览器打开地址：</string>
-    <string name="lan_server_lead_off">开启服务并重启后，可在其他设备打开地址：</string>
+    <string name="lan_server_lead_pending">服务启动后，可在其他设备的浏览器打开地址：</string>
+    <string name="lan_server_lead_off">开启服务后，可在其他设备打开地址：</string>
     <string name="lan_server_lead_pending_close">请重启应用；在停止前，下面的地址仍可访问：</string>
     <string name="lan_server_addr_empty">没取到局域网 IP —— 请确认本机已连接 Wi-Fi（或已开热点）后回到这里重看。</string>
 
@@ -84,8 +84,8 @@
     <string name="empty_reason_offline">网络连接不可用\n请检查 Wi-Fi 或移动数据后重试</string>
 
     <string name="setting_ignore_ssl_tip">
-        仅对你指定的一个精确域名忽略证书错误，不包括它的子域名或其他网站。
-        \n网页（WebView）立即生效；网络请求重启应用后生效。此网站的连接可能被截获。
+        开启后对所有网站忽略证书错误，无需逐个填写域名；默认关闭，由你自行控制。
+        \n网页（WebView）立即生效；网络请求重启应用后生效。开启后连接可能被截获。
              </string>
 
     <!-- 主题颜色的用法说明(横排设置行塞不下,由标题长按调出,与其它设置项同一套口径) -->
@@ -108,4 +108,6 @@
     <string name="home_source_filter_hint">输入数据源名称筛选</string>
     <string name="home_source_no_match">未找到匹配的数据源</string>
     <string name="home_source_none">暂无可用数据源，可切换订阅</string>
+    <string name="subtitle_size_value">字号：%1$d</string>
+    <string name="subtitle_delay_value">时间偏移：%1$s 秒</string>
 </resources>
