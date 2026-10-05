@@ -4,6 +4,8 @@ import android.app.ActivityOptions
 import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
+import android.os.Looper
+import android.os.ResultReceiver
 import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
@@ -25,14 +27,12 @@ import com.github.tvbox.osc.spiderapi.SourceConfigProviders
 import com.github.tvbox.osc.spiderapi.SpiderFaultProviders
 import com.github.tvbox.osc.spiderapi.SourceLoaderApi
 import com.github.tvbox.osc.spiderapi.SourceLoaderProviders
-import com.github.tvbox.osc.base.App
 import com.github.tvbox.osc.base.BaseLazyFragment
 import com.github.tvbox.osc.base.BaseVbFragment
 import com.github.tvbox.osc.state.SystemStateMonitor
 import com.github.tvbox.osc.bean.AbsSortXml
 import com.github.tvbox.osc.bean.MovieSort.SortData
 import com.github.tvbox.osc.bean.VodInfo
-import com.github.tvbox.osc.constant.IntentKey
 import com.github.tvbox.osc.databinding.FragmentHomeBinding
 import com.github.tvbox.osc.server.ControlManager
 import com.github.tvbox.osc.service.LanServerService
@@ -41,11 +41,13 @@ import com.github.tvbox.osc.ui.activity.FastSearchActivity
 import com.github.tvbox.osc.ui.activity.HistoryActivity
 import com.github.tvbox.osc.ui.activity.MainActivity
 import com.github.tvbox.osc.ui.activity.SubscriptionActivity
+import com.github.tvbox.osc.ui.startup.AppStartupCoordinator
 import com.github.tvbox.osc.ui.dialog.LastViewedDialog
 import com.github.tvbox.osc.ui.dialog.HomeSourceChoices
 import com.github.tvbox.osc.ui.dialog.HomeSourceDialog
 import com.github.tvbox.osc.ui.dialog.TipDialog
 import com.github.tvbox.osc.util.DefaultConfig
+import com.github.tvbox.osc.util.HeavyTaskUtil
 import com.github.tvbox.osc.util.SubscriptionConfig
 import com.github.tvbox.osc.config.SystemConfig
 import com.github.tvbox.osc.viewmodel.SourceViewModel
@@ -53,6 +55,7 @@ import com.lxj.xpopup.XPopup
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicBoolean
 
 class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
 
@@ -71,6 +74,8 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
     private var sourceViewModel: SourceViewModel? = null
     private val fragments: MutableList<BaseLazyFragment> = ArrayList()
     private val mHandler = Handler()
+    private val serverReadyHandler = Handler(Looper.getMainLooper())
+    private var serverReadyTimeout: Runnable? = null
     /** 开屏只预取数据；Fragment 创建后接收同一个请求结果，不再重复加载配置和首页分类。 */
     private var awaitingStartupPrefetch = false
     private var startupHistoryRequested = false
@@ -174,11 +179,7 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
     var onlyConfigChanged = false
 
     override fun init() {
-        // 开屏预取已在共享执行器启动服务并等待就绪；首页提前入场时不要在主线程抢跑。
-        if ((activity as? MainActivity)?.hasStartupHomePrefetch() != true) {
-            ControlManager.get().startServer()
-        }
-        if (SystemConfig.isLanServerEnabled()) LanServerService.start(requireContext())
+        // 开屏预取已经等待本机服务；其余入口在后台绑定完成后再加载订阅。
         // 搜索框是 Fragment 内的自定义视图；显式应用主题令牌，避免 inflater 未覆盖时停在包内配色。
         com.github.tvbox.osc.theme.ThemeDrawables.applyBackground(
             mBinding.search, R.drawable.bg_search_round_float
@@ -203,7 +204,8 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
             }
         }
         mBinding.nameContainer.setOnLongClickListener {
-            refreshHomeSources()
+            // 用户主动刷新先拉取远端配置；请求失败时加载器仍会回退本地缓存。
+            refreshHomeSources(useCache = false)
             true
         }
         mBinding.addSubscriptionButton.setOnClickListener {
@@ -231,7 +233,48 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
             onStartupHomePrefetchSettled()
         } else {
             initViewModel()
-            initData()
+            initDataAfterLocalServerReady()
+        }
+    }
+
+    private fun initDataAfterLocalServerReady() {
+        val host = activity as? MainActivity ?: return
+        val expectedView = mBinding.root
+        val isCurrent = { isAdded && view === expectedView && activity === host }
+        val completed = AtomicBoolean(false)
+        val fallbackStarted = AtomicBoolean(false)
+        lateinit var timeout: Runnable
+        val complete = {
+            if (completed.compareAndSet(false, true)) {
+                serverReadyHandler.removeCallbacks(timeout)
+                if (serverReadyTimeout === timeout) serverReadyTimeout = null
+                if (isCurrent()) initData()
+            }
+        }
+        val startLoopback = {
+            if (isCurrent() && fallbackStarted.compareAndSet(false, true)) {
+                HeavyTaskUtil.executeBigTask {
+                    try {
+                        ControlManager.get().startServerForStartup()
+                    } catch (error: Throwable) {
+                        android.util.Log.e("TVBox-Server", "首页启动本机服务失败", error)
+                    }
+                    host.runOnUiThread { complete() }
+                }
+            }
+        }
+        timeout = Runnable { startLoopback() }
+        if (SystemConfig.isLanServerEnabled()) {
+            serverReadyTimeout = timeout
+            serverReadyHandler.postDelayed(timeout, 15_000L)
+            LanServerService.start(requireContext(), object : ResultReceiver(serverReadyHandler) {
+                override fun onReceiveResult(resultCode: Int, resultData: Bundle?) {
+                    if (resultCode == LanServerService.START_ACTIVE) complete()
+                    else startLoopback()
+                }
+            })
+        } else {
+            startLoopback()
         }
     }
 
@@ -657,6 +700,8 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
     }
 
     override fun onDestroyView() {
+        serverReadyTimeout?.let(serverReadyHandler::removeCallbacks)
+        serverReadyTimeout = null
         unbindNetworkState()
         pendingInit = false
         pendingStartupError = null
@@ -805,20 +850,11 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
         ).show()
     }
 
-    private fun refreshHomeSources() {
-        SystemConfig.markInternalRestart()
-        val intent = Intent(App.getInstance(), MainActivity::class.java)
-        intent.setFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
-        val bundle = Bundle()
-        bundle.putBoolean(IntentKey.CACHE_CONFIG_CHANGED, true)
-        intent.putExtras(bundle)
-        startActivity(intent)
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        // 局域网由前台服务承载；首页销毁或手机锁屏不能把电脑连接一起关闭。
-        if (!ControlManager.get().isLanServing()) ControlManager.get().stopServer()
+    private fun refreshHomeSources(useCache: Boolean = true) {
+        if (!AppStartupCoordinator.launchInternalReload(requireContext(), useCache)) {
+            LogStore.fail(Category.SUBSCRIPTION,
+                "订阅: 重新进入首页失败")
+        }
     }
 
     private fun queryHistory() {
@@ -861,8 +897,16 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
             !host.isOnlineContentVisible() ||
             host.isStartupSplashVisible() || autoCheckStarted ||
             lastViewedBubble?.isShow == true) return
+        val visualDelay = host.startupVisualDelayMs()
+        if (visualDelay > 0L) {
+            mHandler.postDelayed({
+                if (canShowStartupUi(host, view)) showLastViewedBubble(host, vod)
+            }, visualDelay)
+            return
+        }
         val shownAt = android.os.SystemClock.uptimeMillis()
         bubbleUntil = shownAt + BUBBLE_SHOW_MS
+        host.onStartupBubbleVisible(bubbleUntil)
         val visibleContent = fragments.getOrNull(mBinding.mViewPager.currentItem)
         val liveBubble = visibleContent?.view?.findViewById<View>(R.id.btn_live)
         val bubble = LastViewedDialog(host, vod, mBinding.root, liveBubble)
@@ -888,6 +932,7 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
         lastViewedBubble?.dismiss()
         lastViewedBubble = null
         bubbleUntil = 0L
+        (activity as? MainActivity)?.onStartupBubbleDismissed()
     }
 
     private fun rescheduleAutoUpdateCheckAfterBubble() {
@@ -922,7 +967,9 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
         // 气泡若已排好,等到它消失;否则(无历史/无痕)用默认延时
         val now = android.os.SystemClock.uptimeMillis()
         val remain = bubbleUntil - now
-        mHandler.postDelayed(pendingAutoCheck, if (remain > 0) remain + 600L else CHECK_DEFAULT_DELAY_MS)
+        val visualDelay = host.startupVisualDelayMs()
+        val delay = if (remain > 0) remain + 600L else CHECK_DEFAULT_DELAY_MS
+        mHandler.postDelayed(pendingAutoCheck, maxOf(delay, visualDelay + 600L))
     }
 
     /** 真正执行自动检查(主线程):进程级去重与开关判定在 UpdateCheck 内 */
@@ -931,6 +978,11 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
         if (!act.isUserInitiatedLaunch()) return
         if (act.isStartupSplashVisible()) {
             scheduleAutoUpdateCheck()
+            return
+        }
+        val visualDelay = act.startupVisualDelayMs()
+        if (visualDelay > 0L) {
+            mHandler.postDelayed(pendingAutoCheck, visualDelay + 600L)
             return
         }
         if (isAdded && isResumed && !act.isFinishing && !act.isDestroyed &&

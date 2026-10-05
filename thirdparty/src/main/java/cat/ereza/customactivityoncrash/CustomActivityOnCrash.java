@@ -57,6 +57,9 @@ public final class CustomActivityOnCrash {
 
     private final static String TAG = "CustomActivityOnCrash";
 
+    /** Lets the restart target distinguish a crash recovery from a launcher opening. */
+    public static final String EXTRA_CRASH_RESTART = "cat.ereza.customactivityoncrash.EXTRA_CRASH_RESTART";
+
     //Extras passed to the error activity
     private static final String EXTRA_CONFIG = "cat.ereza.customactivityoncrash.EXTRA_CONFIG";
     private static final String EXTRA_STACK_TRACE = "cat.ereza.customactivityoncrash.EXTRA_STACK_TRACE";
@@ -392,6 +395,7 @@ public final class CustomActivityOnCrash {
      */
     public static void restartApplicationWithIntent(@NonNull Activity activity, @NonNull Intent intent, @NonNull CaocConfig config) {
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
+        intent.putExtra(EXTRA_CRASH_RESTART, true);
         if (intent.getComponent() != null) {
             //If the class name has been set, we force it to simulate a Launcher launch.
             //If we don't do this, if you restart from the error activity, then press home,

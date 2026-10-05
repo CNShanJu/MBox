@@ -18,6 +18,7 @@ import androidx.core.app.NotificationCompat;
 import androidx.core.content.ContextCompat;
 
 import com.github.tvbox.osc.R;
+import com.github.tvbox.osc.ui.startup.AppLaunchSource;
 import com.github.tvbox.osc.util.LOG;
 
 import java.util.Locale;
@@ -141,6 +142,7 @@ public final class UpdateDownloadService extends Service implements UpdateManage
         builder.setContentText(progress);
         Intent launch = getPackageManager().getLaunchIntentForPackage(getPackageName());
         if (launch != null) {
+            launch.putExtra(AppLaunchSource.EXTRA_NON_USER_ENTRY, true);
             launch.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
             PendingIntent open = PendingIntent.getActivity(this, NOTIFICATION_ID, launch,
                     PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);

@@ -147,8 +147,13 @@ class LanImportActivity : BaseVbActivity<ActivityLanImportBinding>() {
             // 导入已同步落盘。即使用户离开本页，也要重新装配订阅、主题和网络配置。
             LogStore.log(Category.SYSTEM, "局域网配置导入: 完成，发起内部重启")
             try {
+                val app = com.github.tvbox.osc.base.App.getInstance()
+                check(app.packageManager.getLaunchIntentForPackage(app.packageName) != null) {
+                    "未找到应用启动入口"
+                }
                 SystemConfig.markInternalRestart()
                 AppUtils.relaunchApp(true)
+                error("重启未执行")
             } catch (failure: Throwable) {
                 SystemConfig.clearInternalRestart()
                 LogStore.fail(Category.SYSTEM, "局域网配置导入: 重启失败，原因=${failure.javaClass.simpleName}")

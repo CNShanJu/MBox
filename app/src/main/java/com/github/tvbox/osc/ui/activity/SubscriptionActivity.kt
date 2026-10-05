@@ -41,6 +41,7 @@ import com.github.tvbox.osc.ui.dialog.SubsciptionDialog.OnSubsciptionListener
 import com.github.tvbox.osc.ui.kit.SelectActionBar
 import com.github.tvbox.osc.ui.kit.TabSwipeHelper
 import com.github.tvbox.osc.ui.kit.TabPageAnimator
+import com.github.tvbox.osc.ui.startup.AppStartupCoordinator
 import com.github.tvbox.osc.log.Category
 import com.github.tvbox.osc.log.LogStore
 import com.github.tvbox.osc.spiderapi.CmsApiRules
@@ -921,8 +922,7 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
             // 直播源变了:回首页让配置重载 —— 直播页用的"待拉取直播源"是加载配置时定下的
             // (与设置页改直播源同一个处理:不带 CACHE_CONFIG_CHANGED 回首页重新加载)
             if (mBeforeUrl == mSelectedUrl) {
-                SystemConfig.markInternalRestart()
-                jumpActivity(MainActivity::class.java)
+                if (!AppStartupCoordinator.launchInternalReload(this, false)) return
                 overridePendingTransition(R.anim.fade_in, R.anim.fade_out)
             }
             finish()
@@ -2247,8 +2247,20 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
             }
             SubscriptionConfig.setApiUrl(mSelectedUrl)
             SubscriptionConfig.setSubscriptions(mSubscriptions)
-            SystemConfig.markInternalRestart()
-            AppUtils.relaunchApp(true)
+            if (packageManager.getLaunchIntentForPackage(packageName) == null) {
+                AppBubble.toast("订阅已保存，自动重启失败，请手动重开应用")
+                return
+            }
+            try {
+                SystemConfig.markInternalRestart()
+                AppUtils.relaunchApp(true)
+            } catch (failure: Throwable) {
+                android.util.Log.w("MBox-Startup", "切换订阅重启失败", failure)
+            }
+            // relaunchApp(true) 成功时结束当前进程；若返回则让用户留在本页重试。
+            SystemConfig.clearInternalRestart()
+            AppBubble.toast("订阅已保存，自动重启失败，请手动重开应用")
+            return
         }
         super.finish()
     }

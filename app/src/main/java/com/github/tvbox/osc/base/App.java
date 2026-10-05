@@ -1,5 +1,6 @@
 package com.github.tvbox.osc.base;
 
+import android.content.pm.ApplicationInfo;
 import android.text.TextUtils;
 
 import androidx.multidex.MultiDexApplication;
@@ -14,7 +15,7 @@ import com.github.tvbox.osc.log.Category;
 import com.github.tvbox.osc.log.LogStore;
 import com.github.tvbox.osc.server.ControlManager;
 import com.github.tvbox.osc.state.SystemStateMonitor;
-import com.github.tvbox.osc.ui.activity.MainActivity;
+import com.github.tvbox.osc.ui.activity.SplashActivity;
 import com.github.tvbox.osc.util.FileUtils;
 import com.github.tvbox.osc.config.HawkConfig;
 import com.github.tvbox.osc.util.LOG;
@@ -33,11 +34,13 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
+import java.io.FileNotFoundException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import cat.ereza.customactivityoncrash.config.CaocConfig;
 import me.jessyan.autosize.AutoSizeConfig;
@@ -56,6 +59,7 @@ public class App extends MultiDexApplication {
 
     public boolean isNormalStart;
     private boolean pendingSafeModeNotice;
+    private final AtomicBoolean startupCleanupScheduled = new AtomicBoolean();
 
     /** 安全模式提示由首页在开屏关闭后消费，避免系统 Toast 盖住开屏。 */
     public boolean consumePendingSafeModeNotice() {
@@ -161,8 +165,6 @@ public class App extends MultiDexApplication {
         } else {
             QuickJSLoader.init();
         }
-        // 播放器缓存清理移出启动主线程:延迟到首屏后再由后台低优先级线程执行,且超过阈值才清(见 schedulePlayerCacheCleanup)
-        schedulePlayerCacheCleanup();
         Utils.initTheme();
         // 业务日志(系统类目):应用启动(旧 AppLog 文件通道已退役,统一走 LogStore 结构化日志)
         LogStore.log(Category.SYSTEM, "应用启动(Android " + android.os.Build.VERSION.RELEASE + ")");
@@ -180,11 +182,6 @@ public class App extends MultiDexApplication {
         com.github.tvbox.osc.download.DownloadFacade.init(this);
         // 下载完成通知渠道(可选增强)
 
-        // 更新缓存清理:更新完成并安装后,首次启动删除"版本与当前一致"的本地 APK;并清半成品
-        try {
-            com.github.tvbox.osc.update.UpdateManager.cleanupOnAppStart(this);
-        } catch (Throwable ignored) {
-        }
     }
 
     /**
@@ -222,21 +219,26 @@ public class App extends MultiDexApplication {
         }
     }
 
-    /** 播放器缓存清理:延迟到首屏后再执行;仅当缓存超阈值才递归删除,低优先级后台线程 */
-    private void schedulePlayerCacheCleanup() {
-        final android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
-        handler.postDelayed(() -> {
-            Thread t = new Thread(() -> {
+    /** 首页首帧后一次性调度磁盘清理，避免占用开屏动画和配置预取的资源。 */
+    public void runStartupCleanupAfterFirstHomeFrame() {
+        if (!startupCleanupScheduled.compareAndSet(false, true)) return;
+        // 更新包清理本身只负责入共享后台池；播放器缓存扫描走共享串行池。
+        try {
+            com.github.tvbox.osc.update.UpdateManager.cleanupOnAppStart(this);
+        } catch (Throwable failure) {
+            android.util.Log.w("MBox-Startup", "更新包清理未能调度", failure);
+        }
+        try {
+            com.github.tvbox.osc.util.HeavyTaskUtil.getSerialExecutorService().execute(() -> {
                 try {
                     FileUtils.cleanPlayerCacheIfOverflow(100L * 1024 * 1024);
-                } catch (Throwable th) {
-                    th.printStackTrace();
+                } catch (Throwable failure) {
+                    android.util.Log.w("MBox-Startup", "播放器缓存清理失败", failure);
                 }
-            }, "player-cache-clean");
-            t.setDaemon(true);
-            t.setPriority(Thread.MIN_PRIORITY);
-            t.start();
-        }, 5000L);
+            });
+        } catch (Throwable failure) {
+            android.util.Log.w("MBox-Startup", "播放器缓存清理未能调度", failure);
+        }
     }
 
     /** 撤销旧版为开屏设置的持久化应用级夜间覆盖，页面明暗仍由主题选择控制。 */
@@ -405,6 +407,8 @@ public class App extends MultiDexApplication {
      * 文件存在(本机 debug 打包)则返回默认订阅列表;文件不存在(release 包、克隆仓库后的构建)返回 null。
      */
     private List<Subscription> readDefaultSubscriptions() {
+        // 清单只属于 debug 源集；正式包没有这份 asset，缺失是预期状态，不应每次启动报错。
+        if ((getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) == 0) return null;
         try {
             InputStream is = getAssets().open("config/default_subscriptions.json");
             BufferedReader reader = new BufferedReader(new InputStreamReader(is, "UTF-8"));
@@ -425,6 +429,9 @@ public class App extends MultiDexApplication {
                 }
             }
             return list;
+        } catch (FileNotFoundException ignored) {
+            // 克隆仓库后未提供本机调试清单时，同样保持现有订阅不变。
+            return null;
         } catch (Throwable th) {
             LOG.e("readDefaultSubscriptions: " + th.getMessage());
             return null;
@@ -614,7 +621,7 @@ public class App extends MultiDexApplication {
                 // 因为用户点"重新启动"到新进程再走到这里必然超过任何几秒级窗口,靠时间窗永远不命中
                 .minTimeBetweenCrashesMs(2000) //崩溃的间隔时间(毫秒)
                 .errorDrawable(R.drawable.ic_crash) //错误图标(记录空空的,矢量)
-                .restartActivity(MainActivity.class) //重新启动后的activity
+                .restartActivity(SplashActivity.class) //崩溃恢复仍经过统一开屏调度
                 // 崩溃页"详细错误信息"里带上启动计数/安全模式状态,便于用户反馈时说明情况
                 .customCrashDataCollector(new StartupGuard.CrashStateCollector())
                 .apply();

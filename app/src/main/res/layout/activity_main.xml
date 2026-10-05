@@ -20,6 +20,14 @@
         android:focusable="true"
         android:visibility="gone">
 
+        <ImageView
+            android:id="@+id/startup_splash_background_image"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:contentDescription="@null"
+            android:scaleType="matrix"
+            android:visibility="gone" />
+
         <com.airbnb.lottie.LottieAnimationView
             android:id="@+id/startup_splash_animation"
             android:layout_width="320dp"

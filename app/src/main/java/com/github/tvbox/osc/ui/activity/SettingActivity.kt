@@ -3,7 +3,6 @@ package com.github.tvbox.osc.ui.activity
 import android.content.DialogInterface
 import android.content.Intent
 import android.os.Build
-import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.View
@@ -17,7 +16,7 @@ import com.github.tvbox.osc.util.BackgroundPlaySettings
 import com.github.tvbox.osc.R
 import com.github.tvbox.osc.base.BaseVbActivity
 import com.github.tvbox.osc.bean.IJKCode
-import com.github.tvbox.osc.constant.IntentKey
+import com.github.tvbox.osc.ui.startup.AppStartupCoordinator
 import com.github.tvbox.osc.databinding.ActivitySettingBinding
 import com.github.tvbox.osc.download.DownloadFacade
 import com.github.tvbox.osc.util.ThrottlePolicy
@@ -614,10 +613,7 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             // 与主题颜色切换同一套"重启"逻辑:值有变化时带缓存配置重载主页,立即生效,不再提示"下次启动生效"
             dialog.setOnDismissListener { dialog1: DialogInterface? ->
                 if (oldAnim != LoadingAnim.getAnimName()) {
-                    val bundle = Bundle()
-                    bundle.putBoolean(IntentKey.CACHE_CONFIG_CHANGED, true)
-                    SystemConfig.markInternalRestart()
-                    jumpActivity(MainActivity::class.java, bundle)
+                    AppStartupCoordinator.launchInternalReload(this@SettingActivity, true)
                 }
             }
             dialog.show()
@@ -627,10 +623,7 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
     override fun onBackPressed() {
         if (homeRec != SystemConfig.getHomeRec() || dnsOpt != SystemConfig.getDohUrl()
         ) { // 首页类型/dns/doh 有更改,需重载页面(直播源已移到订阅管理页,不在这里比)
-            val bundle = Bundle()
-            bundle.putBoolean(IntentKey.CACHE_CONFIG_CHANGED, true)
-            SystemConfig.markInternalRestart()
-            jumpActivity(MainActivity::class.java, bundle)
+            AppStartupCoordinator.launchInternalReload(this, true)
             overridePendingTransition(R.anim.fade_in, R.anim.fade_out)
         } else {
             super.onBackPressed()
@@ -729,9 +722,21 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
      */
     private fun applyThemeAndRestart() {
         Utils.initTheme()
-        SystemConfig.markInternalRestart()
-        SystemConfig.markThemeRestartUseCache()
-        AppUtils.relaunchApp(true)
+        if (packageManager.getLaunchIntentForPackage(packageName) == null) {
+            AppBubble.toast("主题已保存，自动重启失败，请手动重开应用")
+            return
+        }
+        try {
+            SystemConfig.markInternalRestart()
+            SystemConfig.markThemeRestartUseCache()
+            AppUtils.relaunchApp(true)
+        } catch (failure: Throwable) {
+            android.util.Log.w("MBox-Startup", "主题生效重启失败", failure)
+        }
+        // relaunchApp(true) 成功时结束当前进程；若返回则未完成重启。
+        SystemConfig.clearInternalRestart()
+        SystemConfig.clearThemeRestartUseCache()
+        AppBubble.toast("主题已保存，自动重启失败，请手动重开应用")
     }
 
     private fun updateVideoPurifyModeUi() {

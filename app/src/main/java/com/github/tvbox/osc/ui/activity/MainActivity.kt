@@ -3,6 +3,10 @@ package com.github.tvbox.osc.ui.activity
 import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.Matrix
+import android.graphics.drawable.Drawable
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -25,11 +29,14 @@ import com.github.tvbox.osc.base.App
 import com.github.tvbox.osc.base.BaseVbActivity
 import com.github.tvbox.osc.bean.AbsSortXml
 import com.github.tvbox.osc.bean.MovieSort
+import com.github.tvbox.osc.bean.theme.ThemeColorPalette
+import com.github.tvbox.osc.bean.theme.ThemeDef
 import com.github.tvbox.osc.calendar.HolidayCatalog
 import com.github.tvbox.osc.constant.IntentKey
 import com.github.tvbox.osc.config.SystemConfig
 import com.github.tvbox.osc.databinding.ActivityMainBinding
 import com.github.tvbox.osc.databinding.MainHomeShellBinding
+import com.github.tvbox.osc.download.DownloadFacade
 import com.github.tvbox.osc.log.Category
 import com.github.tvbox.osc.log.LogStore
 import com.github.tvbox.osc.server.ControlManager
@@ -39,21 +46,27 @@ import com.github.tvbox.osc.ui.fragment.HomeFragment
 import com.github.tvbox.osc.ui.fragment.MyFragment
 import com.github.tvbox.osc.ui.kit.FireworksView
 import com.github.tvbox.osc.ui.startup.AppLaunchSource
+import com.github.tvbox.osc.ui.startup.AppStartupCoordinator
 import com.github.tvbox.osc.ui.startup.UserStartupGate
 import com.github.tvbox.osc.spiderapi.SourceConfigProviders
 import com.github.tvbox.osc.spiderapi.SourceLoaderApi
 import com.github.tvbox.osc.spiderapi.SourceLoaderProviders
+import com.github.tvbox.osc.storage.theme.ThemeStore
 import com.github.tvbox.osc.theme.ThemeRuntime
 import com.github.tvbox.osc.ui.splash.SplashContent
 import com.github.tvbox.osc.ui.splash.SplashContentSelector
 import com.github.tvbox.osc.util.HomeHotPreloader
 import com.github.tvbox.osc.util.DefaultConfig
 import com.github.tvbox.osc.util.HeavyTaskUtil
+import com.github.tvbox.osc.util.BgImageTransform
 import com.github.tvbox.osc.util.SubscriptionConfig
 import com.github.tvbox.osc.util.holiday.HolidayCalendarClock
 import com.github.tvbox.osc.util.holiday.HolidayCatalogRepository
 import com.github.tvbox.osc.util.holiday.HolidayFireworksLaunchCoordinator
 import com.github.tvbox.osc.viewmodel.SourceViewModel
+import com.squareup.picasso.Picasso
+import com.squareup.picasso.Target
+import java.io.File
 import kotlin.system.exitProcess
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -64,30 +77,30 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
         private const val POST_ANIMATION_HOLD_MS = 300L
         private const val ANIMATION_LOAD_TIMEOUT_MS = 10_000L
         private const val ANIMATION_PLAYBACK_GRACE_MS = 3_000L
+        private const val IMAGE_LOAD_TIMEOUT_MS = 3_000L
+        private const val IMAGE_ONLY_DISPLAY_MS = 1_000L
     }
 
     private var fragments: List<Fragment> = emptyList()
     private var mainShellBinding: MainHomeShellBinding? = null
     var useCacheConfig = false
     private var exitTime = 0L
-    private var showStartupSplashOnCreate = false
-    private var launchSource = AppLaunchSource.OTHER
-    private var holidayFireworksCheckedForLaunch = false
+    private lateinit var startup: AppStartupCoordinator
     private val holidayCatalogRepository by lazy { HolidayCatalogRepository(applicationContext) }
-    private var startupSplashVisible = false
-    private var startupContentReady = false
-    private var startupAnimationEnded = false
-    private var startupAnimationTailReady = false
-    private var startupUiForeground = false
-    private var pendingStartupUiDispatch = false
+    private var startupImageOnly = false
+    private var splashImageTarget: Target? = null
+    private var splashBackgroundZoom = 0f
+    private var splashBackgroundAnchorX = 0.5f
+    private var splashBackgroundAnchorY = 0.5f
+    private val splashImageLayoutListener = View.OnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+        if (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop) {
+            applySplashImageTransform()
+        }
+    }
     private var disclaimerLaunching = false
-    private var startupFirstHomeFramePending = false
     private var startupFirstHomePreDraw: ViewTreeObserver.OnPreDrawListener? = null
     private var startupSplashPreDraw: ViewTreeObserver.OnPreDrawListener? = null
     private var startupShellPreDraw: ViewTreeObserver.OnPreDrawListener? = null
-    private var startupHomePrefetchActive = false
-    private var startupHomePrefetchStarted = false
-    private var startupHomeDataReady = false
     private var startupSortPending = false
     private var startupHomeErrorMessage: String? = null
     private var startupHomeHotPreloader: HomeHotPreloader? = null
@@ -96,10 +109,26 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
     private var startupFirstGridReady = true
     private var startupFirstGridPrefetchActive = false
     private var startupLanTimeout: Runnable? = null
-    private val pendingAfterStartupSplash = ArrayList<Runnable>()
+    private val startupHandler = Handler(Looper.getMainLooper())
+    private var pendingFireworksClaim: HolidayFireworksLaunchCoordinator.Claim? = null
+    private var pendingFireworksLaunch: Runnable? = null
+    private var pendingNotificationDetailId: String? = null
+    private var pendingNotificationSourceKey: String? = null
+    private var pendingNotificationDetailName: String? = null
+    private val pendingNotificationTimeout = Runnable {
+        if (pendingNotificationDetailId != null && SystemConfig.isDisclaimerAccepted() &&
+            startup.canEnterStartupUi(mainShellBinding != null)) {
+            pendingNotificationDetailId = null
+            pendingNotificationSourceKey = null
+            pendingNotificationDetailName = null
+            AppBubble.toast("播放详情加载超时，请从首页重试")
+        }
+    }
+
+    override fun shouldAttachPageBackground(): Boolean =
+        !::startup.isInitialized || !startup.showSplashOnCreate ||
+            startup.phase == AppStartupCoordinator.Phase.HOME_FIRST_FRAME
     private val startStartupHomePrefetch = Runnable {
-        // 目录解析与 Lottie 首次装配错开，至少先让开屏画出一帧。
-        holidayCatalogRepository.loadAsync(null)
         startStartupHomePrefetch()
     }
     private val attachHomePagerAfterSplash = Runnable {
@@ -110,25 +139,34 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
         }
     }
     private val finishStartupSplash = Runnable {
-        startupAnimationTailReady = true
+        startup.onAnimationTailReady()
         maybeDismissStartupSplash()
     }
     private val animationLoadTimeout = Runnable {
         // 素材解析失败或过慢时退场；正常动画按播完后停留 300ms 退场。
-        startupAnimationTailReady = true
+        startup.onAnimationTailReady()
         maybeDismissStartupSplash()
     }
     private val animationPlaybackTimeout = Runnable {
         // composition 已就绪却没有播放结束回调时，也不能永久停在开屏。
-        startupAnimationTailReady = true
+        startup.onAnimationTailReady()
         maybeDismissStartupSplash()
+    }
+    private var imageOnlyFallback: SplashContent.Lottie? = null
+    private val imageLoadTimeout = Runnable {
+        // 私有图片损坏或解码过慢时回退到主题色与 Lottie，避免只留空白开屏。
+        fallbackFromSplashImage()
+    }
+    private val imageOnlyDisplayFinished = Runnable {
+        if (startup.splashVisible && startupImageOnly) {
+            startup.onAnimationTailReady()
+            maybeDismissStartupSplash()
+        }
     }
     private val dispatchAfterStartupSplash = Runnable {
         if (isFinishing || isDestroyed) {
-            pendingAfterStartupSplash.clear()
-            pendingStartupUiDispatch = false
-        } else if (startupUiForeground && !startupSplashVisible &&
-            !startupFirstHomeFramePending && mainShellBinding != null && pendingStartupUiDispatch) {
+            startup.onDestroy()
+        } else if (startup.canDispatchStartupUi(mainShellBinding != null)) {
             if (!SystemConfig.isDisclaimerAccepted()) {
                 // 开屏和首页首帧都结束后再显示声明；其他启动浮层继续排队。
                 if (!disclaimerLaunching) {
@@ -136,20 +174,38 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
                     startActivity(Intent(this, DisclaimerActivity::class.java))
                 }
             } else {
-                pendingStartupUiDispatch = false
-                if (showStartupSplashOnCreate) {
+                val actions = startup.takeVisibleActions()
+                if (startup.showSplashOnCreate) {
                     com.github.tvbox.osc.update.UpdateFloatIndicator.get(this).attach(this)
-                    if (isUserInitiatedLaunch() && !holidayFireworksCheckedForLaunch) {
-                        holidayFireworksCheckedForLaunch = true
-                        mainShellBinding?.bottomNav?.post { maybeLaunchHolidayFireworks() }
-                    }
                 }
-                val actions = pendingAfterStartupSplash.toList()
-                pendingAfterStartupSplash.clear()
                 actions.forEach { it.run() }
                 showPendingSafeModeNotice()
+                if (startup.claimFireworksDispatch(mainShellBinding != null)) {
+                    mainShellBinding?.bottomNav?.post { maybeLaunchHolidayFireworks() }
+                }
+                maybeOpenPendingNotificationDetail()
             }
         }
+    }
+
+    private fun maybeOpenPendingNotificationDetail() {
+        val id = pendingNotificationDetailId ?: return
+        val sourceKey = pendingNotificationSourceKey ?: return
+        if (!SystemConfig.isDisclaimerAccepted() || !startup.homeDataReady ||
+            !startup.canEnterStartupUi(mainShellBinding != null) || isFinishing || isDestroyed) return
+        pendingNotificationDetailId = null
+        pendingNotificationSourceKey = null
+        val name = pendingNotificationDetailName.orEmpty()
+        pendingNotificationDetailName = null
+        startupHandler.removeCallbacks(pendingNotificationTimeout)
+        if (startupHomeErrorMessage != null) {
+            AppBubble.toast("播放详情暂不可用，请先检查订阅")
+            return
+        }
+        startActivity(Intent(this, DetailActivity::class.java)
+            .putExtra("id", id)
+            .putExtra("sourceKey", sourceKey)
+            .putExtra("vodName", name))
     }
 
     /** 首页展示联网内容；“我的”页可能正在查看本地内容，不主动弹无网页。 */
@@ -157,17 +213,24 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
 
     /** 开屏、首页首帧和首次声明结束前，启动提示都应继续等待。 */
     fun isStartupSplashVisible(): Boolean =
-        startupSplashVisible || pendingStartupUiDispatch || !SystemConfig.isDisclaimerAccepted()
+        startup.blocksVisibleUi() || !SystemConfig.isDisclaimerAccepted()
 
     /** 启动专属动作统一使用这次主页创建时确定的来源，不再各自消费重启标记。 */
-    override fun isUserInitiatedLaunch(): Boolean = launchSource.allowsStartupActions()
+    override fun isUserInitiatedLaunch(): Boolean = startup.launchSource.allowsStartupActions()
+
+    /** History bubble and update prompt share the first-home-frame visual lane with fireworks. */
+    fun onStartupBubbleVisible(untilUptimeMs: Long) = startup.onBubbleVisible(untilUptimeMs)
+
+    fun onStartupBubbleDismissed() = startup.onBubbleDismissed()
+
+    fun startupVisualDelayMs(): Long = startup.startupVisualDelayMs()
 
     /** 开屏阶段的数据预取结果由首页首次装配消费，避免重新拉取订阅和分类。 */
-    fun hasStartupHomePrefetch(): Boolean = startupHomePrefetchActive
+    fun hasStartupHomePrefetch(): Boolean = startup.prefetchActive
 
     fun startupHomeError(): String? = startupHomeErrorMessage
 
-    fun isStartupHomeDataReady(): Boolean = startupHomeDataReady
+    fun isStartupHomeDataReady(): Boolean = startup.homeDataReady
 
     fun startupHomeHotPreloader(): HomeHotPreloader? = startupHomeHotPreloader
 
@@ -186,7 +249,7 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
 
     /** 首次首页已消费预取结果；后续 Fragment 重建应走自己的新一轮加载。 */
     fun consumeStartupHomePrefetch() {
-        startupHomePrefetchActive = false
+        startup.consumePrefetch()
     }
 
     /** 开屏关闭后才允许气泡、弹窗等可见组件挂到窗口上。 */
@@ -196,11 +259,9 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
             return
         }
         if (isFinishing || isDestroyed) return
-        if (startupSplashVisible || !SystemConfig.isDisclaimerAccepted() ||
-            !startupUiForeground || pendingStartupUiDispatch) {
-            pendingAfterStartupSplash.add(action)
-            pendingStartupUiDispatch = true
-            if (!startupSplashVisible && startupUiForeground) {
+        if (startup.queueVisibleAction(action, SystemConfig.isDisclaimerAccepted(),
+                mainShellBinding != null)) {
+            if (!startup.splashVisible && startup.foreground) {
                 mBinding.root.post(dispatchAfterStartupSplash)
             }
         } else {
@@ -211,90 +272,143 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
     override fun onCreate(savedInstanceState: Bundle?) {
         // FragmentPagerAdapter 会恢复旧 Fragment；重建时不能把回调挂到新建的 fragments[0]。
         val fromStartupPage = intent.getBooleanExtra(EXTRA_STARTUP_SPLASH, false)
-        launchSource = AppLaunchSource.resolve(
-            fromStartupPage, savedInstanceState != null, SystemConfig.consumeInternalRestart()
+        val nonUserEntry = intent.getBooleanExtra(AppLaunchSource.EXTRA_NON_USER_ENTRY, false)
+        val internalReload = intent.getBooleanExtra(AppLaunchSource.EXTRA_INTERNAL_RELOAD, false)
+        startup = AppStartupCoordinator.create(
+            fromStartupPage, savedInstanceState != null,
+            // 重建和通知入口不能偷消费即将到来的内部重启来源标记。
+            savedInstanceState == null && (!nonUserEntry || internalReload) &&
+                SystemConfig.consumeInternalRestart(),
+            nonUserEntry
         )
-        showStartupSplashOnCreate = savedInstanceState == null &&
-            fromStartupPage
-        if (showStartupSplashOnCreate) {
+        if (startup.showSplashOnCreate) {
             window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
         }
+        ControlManager.get().acquireHomeHost()
         super.onCreate(savedInstanceState)
     }
 
     override fun init() {
 
-        LogStore.log(Category.SYSTEM, "应用启动来源: $launchSource")
+        LogStore.log(Category.SYSTEM, "应用启动来源: ${startup.launchSource}")
 
         // 主题真重启会清空 Intent 标志；只在下一进程的一次主页创建中复用磁盘配置缓存。
-        if (SystemConfig.consumeThemeRestartUseCache()) {
+        if (startup.launchSource == AppLaunchSource.INTERNAL_RESTART &&
+            SystemConfig.consumeThemeRestartUseCache()) {
             intent.putExtra(IntentKey.CACHE_CONFIG_CHANGED, true)
         }
         useCacheConfig = intent.getBooleanExtra(IntentKey.CACHE_CONFIG_CHANGED, false)
 
+        pendingNotificationDetailId = intent.getStringExtra(NotificationEntryActivity.EXTRA_DETAIL_ID)
+            ?.takeIf { it.isNotBlank() }
+        pendingNotificationSourceKey =
+            intent.getStringExtra(NotificationEntryActivity.EXTRA_DETAIL_SOURCE_KEY)
+                ?.takeIf { it.isNotBlank() }
+        pendingNotificationDetailName = intent.getStringExtra(NotificationEntryActivity.EXTRA_DETAIL_NAME)
+
         intent.removeExtra(EXTRA_STARTUP_SPLASH)
-        if (showStartupSplashOnCreate) {
+        if (startup.showSplashOnCreate) {
             showStartupSplash()
-            HeavyTaskUtil.executeBigTask {
-                HolidayFireworksLaunchCoordinator.clearPreviousDay()
-            }
         } else {
             inflateMainShell()
             attachHomePager()
+            startup.onShellAttached()
+            waitForFirstHomeFrame()
         }
-        if (showStartupSplashOnCreate) {
+        if (startup.showSplashOnCreate) {
             scheduleStartupHomePrefetchAfterSplashFrame()
-        } else {
-            pendingStartupUiDispatch = true
-            mBinding.root.post(dispatchAfterStartupSplash)
         }
-        runAfterStartupSplash(Runnable {
-            com.github.tvbox.osc.transfer.LocalBackupRepository.cleanupOnStartup(applicationContext)
+        startup.runInBackgroundAfterFirstHomeFrame(Runnable {
+            DownloadFacade.startAfterFirstHomeFrame()
+        })
+        startup.runProcessCleanupAfterFirstHomeFrame(Runnable {
+            try {
+                App.getInstance().runStartupCleanupAfterFirstHomeFrame()
+            } catch (error: Throwable) {
+                android.util.Log.w("MBox-Startup", "启动资源清理未能调度", error)
+            }
+            try {
+                com.github.tvbox.osc.transfer.LocalBackupRepository.cleanupOnStartup(applicationContext)
+            } catch (error: Throwable) {
+                android.util.Log.w("MBox-Startup", "过期系统备份清理失败", error)
+            }
+            try {
+                HolidayFireworksLaunchCoordinator.clearPreviousDay()
+            } catch (error: Throwable) {
+                android.util.Log.w("MBox-Startup", "跨日烟花记录清理失败", error)
+            }
         })
     }
 
     private fun maybeLaunchHolidayFireworks() {
-        if (!isUserInitiatedLaunch() || !showStartupSplashOnCreate ||
-            pendingStartupUiDispatch || !startupUiForeground ||
-            startupSplashVisible || startupFirstHomeFramePending || isFinishing || isDestroyed ||
+        if (!startup.canRunUserStartupActions(mainShellBinding != null) || isFinishing || isDestroyed ||
             mainShellBinding?.bottomNav?.isShown != true) {
             LogStore.log(Category.SYSTEM, "节日烟花: 启动界面未就绪，本次不检查发射")
             return
         }
+        startup.reserveFireworksCheck()
         HeavyTaskUtil.executeBigTask {
             val claim = try {
                 val catalog: HolidayCatalog? = holidayCatalogRepository.getOrLoad()
                 HolidayFireworksLaunchCoordinator.claim(catalog)
             } catch (error: Throwable) {
                 LogStore.fail(Category.SYSTEM, "节日烟花: 检查启动资格失败，原因=${error.javaClass.simpleName}")
+                runOnUiThread { startup.onFireworksSkipped() }
                 return@executeBigTask
-            } ?: return@executeBigTask
-            runOnUiThread {
-                val nav = mainShellBinding?.bottomNav
-                val launchClock = HolidayCalendarClock.now()
-                val sameDay = HolidayFireworksLaunchCoordinator.isClaimForDate(claim, launchClock)
-                val groupCount = if (startupUiForeground && !startupSplashVisible &&
-                    !startupFirstHomeFramePending && !isFinishing && !isDestroyed &&
-                    sameDay && nav != null && nav.isShown) try {
-                    launchHolidayGroupsFromNav(nav)
-                } catch (error: Throwable) {
-                    LogStore.fail(Category.SYSTEM, "节日烟花: 发射失败，原因=${error.javaClass.simpleName}")
-                    0
-                } else 0
-                val started = groupCount > 0
-                if (!started) {
-                    LogStore.log(Category.SYSTEM, if (sameDay)
-                        "节日烟花: 底栏或动画不可用，本次未发射" else
-                        "节日烟花: 检查后跨日，本次未发射")
-                }
-                val fireAtMillis = if (started) launchClock.timeInMillis else 0L
-                HeavyTaskUtil.executeBigTask {
-                    try {
-                        HolidayFireworksLaunchCoordinator.finish(claim, started, fireAtMillis, groupCount)
-                    } catch (error: Throwable) {
-                        LogStore.fail(Category.SYSTEM, "节日烟花: 确认发射记录失败，原因=${error.javaClass.simpleName}")
-                    }
-                }
+            }
+            if (claim == null) {
+                runOnUiThread { startup.onFireworksSkipped() }
+                return@executeBigTask
+            }
+            runOnUiThread { launchClaimedHolidayFireworks(claim) }
+        }
+    }
+
+    private fun launchClaimedHolidayFireworks(claim: HolidayFireworksLaunchCoordinator.Claim) {
+        if (!startup.isFireworksCheckCurrent()) {
+            pendingFireworksLaunch = null
+            pendingFireworksClaim = null
+            startup.onFireworksSkipped()
+            LogStore.log(Category.SYSTEM, "节日烟花: 启动检查超时或页面已离开，撤销本轮发射")
+            HeavyTaskUtil.executeBigTask {
+                HolidayFireworksLaunchCoordinator.finish(claim, false, 0L, 0)
+            }
+            return
+        }
+        pendingFireworksClaim = claim
+        val bubbleDelay = startup.bubbleDelayMs()
+        if (bubbleDelay > 0L && startup.canRunUserStartupActions(mainShellBinding != null) &&
+            !isFinishing && !isDestroyed) {
+            val callback = Runnable { launchClaimedHolidayFireworks(claim) }
+            pendingFireworksLaunch = callback
+            startupHandler.postDelayed(callback, bubbleDelay + 50L)
+            return
+        }
+        pendingFireworksLaunch = null
+        pendingFireworksClaim = null
+        val nav = mainShellBinding?.bottomNav
+        val launchClock = HolidayCalendarClock.now()
+        val sameDay = HolidayFireworksLaunchCoordinator.isClaimForDate(claim, launchClock)
+        val groupCount = if (startup.canRunUserStartupActions(mainShellBinding != null) &&
+            !isFinishing && !isDestroyed && sameDay && nav?.isShown == true) try {
+            launchHolidayGroupsFromNav(nav)
+        } catch (error: Throwable) {
+            LogStore.fail(Category.SYSTEM, "节日烟花: 发射失败，原因=${error.javaClass.simpleName}")
+            0
+        } else 0
+        val started = groupCount > 0
+        if (started) startup.onFireworksQueued() else startup.onFireworksSkipped()
+        if (!started) {
+            LogStore.log(Category.SYSTEM, if (sameDay)
+                "节日烟花: 底栏或动画不可用，本次未发射" else
+                "节日烟花: 检查后跨日，本次未发射")
+        }
+        val fireAtMillis = if (started) launchClock.timeInMillis else 0L
+        HeavyTaskUtil.executeBigTask {
+            try {
+                HolidayFireworksLaunchCoordinator.finish(claim, started, fireAtMillis, groupCount)
+            } catch (error: Throwable) {
+                LogStore.fail(Category.SYSTEM, "节日烟花: 确认发射记录失败，原因=${error.javaClass.simpleName}")
             }
         }
     }
@@ -360,15 +474,22 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
 
     override fun onResume() {
         super.onResume()
-        startupUiForeground = true
+        startup.onResume()
         if (!SystemConfig.isDisclaimerAccepted()) disclaimerLaunching = false
-        if (!startupSplashVisible && pendingStartupUiDispatch) {
+        if (pendingNotificationDetailId != null && SystemConfig.isDisclaimerAccepted() &&
+            startup.phase == AppStartupCoordinator.Phase.HOME_FIRST_FRAME) {
+            startupHandler.removeCallbacks(pendingNotificationTimeout)
+            startupHandler.postDelayed(pendingNotificationTimeout, 30_000L)
+        }
+        if (!startup.splashVisible && startup.pendingUiDispatch) {
             mBinding.root.post(dispatchAfterStartupSplash)
+        } else {
+            maybeOpenPendingNotificationDetail()
         }
     }
 
     override fun onPause() {
-        startupUiForeground = false
+        startup.onPause()
         super.onPause()
     }
 
@@ -385,6 +506,7 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
             override fun onPreDraw(): Boolean {
                 overlay.viewTreeObserver.removeOnPreDrawListener(this)
                 startupSplashPreDraw = null
+                startup.onSplashFirstFrame()
                 overlay.post(startStartupHomePrefetch)
                 return true
             }
@@ -394,8 +516,9 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
     }
 
     private fun startStartupHomePrefetch() {
-        if (!startupHomePrefetchActive || startupHomePrefetchStarted || isFinishing || isDestroyed) return
-        startupHomePrefetchStarted = true
+        if (isFinishing || isDestroyed || !startup.claimPrefetch()) return
+        // 目录解析与 Lottie 首次装配错开，至少先让开屏画出一帧。
+        holidayCatalogRepository.loadAsync(null)
         val sourceViewModel = ViewModelProvider(this)[SourceViewModel::class.java]
         sourceViewModel.listResult.observe(this) {
             if (startupFirstGridPrefetchActive && !startupFirstGridReady) {
@@ -420,14 +543,16 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
         if (SystemConfig.isLanServerEnabled()) {
             val completed = AtomicBoolean(false)
             val timeout = Runnable {
-                if (completed.compareAndSet(false, true) && startupHomePrefetchActive &&
+                if (completed.compareAndSet(false, true) && startup.prefetchActive &&
                     !isFinishing && !isDestroyed) {
                     startupLanTimeout = null
                     // 等待端口绑定和关闭都在共享后台池完成，避免超时回调卡住开屏主线程。
                     HeavyTaskUtil.executeBigTask {
                         try {
                             LanServerService.disable(applicationContext)
-                            ControlManager.get().startServer()
+                            if (!ControlManager.get().startServerForStartup()) {
+                                android.util.Log.e("TVBox-Server", "局域网启动超时后本机服务仍未就绪")
+                            }
                         } catch (error: RuntimeException) {
                             android.util.Log.e("TVBox-Server", "局域网启动超时后恢复回环失败", error)
                         }
@@ -458,7 +583,9 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
         // 本地订阅需先等回环服务监听成功；端口绑定放到共享执行器。
         HeavyTaskUtil.executeBigTask {
             try {
-                ControlManager.get().startServer()
+                if (!ControlManager.get().startServerForStartup()) {
+                    android.util.Log.e("TVBox-Server", "开屏预取本机服务仍未就绪")
+                }
             } catch (error: Throwable) {
                 android.util.Log.e("TVBox-Server", "开屏预取启动本机服务失败", error)
             }
@@ -469,7 +596,7 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
     }
 
     private fun loadStartupConfigIfActive(sourceViewModel: SourceViewModel) {
-        if (startupHomePrefetchActive && !startupHomeDataReady && !isFinishing && !isDestroyed) {
+        if (startup.prefetchActive && !startup.homeDataReady && !isFinishing && !isDestroyed) {
             loadStartupConfig(sourceViewModel)
         }
     }
@@ -478,7 +605,7 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
         SourceLoaderProviders.get().loadConfig(useCacheConfig, object : SourceLoaderApi.Callback {
             override fun retry() {
                 mBinding.root.post {
-                    if (startupHomePrefetchActive && !startupHomeDataReady &&
+                    if (startup.prefetchActive && !startup.homeDataReady &&
                         !isFinishing && !isDestroyed) {
                         loadStartupConfig(sourceViewModel)
                     }
@@ -521,7 +648,7 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
     }
 
     private fun requestStartupSort(sourceViewModel: SourceViewModel) {
-        if (startupHomeDataReady || startupSortPending) return
+        if (startup.homeDataReady || startupSortPending) return
         startupSortPending = true
         sourceViewModel.getSort(SourceConfigProviders.get().homeSourceBean?.key)
     }
@@ -552,24 +679,24 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
             mBinding.root.post { runStartupPrefetchCallback(action) }
             return
         }
-        if (!startupHomePrefetchActive || startupHomeDataReady || isFinishing || isDestroyed) return
+        if (!startup.prefetchActive || startup.homeDataReady || isFinishing || isDestroyed) return
         action()
     }
 
     private fun settleStartupHomeData(error: String?) {
-        if (startupHomeDataReady) return
+        if (!startup.onHomeDataReady()) return
         startupHomeErrorMessage = error
-        startupHomeDataReady = true
         startupSortPending = false
         activeHomeFragment()?.takeIf { it.isAdded }?.onStartupHomePrefetchSettled()
         maybeMarkStartupContentReady()
+        maybeOpenPendingNotificationDetail()
     }
 
     private fun maybeMarkStartupContentReady() {
-        if (startupHomeDataReady &&
+        if (startup.homeDataReady &&
             (startupHomeErrorMessage != null ||
                 (startupHomeHotPreloader?.isSettled != false && startupFirstGridReady))) {
-            startupContentReady = true
+            startup.onContentReady()
             maybeDismissStartupSplash()
         }
     }
@@ -578,22 +705,29 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
         val themeBackground = ThemeRuntime.runtimePalette()?.get("bg_body")
             ?: ContextCompat.getColor(this, R.color.bg_body)
         val overlay = mBinding.startupSplashOverlay
-        startupSplashVisible = true
-        startupHomePrefetchActive = true
-        startupHomePrefetchStarted = false
-        startupHomeDataReady = false
+        startup.onSplashShown()
         startupHomeErrorMessage = null
-        startupContentReady = false
-        startupAnimationEnded = false
-        startupAnimationTailReady = false
+        startupImageOnly = false
+        imageOnlyFallback = null
         window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
         overlay.visibility = View.VISIBLE
         // 仅对素材解析加兜底；正常播放不被超时截断。
         overlay.postDelayed(animationLoadTimeout, ANIMATION_LOAD_TIMEOUT_MS)
-        val hasBackgroundImage = SystemConfig.getPageBackgroundPath().isNotEmpty()
         // 开屏素材立即开始；节日目录在首帧后由预取任务后台加载。
+        // 开屏背景由当前主题定义；纯色默认跟随同一主题的主背景色。
+        val splash = ThemeStore.activeSplashBackground()
+        splashBackgroundZoom = splash.zoom
+        splashBackgroundAnchorX = splash.anchorX
+        splashBackgroundAnchorY = splash.anchorY
+        val imagePath = if (splash.mode == ThemeDef.SplashBackground.MODE_IMAGE)
+            ThemeStore.resolveSplashBackgroundPath(splash.ref).takeIf { it.isNotEmpty() } else null
+        val solidColor = if (splash.mode == ThemeDef.SplashBackground.MODE_SOLID)
+            ThemeColorPalette.parseColor(splash.color, themeBackground) else null
         val content = SplashContentSelector.select(
-            themeBackground, hasBackgroundImage,
+            themeBackground,
+            solidColor,
+            imagePath,
+            splash.isLottieOnImage,
             holidayCatalogRepository.getCached(), HolidayCalendarClock.now()
         )
         startStartupSplashContent(content)
@@ -601,19 +735,25 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
 
     private fun startStartupSplashContent(content: SplashContent) {
         val overlay = mBinding.startupSplashOverlay
+        overlay.setBackgroundColor(when (content) {
+            is SplashContent.Lottie -> content.backgroundColor
+            is SplashContent.Image -> content.backgroundColor
+        })
         when (content) {
             is SplashContent.Lottie -> {
-                overlay.setBackgroundColor(content.backgroundColor)
+                startupImageOnly = false
+                mBinding.startupSplashAnimation.visibility = View.VISIBLE
+                loadSplashBackgroundImage(content.backgroundImagePath) { }
                 mBinding.startupSplashAnimation.apply {
                     repeatCount = 0
                     setFailureListener {
-                        if (startupSplashVisible) overlay.post(animationLoadTimeout)
+                        if (startup.splashVisible) overlay.post(animationLoadTimeout)
                     }
                     addAnimatorListener(object : AnimatorListenerAdapter() {
                         override fun onAnimationEnd(animation: Animator) {
-                            if (startupSplashVisible) {
+                            if (startup.splashVisible) {
                                 overlay.removeCallbacks(animationPlaybackTimeout)
-                                startupAnimationEnded = true
+                                startup.onAnimationEnded()
                                 overlay.postDelayed(finishStartupSplash, POST_ANIMATION_HOLD_MS)
                             }
                         }
@@ -621,7 +761,7 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
                     addLottieOnCompositionLoadedListener { composition ->
                         overlay.removeCallbacks(animationLoadTimeout)
                         // 解析超时后不再启动迟到的动画，否则首屏就绪会中途撤掉它。
-                        if (startupSplashVisible && !startupAnimationTailReady) {
+                        if (startup.splashVisible && !startup.animationTailIsReady) {
                             overlay.postDelayed(
                                 animationPlaybackTimeout,
                                 composition.duration.toLong() * 2 + ANIMATION_PLAYBACK_GRACE_MS
@@ -632,19 +772,110 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
                     setAnimation(content.assetPath)
                 }
             }
+            is SplashContent.Image -> {
+                startupImageOnly = true
+                imageOnlyFallback = SplashContent.Lottie(
+                    content.fallbackLottieAssetPath, content.backgroundColor
+                )
+                mBinding.startupSplashAnimation.visibility = View.GONE
+                overlay.postDelayed(imageLoadTimeout, IMAGE_LOAD_TIMEOUT_MS)
+                loadSplashBackgroundImage(content.imagePath) {
+                    overlay.removeCallbacks(imageLoadTimeout)
+                    overlay.postDelayed(imageOnlyDisplayFinished, IMAGE_ONLY_DISPLAY_MS)
+                }
+            }
         }
     }
 
+    private fun loadSplashBackgroundImage(path: String?, onReady: () -> Unit) {
+        val image = mBinding.startupSplashBackgroundImage
+        cancelSplashImageLoad()
+        image.removeOnLayoutChangeListener(splashImageLayoutListener)
+        image.setImageDrawable(null)
+        image.visibility = if (path == null) View.GONE else View.VISIBLE
+        if (path == null) return
+        image.addOnLayoutChangeListener(splashImageLayoutListener)
+        val target = object : Target {
+            override fun onBitmapLoaded(bitmap: Bitmap, from: Picasso.LoadedFrom) {
+                if (!startup.splashVisible) return
+                splashImageTarget = null
+                // 与背景调整页共用像素坐标，避免设备密度改变缩放和位置。
+                bitmap.density = Bitmap.DENSITY_NONE
+                image.setImageBitmap(bitmap)
+                applySplashImageTransform()
+                onReady()
+            }
+
+            override fun onBitmapFailed(error: Exception, errorDrawable: Drawable?) {
+                splashImageTarget = null
+                if (!startup.splashVisible) return
+                image.visibility = View.GONE
+                if (startupImageOnly) fallbackFromSplashImage()
+            }
+
+            override fun onPrepareLoad(placeHolderDrawable: Drawable?) = Unit
+        }
+        splashImageTarget = target
+        try {
+            val request = if (path.startsWith("file:///android_asset/"))
+                Picasso.get().load(Uri.parse(path)) else Picasso.get().load(File(path))
+            val metrics = resources.displayMetrics
+            request.resize(metrics.widthPixels.coerceAtLeast(1) * 2,
+                metrics.heightPixels.coerceAtLeast(1) * 2).centerInside().into(target)
+        } catch (_: Exception) {
+            splashImageTarget = null
+            image.visibility = View.GONE
+            if (startupImageOnly) fallbackFromSplashImage()
+        }
+    }
+
+    private fun cancelSplashImageLoad() {
+        splashImageTarget?.let { Picasso.get().cancelRequest(it) }
+        splashImageTarget = null
+    }
+
+    private fun applySplashImageTransform() {
+        val image = mBinding.startupSplashBackgroundImage
+        val drawable = image.drawable ?: return
+        if (drawable.intrinsicWidth <= 0 || drawable.intrinsicHeight <= 0
+            || image.width <= 0 || image.height <= 0) return
+        val transform = BgImageTransform.resolve(
+            drawable.intrinsicWidth, drawable.intrinsicHeight,
+            image.width, image.height,
+            splashBackgroundZoom, splashBackgroundAnchorX, splashBackgroundAnchorY
+        )
+        image.imageMatrix = Matrix().apply {
+            setScale(transform[0], transform[0])
+            postTranslate(transform[1], transform[2])
+        }
+    }
+
+    private fun fallbackFromSplashImage() {
+        if (!startup.splashVisible || !startupImageOnly) return
+        val overlay = mBinding.startupSplashOverlay
+        overlay.removeCallbacks(imageLoadTimeout)
+        overlay.removeCallbacks(imageOnlyDisplayFinished)
+        cancelSplashImageLoad()
+        mBinding.startupSplashBackgroundImage.removeOnLayoutChangeListener(splashImageLayoutListener)
+        mBinding.startupSplashBackgroundImage.setImageDrawable(null)
+        mBinding.startupSplashBackgroundImage.visibility = View.GONE
+        startupImageOnly = false
+        val fallback = imageOnlyFallback ?: return
+        imageOnlyFallback = null
+        overlay.removeCallbacks(animationLoadTimeout)
+        overlay.postDelayed(animationLoadTimeout, ANIMATION_LOAD_TIMEOUT_MS)
+        startStartupSplashContent(fallback)
+    }
+
     private fun maybeDismissStartupSplash() {
-        if (startupSplashVisible &&
-            ((startupContentReady && !startupAnimationEnded) || startupAnimationTailReady)) {
+        if (startup.shouldDismissSplash()) {
             dismissStartupSplash()
         }
     }
 
     private fun dismissStartupSplash(runDeferredComponents: Boolean = true) {
-        if (!startupSplashVisible) return
-        startupSplashVisible = false
+        if (!startup.splashVisible) return
+        startup.onSplashDismissed(runDeferredComponents)
         startupSplashPreDraw?.let { listener ->
             val observer = mBinding.startupSplashOverlay.viewTreeObserver
             if (observer.isAlive) observer.removeOnPreDrawListener(listener)
@@ -655,13 +886,18 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
         mBinding.startupSplashOverlay.removeCallbacks(finishStartupSplash)
         mBinding.startupSplashOverlay.removeCallbacks(animationLoadTimeout)
         mBinding.startupSplashOverlay.removeCallbacks(animationPlaybackTimeout)
+        mBinding.startupSplashOverlay.removeCallbacks(imageLoadTimeout)
+        mBinding.startupSplashOverlay.removeCallbacks(imageOnlyDisplayFinished)
         mBinding.startupSplashAnimation.cancelAnimation()
+        cancelSplashImageLoad()
+        mBinding.startupSplashBackgroundImage.removeOnLayoutChangeListener(splashImageLayoutListener)
+        mBinding.startupSplashBackgroundImage.setImageDrawable(null)
+        startupImageOnly = false
+        imageOnlyFallback = null
         mBinding.startupSplashOverlay.visibility = View.GONE
         window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
         if (runDeferredComponents) {
-            pendingStartupUiDispatch = true
             // 先画一帧主题背景，之后才装配首页组件和 Fragment。
-            startupFirstHomeFramePending = true
             val content = mBinding.root
             val listener = object : ViewTreeObserver.OnPreDrawListener {
                 override fun onPreDraw(): Boolean {
@@ -673,10 +909,6 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
             }
             startupShellPreDraw = listener
             content.viewTreeObserver.addOnPreDrawListener(listener)
-        } else {
-            startupFirstHomeFramePending = false
-            pendingAfterStartupSplash.clear()
-            pendingStartupUiDispatch = false
         }
     }
 
@@ -686,9 +918,17 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
             override fun onPreDraw(): Boolean {
                 content.viewTreeObserver.removeOnPreDrawListener(this)
                 startupFirstHomePreDraw = null
-                startupFirstHomeFramePending = false
-                content.post(dispatchAfterStartupSplash)
-                if (!startupHomePrefetchStarted) content.post(startStartupHomePrefetch)
+                content.post {
+                    // post from pre-draw runs after the frame; cleanup and windows cannot steal it.
+                    startup.onFirstHomeFrame()
+                    if (startup.showSplashOnCreate) attachPageBackground()
+                    if (pendingNotificationDetailId != null) {
+                        startupHandler.postDelayed(pendingNotificationTimeout, 30_000L)
+                    }
+                    dispatchAfterStartupSplash.run()
+                    maybeOpenPendingNotificationDetail()
+                    if (!startup.prefetchStarted) startStartupHomePrefetch.run()
+                }
                 return true
             }
         }
@@ -697,8 +937,17 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
     }
 
     override fun onDestroy() {
+        startupHandler.removeCallbacks(pendingNotificationTimeout)
+        pendingFireworksLaunch?.let { startupHandler.removeCallbacks(it) }
+        pendingFireworksLaunch = null
+        pendingFireworksClaim?.let { claim ->
+            HeavyTaskUtil.executeBigTask {
+                HolidayFireworksLaunchCoordinator.finish(claim, false, 0L, 0)
+            }
+        }
+        pendingFireworksClaim = null
         dismissStartupSplash(false)
-        startupHomePrefetchActive = false
+        startup.onDestroy()
         startupLanTimeout?.let { mBinding.root.removeCallbacks(it) }
         startupLanTimeout = null
         startupSplashPreDraw?.let { listener ->
@@ -721,8 +970,8 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
         mBinding.root.removeCallbacks(attachHomePagerAfterSplash)
         mBinding.root.removeCallbacks(dispatchAfterStartupSplash)
         mainShellBinding?.root?.removeCallbacks(dispatchAfterStartupSplash)
-        pendingAfterStartupSplash.clear()
         super.onDestroy()
+        ControlManager.get().releaseHomeHost()
     }
 
     /** 底部导航图标: 选中项换"选中"变体(与未选中图形区分), 颜色仍由 itemIconTint 按状态着色 */
@@ -745,7 +994,7 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
     }
 
     override fun onBackPressed() {
-        if (startupSplashVisible || startupFirstHomeFramePending) return
+        if (startup.splashVisible || startup.firstHomeFramePending) return
         val shell = mainShellBinding ?: return
         if (shell.vp.currentItem != 0) { // 非首页(我的)按返回回首页
             shell.vp.currentItem = 0

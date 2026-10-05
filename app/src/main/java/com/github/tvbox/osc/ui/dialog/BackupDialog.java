@@ -192,9 +192,14 @@ public class BackupDialog extends AppBottomPopupView {
     /** Runs independently of the popup lifecycle after a completed restore. */
     private static void restartApp(String restored) {
         try {
+            com.github.tvbox.osc.base.App app = com.github.tvbox.osc.base.App.getInstance();
+            if (app.getPackageManager().getLaunchIntentForPackage(app.getPackageName()) == null) {
+                throw new IllegalStateException("未找到应用启动入口");
+            }
             SystemConfig.markInternalRestart();
             AppBubble.toast(restored + "，正在重启");
             AppUtils.relaunchApp(true);
+            throw new IllegalStateException("重启未执行");
         } catch (Throwable ignored) {
             try { SystemConfig.clearInternalRestart(); }
             catch (Throwable ignoredClear) { }

@@ -95,6 +95,27 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
+        mContext = this;
+        AppManager.getInstance().addActivity(this);
+        // 系统从已回收的任务栈直接恢复页面时，先转到统一开屏入口。
+        // 放在布局 inflate 之前，避免把旧页面和首页组件先创建一遍再重启。
+        if (!App.getInstance().isNormalStart && allowDirectColdStart()) {
+            App.getInstance().isNormalStart = true;
+        } else if (!App.getInstance().isNormalStart) {
+            try {
+                if (getPackageManager().getLaunchIntentForPackage(getPackageName()) != null) {
+                    com.github.tvbox.osc.config.SystemConfig.markInternalRestart();
+                    AppUtils.relaunchApp(true);
+                    // relaunchApp 正常结束当前进程；若它未能发起，继续显示当前页面。
+                    com.github.tvbox.osc.config.SystemConfig.clearInternalRestart();
+                }
+            } catch (Throwable failure) {
+                com.github.tvbox.osc.config.SystemConfig.clearInternalRestart();
+                android.util.Log.w("MBox-Startup", "系统恢复时重启应用失败", failure);
+            }
+            App.getInstance().isNormalStart = true;
+        }
+
         // 「跟随系统」翻明暗的比对基准:记下建这页时系统的明暗(见 handleSystemNightChange)
         createdSystemNight = systemNightNow();
 
@@ -120,12 +141,10 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
             com.github.tvbox.osc.theme.ThemeSweep.apply(content);
         } catch (Throwable ignored) {
         }
-        mContext = this;
-        AppManager.getInstance().addActivity(this);
         // 全局页面背景层("body"底图):挂到内容容器最底层,所有页面透明处即显示背景图
         // 图源/遮罩/缩放位置统一走系统配置门面(SystemConfig)组装,设置页改完各页 onResume 自动套用
         try {
-            attachPageBackground();
+            if (shouldAttachPageBackground()) attachPageBackground();
         } catch (Throwable ignored) {
         }
         initStatusBar();
@@ -135,11 +154,6 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
         try {
             com.github.tvbox.osc.theme.ThemeSweep.apply(getWindow() == null ? null : getWindow().getDecorView());
         } catch (Throwable ignored) {
-        }
-        if (!App.getInstance().isNormalStart){
-            // 系统直接恢复页面时由框架补走启动页；这不是用户主动重开 App。
-            com.github.tvbox.osc.config.SystemConfig.markInternalRestart();
-            AppUtils.relaunchApp(true);
         }
         // 暂停页面创建时的主题诊断与按需全树采集。
         /* 临时停用页面主题探针，保留代码供后续排障。
@@ -162,6 +176,11 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
         } catch (Throwable ignored) {
         }
         */
+    }
+
+    /** 启动器开屏或通知直达页面可在冷进程里直接创建。 */
+    protected boolean allowDirectColdStart() {
+        return false;
     }
 
 
@@ -212,7 +231,11 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
      * 顺带接上"老配置位移→锚点"的迁移回调:背景层拿到图片尺寸后换算出的锚点在这里落盘(一次性),
      * 之后换横竖屏/分辨率都按锚点还原,不会出现"竖屏摆好的图转横屏自己往中间跑"。
      */
-    private void attachPageBackground() {
+    protected boolean shouldAttachPageBackground() {
+        return true;
+    }
+
+    protected final void attachPageBackground() {
         com.github.tvbox.osc.ui.kit.PageBackgroundView layer =
                 com.github.tvbox.osc.ui.kit.PageBackgroundView.attach(this,
                         com.github.tvbox.osc.util.PageBackgroundStore.currentConfig());
@@ -296,7 +319,7 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
         super.onResume();
         // 全局背景层:主题切换/背景图配置变更后重新应用;图源未变时为零开销
         try {
-            attachPageBackground();
+            if (shouldAttachPageBackground()) attachPageBackground();
         } catch (Throwable ignored) {
         }
         // 暂停页面恢复时的主题与输入框诊断。

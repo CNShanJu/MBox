@@ -23,10 +23,13 @@ public class AppLaunchSourceTest {
     public void taskReloadAndSystemRestoreDoNotRunStartupActions() {
         assertEquals(AppLaunchSource.INTERNAL_RESTART,
                 AppLaunchSource.resolve(false, false, true));
-        assertEquals(AppLaunchSource.OTHER,
+        assertEquals(AppLaunchSource.ACTIVITY_RECREATION,
                 AppLaunchSource.resolve(true, true, false));
-        assertEquals(AppLaunchSource.OTHER,
+        assertEquals(AppLaunchSource.SYSTEM_RESTART,
                 AppLaunchSource.resolve(false, false, false));
         assertFalse(AppLaunchSource.resolve(true, true, false).allowsStartupActions());
+        assertEquals(AppLaunchSource.NOTIFICATION_ENTRY,
+                AppLaunchSource.resolve(true, false, false, true));
+        assertFalse(AppLaunchSource.resolve(true, false, false, true).allowsStartupActions());
     }
 }

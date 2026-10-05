@@ -283,6 +283,14 @@ public final class SystemConfig {
         themeRestartCacheMarkedInProcessAt = markedAt;
     }
 
+    /** 真重启未发起时撤销缓存快速路径，避免下一次手动打开误读旧订阅。 */
+    public static synchronized void clearThemeRestartUseCache() {
+        if (PrefsDataStore.contains(KEY_THEME_RESTART_CACHE_AT)) {
+            PrefsDataStore.delete(KEY_THEME_RESTART_CACHE_AT);
+        }
+        themeRestartCacheMarkedInProcessAt = 0L;
+    }
+
     /** 仅由新进程消费一次，超时则按普通冷启动处理。 */
     public static synchronized boolean consumeThemeRestartUseCache() {
         long markedAt = PrefsDataStore.getLong(KEY_THEME_RESTART_CACHE_AT, 0L);
