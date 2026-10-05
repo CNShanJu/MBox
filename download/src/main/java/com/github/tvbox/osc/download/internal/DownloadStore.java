@@ -13,8 +13,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Type;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -47,6 +49,18 @@ public class DownloadStore {
     });
     /** 正在拉取的海报文件(去重,避免列表多次刷新重复下载) */
     private final Set<String> posterFetching = new HashSet<>();
+    /** 同名请求到来时保留最新一次，当前请求结束后复核海报是否仍存在。 */
+    private final Map<String, PosterRequest> posterRetries = new HashMap<>();
+
+    private static final class PosterRequest {
+        final String pic;
+        final String vodName;
+
+        PosterRequest(String pic, String vodName) {
+            this.pic = pic;
+            this.vodName = vodName;
+        }
+    }
 
     DownloadStore(DownloadManager dm) {
         this.dm = dm;
@@ -62,8 +76,12 @@ public class DownloadStore {
     }.getType();
 
     private static List<DownloadTask> readTasksFile() {
-        String s = JsonFiles.readUtf8(tasksFile());
-        if (s == null) return null;
+        File file = tasksFile();
+        String s = JsonFiles.readUtf8(file);
+        if (s == null) {
+            if (JsonFiles.hasAtomicState(file)) throw new IllegalStateException("下载任务记录无法读取");
+            return null;
+        }
         List<DownloadTask> r = GSON.fromJson(s, TASK_LIST_TYPE);
         return r == null ? new ArrayList<>() : r;
     }
@@ -82,17 +100,20 @@ public class DownloadStore {
     /**
      * 启动加载:读任务文件 + 进程重启状态归位(下载中/等待/调度暂停 -> 用户暂停,待手动继续)。
      * <p>
-     * <b>整体兜底是硬要求</b>:本方法跑在 {@code Application.onCreate}(DownloadFacade.init → boot → load),
-     * 一旦抛异常就是"开机即崩";而任务文件已经落盘,下次启动会读到同一份坏数据继续崩 = 卸载重装才能救。
+     * 任务文件读取失败时停止本次下载器装载，避免把空任务表写回并覆盖原数据；
+     * 单个任务的状态归位和磁盘对账仍逐项兜底。
      * 所以除读盘外,后面的状态归位/磁盘对账两段也必须包在 try 里(与 {@code DownloadArchive} 的口径一致),
      * 且显式剔除列表里的 null 项(Gson 对 {@code [null]} 会产出 null 元素,后面 {@code t.state} 直接 NPE)。
      */
-    void load() {
+    boolean load() {
+        synchronized (dm.tasks) {
+            dm.tasks.clear(); // 上一轮装载若中途失败，重试时从磁盘重新建立完整快照。
+        }
         List<DownloadTask> saved = null;
         try {
             saved = readTasksFile();
         } catch (Throwable th) {
-            th.printStackTrace(); // 存储损坏时兜底为空列表,不阻塞下载器启动
+            throw new IllegalStateException("下载任务记录装载失败，已保留原文件", th);
         }
         if (saved != null && !saved.isEmpty()) {
             List<DownloadTask> usable = new ArrayList<>(saved.size());
@@ -101,8 +122,8 @@ public class DownloadStore {
             }
             dm.tasks.addAll(usable);
         }
+        boolean needPersist = false;
         try {
-            boolean needPersist = false;
             synchronized (dm.tasks) {
                 for (DownloadTask t : dm.tasks) {
                     if (t.state == DownloadTask.STATE_DOWNLOADING
@@ -131,7 +152,6 @@ public class DownloadStore {
                 }
             }
             if (needPersist) {
-                dm.persist();
                 Log.i("TVBox-Download", "进程重启:按自动继续设置恢复任务，开跑前刷新地址");
             }
             // 启动磁盘对账(4.5):内存计数被杀后滞后,以磁盘实况修正
@@ -165,6 +185,7 @@ public class DownloadStore {
             th.printStackTrace();
             Log.e("TVBox-Download", "启动任务归位/对账失败(已忽略):" + th);
         }
+        return needPersist;
     }
 
     /** 任务快照(安全遍历,避免外部迭代与任务增删并发冲突) */
@@ -256,6 +277,28 @@ public class DownloadStore {
         return isUsablePoster(f) ? f : null;
     }
 
+    /** Serialize cleanup with poster downloads, then recheck all sources and disk files. */
+    void requestPosterCleanup(String vodName, String savePath, String tmpDir) {
+        if (appContext == null || PosterCleanup.sanitizeName(vodName).isEmpty()) return;
+        posterExecutor.execute(() -> {
+            try {
+                PosterCleanup.deleteIfUnused(appContext.getFilesDir(), vodName,
+                        dm.getTasks(), dm.archive.getAll(), FileCleaner.knownSaveRoots(),
+                        new File(appContext.getFilesDir(), "download_tmp"),
+                        savePath == null ? null : new File(savePath),
+                        savePath == null ? null : new File(savePath + ".part"),
+                        tmpDir == null ? null : new File(tmpDir));
+            } catch (RuntimeException error) {
+                Log.w("TVBox-Download", "海报清理检查失败", error);
+            }
+        });
+    }
+
+    private boolean hasPosterOwner(String vodName) {
+        return PosterCleanup.hasReference(PosterCleanup.sanitizeName(vodName),
+                dm.getTasks(), dm.archive.getAll());
+    }
+
     private static boolean isUsablePoster(File file) {
         return file.isFile() && file.length() > 0 && file.length() <= MAX_POSTER_BYTES;
     }
@@ -264,19 +307,26 @@ public class DownloadStore {
     void ensurePosterAsync(String pic, String vodName) {
         if (pic == null || pic.isEmpty() || vodName == null || vodName.isEmpty()) return;
         final File target = new File(getPosterDir(vodName), "poster.jpg");
-        if (isUsablePoster(target)) return;
         final String key = target.getAbsolutePath();
         synchronized (posterFetching) {
-            if (posterFetching.contains(key)) return;
+            if (posterFetching.contains(key)) {
+                posterRetries.put(key, new PosterRequest(pic, vodName));
+                return;
+            }
             posterFetching.add(key);
         }
         posterExecutor.execute(() -> {
             try {
+                if (!hasPosterOwner(vodName)) return;
+                // 与清理共用串行队列检查：新任务若在清理扫描期间入队，
+                // 这里会在清理后重新确认海报是否还在，避免留下无海报的新任务。
+                if (isUsablePoster(target)) return;
                 Request req = new Request.Builder().url(pic).build();
                 try (Response resp = dm.downloadClient().newCall(req).execute()) {
                     if (!resp.isSuccessful() || resp.body() == null) return;
                     String ct = resp.header("Content-Type");
                     if (ct != null && !ct.toLowerCase(java.util.Locale.ROOT).startsWith("image/")) return;
+                    if (!hasPosterOwner(vodName)) return;
                     try (InputStream is = resp.body().byteStream()) {
                         savePoster(is, target, resp.body().contentLength());
                     }
@@ -286,9 +336,12 @@ public class DownloadStore {
             } catch (Throwable th) {
                 Log.i("TVBox-Download", "海报下载失败: " + th.getMessage());
             } finally {
+                PosterRequest retry;
                 synchronized (posterFetching) {
                     posterFetching.remove(key);
+                    retry = posterRetries.remove(key);
                 }
+                if (retry != null) ensurePosterAsync(retry.pic, retry.vodName);
             }
         });
     }

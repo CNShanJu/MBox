@@ -1151,6 +1151,9 @@ public class DownloadScheduler {
             }
         }
         dm.persist();
+        // 即使只删记录也检查一次；留下的成品或分片会阻止海报删除。
+        dm.requestPosterCleanup(t.vodName == null ? t.groupName : t.vodName,
+                t.savePath, t.tmpDir);
         dm.notifyChanged();
         wakeWorker(); // 删除后重新调度
     }

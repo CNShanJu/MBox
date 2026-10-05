@@ -334,6 +334,8 @@ public class DownloadFragment extends BaseVbFragment<FragmentDownloadBinding> {
     public void onStart() {
         super.onStart();
         subscribeDownloadEvents();
+        // 后台装载可能恰好在 init() 的首次 refresh 与订阅之间完成。
+        if (DownloadFacade.get().isReady()) refresh();
     }
 
     @Override
@@ -829,7 +831,7 @@ public class DownloadFragment extends BaseVbFragment<FragmentDownloadBinding> {
                                     File p = new File(t.savePath).getParentFile();
                                     if (p != null) dirs.add(p);
                                 }
-                                DownloadFacade.get().remove(t, false);
+                                DownloadFacade.get().remove(t, true);
                             }
                             for (com.github.tvbox.osc.download.ArchiveItem it : g.doneItems) {
                                 if (it.savePath != null) {
@@ -847,6 +849,8 @@ public class DownloadFragment extends BaseVbFragment<FragmentDownloadBinding> {
                                     com.github.tvbox.osc.download.DownloadFacade.get().deleteArchive(it.episodeId, true);
                                 }
                             }
+                            // 海报按剧名跨来源共用，整组删完后由下载模块复核所有任务和磁盘文件。
+                            DownloadFacade.get().requestPosterCleanup(g.name);
                         } else {
                             // 不勾选:只删下载中的任务(记录 + 过程文件),已完成记录与文件保留
                             for (DownloadTask t : g.tasks) {

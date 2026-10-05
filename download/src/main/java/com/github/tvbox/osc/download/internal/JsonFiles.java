@@ -28,6 +28,13 @@ final class JsonFiles {
         return new File(ctx.getFilesDir(), name);
     }
 
+    /** AtomicFile 可能只留下待恢复的 .bak/.new；有任一状态就不能把读取失败当成空记录。 */
+    static boolean hasAtomicState(File f) {
+        if (f == null) return false;
+        return f.exists() || new File(f.getPath() + ".bak").exists()
+                || new File(f.getPath() + ".new").exists();
+    }
+
     static String readUtf8(File f) {
         if (f == null) return null;
         android.util.AtomicFile atomic = new android.util.AtomicFile(f);

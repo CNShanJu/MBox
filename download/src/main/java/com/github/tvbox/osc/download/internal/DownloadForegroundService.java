@@ -102,6 +102,8 @@ public final class DownloadForegroundService extends Service {
     public void onCreate() {
         super.onCreate();
         running = true;
+        // 系统可只恢复下载服务而不创建首页；模块启动仍在自己的后台执行器完成。
+        DownloadManager.get().startBackgroundBoot();
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
                     CHANNEL_ID, "下载进行中", NotificationManager.IMPORTANCE_LOW);

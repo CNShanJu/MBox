@@ -12,6 +12,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.util.HashSet;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
@@ -107,6 +108,25 @@ public class FileCleaner {
         }
         if (!base.exists()) base.mkdirs();
         return base;
+    }
+
+    /** All current and older download roots; inspecting them must not create directories. */
+    static List<File> knownSaveRoots() {
+        List<File> roots = new ArrayList<>();
+        File publicDownloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+        if (publicDownloads != null) {
+            roots.add(new File(publicDownloads, SAVE_DIR_NAME));
+            roots.add(new File(publicDownloads, "TVBox"));
+        }
+        if (appContext != null) {
+            File privateDownloads = appContext.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+            if (privateDownloads != null) {
+                roots.add(new File(privateDownloads, SAVE_DIR_NAME));
+                roots.add(new File(privateDownloads, "TVBox"));
+            }
+            roots.add(new File(appContext.getFilesDir(), "downloads"));
+        }
+        return roots;
     }
 
     /**

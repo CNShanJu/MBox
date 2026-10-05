@@ -10,6 +10,7 @@ import android.os.Handler;
 import android.os.Looper;
 
 import java.io.File;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -107,10 +108,34 @@ public final class DownloadFacade {
     // 装配入口(App 组合根调用一次;UI 不接触):转发到模块内部 DownloadManager
     // ------------------------------------------------------------------
 
-    /** App 启动初始化:注入 context(保存目录/海报/网络监听/通知渠道)。仅组合根调用一次 */
+    /** App 启动初始化:只注入 context/通知渠道，避免在 Application 主线程扫描下载文件。 */
     public static void init(android.content.Context context) {
         com.github.tvbox.osc.download.internal.DownloadManager.init(context);
         com.github.tvbox.osc.download.internal.DownloadNotifier.init(context);
+    }
+
+    /** 首页首帧后调用；服务单独唤起进程时也可直接调用。重复调用安全。 */
+    public static void startAfterFirstHomeFrame() {
+        DownloadManager.get().startBackgroundBoot();
+    }
+
+    /** 下载页可据此显示装载状态；就绪时会向已注册监听器派发一次刷新。 */
+    public boolean isReady() {
+        return DownloadManager.get().isBooted();
+    }
+
+    private boolean readyForRead() {
+        DownloadManager manager = DownloadManager.get();
+        if (manager.isBooted()) return true;
+        manager.startBackgroundBoot();
+        return false;
+    }
+
+    /** 有返回值的入队在原有后台解析线程等待，以便保留精确结果；主线程直接排队。 */
+    private boolean readyForEnqueue() {
+        if (readyForRead()) return true;
+        if (Looper.myLooper() == Looper.getMainLooper()) return false;
+        return DownloadManager.get().awaitBootInBackground(30_000);
     }
 
     /** 注册播放地址解析契约实现(:spider 提供;App 组合根注入) */
@@ -140,6 +165,7 @@ public final class DownloadFacade {
      */
     public int[] queryEpisodes(String videoId, String playFlag, int episodeCount) {
         int[] states = new int[Math.max(0, episodeCount)];
+        if (!readyForRead()) return states;
         List<DownloadTask> tasks = DownloadManager.get().getTasks();
         for (int i = 0; i < states.length; i++) {
             String episodeId = buildEpisodeId(videoId, playFlag, i);
@@ -182,13 +208,14 @@ public final class DownloadFacade {
     /** 单任务详情（进度等） */
     public DownloadTask getTask(String episodeId) {
         if (episodeId == null) return null;
-        for (DownloadTask t : DownloadManager.get().getTasks()) {
+        for (DownloadTask t : getTasks()) {
             if (episodeId.equals(t.episodeId)) return t;
         }
         return null;
     }
 
     public List<DownloadTask> getTasks() {
+        if (!readyForRead()) return Collections.emptyList();
         return DownloadManager.get().getTasks();
     }
 
@@ -200,6 +227,16 @@ public final class DownloadFacade {
     public boolean enqueue(String url, String sourceKey, String playFlag, String episodeRawUrl,
                            String episodeId, String pic, java.util.Map<String, String> headers,
                            String sourceName, String vodName, String episodeName) {
+        if (!readyForEnqueue()) {
+            if (Looper.myLooper() != Looper.getMainLooper()) return false;
+            DownloadRequest copy = new DownloadRequest(url, sourceKey, playFlag, episodeRawUrl,
+                    episodeId, pic, headers, sourceName, vodName, episodeName);
+            DownloadManager manager = DownloadManager.get();
+            manager.whenBooted(() -> manager.enqueue(copy.url, copy.sourceKey, copy.playFlag,
+                    copy.episodeRawUrl, copy.episodeId, copy.pic, copy.headers,
+                    copy.sourceName, copy.vodName, copy.episodeName));
+            return true;
+        }
         return DownloadManager.get().enqueue(url, sourceKey, playFlag, episodeRawUrl,
                 episodeId, pic, headers, sourceName, vodName, episodeName);
     }
@@ -207,6 +244,17 @@ public final class DownloadFacade {
     /** 入队(DownloadRequest 化入口:UI 只构造请求对象,见改进.txt §六下载) */
     public EnqueueResult enqueue(DownloadRequest request) {
         if (request == null) return EnqueueResult.of(EnqueueResult.Code.INVALID_REQUEST, "下载请求为空");
+        if (!readyForEnqueue()) {
+            if (Looper.myLooper() != Looper.getMainLooper()) {
+                return EnqueueResult.of(EnqueueResult.Code.STORAGE_ERROR, "下载记录装载超时，请稍后重试");
+            }
+            DownloadManager manager = DownloadManager.get();
+            manager.whenBooted(() -> manager.enqueueResult(request.url, request.sourceKey, request.playFlag,
+                    request.episodeRawUrl, request.episodeId, request.pic, request.headers,
+                    request.sourceName, request.vodName, request.episodeName, request.altRoutes,
+                    request.requiresResolution));
+            return EnqueueResult.queued(null, "下载记录装载中，任务已排队");
+        }
         return DownloadManager.get().enqueueResult(request.url, request.sourceKey, request.playFlag,
                 request.episodeRawUrl, request.episodeId, request.pic, request.headers,
                 request.sourceName, request.vodName, request.episodeName, request.altRoutes, request.requiresResolution);
@@ -214,42 +262,74 @@ public final class DownloadFacade {
 
     /** 按任务对象暂停 */
     public void pause(DownloadTask t) {
-        if (t != null) DownloadManager.get().pause(t);
+        if (t != null) {
+            DownloadManager manager = DownloadManager.get();
+            manager.whenBooted(() -> manager.pause(t));
+        }
     }
 
     /** 按任务对象恢复 */
     public void resume(DownloadTask t) {
-        if (t != null) DownloadManager.get().resume(t);
+        if (t != null) {
+            DownloadManager manager = DownloadManager.get();
+            manager.whenBooted(() -> manager.resume(t));
+        }
     }
 
     /** 暂停全部 */
     public void pauseAll() {
-        DownloadManager.get().pauseAll();
+        DownloadManager manager = DownloadManager.get();
+        manager.whenBooted(manager::pauseAll);
     }
 
     /** 恢复全部 */
     public void startAll() {
-        DownloadManager.get().startAll();
+        DownloadManager manager = DownloadManager.get();
+        manager.whenBooted(manager::startAll);
     }
 
     /** 删除任务(不删文件) */
     public void remove(DownloadTask t) {
-        if (t != null) DownloadManager.get().remove(t);
+        if (t != null) {
+            DownloadManager manager = DownloadManager.get();
+            manager.whenBooted(() -> manager.remove(t));
+        }
     }
 
     /** 删除任务(deleteFiles=true 连文件一起删) */
     public void remove(DownloadTask t, boolean deleteFiles) {
-        if (t != null) DownloadManager.get().remove(t, deleteFiles);
+        if (t != null) {
+            DownloadManager manager = DownloadManager.get();
+            manager.whenBooted(() -> manager.remove(t, deleteFiles));
+        }
     }
 
     /** 按本地路径清理下载任务(本地文件删除联动),返回清理条数 */
     public int removeTasksByPath(String savePath) {
+        if (!readyForRead()) {
+            DownloadManager manager = DownloadManager.get();
+            manager.whenBooted(() -> manager.removeTasksByPath(savePath));
+            return 0;
+        }
         return DownloadManager.get().removeTasksByPath(savePath);
     }
 
     /** 按本地路径删除档案(与 removeTasksByPath 配套,一次调用完成文件联动) */
     public boolean removeArchiveByPath(String savePath) {
-        return DownloadArchive.get().removeByPath(savePath);
+        if (!readyForRead()) {
+            DownloadManager.get().whenBooted(() -> removeArchiveByPathNow(savePath));
+            return false;
+        }
+        return removeArchiveByPathNow(savePath);
+    }
+
+    private boolean removeArchiveByPathNow(String savePath) {
+        ArchiveItem item = DownloadArchive.get().findByPath(savePath);
+        boolean removed = DownloadArchive.get().removeByPath(savePath);
+        if (removed && item != null) {
+            DownloadManager.get().requestPosterCleanup(item.vodName, savePath, null);
+        }
+        return removed;
     }
 
     /** 海报本地文件(不存在返回 null) */
@@ -262,20 +342,32 @@ public final class DownloadFacade {
         DownloadManager.get().ensurePosterAsync(pic, vodName);
     }
 
+    /** Recheck a series after its confirmed batch file deletion. */
+    public void requestPosterCleanup(String vodName) {
+        DownloadManager manager = DownloadManager.get();
+        manager.whenBooted(() -> manager.requestPosterCleanup(vodName, null, null));
+    }
+
     // ------------------------------------------------------------------
     // 排队 / 插队（4.4，按 episodeId 操作）
     // ------------------------------------------------------------------
 
     /** 排队插队(温和): 提到队首, 不打断运行中任务 */
     public void moveToFront(String episodeId) {
-        DownloadTask t = getTask(episodeId);
-        if (t != null) DownloadManager.get().moveToFront(t);
+        DownloadManager manager = DownloadManager.get();
+        manager.whenBooted(() -> {
+            DownloadTask t = findTask(manager.getTasks(), episodeId);
+            if (t != null) manager.moveToFront(t);
+        });
     }
 
     /** 设置优先级(HIGH/NORMAL/LOW); 置 HIGH 且并发满时抢占让位(被抢占者排最前) */
     public void setPriority(String episodeId, int level) {
-        DownloadTask t = getTask(episodeId);
-        if (t != null) DownloadManager.get().setPriority(t, level);
+        DownloadManager manager = DownloadManager.get();
+        manager.whenBooted(() -> {
+            DownloadTask t = findTask(manager.getTasks(), episodeId);
+            if (t != null) manager.setPriority(t, level);
+        });
     }
 
     // ------------------------------------------------------------------
@@ -370,11 +462,13 @@ public final class DownloadFacade {
 
     /** 批量查询剧集状态:0=未下载;1=已下载完成且文件存在;2=已有任务(下载中/排队/暂停);3=失败 */
     public int[] getEpisodeStates(String[] episodeIds, String sourceName, String vodName, String[] episodeNames) {
+        if (!readyForRead()) return new int[episodeIds == null ? 0 : episodeIds.length];
         return com.github.tvbox.osc.download.internal.DownloadCore.getEpisodeStates(episodeIds, sourceName, vodName, episodeNames);
     }
 
     /** 单集下载状态(语义同上) */
     public int getEpisodeState(String episodeId, String sourceName, String vodName, String episodeName) {
+        if (!readyForRead()) return 0;
         return com.github.tvbox.osc.download.internal.DownloadCore.getEpisodeState(episodeId, sourceName, vodName, episodeName);
     }
 
@@ -384,47 +478,78 @@ public final class DownloadFacade {
 
     /** 某视频的已下载列表（下载完成 tab 数据源） */
     public List<ArchiveItem> queryArchive(String videoId) {
+        if (!readyForRead()) return Collections.emptyList();
         return DownloadArchive.get().queryByVideo(videoId);
     }
 
     public ArchiveItem getArchive(String episodeId) {
+        if (!readyForRead()) return null;
         return DownloadArchive.get().get(episodeId);
     }
 
     /** 删除档案（deleteFile=true 连文件一起删） */
     public boolean deleteArchive(String episodeId, boolean deleteFile) {
+        if (!readyForRead()) {
+            DownloadManager.get().whenBooted(() -> deleteArchiveNow(episodeId, deleteFile));
+            return false;
+        }
+        return deleteArchiveNow(episodeId, deleteFile);
+    }
+
+    private boolean deleteArchiveNow(String episodeId, boolean deleteFile) {
+        ArchiveItem item = DownloadArchive.get().get(episodeId);
         boolean removed = DownloadArchive.get().remove(episodeId, deleteFile);
         // 文件都要删了,同一集的"已完成"任务记录也必须一起清掉:
         // 否则它会挡住重新下载(入队按 episodeId 判重)却又不在列表显示
         // (下载列表只聚合"未完成任务 + 已完成且文件存在"),用户看到的就是
         //「所选剧集已在下载任务中,可下载列表里什么都没有」。
         DownloadManager.get().removeTasksByEpisode(episodeId);
+        if (removed && item != null) {
+            DownloadManager.get().requestPosterCleanup(item.vodName, item.savePath, null);
+        }
         return removed;
     }
 
     /** 重命名成品文件（同步更新档案） */
     public boolean renameArchive(String episodeId, String newName) {
+        if (!readyForRead()) {
+            DownloadManager.get().whenBooted(() -> DownloadArchive.get().rename(episodeId, newName));
+            return false;
+        }
         return DownloadArchive.get().rename(episodeId, newName);
     }
 
     /** 某剧(名称+源名)的已下载档案(下载管理页分组用) */
     public List<ArchiveItem> queryArchiveByVod(String vodName, String sourceName) {
+        if (!readyForRead()) return Collections.emptyList();
         return DownloadArchive.get().queryByVod(vodName, sourceName);
     }
 
     /** 全部已下载档案(下载管理页分组数据源) */
     public List<ArchiveItem> getAllArchive() {
+        if (!readyForRead()) return Collections.emptyList();
         return DownloadArchive.get().getAll();
     }
 
     /** 按成品文件路径查档案(下载管理页删除完成项定位用) */
     public ArchiveItem findArchiveByPath(String savePath) {
+        if (!readyForRead()) return null;
         return DownloadArchive.get().findByPath(savePath);
     }
 
     /** 删除某剧的孤儿档案记录(文件名全没了只剩档案) */
     public int removeArchiveOrphansByVod(String vodName, String sourceName) {
-        return DownloadArchive.get().removeOrphansByVod(vodName, sourceName);
+        if (!readyForRead()) {
+            DownloadManager.get().whenBooted(() -> removeArchiveOrphansByVodNow(vodName, sourceName));
+            return 0;
+        }
+        return removeArchiveOrphansByVodNow(vodName, sourceName);
+    }
+
+    private int removeArchiveOrphansByVodNow(String vodName, String sourceName) {
+        int removed = DownloadArchive.get().removeOrphansByVod(vodName, sourceName);
+        if (removed > 0) DownloadManager.get().requestPosterCleanup(vodName, null, null);
+        return removed;
     }
 
     // ------------------------------------------------------------------

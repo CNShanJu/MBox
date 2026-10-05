@@ -59,8 +59,17 @@ public class DownloadManager {
     /** 注入的 application context（独立模块 :download，App 启动时 init 注入） */
     static volatile android.content.Context appContext;
 
-    /** 数据加载/组件启动完成标记(init 注入 appContext 后执行一次) */
+    /** 数据加载/组件启动完成标记；仅在后台 boot 全部结束后发布。 */
     private volatile boolean booted = false;
+    private boolean bootScheduled = false;
+    private final Object bootLock = new Object();
+    private final List<Runnable> pendingBootActions = new ArrayList<>();
+    /** 下载模块自己的串行启动执行器，不占首页预取与动画线程。 */
+    private final ExecutorService bootExecutor = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "tvbox-download-boot");
+        t.setDaemon(true);
+        return t;
+    });
 
     final List<DownloadTask> tasks = new ArrayList<>();
     final Object lock = new Object();
@@ -194,16 +203,108 @@ public class DownloadManager {
         archive = com.github.tvbox.osc.download.internal.DownloadArchive.get();
     }
 
-    /** App init 注入 appContext 后执行一次:任务/档案文件加载(含旧 Hawk 迁移)+ 孤儿清理 + 调度启动 */
-    synchronized void boot() {
-        if (booted) return;
-        booted = true;
-        store.load();
-        // Bug5: 孤儿 tmpDir 回收(启动时任务已加载,无写入中,安全)
-        FileCleaner.cleanupOrphanTmpDirs(tasks);
-        archive.load();
-        scheduler.startWorker();
-        scheduler.subscribeNetworkEvents(); // 网络事件统一源:SystemStateMonitor(见任务C)
+    /** 在首页首帧后或下载功能被独立唤起时启动，不在 Application 主线程读盘。 */
+    public void startBackgroundBoot() {
+        synchronized (bootLock) {
+            if (appContext == null || bootScheduled || booted) return;
+            bootScheduled = true;
+        }
+        try {
+            bootExecutor.execute(() -> {
+            try {
+                // 先确认档案可读，再迁移旧分片目录；读取失败时尽量不动用户文件。
+                archive.load();
+                boolean taskStateChanged = store.load();
+                // 对账和递归清理必须在调度器开跑前完成，避免误删正在写入的分片。
+                FileCleaner.cleanupOrphanTmpDirs(tasks);
+                if (taskStateChanged) persist();
+                scheduler.startWorker();
+                scheduler.subscribeNetworkEvents();
+                // 装载期间到达的操作依次执行；队列清空与 ready 发布用同一把锁，
+                // 新操作不能越过较早排队的删除或入队。
+                while (true) {
+                    List<Runnable> queued;
+                    synchronized (bootLock) {
+                        if (pendingBootActions.isEmpty()) {
+                            booted = true;
+                            bootScheduled = false;
+                            bootLock.notifyAll();
+                            break;
+                        }
+                        queued = new ArrayList<>(pendingBootActions);
+                        pendingBootActions.clear();
+                    }
+                    for (Runnable action : queued) {
+                        try {
+                            action.run();
+                        } catch (Throwable th) {
+                            android.util.Log.e("TVBox-Download", "下载启动后操作失败", th);
+                        }
+                    }
+                }
+                try {
+                    notifyChanged();
+                } catch (Throwable th) {
+                    android.util.Log.e("TVBox-Download", "下载记录就绪通知失败", th);
+                }
+            } catch (Throwable th) {
+                android.util.Log.e("TVBox-Download", "后台装载下载记录失败", th);
+                // 失败时不发布空记录、不执行待处理写操作；下次访问可重新装载。
+                synchronized (bootLock) {
+                    bootScheduled = false;
+                    bootLock.notifyAll();
+                }
+            }
+            });
+        } catch (Throwable th) {
+            synchronized (bootLock) {
+                bootScheduled = false;
+                bootLock.notifyAll();
+            }
+            android.util.Log.e("TVBox-Download", "无法安排下载记录后台装载", th);
+        }
+    }
+
+    public boolean isBooted() {
+        return booted;
+    }
+
+    /** UI 的无返回值操作在加载期间排队，加载完成后由模块执行器顺序执行。 */
+    public void whenBooted(Runnable action) {
+        if (action == null) return;
+        boolean queued = false;
+        synchronized (bootLock) {
+            if (!booted) {
+                pendingBootActions.add(action);
+                queued = true;
+            }
+        }
+        if (queued) {
+            startBackgroundBoot();
+            return;
+        }
+        action.run();
+    }
+
+    /** 仅供已有后台入队调用保留精确结果；主线程绝不调用此等待。 */
+    public boolean awaitBootInBackground(long timeoutMs) {
+        startBackgroundBoot();
+        if (Looper.myLooper() == Looper.getMainLooper()
+                || Thread.currentThread().getName().equals("tvbox-download-boot")) return false;
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(Math.max(0L, timeoutMs));
+        try {
+            synchronized (bootLock) {
+                while (!booted && bootScheduled) {
+                    long remaining = deadline - System.nanoTime();
+                    if (remaining <= 0L) return false;
+                    TimeUnit.NANOSECONDS.timedWait(bootLock, remaining);
+                }
+                return booted;
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
     }
 
     public static synchronized DownloadManager get() {
@@ -219,8 +320,12 @@ public class DownloadManager {
         FileCleaner.setAppContext(appContext);
         DownloadStore.setAppContext(appContext);
         com.github.tvbox.osc.download.internal.DownloadNotifier.init(context);
-        // 注入完成后启动(任务/档案文件加载依赖 appContext;早于任何 UI 使用)
-        get().boot();
+        // Application 只注入 Context；首页首帧、下载服务或下载 API 的首次访问负责触发装载。
+        DownloadManager manager = get();
+        synchronized (manager.bootLock) {
+            if (manager.pendingBootActions.isEmpty()) return;
+        }
+        manager.startBackgroundBoot();
     }
 
     // ------------------------------------------------------------------
@@ -477,11 +582,7 @@ public class DownloadManager {
 
     /** 去除文件名的非法字符;null/空白返回空串,由调用方决定兜底名 */
     public static String sanitizeName(String name) {
-        if (name == null) return "";
-        String n = name.trim();
-        n = n.replaceAll("[\\\\/:*?\"<>|]", "_").trim();
-        if (n.equals(".") || n.equals("..")) return "";
-        return n;
+        return PosterCleanup.sanitizeName(name);
     }
 
     // ------------------------------------------------------------------
@@ -602,6 +703,8 @@ public class DownloadManager {
         }
         for (DownloadTask t : matched) {
             scheduler.remove(t, false);
+            requestPosterCleanup(t.vodName == null ? t.groupName : t.vodName,
+                    t.savePath, t.tmpDir);
         }
         if (!matched.isEmpty()) {
             com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.DOWNLOAD,
@@ -625,6 +728,8 @@ public class DownloadManager {
         }
         for (DownloadTask t : matched) {
             scheduler.remove(t, false); // 文件由档案删除路径负责,这里只清记录
+            requestPosterCleanup(t.vodName == null ? t.groupName : t.vodName,
+                    t.savePath, t.tmpDir);
         }
         if (!matched.isEmpty()) {
             com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.DOWNLOAD,
@@ -743,5 +848,10 @@ public class DownloadManager {
     /** 确保剧集海报已下载到本地 */
     public void ensurePosterAsync(String pic, String vodName) {
         store.ensurePosterAsync(pic, vodName);
+    }
+
+    /** Check poster ownership after a confirmed deletion; disk inspection runs on the poster executor. */
+    public void requestPosterCleanup(String vodName, String savePath, String tmpDir) {
+        store.requestPosterCleanup(vodName, savePath, tmpDir);
     }
 }

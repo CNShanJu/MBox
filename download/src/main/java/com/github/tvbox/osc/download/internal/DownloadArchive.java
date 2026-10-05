@@ -33,8 +33,13 @@ public final class DownloadArchive {
 
     /** App init 注入 appContext 后由 DownloadManager.boot 调用:文件加载 + 对账 */
     synchronized void load() {
+        items.clear(); // 中途失败后的重试从磁盘重建，避免重复插入。
         try {
+            File file = archiveFile();
             List<ArchiveItem> saved = readArchiveFile();
+            if (saved == null && JsonFiles.hasAtomicState(file)) {
+                throw new IllegalStateException("已下载档案记录无法读取");
+            }
             if (saved != null) {
                 for (ArchiveItem item : saved) {
                     if (item != null) items.add(item);
@@ -50,7 +55,8 @@ public final class DownloadArchive {
                 }
             }
             if (changed) persist();
-        } catch (Throwable ignored) {
+        } catch (Throwable th) {
+            throw new IllegalStateException("已下载档案装载失败，已保留原文件", th);
         }
     }
 
