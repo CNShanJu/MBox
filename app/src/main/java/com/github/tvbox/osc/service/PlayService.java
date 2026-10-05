@@ -5,6 +5,7 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.media.MediaMetadata;
@@ -26,6 +27,7 @@ import com.github.tvbox.osc.base.App;
 import com.github.tvbox.osc.constant.IntentKey;
 import com.github.tvbox.osc.player.MyVideoView;
 import com.github.tvbox.osc.ui.activity.DetailActivity;
+import com.github.tvbox.osc.ui.activity.NotificationEntryActivity;
 
 import java.lang.ref.WeakReference;
 import java.util.Locale;
@@ -50,6 +52,9 @@ import java.util.Locale;
 public class PlayService extends Service {
 
     static String videoInfo = "MBox&&第一集";
+    private static volatile String videoId;
+    private static volatile String videoSourceKey;
+    private static volatile String videoName;
     /**
      * 共享播放视图:后台播放期间服务只"借用"它来响应通知栏/媒体卡控制,用弱引用持有。
      *
@@ -87,10 +92,14 @@ public class PlayService extends Service {
         return parts.length > 0 && parts[0] != null ? parts[0].trim() : "";
     }
 
-    public static void start(MyVideoView controller, String currentVideoInfo) {
+    public static void start(MyVideoView controller, String currentVideoInfo,
+                             String currentVideoId, String currentSourceKey, String currentVideoName) {
         if (currentVideoInfo != null) {
             videoInfo = currentVideoInfo;
         }
+        videoId = currentVideoId;
+        videoSourceKey = currentSourceKey;
+        videoName = currentVideoName;
         videoViewRef = new WeakReference<>(controller);
         ContextCompat.startForegroundService(App.getInstance(), new Intent(App.getInstance(), PlayService.class));
     }
@@ -151,6 +160,11 @@ public class PlayService extends Service {
 
     private static final String CHANNEL_ID = "MyChannelId";
     private static final int NOTIFICATION_ID = 1;
+
+    /** 播放页返回前台时只撤下播放通知，保留正在运行的局域网投屏通知。 */
+    public static void cancelPlaybackNotification(Context context) {
+        if (context != null) NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID);
+    }
 
     @Override
     public void onCreate() {
@@ -395,7 +409,10 @@ public class PlayService extends Service {
     }
 
     private PendingIntent getPendingIntentActivity() {
-        Intent intent = new Intent(this, DetailActivity.class);
+        Intent intent = new Intent(this, NotificationEntryActivity.class)
+                .putExtra(NotificationEntryActivity.EXTRA_DETAIL_ID, videoId)
+                .putExtra(NotificationEntryActivity.EXTRA_DETAIL_SOURCE_KEY, videoSourceKey)
+                .putExtra(NotificationEntryActivity.EXTRA_DETAIL_NAME, videoName);
         return PendingIntent.getActivity(this, 1, intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
     }
 

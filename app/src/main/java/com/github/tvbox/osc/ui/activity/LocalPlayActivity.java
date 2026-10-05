@@ -10,7 +10,6 @@ import android.view.View;
 import android.view.WindowManager;
 
 import com.blankj.utilcode.util.GsonUtils;
-import com.blankj.utilcode.util.NotificationUtils;
 import com.blankj.utilcode.util.SPUtils;
 import com.github.tvbox.osc.util.AppBubble;
 import com.github.tvbox.osc.base.BaseVbActivity;
@@ -425,7 +424,7 @@ public class LocalPlayActivity extends BaseVbActivity<ActivityLocalPlayBinding> 
             @Override
             public void onClose() {
                 finish();
-                NotificationUtils.cancelAll();
+                com.github.tvbox.osc.service.PlayService.cancelPlaybackNotification(LocalPlayActivity.this);
             }
         });
     }
