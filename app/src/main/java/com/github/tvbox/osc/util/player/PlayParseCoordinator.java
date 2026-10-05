@@ -124,6 +124,18 @@ public class PlayParseCoordinator {
     // ---------- 解析任务代数(替代原 parseThreadPool.shutdown;共享执行器不可 shutdown) ----------
     private final AtomicInteger parseTaskEpoch = new AtomicInteger();
 
+    /** Check again when a queued UI action actually runs, after any intervening episode change. */
+    static Runnable guardParseEpoch(AtomicInteger epochCounter, long expectedEpoch, Runnable action) {
+        return () -> {
+            if (expectedEpoch == epochCounter.get()) action.run();
+        };
+    }
+
+    private boolean postIfCurrentParse(long epoch, Runnable action) {
+        return epoch == parseTaskEpoch.get()
+                && callback.postOnUiThread(guardParseEpoch(parseTaskEpoch, epoch, action));
+    }
+
     // ---------- 无头 WebView 嗅探状态(原 PlayFragment 私有字段) ----------
     private WebView mSysWebView;
     private final Map<String, Boolean> loadedUrls = new HashMap<>();
@@ -261,6 +273,8 @@ public class PlayParseCoordinator {
             loadWebView(ParseBeanUrls.url(pb) + webUrl);
 
         } else if (pb.getType() == 1) { // json 解析
+            final long parseEpoch = parseTaskEpoch.get();
+            final String requestWebUrl = webUrl;
             callback.onShowTip("正在解析播放地址", true, false);
             // 解析ext
             Map<String, String> reqHeaders = new HashMap<>();
@@ -280,8 +294,9 @@ public class PlayParseCoordinator {
             HttpClient.get(ParseBeanUrls.url(pb) + encodeUrl(webUrl), reqHeaders, "json_jx", new HCallBack() {
                         @Override
                         public void onSuccess(String json) {
+                            if (parseEpoch != parseTaskEpoch.get()) return;
                             try {
-                                JSONObject rs = jsonParse(webUrl, json);
+                                JSONObject rs = jsonParse(requestWebUrl, json);
                                 HashMap<String, String> headers = null;
                                 if (rs.has("header")) {
                                     try {
@@ -298,21 +313,27 @@ public class PlayParseCoordinator {
 
                                     }
                                 }
-                                callback.onPlayUrl(rs.getString("url"), headers);
+                                String resolvedUrl = rs.getString("url");
+                                HashMap<String, String> resolvedHeaders = headers;
+                                postIfCurrentParse(parseEpoch,
+                                        () -> callback.onPlayUrl(resolvedUrl, resolvedHeaders));
                             } catch (Throwable e) {
                                 e.printStackTrace();
-                                callback.onErrorRetry("解析错误", false);
+                                postIfCurrentParse(parseEpoch,
+                                        () -> callback.onErrorRetry("解析错误", false));
                             }
                         }
 
                         @Override
                         public void onError(Throwable e) {
-                            callback.onErrorRetry("解析错误", false);
+                            postIfCurrentParse(parseEpoch,
+                                    () -> callback.onErrorRetry("解析错误", false));
                         }
                     });
         } else if (pb.getType() == 2) { // json 扩展
             callback.onShowTip("正在解析播放地址", true, false);
             final long parseEpoch = parseTaskEpoch.get();
+            final String requestWebUrl = webUrl;
             LinkedHashMap<String, String> jxs = new LinkedHashMap<>();
             for (ParseBean p : ParseConfigProviders.get().getParseBeanList()) {
                 if (p.getType() == 1) {
@@ -324,11 +345,12 @@ public class PlayParseCoordinator {
                 public void run() {
                     // 已被新一轮解析/停止取代:直接丢弃(共享线程池不可 shutdown,epoch 自检)
                     if (parseEpoch != parseTaskEpoch.get()) return;
-                    JSONObject rs = ParseConfigProviders.get().jsonExt(ParseBeanUrls.url(pb), jxs, webUrl);
-                    if (parseEpoch != parseTaskEpoch.get()) return;
-                    if (rs == null || !rs.has("url") || rs.optString("url").isEmpty()) {
-                        callback.onShowTip("解析错误", false, true);
-                    } else {
+                    JSONObject rs = ParseConfigProviders.get().jsonExt(ParseBeanUrls.url(pb), jxs, requestWebUrl);
+                    postIfCurrentParse(parseEpoch, () -> {
+                        if (rs == null || !rs.has("url") || rs.optString("url").isEmpty()) {
+                            callback.onShowTip("解析错误", false, true);
+                            return;
+                        }
                         HashMap<String, String> headers = null;
                         if (rs.has("header")) {
                             try {
@@ -345,23 +367,24 @@ public class PlayParseCoordinator {
 
                             }
                         }
-                        if (parseEpoch != parseTaskEpoch.get()) return;
                         if (rs.has("jxFrom")) {
                             logParseOrigin(rs.optString("jxFrom"));
                         }
                         boolean parseWV = rs.optInt("parse", 0) == 1;
                         if (parseWV) {
                             String wvUrl = DefaultConfig.checkReplaceProxy(rs.optString("url", ""));
-                            loadUrl(wvUrl);
+                            loadWebView(wvUrl);
                         } else {
                             callback.onPlayUrl(rs.optString("url", ""), headers);
                         }
-                    }
+                    });
                 }
             });
         } else if (pb.getType() == 3) { // json 聚合
             callback.onShowTip("正在解析播放地址", true, false);
             final long parseEpoch = parseTaskEpoch.get();
+            final String requestParseFlag = parseFlag;
+            final String requestWebUrl = webUrl;
             LinkedHashMap<String, HashMap<String, String>> jxs = new LinkedHashMap<>();
             String extendName = "";
             for (ParseBean p : ParseConfigProviders.get().getParseBeanList()) {
@@ -379,26 +402,21 @@ public class PlayParseCoordinator {
                 @Override
                 public void run() {
                     if (parseEpoch != parseTaskEpoch.get()) return;
-                    JSONObject rs = ParseConfigProviders.get().jsonExtMix(parseFlag + "111", ParseBeanUrls.url(pb), finalExtendName, jxs, webUrl);
-                    if (parseEpoch != parseTaskEpoch.get()) return;
-                    if (rs == null || !rs.has("url") || rs.optString("url").isEmpty()) {
-                        callback.onShowTip("解析错误", false, true);
-                    } else {
+                    JSONObject rs = ParseConfigProviders.get().jsonExtMix(requestParseFlag + "111", ParseBeanUrls.url(pb), finalExtendName, jxs, requestWebUrl);
+                    postIfCurrentParse(parseEpoch, () -> {
+                        if (rs == null || !rs.has("url") || rs.optString("url").isEmpty()) {
+                            callback.onShowTip("解析错误", false, true);
+                            return;
+                        }
                         if (rs.has("parse") && rs.optInt("parse", 0) == 1) {
                             if (rs.has("ua")) {
                                 webUserAgent = rs.optString("ua").trim();
                             }
-                            if (parseEpoch != parseTaskEpoch.get()) return;
-                            if (!callback.postOnUiThread(new Runnable() {
-                                @Override
-                                public void run() {
-                                    String mixParseUrl = DefaultConfig.checkReplaceProxy(rs.optString("url", ""));
-                                    stopParse();
-                                    callback.onShowTip("正在嗅探播放地址", true, false);
-                                    scheduleSniffTimeout();
-                                    loadWebView(mixParseUrl);
-                                }
-                            })) return;
+                            String mixParseUrl = DefaultConfig.checkReplaceProxy(rs.optString("url", ""));
+                            stopParse();
+                            callback.onShowTip("正在嗅探播放地址", true, false);
+                            scheduleSniffTimeout();
+                            loadWebView(mixParseUrl);
                         } else {
                             HashMap<String, String> headers = null;
                             if (rs.has("header")) {
@@ -416,13 +434,12 @@ public class PlayParseCoordinator {
                                     th.printStackTrace();
                                 }
                             }
-                            if (parseEpoch != parseTaskEpoch.get()) return;
                             if (rs.has("jxFrom")) {
                                 logParseOrigin(rs.optString("jxFrom"));
                             }
                             callback.onPlayUrl(rs.optString("url", ""), headers);
                         }
-                    }
+                    });
                 }
             });
         }
@@ -498,7 +515,8 @@ public class PlayParseCoordinator {
     }
 
     private void loadUrl(String url) {
-        if (!callback.postOnUiThread(new Runnable() {
+        final long parseEpoch = parseTaskEpoch.get();
+        postIfCurrentParse(parseEpoch, new Runnable() {
             @Override
             public void run() {
                 if (mSysWebView != null) {
@@ -514,11 +532,12 @@ public class PlayParseCoordinator {
                     }
                 }
             }
-        })) return;
+        });
     }
 
     private void stopLoadWebView(boolean destroy) {
-        if (!callback.postOnUiThread(new Runnable() {
+        final long parseEpoch = parseTaskEpoch.get();
+        postIfCurrentParse(parseEpoch, new Runnable() {
             @Override
             public void run() {
                 if (mSysWebView != null) {
@@ -529,7 +548,7 @@ public class PlayParseCoordinator {
                     }
                 }
             }
-        })) return;
+        });
     }
 
     JSONObject jsonParse(String input, String json) throws JSONException {
@@ -693,7 +712,7 @@ public class PlayParseCoordinator {
         @SuppressLint("WebViewClientOnReceivedSslError")
         @Override
         public void onReceivedSslError(WebView webView, SslErrorHandler sslErrorHandler, SslError sslError) {
-            if (sslError != null && SystemConfig.isSslExceptionAllowedForUrl(sslError.getUrl())) {
+            if (SystemConfig.isIgnoreSslError()) {
                 sslErrorHandler.proceed();
             } else {
                 sslErrorHandler.cancel();

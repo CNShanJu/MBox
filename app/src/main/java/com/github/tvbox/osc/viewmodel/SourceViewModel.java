@@ -47,6 +47,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 
 /**
  * @author pj567
@@ -79,6 +80,31 @@ public class SourceViewModel extends ViewModel {
     private final Handler homeSortMain = new Handler(Looper.getMainLooper());
     private final AtomicInteger listEpoch = new AtomicInteger();
     private final Handler listMain = new Handler(Looper.getMainLooper());
+    private final DetailRequestGate detailGate = new DetailRequestGate();
+    private final Handler detailMain = new Handler(Looper.getMainLooper());
+
+    /** 详情的旧回调即使已经排到主线程，也不能覆盖随后发起的新请求。 */
+    static final class DetailRequestGate {
+        private final AtomicInteger epoch = new AtomicInteger();
+        private volatile boolean cleared;
+
+        int begin() { return cleared ? -1 : epoch.incrementAndGet(); }
+        boolean isCurrent(int request) { return !cleared && request > 0 && epoch.get() == request; }
+        boolean deliverIfCurrent(int request, Runnable publish) {
+            if (!isCurrent(request)) return false;
+            publish.run();
+            return true;
+        }
+        boolean postIfCurrent(int request, Consumer<Runnable> post, Runnable publish) {
+            if (!isCurrent(request)) return false;
+            post.accept(() -> deliverIfCurrent(request, publish));
+            return true;
+        }
+        void invalidate() {
+            cleared = true;
+            epoch.incrementAndGet();
+        }
+    }
 
     private void publishHomeSortResult(int epoch, AbsSortXml result) {
         // 排队期间也可能切换源；在主线程真正投递 LiveData 时再次确认轮次。
@@ -91,6 +117,11 @@ public class SourceViewModel extends ViewModel {
         listMain.post(() -> {
             if (listEpoch.get() == epoch) listResult.setValue(result);
         });
+    }
+
+    private void publishDetailResult(int epoch, AbsXml result) {
+        detailGate.postIfCurrent(epoch, task -> detailMain.post(task),
+                () -> detailResult.setValue(result));
     }
 
     /**
@@ -533,10 +564,12 @@ public class SourceViewModel extends ViewModel {
     }
     // detailContent
     public void getDetail(String sourceKey, String id) {
+        final int epoch = detailGate.begin();
+        if (!detailGate.isCurrent(epoch)) return;
         SourceBean sourceBean = sourceConfig.getSource(sourceKey);
         if (sourceBean == null) {
             // 源不存在(订阅变更/失效等),通知空结果,避免崩溃
-            detailResult.postValue(null);
+            publishDetailResult(epoch, null);
             return;
         }
         int type = sourceBean.getType();
@@ -544,25 +577,29 @@ public class SourceViewModel extends ViewModel {
             spExecute(sourceKey, new Runnable() {
                 @Override
                 public void run() {
+                    if (!detailGate.isCurrent(epoch)) return;
                     try {
                         // 强类型试点:解析下沉 :spider(SpiderDetailImpl);失败回退字符串通道(行为不变)
                         com.github.tvbox.osc.bean.AbsXml typed =
                                 com.github.tvbox.osc.spiderapi.SpiderDetailProviders.get().detail(sourceKey, id);
+                        if (!detailGate.isCurrent(epoch)) return;
                         if (typed != null && typed.movie != null) {
                             absXml(typed, sourceBean.getKey());
-                            checkThunder(typed, 0); // 内部按需 postValue(detailResult)
+                            checkThunder(typed, 0, epoch);
                             return;
                         }
                         android.util.Log.i("SpiderBridge", "detail(typed) 不可用,回退字符串通道: key=" + sourceKey + " id=" + id);
                         List<String> ids = new ArrayList<>();
                         ids.add(id);
-                        json(detailResult, com.github.tvbox.osc.spiderapi.SpiderContentProviders.get()
-                                .detailContent(sourceBean.getKey(), ids), sourceBean.getKey());
+                        String payload = com.github.tvbox.osc.spiderapi.SpiderContentProviders.get()
+                                .detailContent(sourceBean.getKey(), ids);
+                        if (!detailGate.isCurrent(epoch)) return;
+                        publishParsedDetail(epoch, json(null, payload, sourceBean.getKey()));
                     } catch (Throwable th) {
                         th.printStackTrace();
                         // 详情取回空/抛异常也要投递结果,否则详情页永远停在 loading(无失败提示)
                         android.util.Log.e("SpiderBridge", "detail 失败,投递空结果: key=" + sourceKey + " id=" + id + " " + th);
-                        detailResult.postValue(null);
+                        publishDetailResult(epoch, null);
                     }
                 }
             });
@@ -570,53 +607,58 @@ public class SourceViewModel extends ViewModel {
             spExecute(sourceBean.getKey(), new Runnable() {
                 @Override
                 public void run() {
+                    if (!detailGate.isCurrent(epoch)) return;
                     try {
                         // type0/1/4 HTTP 源契约化:typed detail(SpiderDetailImpl 按类型拼参拉取+解析)
                         // 成功即发布;失败回退旧 HttpClient 直连(行为兜底)
                         com.github.tvbox.osc.bean.AbsXml typed =
                                 com.github.tvbox.osc.spiderapi.SpiderDetailProviders.get().detail(sourceKey, id);
+                        if (!detailGate.isCurrent(epoch)) return;
                         if (typed != null && typed.movie != null) {
                             absXml(typed, sourceBean.getKey());
-                            checkThunder(typed, 0);
+                            checkThunder(typed, 0, epoch);
                             return;
                         }
                         android.util.Log.i("SpiderBridge", "detail(typed/http) 不可用,回退旧路径: key=" + sourceKey + " id=" + id);
                     } catch (Throwable th) {
                         th.printStackTrace();
                     }
-                    fetchDetailHttpLegacy(sourceBean, type, id);
+                    if (detailGate.isCurrent(epoch)) fetchDetailHttpLegacy(sourceBean, type, id, epoch);
                 }
             });
         } else {
-            detailResult.postValue(null);
+            publishDetailResult(epoch, null);
         }
     }
 
     /** type0/1/4 详情旧路径:HttpClient 直连拼参(typed 失败时的行为兜底,与原实现逐字一致) */
-    private void fetchDetailHttpLegacy(final SourceBean sourceBean, final int type, final String id) {
+    private void fetchDetailHttpLegacy(final SourceBean sourceBean, final int type,
+                                       final String id, final int epoch) {
+        if (!detailGate.isCurrent(epoch)) return;
         Map<String, String> detailParams =
                 com.github.tvbox.osc.spiderapi.HttpSourceParams.detail(type, id);
         if (detailParams == null) {
-            detailResult.postValue(null);
+            publishDetailResult(epoch, null);
             return;
         }
         HttpClient.get(sourceBean.getApi(), detailParams, null, "detail", new HCallBack() {
 
                     @Override
                     public void onSuccess(String content) {
+                        if (!detailGate.isCurrent(epoch)) return;
                         if (type == 0) {
                             String xml = content;
-                            xml(detailResult, xml, sourceBean.getKey());
+                            publishParsedDetail(epoch, xml(null, xml, sourceBean.getKey()));
                         } else {
                             String json = content;
                             LOG.i(json);
-                            json(detailResult, json, sourceBean.getKey());
+                            publishParsedDetail(epoch, json(null, json, sourceBean.getKey()));
                         }
                     }
 
                     @Override
                     public void onError(Throwable e) {
-                        detailResult.postValue(null);
+                        publishDetailResult(epoch, null);
                     }
                 });
     }
@@ -1002,7 +1044,14 @@ public class SourceViewModel extends ViewModel {
         return com.github.tvbox.osc.spiderapi.SortParser.parseSortXml(xml);
     }
 
-    public void checkThunder(AbsXml data, int index) {
+    private void publishParsedDetail(int epoch, AbsXml data) {
+        if (!detailGate.isCurrent(epoch)) return;
+        if (data == null) publishDetailResult(epoch, null);
+        else checkThunder(data, 0, epoch);
+    }
+
+    private void checkThunder(AbsXml data, int index, int epoch) {
+        if (!detailGate.isCurrent(epoch) || data == null) return;
         boolean thunderParse = false;
         if (data.movie != null && data.movie.videoList != null && data.movie.videoList.size() == 1) {
             Movie.Video video = data.movie.videoList.get(0);
@@ -1024,16 +1073,18 @@ public class SourceViewModel extends ViewModel {
                     Thunder.parse(App.getInstance(), video.urlBean, new Thunder.ThunderCallback() {
                         @Override
                         public void status(int code, String info) {
+                            if (!detailGate.isCurrent(epoch)) return;
                             if (code >= 0) {
                                 LOG.i(info);
                             } else {
                                 video.urlBean.infoList.get(0).beanList.get(0).name = info;
-                                detailResult.postValue(data);
+                                publishDetailResult(epoch, data);
                             }
                         }
 
                         @Override
                         public void list(Map<Integer, String> urlMap) {
+                            if (!detailGate.isCurrent(epoch)) return;
                             for (int key : urlMap.keySet()) {
                                 String playList=urlMap.get(key);
                                 video.urlBean.infoList.get(key).urls = playList;
@@ -1054,7 +1105,7 @@ public class SourceViewModel extends ViewModel {
                                 }
                                 video.urlBean.infoList.get(key).beanList = infoBeanList;
                             }
-                            detailResult.postValue(data);
+                            publishDetailResult(epoch, data);
                         }
 
                         @Override
@@ -1066,7 +1117,7 @@ public class SourceViewModel extends ViewModel {
             }
         }
         if (!thunderParse && index==0) {
-            detailResult.postValue(data);
+            publishDetailResult(epoch, data);
         }
     }
 
@@ -1087,15 +1138,9 @@ public class SourceViewModel extends ViewModel {
         if (quickSearchResult == result) {
             deliverQuickSearchBatch(data);
         } else if (result != null) {
-            if (result == detailResult) {
-                if (data != null) {
-                    checkThunder(data, 0);
-                } else {
-                    result.postValue(null);
-                }
-            } else {
-                result.postValue(data);
-            }
+            if (result == detailResult)
+                throw new IllegalStateException("详情结果必须携带请求代次");
+            result.postValue(data);
         }
     }
 
@@ -1124,6 +1169,7 @@ public class SourceViewModel extends ViewModel {
     protected void onCleared() {
         homeSortEpoch.incrementAndGet();
         listEpoch.incrementAndGet();
+        detailGate.invalidate();
         super.onCleared();
     }
 }

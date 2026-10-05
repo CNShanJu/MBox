@@ -18,6 +18,7 @@ import com.lxj.xpopup.interfaces.OnSelectListener;
 
 import org.jetbrains.annotations.NotNull;
 
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -26,7 +27,11 @@ import java.util.List;
  */
 public class AllVodSeriesBottomDialog extends SheetResizableBottomPopup {
 
-    List<VodInfo.VodSeries> mList;
+    private List<VodInfo.VodSeries> mList;
+    private RecyclerView mRv;
+    private GridLayoutManager mGridManager;
+    private GridSpacingItemDecoration mGridDecoration;
+    private BaseQuickAdapter<VodInfo.VodSeries, BaseViewHolder> mSeriesAdapter;
     private final OnSelectListener mSelectListener;
     /** 倒序回调:执行详情页 sortSeries(共用状态);由 DetailActivity 传入 */
     private final Runnable mSortAction;
@@ -38,7 +43,7 @@ public class AllVodSeriesBottomDialog extends SheetResizableBottomPopup {
                                     OnSelectListener selectListener, Runnable sortAction,
                                     java.util.function.BooleanSupplier isReversed) {
         super(context);
-        mList = list;
+        mList = list != null ? list : Collections.emptyList();
         mSelectListener = selectListener;
         mSortAction = sortAction;
         mIsReversed = isReversed;
@@ -52,7 +57,7 @@ public class AllVodSeriesBottomDialog extends SheetResizableBottomPopup {
     @Override
     protected void onCreate() {
         super.onCreate();
-        RecyclerView rv = findViewById(R.id.rv);
+        mRv = findViewById(R.id.rv);
 
         // 倒序按钮:文字随共用状态切换(未倒序=倒序, 已倒序=正序);与下载/全屏弹窗共用 sortSeries
         mTvSort = findViewById(R.id.tv_sort);
@@ -61,15 +66,17 @@ public class AllVodSeriesBottomDialog extends SheetResizableBottomPopup {
             if (mSortAction != null) mSortAction.run();
             updateSortButton();
             // 倒序后同一列表引用内容已反转,刷新显示(选中态随 item 保持)
-            if (rv.getAdapter() != null) rv.getAdapter().notifyDataSetChanged();
+            if (mSeriesAdapter != null) mSeriesAdapter.notifyDataSetChanged();
         });
 
         // 集数网格:最多3列,基于文字长度自适应(1列/2列/3列),RoundChip 文字条目(与全屏抽屉同款,无边框)
         int span = Utils.getSeriesSpanCount(mList);
-        rv.setLayoutManager(new GridLayoutManager(getContext(), span));
-        rv.addItemDecoration(new GridSpacingItemDecoration(span, 20, true));
+        mGridManager = new GridLayoutManager(getContext(), span);
+        mRv.setLayoutManager(mGridManager);
+        mGridDecoration = new GridSpacingItemDecoration(span, 20, true);
+        mRv.addItemDecoration(mGridDecoration);
 
-        BaseQuickAdapter<VodInfo.VodSeries, BaseViewHolder> seriesAdapter =
+        mSeriesAdapter =
                 new BaseQuickAdapter<VodInfo.VodSeries, BaseViewHolder>(R.layout.item_series, mList) {
                     @Override
                     protected void convert(BaseViewHolder helper, VodInfo.VodSeries item) {
@@ -78,12 +85,13 @@ public class AllVodSeriesBottomDialog extends SheetResizableBottomPopup {
                         chip.setSelected(item.selected);
                     }
                 };
-        rv.setAdapter(seriesAdapter);
+        mRv.setAdapter(mSeriesAdapter);
 
-        rv.postDelayed(() -> {//xpopup重写maxHeight后布局完成未滑动完毕导致定位异常,加延时可正常滑动
+        mRv.postDelayed(() -> {//xpopup重写maxHeight后布局完成未滑动完毕导致定位异常,加延时可正常滑动
+            if (!isShow()) return;
             for (int i = 0; i < mList.size(); i++) {
                 if (mList.get(i).selected) {
-                    rv.smoothScrollToPosition(i);
+                    mRv.smoothScrollToPosition(i);
                 }
             }
         }, 500);
@@ -91,14 +99,30 @@ public class AllVodSeriesBottomDialog extends SheetResizableBottomPopup {
         // 顶部手势条/标题一带可拖、可点:至少保持 50%;内容超高可展开到 70%
         attachSheet(R.id.bg, R.id.list_box, R.id.rv, true);
 
-        seriesAdapter.setOnItemClickListener((adapter, view, position) -> {
-            for (int j = 0; j < seriesAdapter.getData().size(); j++) {
-                seriesAdapter.getData().get(j).selected = false;
-                seriesAdapter.notifyItemChanged(j);
-            }
-            seriesAdapter.getData().get(position).selected = true;
-            seriesAdapter.notifyItemChanged(position);
+        mSeriesAdapter.setOnItemClickListener((adapter, view, position) -> {
+            if (position < 0 || position >= mList.size() || mSelectListener == null) return;
             mSelectListener.onSelect(position, "");
+            // 选中状态由宿主维护；本弹窗只根据更新后的 item 状态重绑。
+            if (mSeriesAdapter != null) mSeriesAdapter.notifyDataSetChanged();
+        });
+    }
+
+    /** 宿主切换线路或刷新选集后同步当前数据和网格列数。 */
+    public void updateData(List<VodInfo.VodSeries> list) {
+        mList = list != null ? list : Collections.emptyList();
+        updateSortButton();
+        if (mRv == null || mSeriesAdapter == null) return;
+        int span = Utils.getSeriesSpanCount(mList);
+        if (mGridManager != null && mGridManager.getSpanCount() != span) {
+            mGridManager.setSpanCount(span);
+            if (mGridDecoration != null) mRv.removeItemDecoration(mGridDecoration);
+            mGridDecoration = new GridSpacingItemDecoration(span, 20, true);
+            mRv.addItemDecoration(mGridDecoration);
+        }
+        mSeriesAdapter.setNewData(mList);
+        mRv.post(() -> {
+            SheetResizeController controller = sheetResize();
+            if (controller != null && isShow()) controller.sync();
         });
     }
 

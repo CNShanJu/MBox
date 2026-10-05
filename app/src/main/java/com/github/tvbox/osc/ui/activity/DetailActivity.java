@@ -68,6 +68,7 @@ import com.github.tvbox.osc.ui.dialog.SelectDialog;
 import com.github.tvbox.osc.ui.dialog.VideoDetailDialog;
 import com.github.tvbox.osc.ui.fragment.PlayFragment;
 import com.github.tvbox.osc.ui.kit.LinearSpacingItemDecoration;
+import com.github.tvbox.osc.ui.state.EpisodeSelectionState;
 import com.github.tvbox.osc.util.BroadcastUtils;
 import com.github.tvbox.osc.util.DetailQuickSearchHelper;
 import com.github.tvbox.osc.util.DownloadHeaders;
@@ -121,6 +122,13 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     /** 外部下载解析代次:重复点击或页面离开后丢弃旧结果。 */
     private int externalDownloadEpoch;
     private VodInfo vodInfo;
+    private final EpisodeSelectionState episodeSelection = new EpisodeSelectionState();
+    private int playbackSelectionEpoch;
+    private int startedPlaybackEpoch = -1;
+    private boolean collected;
+    private boolean collectionStateReady;
+    private boolean collectionBusy;
+    private int collectionQueryEpoch;
     private VodInfo historyRecord;
     private boolean historyRecordReady;
     private boolean pendingDetailReady;
@@ -147,8 +155,6 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     /** 入口(搜索/列表)传入的剧名,详情拉不到名称时用于下载命名 */
     private String mPassedName = "";
     private View seriesFlagFocus = null;
-    private boolean isReverse;
-    private String preFlag = "";
     //改为view模式无法自动响应返回键操作,onBackPress时手动dismiss
     private BasePopupView mAllSeriesRightDialog;
     private BasePopupView mAllSeriesBottomDialog;
@@ -358,6 +364,7 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
         pipExitByBack = false; // 回到前台,清除返回键退出标记
         navigatingAway = false; // 回到前台,清除应用内跳转标记
         mBinding.ivPrivateBrowsing.postDelayed(NotificationUtils::cancelAll, 800);
+        if (collectionStateReady && !collectionBusy) refreshCollectionState();
     }
 
     private void initView() {
@@ -374,8 +381,6 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
         mBinding.mGridViewFlag.setHasFixedSize(true);
         seriesFlagAdapter = new SeriesFlagAdapter();
         mBinding.mGridViewFlag.setAdapter(seriesFlagAdapter);
-        isReverse = false;
-        preFlag = "";
         if (showPreview) {
             playFragment = new PlayFragment();
             playFragment.setPlaySyncHost(this);
@@ -384,6 +389,7 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
         }
 
         findViewById(R.id.ll_title).setOnClickListener(view -> {
+            if (!isCurrentDetail(vodInfo)) return;
             // VideoDetailDialog 是 SheetResizableBottomPopup(底部可伸缩抽屉):与 AboutDialog/接口历史抽屉
             // 同属底部抽屉族,统一走 bottom(...) —— 它带的 isViewMode(true) + hasNavigationBar(false)
             // 才算"和其它抽屉同款"(原来用 center(...) 只做 asCustom,位置虽对但少了这两个参数)
@@ -406,31 +412,7 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
         mBinding.tvCast.setOnClickListener(v -> {
             showCastDialog();
         });
-        mBinding.tvCollect.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                String text = mBinding.tvCollect.getText().toString();
-                if ("加入收藏".equals(text)) {
-                    com.github.tvbox.osc.repo.HistoryRepositories.collect().save(sourceKey, vodInfo);
-                    com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM,
-                            "收藏: " + (vodInfo.name == null ? "?" : vodInfo.name));
-                    AppBubble.toast("已加入收藏夹");
-                    updateCollectAction(true);
-                } else {
-                    com.github.tvbox.osc.ui.dialog.ConfirmDialog.showDangerInHostView(
-                            DetailActivity.this, "取消收藏",
-                            "确定将《" + (vodInfo.name == null ? "该影片" : vodInfo.name) + "》移出收藏夹吗？",
-                            "移除", () -> {
-                                if (!"取消收藏".contentEquals(mBinding.tvCollect.getText())) return;
-                                com.github.tvbox.osc.repo.HistoryRepositories.collect().delete(sourceKey, vodInfo.id);
-                                com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM,
-                                        "取消收藏: " + (vodInfo.name == null ? "?" : vodInfo.name));
-                                AppBubble.toast("已移除收藏夹");
-                                updateCollectAction(false);
-                            });
-                }
-            }
-        });
+        mBinding.tvCollect.setOnClickListener(v -> changeCollection());
 
         seriesFlagAdapter.setOnItemClickListener((adapter, view, position) -> {
             chooseFlag(position);
@@ -459,6 +441,7 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
             mQuickSearchDialog.setHost(new QuickSearchDialog.Host() {
                 @Override
                 public void onVideoSelected(Movie.Video video) {
+                    mPassedName = video.name == null ? "" : video.name;
                     loadDetail(video.id, video.sourceKey);
                 }
 
@@ -564,12 +547,14 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
      * @return 反转后的状态:true=已倒序(按钮应显示"正序");false=正序(按钮显示"倒序")
      */
     public boolean sortSeries() {
-        if (vodInfo != null && vodInfo.seriesMap.size() > 0) {
-            vodInfo.reverseSort = !vodInfo.reverseSort;
-            isReverse = !isReverse;
-            vodInfo.reverse();
-            vodInfo.playIndex = (vodInfo.seriesMap.get(vodInfo.playFlag).size() - 1) - vodInfo.playIndex;
-            seriesAdapter.notifyDataSetChanged();
+        if (isCurrentDetail(vodInfo)) {
+            episodeSelection.reverse(vodInfo);
+            if (isCurrentPreview()) {
+                // 列表引用共享，倒序后必须同步播放器索引，仍指向原来的剧集。
+                previewVodInfo.playIndex = vodInfo.playIndex;
+                previewVodInfo.reverseSort = vodInfo.reverseSort;
+            }
+            refreshList();
         }
         // 详情页选集区按钮文字跟随共用状态(弹窗内排序也同步;原调用点手调 updateSortButtonText 保留无害)
         updateSortButtonText();
@@ -590,7 +575,7 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     }
 
     public void showCastDialog() {
-        if (vodInfo == null || playFragment == null || vodInfo.seriesMap == null
+        if (!isCurrentPreview() || playFragment == null || vodInfo.seriesMap == null
                 || vodInfo.seriesMap.get(vodInfo.playFlag) == null
                 || vodInfo.playIndex < 0
                 || vodInfo.playIndex >= vodInfo.seriesMap.get(vodInfo.playFlag).size()) return;
@@ -601,14 +586,16 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
         }
         VodInfo.VodSeries vodSeries = vodInfo.seriesMap.get(vodInfo.playFlag).get(vodInfo.playIndex);
         List<String> castEpisodes = currentCastEpisodeNames();
+        int detailEpoch = detailRequestEpoch;
         CastListDialog castDialog = new CastListDialog(this, new CastVideo(vodSeries.name,
                 playingUrl, playFragment.getPlayer() == null ? 0
                 : playFragment.getPlayer().getCurrentPosition()), deviceId -> {
+                    if (detailEpoch != detailRequestEpoch || !isCurrentPreview()) return;
                     if (deviceId != null) {
                         ControlManager.get().setEpisodeCast(lanCastOwner, deviceId, castEpisodes,
                                 vodInfo.playIndex, new RemoteServer.NextEpisodeHandler() {
                                     @Override public boolean playNext() {
-                                        if (vodInfo == null || playFragment == null || vodInfo.seriesMap == null
+                                        if (detailEpoch != detailRequestEpoch || !isCurrentPreview() || playFragment == null || vodInfo.seriesMap == null
                                                 || vodInfo.seriesMap.get(vodInfo.playFlag) == null
                                                 || vodInfo.playIndex + 1 >= vodInfo.seriesMap.get(vodInfo.playFlag).size()) return false;
                                         playFragment.playNext(false);
@@ -616,11 +603,15 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
                                     }
 
                                     @Override public boolean selectEpisode(int index) {
-                                        if (vodInfo == null || playFragment == null || vodInfo.seriesMap == null
+                                        if (detailEpoch != detailRequestEpoch || !isCurrentPreview() || playFragment == null || vodInfo.seriesMap == null
                                                 || vodInfo.seriesMap.get(vodInfo.playFlag) == null
                                                 || index < 0 || index >= vodInfo.seriesMap.get(vodInfo.playFlag).size()) return false;
                                         if (index == vodInfo.playIndex) playFragment.play(false);
-                                        else chooseSeries(index, false);
+                                        else {
+                                            episodeSelection.browse(vodInfo, vodInfo.playFlag);
+                                            refreshList();
+                                            chooseSeries(index, false);
+                                        }
                                         return true;
                                     }
                                 });
@@ -633,6 +624,9 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     }
 
     public void showAllSeriesDialog() {
+        if (!isCurrentDetail(vodInfo)) return;
+        if (mAllSeriesRightDialog != null && mAllSeriesRightDialog.isShow()
+                || mAllSeriesBottomDialog != null && mAllSeriesBottomDialog.isShow()) return;
         // 按当前方向决定形态: 横屏用右侧抽屉, 竖屏用底部弹层并限制高度(与详情页一致)
         if (ScreenUtils.isLandscape()) {
             // 右侧抽屉:固定宽度 360,与下载右侧抽屉一致,避免线路列表把弹窗撑开;内部有横向 rv 禁拖拽
@@ -652,79 +646,42 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     }
 
     private void chooseFlag(int position) {
-        //新选中的flag
+        if (!isCurrentDetail(vodInfo) || position < 0 || position >= seriesFlagAdapter.getData().size()) return;
         String newFlag = seriesFlagAdapter.getData().get(position).name;
-        if (vodInfo != null && !vodInfo.playFlag.equals(newFlag)) {
-            for (int i = 0; i < vodInfo.seriesFlags.size(); i++) {//遍历flag集合
-                VodInfo.VodSeriesFlag flag = vodInfo.seriesFlags.get(i);
-                if (flag.name.equals(vodInfo.playFlag)) {//取消当前播放的选中状态
-                    flag.selected = false;
-                    seriesFlagAdapter.notifyItemChanged(i);
-                    break;
-                }
-            }
-            //新选中的flag
-            VodInfo.VodSeriesFlag flag = vodInfo.seriesFlags.get(position);
-            flag.selected = true;
-            //清除上一个线路集数的选中状态
-            List<VodInfo.VodSeries> currentSeriesList = vodInfo.seriesMap.get(vodInfo.playFlag);
-            if (currentSeriesList.size() > vodInfo.playIndex) {//有效集数
-                currentSeriesList.get(vodInfo.playIndex).selected = false;
-            }
-            vodInfo.playFlag = newFlag;
-            seriesFlagAdapter.notifyItemChanged(position);
+        if (!TextUtils.equals(newFlag, episodeSelection.displayedFlag(vodInfo))
+                && episodeSelection.browse(vodInfo, newFlag)) {
+            ++externalDownloadEpoch;
+            downloadDialogCoordinator.invalidate();
             refreshList();
         }
     }
 
     private void chooseSeries(int position, boolean reloadWithChangeLine) {
-        if (vodInfo != null && vodInfo.seriesMap.get(vodInfo.playFlag).size() > 0) {
-            boolean reload = false;
-            List<VodInfo.VodSeries> shown = seriesAdapter.getData();
-            if (position < 0 || position >= shown.size()) return;
-            for (int j = 0; j < shown.size(); j++) {
-                if (j != position && shown.get(j).selected) {
-                    shown.get(j).selected = false;
-                    seriesAdapter.notifyItemChanged(j);
-                }
-            }
-            //解决倒叙不刷新
-            if (vodInfo.playIndex != position) {
-                vodInfo.playIndex = position;
-                reload = true;
-            }
-            //解决当前集不刷新的BUG
-            if (!preFlag.isEmpty() && !vodInfo.playFlag.equals(preFlag)) {
-                reload = true;
-            }
-
-            if (!shown.get(position).selected) {
-                shown.get(position).selected = true;
-                seriesAdapter.notifyItemChanged(position);
-            }
-
-            //选集全屏 想选集不全屏的注释下面一行
-            if (!showPreview || reload || reloadWithChangeLine) {
-                jumpToPlay();
-            }
-        }
+        if (!isCurrentDetail(vodInfo)) return;
+        String previousFlag = vodInfo.playFlag;
+        int previousIndex = vodInfo.playIndex;
+        if (!episodeSelection.select(vodInfo, position)) return;
+        boolean reload = previousIndex != position || !TextUtils.equals(previousFlag, vodInfo.playFlag);
+        refreshList();
+        if (!showPreview || reload || reloadWithChangeLine) jumpToPlay();
     }
 
     private void jumpToPlay() {
         if (playFragment == null) return;
+        int epoch = ++playbackSelectionEpoch;
+        int detailEpoch = detailRequestEpoch;
         playFragment.runWhenPlaybackReady(() -> {
-            if (!isFinishing() && !isDestroyed()) startPlaybackForCurrentVod();
+            if (epoch == playbackSelectionEpoch && detailEpoch == detailRequestEpoch
+                    && !isFinishing() && !isDestroyed()) startPlaybackForCurrentVod();
         });
     }
 
     private void startPlaybackForCurrentVod() {
-        if (vodInfo != null && vodInfo.seriesMap.get(vodInfo.playFlag).size() > 0) {
-            preFlag = vodInfo.playFlag;
+        if (isCurrentDetail(vodInfo) && HistoryEntryNavigator.hasPlayableSnapshot(vodInfo)) {
             //更新播放地址
             Bundle bundle = new Bundle();
             bundle.putString("sourceKey", sourceKey);
 //            bundle.putSerializable("VodInfo", vodInfo);
-            App.getInstance().setVodInfo(vodInfo);
             if (previewVodInfo == null) {
                 try {
                     ByteArrayOutputStream bos = new ByteArrayOutputStream();
@@ -738,42 +695,38 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
                     e.printStackTrace();
                 }
             }
+            if (previewVodInfo == null) {
+                AppBubble.toast("播放信息准备失败，请重新选择剧集");
+                return;
+            }
             if (previewVodInfo != null) {
                 previewVodInfo.playerCfg = vodInfo.playerCfg;
                 previewVodInfo.playFlag = vodInfo.playFlag;
                 previewVodInfo.playIndex = vodInfo.playIndex;
                 previewVodInfo.seriesMap = vodInfo.seriesMap;
+                previewVodInfo.seriesFlags = vodInfo.seriesFlags;
+                previewVodInfo.reverseSort = vodInfo.reverseSort;
 //                    bundle.putSerializable("VodInfo", previewVodInfo);
                 App.getInstance().setVodInfo(previewVodInfo);
             }
             // setData→play 会同步回调 onEpisodeSelected，那里按本次选集异步保存历史。
+            startedPlaybackEpoch = playbackSelectionEpoch;
             playFragment.setData(bundle);
 
             //定位选集
-            mBinding.mGridView.scrollToPosition(vodInfo.playIndex);
+            if (TextUtils.equals(episodeSelection.displayedFlag(vodInfo), vodInfo.playFlag))
+                mBinding.mGridView.scrollToPosition(vodInfo.playIndex);
         }
     }
 
     @SuppressLint("NotifyDataSetChanged")
     void refreshList() {
-        int seriesSize = vodInfo.seriesMap.get(vodInfo.playFlag).size();
-        if (seriesSize > 0 && seriesSize <= vodInfo.playIndex) {//当前集数大于新选线路的总集数,设置为最后一集
-            vodInfo.playIndex = seriesSize - 1;
-        }
-
-        if (vodInfo.seriesMap.get(vodInfo.playFlag) != null) {
-            boolean canSelect = true;
-            for (int j = 0; j < vodInfo.seriesMap.get(vodInfo.playFlag).size(); j++) {
-                if (vodInfo.seriesMap.get(vodInfo.playFlag).get(j).selected) {
-                    canSelect = false;
-                    break;
-                }
-            }
-            if (canSelect)
-                vodInfo.seriesMap.get(vodInfo.playFlag).get(vodInfo.playIndex).selected = true;
-        }
-        seriesAdapter.setNewData(vodInfo.seriesMap.get(vodInfo.playFlag));
-
+        episodeSelection.sync(vodInfo);
+        seriesFlagAdapter.notifyDataSetChanged();
+        List<VodInfo.VodSeries> shown = episodeSelection.displayedEpisodes(vodInfo);
+        seriesAdapter.setNewData(shown);
+        if (mAllSeriesBottomDialog instanceof AllVodSeriesBottomDialog && mAllSeriesBottomDialog.isShow())
+            ((AllVodSeriesBottomDialog) mAllSeriesBottomDialog).updateData(shown);
     }
 
     private void initViewModel() {
@@ -869,6 +822,8 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
 
     private void showVodInfo(VodInfo info, boolean keepPlaying) {
         vodInfo = info;
+        episodeSelection.bind(info, keepPlaying);
+        updateCollectAction(collected);
         showSuccess();
         mBinding.tvName.setText(TextUtils.isEmpty(info.name) ? "暂无信息" : info.name);
         SourceBean detailSource = com.github.tvbox.osc.spiderapi.SourceConfigProviders.get().getSource(info.sourceKey);
@@ -876,6 +831,9 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
         mBinding.tvSite.setText("来源：" + (TextUtils.isEmpty(srcName) ? "未知" : srcName));
 
         if (info.seriesMap == null || info.seriesMap.isEmpty()) {
+            seriesFlagAdapter.setNewData(new ArrayList<>());
+            refreshList();
+            dismissSeriesDialogs();
             mBinding.llLayout.setVisibility(View.GONE);
             mBinding.mEmptyPlaylist.setVisibility(View.VISIBLE);
             mBinding.previewPlayerPlace.setVisibility(View.GONE);
@@ -888,23 +846,21 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
         mBinding.rlLineHeader.setVisibility(View.VISIBLE);
         mBinding.llSeriesHeader.setVisibility(View.VISIBLE);
         mBinding.mEmptyPlaylist.setVisibility(View.GONE);
-        if (info.playFlag == null || !info.seriesMap.containsKey(info.playFlag))
-            info.playFlag = info.seriesMap.keySet().iterator().next();
         if (info.seriesFlags == null) info.seriesFlags = new ArrayList<>();
         if (info.seriesFlags.isEmpty()) {
             for (String flag : info.seriesMap.keySet()) info.seriesFlags.add(new VodInfo.VodSeriesFlag(flag));
         }
+        episodeSelection.sync(info);
         int flagScrollTo = 0;
         for (int j = 0; j < info.seriesFlags.size(); j++) {
             VodInfo.VodSeriesFlag flag = info.seriesFlags.get(j);
-            flag.selected = TextUtils.equals(flag.name, info.playFlag);
             if (flag.selected) flagScrollTo = j;
         }
         updateSortButtonText();
         seriesFlagAdapter.setNewData(info.seriesFlags);
         mBinding.mGridViewFlag.scrollToPosition(flagScrollTo);
         refreshList();
-        if (showPreview) {
+        if (showPreview && HistoryEntryNavigator.hasPlayableSnapshot(info)) {
             if (keepPlaying && previewVodInfo != null) {
                 // PlayFragment 持有 previewVodInfo 引用；只换后续选集列表，保留当前解码会话。
                 previewVodInfo.seriesMap = info.seriesMap;
@@ -920,6 +876,9 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
             mBinding.previewPlayerPlace.setVisibility(View.VISIBLE);
             mBinding.previewPlayer.setVisibility(View.VISIBLE);
             toggleSubtitleTextSize();
+        } else {
+            mBinding.previewPlayerPlace.setVisibility(View.GONE);
+            mBinding.previewPlayer.setVisibility(View.GONE);
         }
     }
 
@@ -979,8 +938,23 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     private void loadDetail(String vid, String key, VodInfo snapshot) {
         if (vid != null) {
             int epoch = ++detailRequestEpoch;
+            ++playbackSelectionEpoch;
+            if (playFragment != null) playFragment.clearData();
+            ++externalDownloadEpoch;
+            int collectEpoch = ++collectionQueryEpoch;
+            dismissSeriesDialogs();
+            downloadDialogCoordinator.invalidate();
+            previewVodInfo = null;
+            vodInfo = null;
+            episodeSelection.bind(null, false);
+            seriesFlagAdapter.setNewData(new ArrayList<>());
+            refreshList();
+            ControlManager.get().clearEpisodeCast(lanCastOwner);
             vodId = vid;
             sourceKey = key;
+            collectionStateReady = false;
+            collectionBusy = false;
+            updateCollectAction(false);
             historyRecord = snapshot;
             historyRecordReady = snapshot != null && !showPreview;
             pendingDetail = null;
@@ -1030,7 +1004,10 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
                         historyRecord = record;
                         historyRecordReady = true;
                     }
-                    updateCollectAction(collected);
+                    if (collectEpoch == collectionQueryEpoch) {
+                        collectionStateReady = true;
+                        updateCollectAction(collected);
+                    }
                     if (historyRecordReady && pendingDetailReady) {
                         AbsXml result = pendingDetail;
                         pendingDetail = null;
@@ -1043,8 +1020,94 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     }
 
     /** 收藏是普通动作，取消收藏是移除动作；文字与图标保持同一颜色。 */
+    private boolean isCurrentDetail(VodInfo info) {
+        return info != null && TextUtils.equals(info.id, vodId)
+                && TextUtils.equals(info.sourceKey, sourceKey);
+    }
+
+    private boolean isCurrentPreview() {
+        return startedPlaybackEpoch == playbackSelectionEpoch
+                && isCurrentDetail(vodInfo) && isCurrentDetail(previewVodInfo);
+    }
+
+    private void dismissSeriesDialogs() {
+        if (mAllSeriesRightDialog != null) mAllSeriesRightDialog.dismiss();
+        if (mAllSeriesBottomDialog != null) mAllSeriesBottomDialog.dismiss();
+        mAllSeriesRightDialog = null;
+        mAllSeriesBottomDialog = null;
+    }
+
+    private void refreshCollectionState() {
+        if (!isCurrentDetail(vodInfo)) return;
+        final int detailEpoch = detailRequestEpoch;
+        final int queryEpoch = ++collectionQueryEpoch;
+        final String key = sourceKey;
+        final String id = vodId;
+        HeavyTaskUtil.executeNewTask(() -> {
+            try {
+                boolean saved = HistoryRepositories.collect().isSaved(key, id);
+                runOnUiThread(() -> {
+                    if (detailEpoch != detailRequestEpoch || queryEpoch != collectionQueryEpoch
+                            || collectionBusy || isFinishing() || isDestroyed()) return;
+                    collectionStateReady = true;
+                    updateCollectAction(saved);
+                });
+            } catch (Throwable th) {
+                android.util.Log.w("DetailActivity", "刷新收藏状态失败", th);
+            }
+        });
+    }
+
+    private void changeCollection() {
+        if (!isCurrentDetail(vodInfo) || !collectionStateReady || collectionBusy) return;
+        int epoch = detailRequestEpoch;
+        if (!collected) {
+            persistCollection(epoch, true);
+        } else {
+            ConfirmDialog.showDangerInHostView(this, "取消收藏",
+                    "确定将《" + (vodInfo.name == null ? "该影片" : vodInfo.name) + "》移出收藏夹吗？",
+                    "移除", () -> {
+                        if (epoch == detailRequestEpoch && collected && !collectionBusy)
+                            persistCollection(epoch, false);
+                    });
+        }
+    }
+
+    private void persistCollection(int epoch, boolean save) {
+        if (epoch != detailRequestEpoch || !isCurrentDetail(vodInfo)) return;
+        VodInfo record = new VodInfo();
+        record.id = vodInfo.id;
+        record.name = vodInfo.name;
+        record.pic = vodInfo.pic;
+        final String key = sourceKey;
+        collectionBusy = true;
+        ++collectionQueryEpoch;
+        updateCollectAction(collected);
+        HeavyTaskUtil.executeNewTask(() -> {
+            String failure = null;
+            try {
+                if (save) HistoryRepositories.collect().save(key, record);
+                else HistoryRepositories.collect().delete(key, record.id);
+                com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM,
+                        (save ? "收藏: " : "取消收藏: ") + (record.name == null ? "?" : record.name));
+            } catch (Throwable th) {
+                android.util.Log.w("DetailActivity", "更新收藏失败", th);
+                failure = "更新收藏失败，请重试";
+            }
+            String error = failure;
+            runOnUiThread(() -> {
+                if (epoch != detailRequestEpoch || isFinishing() || isDestroyed()) return;
+                collectionBusy = false;
+                updateCollectAction(error == null ? save : collected);
+                AppBubble.toast(error == null ? (save ? "已加入收藏夹" : "已移除收藏夹") : error);
+            });
+        });
+    }
+
     private void updateCollectAction(boolean collected) {
+        this.collected = collected;
         mBinding.tvCollect.setText(collected ? "取消收藏" : "加入收藏");
+        mBinding.tvCollect.setEnabled(collectionStateReady && !collectionBusy && isCurrentDetail(vodInfo));
         int color = ContextCompat.getColor(this,
                 collected ? R.color.text_danger : R.color.text_foreground);
         mBinding.tvCollect.setTextColor(color);
@@ -1055,38 +1118,30 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     /** PlaySyncHost:选集切换同步(预览播放器→详情选集高亮/历史) */
     @Override
     public void onEpisodeSelected(int index) {
+        if (!isCurrentPreview() || vodInfo.seriesMap == null) return;
+        List<VodInfo.VodSeries> playing = vodInfo.seriesMap.get(previewVodInfo.playFlag);
+        if (playing == null || index < 0 || index >= playing.size()) return;
         ControlManager.get().markEpisodeAdvancing(lanCastOwner);
-        if (vodInfo == null || vodInfo.seriesMap == null) return;
-        Object seriesList = vodInfo.seriesMap.get(vodInfo.playFlag);
-        if (seriesList == null || index < 0) return;
-        List<VodInfo.VodSeries> shown = seriesAdapter.getData();
-        if (index >= shown.size()) return;
-        int previous = vodInfo.playIndex;
-        if (previous != index && previous >= 0 && previous < shown.size()) {
-            shown.get(previous).selected = false;
-            seriesAdapter.notifyItemChanged(previous);
-        }
-        if (!shown.get(index).selected) {
-            shown.get(index).selected = true;
-            seriesAdapter.notifyItemChanged(index);
-        }
+        vodInfo.playFlag = previewVodInfo.playFlag;
         vodInfo.playIndex = index;
+        refreshList();
         insertVod(sourceKey, vodInfo);
     }
 
     /** PlaySyncHost:播放配置变更回写(详情页缓存配置并保存历史) */
     @Override
     public void onPlayerCfgChanged(JSONObject cfg) {
-        if (vodInfo == null || cfg == null) return;
+        if (!isCurrentPreview() || cfg == null) return;
         vodInfo.playerCfg = cfg.toString();
         insertVod(sourceKey, vodInfo);
     }
 
     @Override
     public boolean onPlaybackResolved(String title, String url) {
-        if (vodInfo == null || !ControlManager.get().updateEpisodeCast(lanCastOwner, title, url,
+        if (!isCurrentPreview() || !ControlManager.get().updateEpisodeCast(lanCastOwner, title, url,
                 vodInfo.playIndex, currentCastEpisodeNames(),
-                playFragment == null ? null : playFragment.getPlayHeaders())) return false;
+                playFragment == null ? null : playFragment.getPlayHeaders(),
+                playFragment == null ? null : playFragment.getFinalUrl())) return false;
         if (playFragment != null && playFragment.getPlayer() != null)
             playFragment.getPlayer().pause();
         return true;
@@ -1095,7 +1150,7 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     @Override
     public boolean onPlaybackFailed(long generation, String episodeUrl, String error,
                                     boolean finish, boolean autoSwitchPlayer) {
-        if (!historyQuickPlayback || historyRefreshRetryUsed || historySnapshotEpisodeUrl == null
+        if (!isCurrentPreview() || !historyQuickPlayback || historyRefreshRetryUsed || historySnapshotEpisodeUrl == null
                 || !TextUtils.equals(historySnapshotEpisodeUrl, episodeUrl) || playFragment == null
                 || !playFragment.isPlaybackRequestCurrent(generation, episodeUrl)) return false;
         failedHistoryGeneration = generation;
@@ -1144,6 +1199,12 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
 
     @Override
     protected void onDestroy() {
+        ++detailRequestEpoch;
+        ++playbackSelectionEpoch;
+        ++externalDownloadEpoch;
+        ++collectionQueryEpoch;
+        dismissSeriesDialogs();
+        downloadDialogCoordinator.invalidate();
         historyRefreshHandler.removeCallbacks(historyRefreshTimeout);
         ControlManager.get().clearEpisodeCast(lanCastOwner);
         sourceViewModel.setQuickSearchBatchListener(null); // 断开 quick 结果直调,防悬垂
@@ -1281,12 +1342,37 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
 
     @Override
     public VodInfo currentVodInfo() {
-        return vodInfo;
+        if (!isCurrentDetail(vodInfo)) return null;
+        // 下载跟随正在浏览的线路；传出副本，后台查询不读取正在变化的页面模型。
+        VodInfo snapshot = new VodInfo();
+        snapshot.id = vodInfo.id;
+        snapshot.name = vodInfo.name;
+        snapshot.sourceKey = vodInfo.sourceKey;
+        snapshot.playerCfg = vodInfo.playerCfg;
+        snapshot.reverseSort = vodInfo.reverseSort;
+        snapshot.playFlag = episodeSelection.displayedFlag(vodInfo);
+        snapshot.playIndex = TextUtils.equals(snapshot.playFlag, vodInfo.playFlag) ? vodInfo.playIndex : -1;
+        snapshot.seriesMap = new java.util.LinkedHashMap<>();
+        if (vodInfo.seriesMap != null) for (Map.Entry<String, List<VodInfo.VodSeries>> line : vodInfo.seriesMap.entrySet()) {
+            List<VodInfo.VodSeries> episodes = new ArrayList<>();
+            if (line.getValue() != null) for (VodInfo.VodSeries episode : line.getValue()) {
+                if (episode == null) {
+                    episodes.add(null);
+                    continue;
+                }
+                VodInfo.VodSeries copy = new VodInfo.VodSeries(episode.name, episode.url);
+                copy.selected = episode.selected;
+                copy.episodeId = episode.episodeId;
+                episodes.add(copy);
+            }
+            snapshot.seriesMap.put(line.getKey(), episodes);
+        }
+        return snapshot;
     }
 
     @Override
     public String downloadVodName() {
-        String vodName = vodInfo.name;
+        String vodName = vodInfo == null ? "" : vodInfo.name;
         if (TextUtils.isEmpty(vodName)) {
             vodName = mPassedName;
         }
@@ -1304,6 +1390,11 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     }
 
     @Override
+    public VodInfo currentPlaybackVodInfo() {
+        return isCurrentPreview() ? previewVodInfo : null;
+    }
+
+    @Override
     public boolean isFullscreen() {
         return fullWindows;
     }
@@ -1318,7 +1409,7 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     public void exitFullscreenThenOpenBottom() {
         toggleFullPreview();
         // 等退全屏布局稳定后再弹窗,避免弹窗与全屏切换动画叠加(修复:返回时全屏/抽屉残留)
-        mBinding.previewPlayer.postDelayed(downloadDialogCoordinator::showDownloadSeriesDialogInner, 250);
+        mBinding.previewPlayer.postDelayed(downloadDialogCoordinator.pendingBottomOpenAction(), 250);
     }
 
     @Override
@@ -1357,7 +1448,7 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     }
 
     private void openExternalDownloader() {
-        if (vodInfo == null || vodInfo.seriesMap == null) {
+        if (!isCurrentDetail(vodInfo) || vodInfo.seriesMap == null) {
             toast("资源异常,请稍后重试");
             return;
         }
@@ -1376,8 +1467,10 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
         String title = downloadVodName() + " " + (episode.name == null ? "" : episode.name);
         int epoch = ++externalDownloadEpoch;
         // getFinalUrl keeps the resolved source URL, before the local purified playback playlist.
-        String finalUrl = playFragment == null ? "" : playFragment.getFinalUrl();
-        Map<String, String> playHeaders = playFragment == null ? null : playFragment.getPlayHeaders();
+        boolean samePlayback = isCurrentPreview() && previewVodInfo.playIndex == index
+                && TextUtils.equals(previewVodInfo.playFlag, vodInfo.playFlag);
+        String finalUrl = !samePlayback || playFragment == null ? "" : playFragment.getFinalUrl();
+        Map<String, String> playHeaders = !samePlayback || playFragment == null ? null : playFragment.getPlayHeaders();
         if (isExternalDownloadAddress(finalUrl)) {
             launchExternalDownloader(finalUrl, title, playHeaders);
             return;
@@ -1552,6 +1645,8 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
      */
     private void playServerSwitch(boolean open) {
         if (open) {
+            if (!isCurrentPreview() || playFragment == null || playFragment.getPlayer() == null
+                    || !HistoryEntryNavigator.hasPlayableSnapshot(vodInfo)) return;
             VodInfo.VodSeries vod = vodInfo.seriesMap.get(vodInfo.playFlag).get(vodInfo.playIndex);
             PlayService.start(playFragment.getPlayer(), vodInfo.name + "&&" + vod.name);
             pipHelper.setReceiverEnabled(true);
@@ -1564,15 +1659,17 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     }
 
     public String getCurrentVodUrl() {
-        return playFragment == null ? "" : playFragment.getFinalUrl();
+        return !isCurrentPreview() || playFragment == null ? "" : playFragment.getFinalUrl();
     }
 
     public void quickLineChange() {
+        if (!isCurrentDetail(vodInfo)) return;
+        int playingIndex = vodInfo.playIndex;
         List<VodInfo.VodSeriesFlag> flags = seriesFlagAdapter.getData();
         if (flags.size() > 1) {
             int currentIndex = 0;
             for (int i = 0; i < flags.size(); i++) {
-                if (flags.get(i).selected) {
+                if (TextUtils.equals(flags.get(i).name, vodInfo.playFlag)) {
                     currentIndex = i;
                 }
             }
@@ -1582,7 +1679,8 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
             }
             mBinding.mGridViewFlag.smoothScrollToPosition(currentIndex);
             chooseFlag(currentIndex);
-            mBinding.mGridView.postDelayed(() -> chooseSeries(vodInfo.playIndex, true), 300);
+            List<VodInfo.VodSeries> episodes = episodeSelection.displayedEpisodes(vodInfo);
+            if (!episodes.isEmpty()) chooseSeries(Math.max(0, Math.min(playingIndex, episodes.size() - 1)), true);
         }
     }
 

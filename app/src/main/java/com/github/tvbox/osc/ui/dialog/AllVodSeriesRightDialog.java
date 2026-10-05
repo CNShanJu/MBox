@@ -33,6 +33,21 @@ public class AllVodSeriesRightDialog extends AppDrawerPopupView {
     private final Runnable mSortAction;
     /** 当前是否已倒序(供按钮文字切换);由 DetailActivity 注入 isSeriesReversed */
     private final BooleanSupplier mIsReversed;
+    private RecyclerView mSeriesRv;
+    private GridLayoutManager mGridManager;
+    private GridSpacingItemDecoration mGridDecoration;
+    private boolean observingSeries;
+    private final Runnable mUpdateSpan = this::updateSeriesSpan;
+    private final RecyclerView.AdapterDataObserver mSeriesDataObserver =
+            new RecyclerView.AdapterDataObserver() {
+                @Override public void onChanged() { scheduleSpanUpdate(); }
+                @Override public void onItemRangeChanged(int positionStart, int itemCount) { scheduleSpanUpdate(); }
+                @Override public void onItemRangeInserted(int positionStart, int itemCount) { scheduleSpanUpdate(); }
+                @Override public void onItemRangeRemoved(int positionStart, int itemCount) { scheduleSpanUpdate(); }
+                @Override public void onItemRangeMoved(int fromPosition, int toPosition, int itemCount) {
+                    scheduleSpanUpdate();
+                }
+            };
 
     public AllVodSeriesRightDialog(@NonNull @NotNull Context context,
                                    SeriesFlagAdapter seriesFlagAdapter,
@@ -71,18 +86,23 @@ public class AllVodSeriesRightDialog extends AppDrawerPopupView {
         }
 
         if (seriesAdapter != null) {//复用activity的adapter
-            RecyclerView rv = findViewById(R.id.rv);
-            rv.setLayoutManager(new GridLayoutManager(getContext(), Utils.getSeriesSpanCount(seriesAdapter.getData())));
-            rv.addItemDecoration(new GridSpacingItemDecoration(Utils.getSeriesSpanCount(seriesAdapter.getData()), 20, true));
+            mSeriesRv = findViewById(R.id.rv);
+            int span = Utils.getSeriesSpanCount(seriesAdapter.getData());
+            mGridManager = new GridLayoutManager(getContext(), span);
+            mSeriesRv.setLayoutManager(mGridManager);
+            mGridDecoration = new GridSpacingItemDecoration(span, 20, true);
+            mSeriesRv.addItemDecoration(mGridDecoration);
             seriesAdapter.setGird(true);
             seriesAdapter.setChipTextSize(16f); // 全屏选集文字调大
             seriesAdapter.notifyDataSetChanged();
-            rv.setAdapter(seriesAdapter);
+            mSeriesRv.setAdapter(seriesAdapter);
+            seriesAdapter.registerAdapterDataObserver(mSeriesDataObserver);
+            observingSeries = true;
 
             List<VodInfo.VodSeries> data = seriesAdapter.getData();
             for (int i = 0; i < data.size(); i++) {
                 if (data.get(i).selected) {
-                    rv.scrollToPosition(i);
+                    mSeriesRv.scrollToPosition(i);
                 }
             }
         }
@@ -93,6 +113,23 @@ public class AllVodSeriesRightDialog extends AppDrawerPopupView {
             if (mSortAction != null) mSortAction.run();
             updateSortButton();
         });
+    }
+
+    private void scheduleSpanUpdate() {
+        if (mSeriesRv == null) return;
+        mSeriesRv.removeCallbacks(mUpdateSpan);
+        mSeriesRv.post(mUpdateSpan);
+    }
+
+    private void updateSeriesSpan() {
+        if (mSeriesRv == null || mGridManager == null || seriesAdapter == null) return;
+        updateSortButton();
+        int span = Utils.getSeriesSpanCount(seriesAdapter.getData());
+        if (mGridManager.getSpanCount() == span) return;
+        mGridManager.setSpanCount(span);
+        if (mGridDecoration != null) mSeriesRv.removeItemDecoration(mGridDecoration);
+        mGridDecoration = new GridSpacingItemDecoration(span, 20, true);
+        mSeriesRv.addItemDecoration(mGridDecoration);
     }
 
     /** 倒序按钮文字跟随共用状态:已倒序显示"正序",否则"倒序" */
@@ -108,6 +145,11 @@ public class AllVodSeriesRightDialog extends AppDrawerPopupView {
 
     @Override
     protected void onDismiss() {
+        if (seriesAdapter != null && observingSeries) {
+            seriesAdapter.unregisterAdapterDataObserver(mSeriesDataObserver);
+            observingSeries = false;
+        }
+        if (mSeriesRv != null) mSeriesRv.removeCallbacks(mUpdateSpan);
         super.onDismiss();
         if (seriesAdapter != null) {//重置状态,避免竖屏时显示异常
             seriesAdapter.setGird(false);
@@ -117,5 +159,8 @@ public class AllVodSeriesRightDialog extends AppDrawerPopupView {
         if (seriesFlagAdapter != null) {
             seriesFlagAdapter.setDetailStyle(true); // 线路恢复详情页样式(与选集 chip 一致)
         }
+        mSeriesRv = null;
+        mGridManager = null;
+        mGridDecoration = null;
     }
 }

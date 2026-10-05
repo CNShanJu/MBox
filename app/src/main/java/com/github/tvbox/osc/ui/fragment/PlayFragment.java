@@ -109,6 +109,7 @@ public class PlayFragment extends BaseLazyFragment {
      * 解析/嗅探引擎(解析编排 + 无头 WebView 嗅探 + json/聚合解析;见 util/player/PlayParseCoordinator)
      */
     private com.github.tvbox.osc.util.player.PlayParseCoordinator mParseEngine;
+    private final AtomicLong mParseLifetimeGeneration = new AtomicLong();
     /** 字幕协调器(字幕装载/音轨与内置字幕切换/设置弹窗;见 util/player/SubtitleCoordinator) */
     private com.github.tvbox.osc.util.player.SubtitleCoordinator mSubtitleCoordinator;
     /** 播放进度持久化(key→MD5→CacheRepository,见 util/player/PlayHistoryRepository) */
@@ -281,6 +282,7 @@ public class PlayFragment extends BaseLazyFragment {
 
             @Override
             public void updatePlayerCfg() {
+                if (mVodInfo == null || mVodPlayerCfg == null) return;
                 mVodInfo.playerCfg = mVodPlayerCfg.toString();
                 if (mSyncHost != null)
                     mSyncHost.onPlayerCfgChanged(mVodPlayerCfg);
@@ -381,42 +383,7 @@ public class PlayFragment extends BaseLazyFragment {
         mPlaySession = new com.github.tvbox.osc.player.PlayerSession(mVideoView);
         mSubtitleCoordinator = new com.github.tvbox.osc.util.player.SubtitleCoordinator(mActivity, mController,
                 mPlaySession);
-        // 解析/嗅探引擎(宿主薄委托;解析编排与无头 WebView 收口 util/player)
-        mParseEngine = new com.github.tvbox.osc.util.player.PlayParseCoordinator(mActivity, this,
-                new com.github.tvbox.osc.util.player.PlayParseCoordinator.Callback() {
-                    @Override
-                    public void onShowTip(String msg, boolean loading, boolean err) {
-                        if (err) {
-                            PlaybackErrorReporter.failure("地址解析", "失败",
-                                    PlaybackErrorReporter.source(mRequestedPlayUrl), msg);
-                        }
-                        PlayFragment.this.setTip(msg, loading, err);
-                    }
-
-                    @Override
-                    public void onPlayUrl(String url, HashMap<String, String> headers) {
-                        PlayFragment.this.playUrl(url, headers);
-                    }
-
-                    @Override
-                    public void onErrorRetry(String err, boolean finish) {
-                        PlayFragment.this.errorWithRetry(err, finish);
-                    }
-
-                    @Override
-                    public void onShowParseRoot(boolean show) {
-                        if (mController != null)
-                            mController.showParse(show);
-                    }
-
-                    @Override
-                    public boolean postOnUiThread(Runnable r) {
-                        if (!isAdded())
-                            return false;
-                        requireActivity().runOnUiThread(r);
-                        return true;
-                    }
-                });
+        initParseEngine();
         // 电池图标:经 SystemStateMonitor 订阅百分比变化(替代 EventBus 广播;主线程回调)
         com.github.tvbox.osc.state.SystemStateMonitor monitor = com.github.tvbox.osc.state.SystemStateMonitor.get();
         if (monitor != null) {
@@ -520,8 +487,9 @@ public class PlayFragment extends BaseLazyFragment {
     private void setTip(String msg, boolean loading, boolean err, boolean autoSwitchPlayer) {
         if (!isAdded())
             return;
+        final long generation = mPlaybackGeneration.get();
         requireActivity().runOnUiThread(() -> {
-            if (!isAdded() || mPlayLoadTip == null) return;
+            if (!isCurrentPlayback(generation) || !isAdded() || mPlayLoadTip == null) return;
             // 自动恢复尚未结束，失败文案等最后一次尝试结束后再显示。
             if (autoSwitchPlayer && !retriedSwitchPlayer) {
                 logPlaybackProgress("格式或解码不兼容，自动切换播放器");
@@ -597,6 +565,7 @@ public class PlayFragment extends BaseLazyFragment {
     }
 
     void errorWithRetry(String err, boolean finish) {
+        if (mVodInfo == null) return;
         PlaybackSnapshot failedPlayback = currentPlaybackSnapshot();
         String failedUrl = failedPlayback == null ? mRequestedPlayUrl : failedPlayback.sourceUrl;
         PlaybackFailureKind failureKind = failedPlayback != null && "视频播放出错".equals(err)
@@ -692,6 +661,7 @@ public class PlayFragment extends BaseLazyFragment {
     }
 
     void playUrl(String url, HashMap<String, String> headers) {
+        if (mVodInfo == null) return;
         final long generation = mPlaybackGeneration.incrementAndGet();
         cancelAddressProbe();
         mResolvedPlayback = null;
@@ -712,7 +682,8 @@ public class PlayFragment extends BaseLazyFragment {
     private void playUrlAfterConnectionCheck(String url, HashMap<String, String> requestHeaders,
                                              long generation) {
         if (!isCurrentPlayback(generation)) return;
-        final boolean purifyEnabled = PlayConfig.isVideoPurify();
+        final int purifyMode = PlayConfig.getVideoPurifyMode();
+        final boolean purifyEnabled = purifyMode != PlayConfig.VIDEO_PURIFY_OFF;
         if (!purifyEnabled && autoRetryCount == 0) {
             logManifestProbe("入口", "净化关闭，直接播放", null, null);
             startPlayUrl(url, requestHeaders, generation, url);
@@ -821,8 +792,10 @@ public class PlayFragment extends BaseLazyFragment {
                     }
                     int ilast = url.lastIndexOf('/');
 
-                    String purified = com.github.tvbox.osc.util.M3u8Purifier
-                            .removeMinorityUrl(url.substring(0, ilast + 1), content);
+                    String purified = purifyMode == PlayConfig.VIDEO_PURIFY_ENHANCED
+                            ? com.github.tvbox.osc.util.M3u8Purifier.removeAds(url, content)
+                            : com.github.tvbox.osc.util.M3u8Purifier
+                                    .removeMinorityUrl(url.substring(0, ilast + 1), content);
                     if (purified == null && hadBom) {
                         purified = com.github.tvbox.osc.util.M3u8Purifier
                                 .normalizeForLocalPlayback(url, content);
@@ -853,8 +826,10 @@ public class PlayFragment extends BaseLazyFragment {
                             return;
                         }
                         int ilast = finalforwardurl.lastIndexOf('/');
-                        String purified = com.github.tvbox.osc.util.M3u8Purifier
-                                .removeMinorityUrl(finalforwardurl.substring(0, ilast + 1), content);
+                        String purified = purifyMode == PlayConfig.VIDEO_PURIFY_ENHANCED
+                                ? com.github.tvbox.osc.util.M3u8Purifier.removeAds(finalforwardurl, content)
+                                : com.github.tvbox.osc.util.M3u8Purifier
+                                        .removeMinorityUrl(finalforwardurl.substring(0, ilast + 1), content);
                         if (purified == null && hadBom) {
                             purified = com.github.tvbox.osc.util.M3u8Purifier
                                     .normalizeForLocalPlayback(finalforwardurl, content);
@@ -1240,6 +1215,72 @@ public class PlayFragment extends BaseLazyFragment {
         }
     }
 
+    private void initParseEngine() {
+        if (mParseEngine != null) return;
+        final long lifetime = mParseLifetimeGeneration.get();
+        mParseEngine = new com.github.tvbox.osc.util.player.PlayParseCoordinator(mActivity, this,
+                new com.github.tvbox.osc.util.player.PlayParseCoordinator.Callback() {
+                    private boolean current() { return lifetime == mParseLifetimeGeneration.get(); }
+                    @Override public void onShowTip(String msg, boolean loading, boolean err) {
+                        if (!current()) return;
+                        if (err) PlaybackErrorReporter.failure("地址解析", "失败",
+                                PlaybackErrorReporter.source(mRequestedPlayUrl), msg);
+                        PlayFragment.this.setTip(msg, loading, err);
+                    }
+                    @Override public void onPlayUrl(String url, HashMap<String, String> headers) {
+                        postOnUiThread(() -> PlayFragment.this.playUrl(url, headers));
+                    }
+                    @Override public void onErrorRetry(String err, boolean finish) {
+                        postOnUiThread(() -> PlayFragment.this.errorWithRetry(err, finish));
+                    }
+                    @Override public void onShowParseRoot(boolean show) {
+                        postOnUiThread(() -> {
+                            if (mController != null) mController.showParse(show);
+                        });
+                    }
+                    @Override public boolean postOnUiThread(Runnable action) {
+                        if (!current() || !isAdded()) return false;
+                        requireActivity().runOnUiThread(() -> {
+                            if (current()) action.run();
+                        });
+                        return true;
+                    }
+                });
+    }
+
+    /** 切换详情影片时停止旧播放及解析；播放器 View 保留供新详情使用。 */
+    public void clearData() {
+        pendingReadyAction = null;
+        mParseLifetimeGeneration.incrementAndGet();
+        mPlaybackGeneration.incrementAndGet();
+        mVodInfo = null;
+        mVodPlayerCfg = null;
+        mRequestedPlayUrl = null;
+        mPlayResultToken = null;
+        mResolvedPlayback = null;
+        cancelAddressProbe();
+        HttpClient.cancel("m3u8-1");
+        HttpClient.cancel("m3u8-2");
+        if (mParseEngine != null) {
+            mParseEngine.destroy();
+            mParseEngine = null;
+        }
+        if (mSubtitleCoordinator != null) {
+            mSubtitleCoordinator.invalidateForPlaybackChange();
+            mSubtitleCoordinator.updateSubtitleContext(null, null);
+        }
+        releasePlaybackSession();
+        if (mPlaySession != null) mPlaySession.release();
+        if (mController != null) {
+            mController.setTitle("");
+            mController.showParse(false);
+        }
+        if (mPlayingControlDialog != null) mPlayingControlDialog.dismiss();
+        if (mPlayingControlRightDialog != null) mPlayingControlRightDialog.dismiss();
+        Thunder.stop(true);
+        Jianpian.finish();
+    }
+
     private void initSubtitleView() {
         // 字幕装载/内置字幕自动选中文等已收口 SubtitleCoordinator;同步当前字幕上下文后委托
         if (mSubtitleCoordinator == null)
@@ -1318,6 +1359,7 @@ public class PlayFragment extends BaseLazyFragment {
         mVodInfo = App.getInstance().getVodInfo();
         sourceKey = bundle.getString("sourceKey");
         sourceBean = SourceConfigProviders.get().getSource(sourceKey);
+        initParseEngine();
         if (mParseEngine != null)
             mParseEngine.setSourceBean(sourceBean);
         initPlayerCfg();
@@ -1408,6 +1450,7 @@ public class PlayFragment extends BaseLazyFragment {
         playbackReady = false;
         pendingReadyAction = null;
         mPlaybackGeneration.incrementAndGet();
+        mParseLifetimeGeneration.incrementAndGet();
         cancelAddressProbe();
         HttpClient.cancel("m3u8-1");
         HttpClient.cancel("m3u8-2");
@@ -1518,6 +1561,7 @@ public class PlayFragment extends BaseLazyFragment {
     public void play(boolean reset) {
         if (mVodInfo == null)
             return;
+        if (mSubtitleCoordinator != null) mSubtitleCoordinator.invalidateForPlaybackChange();
         long requestGeneration = mPlaybackGeneration.incrementAndGet();
         cancelAddressProbe();
         HttpClient.cancel("m3u8-1");

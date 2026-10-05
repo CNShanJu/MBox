@@ -2,8 +2,6 @@ package com.github.tvbox.osc.ui.adapter;
 
 import android.view.ViewGroup;
 
-import androidx.recyclerview.widget.RecyclerView;
-
 import com.blankj.utilcode.util.ConvertUtils;
 import com.chad.library.adapter.base.BaseQuickAdapter;
 import com.chad.library.adapter.base.BaseViewHolder;
@@ -39,9 +37,11 @@ public class SeriesAdapter extends BaseQuickAdapter<VodInfo.VodSeries, BaseViewH
         chip.setTitle(item.name);
         chip.setChipTextSize(chipTextSize);
 
-        if (!isGird){// 详情页横向展示时固定宽度
-            ViewGroup.LayoutParams layoutParams = chip.getLayoutParams();
-            layoutParams.width = ConvertUtils.dp2px(120);
+        // 同一个 adapter 在详情横向列表与右侧网格之间移动，复用条目须双向重置宽度。
+        ViewGroup.LayoutParams layoutParams = chip.getLayoutParams();
+        int width = isGird ? ViewGroup.LayoutParams.MATCH_PARENT : ConvertUtils.dp2px(120);
+        if (layoutParams.width != width) {
+            layoutParams.width = width;
             chip.setLayoutParams(layoutParams);
         }
     }

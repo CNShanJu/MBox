@@ -14,6 +14,8 @@ import com.github.tvbox.osc.bean.VodInfo;
 import com.github.tvbox.osc.util.TextLineHeight;
 
 import java.util.ArrayList;
+import java.util.Map;
+import java.util.WeakHashMap;
 
 /**
  * 线路(片源线路)列表:详情页与"全屏抽屉"复用同一个 adapter 实例(见 AllVodSeriesRightDialog)。
@@ -33,6 +35,8 @@ public class SeriesFlagAdapter extends BaseQuickAdapter<VodInfo.VodSeriesFlag, B
 
     /** true = 详情页样式(与选集一致);false = 全屏抽屉样式(保持原样) */
     private boolean detailStyle = true;
+    /** 保存 holder 初次 inflate 的字号，进入抽屉时恢复布局/主题默认值。 */
+    private final Map<TextView, Float> initialTextSizesPx = new WeakHashMap<>();
 
     public SeriesFlagAdapter() {
         super(R.layout.item_select_flag, new ArrayList<>());
@@ -56,6 +60,11 @@ public class SeriesFlagAdapter extends BaseQuickAdapter<VodInfo.VodSeriesFlag, B
         helper.setText(R.id.tvFlag, item.name);
 
         TextView tvFlag = helper.getView(R.id.tvFlag);
+        Float initialSizePx = initialTextSizesPx.get(tvFlag);
+        if (initialSizePx == null) {
+            initialSizePx = tvFlag.getTextSize();
+            initialTextSizesPx.put(tvFlag, initialSizePx);
+        }
         // 选中的线路:文字与"文字下方那条小横线"(shape_source_flag_line)同色 = **文字主色**
         tvFlag.setTextColor(ContextCompat.getColor(mContext,
                 item.selected ? R.color.text_foreground : R.color.text_sub_foreground));
@@ -65,8 +74,9 @@ public class SeriesFlagAdapter extends BaseQuickAdapter<VodInfo.VodSeriesFlag, B
             tvFlag.setTextSize(TypedValue.COMPLEX_UNIT_SP, item.selected ? SIZE_SP_SELECTED : SIZE_SP);
             tvFlag.setMinHeight(TextLineHeight.forSp(tvFlag, SIZE_SP_SELECTED));
         } else {
-            // 全屏抽屉:保持原样(不改字号字重,也不预留行高)
+            // 全屏抽屉:恢复布局/主题的字号、普通字重与自然行高。
             tvFlag.setTypeface(null, Typeface.NORMAL);
+            tvFlag.setTextSize(TypedValue.COMPLEX_UNIT_PX, initialSizePx);
             tvFlag.setMinHeight(0);
         }
     }
