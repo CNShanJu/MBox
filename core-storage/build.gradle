@@ -38,4 +38,5 @@ dependencies {
     annotationProcessor 'androidx.room:room-compiler:2.5.2'
     implementation 'androidx.room:room-runtime:2.5.2'
     implementation 'androidx.datastore:datastore-preferences-rxjava3:1.0.0' // 现代化偏好存储(PrefsDataStore)
+    testImplementation 'junit:junit:4.13.2'
 }

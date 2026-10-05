@@ -2,8 +2,15 @@ package com.github.tvbox.osc.transfer;
 
 import android.content.Context;
 
+import com.github.tvbox.osc.config.PrefsDataStore;
+import com.github.tvbox.osc.config.SystemConfig;
+import com.github.tvbox.osc.data.AppDataManager;
+import com.github.tvbox.osc.log.Category;
+import com.github.tvbox.osc.log.LogStore;
 import com.github.tvbox.osc.share.ShareArchives;
 import com.github.tvbox.osc.share.ShareManifest;
+import com.github.tvbox.osc.storage.theme.ThemeBackgroundLibrary;
+import com.github.tvbox.osc.storage.theme.ThemeStore;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -161,30 +168,98 @@ public final class ConfigBundle {
                     throw new IOException("配置类别不匹配：" + category);
                 staged.put(category, data);
             }
-            List<String> results = new ArrayList<>();
-            for (String category : ORDER) {
-                if (!requested.contains(category)) continue;
-                try {
-                    int count;
-                    if ("themes".equals(category)) {
-                        int expected = staged.get("themes").getAsJsonArray("themes").size();
-                        count = 0;
-                        for (int i = 0; i < expected; i++) count += exchange.importTheme(new File(work, themeName(i)));
-                    } else {
-                        count = exchange.importCategory(category, staged.get(category));
-                    }
-                    results.add(label(category) + " " + count + " 项");
-                } catch (Exception failure) {
-                    throw new IOException((results.isEmpty() ? "" : "此前已导入 "
-                            + android.text.TextUtils.join("、", results) + "；")
-                            + label(category) + " 导入失败，当前类别也可能部分写入："
-                            + failure.getMessage(), failure);
-                }
-            }
-            return "已导入：" + android.text.TextUtils.join("、", results) + "。重启应用后全部生效。";
+            return applyWithRollback(work, requested, staged);
         } finally {
             clean(work);
         }
+    }
+
+    /** Room 串行线程、主题锁、订阅文件锁、偏好锁按固定顺序包住导入和失败恢复。 */
+    private String applyWithRollback(File unpacked, Set<String> requested,
+                                     Map<String, JsonObject> staged) {
+        return AppDataManager.runOnDb(() -> ThemeStore.runWithStorageLock(() -> SubscriptionImportFiles.runLocked(() -> {
+            List<File> directories = new ArrayList<>();
+            if (requested.contains("themes")) {
+                directories.add(new File(context.getFilesDir(), ThemeStore.DIR_THEMES));
+                directories.add(new File(context.getFilesDir(), ThemeBackgroundLibrary.DIR));
+            }
+            if (requested.contains("subscriptions")) {
+                File external = context.getExternalFilesDir(null);
+                if (external == null) throw new IOException("应用存储目录不可用");
+                directories.add(new File(external, "subscription_import"));
+            }
+            // 与解包目录分开：恢复失败时保留快照，不能被 importSelected 的 finally 删除。
+            File rollbackDirectory = new File(context.getFilesDir(), "config_rollback_" + java.util.UUID.randomUUID());
+            if (!rollbackDirectory.mkdir()) throw new IOException("无法准备导入回滚目录");
+            ImportFileCheckpoint checkpoint;
+            try { checkpoint = ImportFileCheckpoint.prepare(rollbackDirectory, directories); }
+            catch (IOException | RuntimeException preparationFailure) {
+                if (!rollbackDirectory.delete())
+                    LogStore.fail(Category.SYSTEM, "配置导入: 未完成的快照目录清理失败，目录=" + rollbackDirectory.getName());
+                throw preparationFailure;
+            }
+            String result;
+            try {
+                // 偏好作用域包住 Room 的提交/结束：任一步失败都恢复原键值，Room 回滚历史。
+                result = PrefsDataStore.runWithRollback(() -> AppDataManager.runInTransaction(() ->
+                        applyStaged(unpacked, requested, staged)));
+            } catch (Throwable failure) {
+                try { checkpoint.rollback(); }
+                catch (Throwable restoreFailure) { failure.addSuppressed(restoreFailure); }
+                try {
+                    ThemeStore.reload();
+                    SystemConfig.notifyRestored();
+                } catch (Throwable restoreFailure) { failure.addSuppressed(restoreFailure); }
+                boolean restored = !hasRecoveryFailure(failure);
+                if (restored) {
+                    try { checkpoint.cleanup(); }
+                    catch (IOException cleanupFailure) {
+                        LogStore.fail(Category.SYSTEM, "配置导入: 回滚完成后的快照清理失败，目录=" + rollbackDirectory.getName());
+                    }
+                }
+                LogStore.fail(Category.SYSTEM, restored ? "配置导入: 失败，已恢复导入前的数据"
+                        : "配置导入: 失败，恢复未完成，文件快照=" + rollbackDirectory.getName());
+                throw new IOException(restored ? "导入失败，已恢复导入前的记录和配置：" + failure.getMessage()
+                        : "导入失败，恢复未完成，请勿继续导入；保留的恢复快照为 "
+                        + rollbackDirectory.getName() + "：" + failure.getMessage(), failure);
+            }
+            // 数据已成功提交；临时快照清理失败只留日志，不改报导入失败。
+            try { checkpoint.cleanup(); }
+            catch (IOException cleanupFailure) {
+                LogStore.fail(Category.SYSTEM, "配置导入: 成功后的回滚快照清理失败，目录=" + rollbackDirectory.getName());
+            }
+            LogStore.log(Category.SYSTEM, "配置导入: 所选类别全部完成并落盘");
+            return result;
+        })));
+    }
+
+    private String applyStaged(File unpacked, Set<String> requested,
+                               Map<String, JsonObject> staged) throws Exception {
+        List<String> results = new ArrayList<>();
+        for (String category : ORDER) {
+            if (!requested.contains(category)) continue;
+            try {
+                int count;
+                if ("themes".equals(category)) {
+                    int expected = staged.get("themes").getAsJsonArray("themes").size();
+                    count = 0;
+                    for (int i = 0; i < expected; i++) count += exchange.importTheme(new File(unpacked, themeName(i)));
+                } else {
+                    count = exchange.importCategory(category, staged.get(category));
+                }
+                results.add(label(category) + " " + count + " 项");
+            } catch (Exception failure) {
+                throw new IOException(label(category) + " 导入失败：" + failure.getMessage(), failure);
+            }
+        }
+        return "已导入：" + android.text.TextUtils.join("、", results) + "。重启应用后全部生效。";
+    }
+
+    private static boolean hasRecoveryFailure(Throwable failure) {
+        if (failure.getSuppressed().length > 0 || failure instanceof AppDataManager.TransactionCompletionException)
+            return true;
+        Throwable cause = failure.getCause();
+        return cause != null && cause != failure && hasRecoveryFailure(cause);
     }
 
     private static Set<String> requireCategories(Set<String> selected) throws IOException {

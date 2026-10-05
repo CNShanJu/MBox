@@ -12,7 +12,13 @@ import com.google.gson.Gson;
 
 import java.lang.reflect.Type;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Function;
 
 /**
  * 现代化偏好存储(Preferences DataStore)的同步门面。
@@ -28,20 +34,37 @@ public final class PrefsDataStore {
     private static final String FILE_NAME = "prefs.pb";
     private static final String PRIVATE_KEY_PREFIX = "_private_";
     private static final String LAN_PAIRING_CODE_KEY = "lan_pairing_code";
+    /** 旧版指定域名设置已停用，仍从共享/备份数据中排除。 */
+    private static final String LEGACY_SSL_EXCEPTION_HOST_KEY = "ssl_exception_host";
+    /** 日志独立管理：本地/共享备份不得导出或覆盖本机日志设置。 */
+    private static final String LOG_ENABLED_KEY = "app_log";
+    private static final String LOG_LEVEL_KEY = "log_level";
+    private static final String LOG_RETENTION_KEY = "log_retention";
 
-    private static volatile RxDataStore<Preferences> store;
+    /** The edit boundary also lets JVM tests inject deterministic persistence failures. */
+    interface EditStore { void update(Function<Preferences, MutablePreferences> edit); }
+
+    private static volatile EditStore editor;
     private static volatile ConcurrentHashMap<String, Object> cache = new ConcurrentHashMap<>();
 
     private static final Object WRITE_LOCK = new Object();
+    private static final ThreadLocal<RollbackScope> ROLLBACK_SCOPE = new ThreadLocal<>();
+
+    private static final class RollbackScope {
+        final Map<String, Object> before;
+        final Set<String> touched = new LinkedHashSet<>();
+
+        RollbackScope(Map<String, Object> before) { this.before = before; }
+    }
 
     private PrefsDataStore() {
     }
 
     /** App 启动调用一次(DataStore 为运行权威;DataStore 为运行权威;旧 Hawk 一次性迁移通道已下线退役) */
     public static void init(Context context) {
-        if (store != null) return;
+        if (editor != null) return;
         synchronized (PrefsDataStore.class) {
-            if (store != null) return;
+            if (editor != null) return;
             RxDataStore<Preferences> ds = new RxPreferenceDataStoreBuilder(
                     context == null ? null : context.getApplicationContext(), FILE_NAME).build();
             try {
@@ -58,7 +81,33 @@ public final class PrefsDataStore {
                 th.printStackTrace();
             }
             // Do not expose a writable store until its initial disk snapshot is published.
-            store = ds;
+            editor = edit -> ds.updateDataAsync(prefs ->
+                    io.reactivex.rxjava3.core.Single.just(edit.apply(prefs))).blockingGet();
+        }
+    }
+
+    /** Run synchronous preference writes as one rollback scope around the caller's full transaction. */
+    public static <T> T runWithRollback(Callable<T> work) throws Exception {
+        if (work == null) throw new IllegalArgumentException("回滚作用域任务不能为空");
+        synchronized (WRITE_LOCK) {
+            if (ROLLBACK_SCOPE.get() != null) throw new IllegalStateException("配置回滚作用域不能嵌套");
+            if (editor == null) throw new IllegalStateException("PrefsDataStore 尚未初始化");
+            RollbackScope scope = new RollbackScope(new LinkedHashMap<>(cache));
+            ROLLBACK_SCOPE.set(scope);
+            try {
+                return work.call();
+            } catch (Throwable failure) {
+                try {
+                    rollback(scope);
+                } catch (Throwable rollbackFailure) {
+                    failure.addSuppressed(new IllegalStateException("设置回滚失败，持久化状态可能已改变", rollbackFailure));
+                }
+                if (failure instanceof Exception) throw (Exception) failure;
+                if (failure instanceof Error) throw (Error) failure;
+                throw new IllegalStateException(failure);
+            } finally {
+                ROLLBACK_SCOPE.remove();
+            }
         }
     }
 
@@ -177,20 +226,21 @@ public final class PrefsDataStore {
     /** 删除键(无论原存储类型;整表扫描移除同名校验值) */
     public static void delete(String key) {
         synchronized (WRITE_LOCK) {
-            RxDataStore<Preferences> s = store;
-            if (s == null) return;
+            EditStore s = editor;
+            if (s == null) {
+                if (ROLLBACK_SCOPE.get() != null) throw new IllegalStateException("PrefsDataStore 尚未初始化");
+                return;
+            }
             try {
-                s.updateDataAsync(prefs -> {
+                if (cache.containsKey(key)) recordTouched(key);
+                s.update(prefs -> {
                     MutablePreferences mutable = prefs.toMutablePreferences();
-                    for (Preferences.Key<?> k : new ArrayList<>(prefs.asMap().keySet())) {
-                        if (key.equals(k.getName())) {
-                            mutable.remove(k);
-                        }
-                    }
-                    return io.reactivex.rxjava3.core.Single.just(mutable);
-                }).blockingGet();
+                    removeNamedKey(prefs, mutable, key);
+                    return mutable;
+                });
                 cache.remove(key);
-            } catch (Throwable ignored) {
+            } catch (Throwable failure) {
+                if (ROLLBACK_SCOPE.get() != null) throw persistenceFailure(failure);
             }
         }
     }
@@ -219,8 +269,64 @@ public final class PrefsDataStore {
         try {
             return importAll(parseImportValues(json));
         } catch (Throwable th) {
+            if (ROLLBACK_SCOPE.get() != null) throw persistenceFailure(th);
             th.printStackTrace();
             return -1;
+        }
+    }
+
+    /**
+     * 精确恢复系统备份中的可转移设置。包中不存在的可转移键会被删除；本机私有键保留。
+     * 一次 DataStore edit 成功后才发布新的内存快照，解析或落盘失败直接抛错。
+     *
+     * @return 备份中恢复的可转移键数量
+     */
+    public static int replaceTransferableJson(String json) {
+        if (json == null) throw new IllegalArgumentException("备份设置不能为空");
+        Map<String, Object> parsed;
+        try {
+            parsed = parseImportValues(json);
+            com.google.gson.JsonObject source = com.google.gson.JsonParser.parseString(json).getAsJsonObject();
+            for (Map.Entry<String, com.google.gson.JsonElement> entry : source.entrySet()) {
+                if (!isTransferExcludedKey(entry.getKey()) && !parsed.containsKey(entry.getKey()))
+                    throw new IllegalArgumentException("备份设置包含不支持的值: " + entry.getKey());
+            }
+        } catch (RuntimeException error) {
+            throw new IllegalArgumentException("备份设置格式无效", error);
+        }
+        Map<String, Object> values = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> entry : parsed.entrySet()) {
+            if (!isTransferExcludedKey(entry.getKey())) values.put(entry.getKey(), entry.getValue());
+        }
+
+        synchronized (WRITE_LOCK) {
+            EditStore s = editor;
+            if (s == null) throw new IllegalStateException("PrefsDataStore 尚未初始化");
+            ConcurrentHashMap<String, Object> restored = new ConcurrentHashMap<>(cache);
+            for (String key : new ArrayList<>(restored.keySet())) {
+                if (!isTransferExcludedKey(key)) {
+                    recordTouched(key);
+                    restored.remove(key);
+                }
+            }
+            for (String key : values.keySet()) recordTouched(key);
+            restored.putAll(values);
+            try {
+                s.update(prefs -> {
+                    MutablePreferences mutable = prefs.toMutablePreferences();
+                    for (Preferences.Key<?> old : prefs.asMap().keySet()) {
+                        if (!isTransferExcludedKey(old.getName())) mutable.remove(old);
+                    }
+                    for (Map.Entry<String, Object> entry : values.entrySet()) {
+                        setScalar(mutable, entry.getKey(), entry.getValue());
+                    }
+                    return mutable;
+                });
+            } catch (Throwable error) {
+                throw persistenceFailure(error);
+            }
+            cache = restored;
+            return values.size();
         }
     }
 
@@ -277,29 +383,30 @@ public final class PrefsDataStore {
             }
         }
         if (values.isEmpty()) return 0;
-        RxDataStore<Preferences> s = store;
-        if (s == null) return -1;
         synchronized (WRITE_LOCK) {
+            EditStore s = editor;
+            if (s == null) {
+                if (ROLLBACK_SCOPE.get() != null) throw new IllegalStateException("PrefsDataStore 尚未初始化");
+                return -1;
+            }
             try {
-                s.updateDataAsync(prefs -> {
+                for (Map.Entry<String, Object> entry : values.entrySet()) {
+                    if (!entry.getValue().equals(cache.get(entry.getKey()))) recordTouched(entry.getKey());
+                }
+                s.update(prefs -> {
                     MutablePreferences mutable = prefs.toMutablePreferences();
                     for (Preferences.Key<?> old : prefs.asMap().keySet()) {
                         if (values.containsKey(old.getName())) mutable.remove(old);
                     }
                     for (java.util.Map.Entry<String, Object> entry : values.entrySet()) {
-                        String key = entry.getKey();
-                        Object value = entry.getValue();
-                        if (value instanceof String) mutable.set(PreferencesKeys.stringKey(key), (String) value);
-                        else if (value instanceof Boolean) mutable.set(PreferencesKeys.booleanKey(key), (Boolean) value);
-                        else if (value instanceof Integer) mutable.set(PreferencesKeys.intKey(key), (Integer) value);
-                        else if (value instanceof Long) mutable.set(PreferencesKeys.longKey(key), (Long) value);
-                        else if (value instanceof Float) mutable.set(PreferencesKeys.floatKey(key), (Float) value);
+                        setScalar(mutable, entry.getKey(), entry.getValue());
                     }
-                    return io.reactivex.rxjava3.core.Single.just(mutable);
-                }).blockingGet();
+                    return mutable;
+                });
                 cache.putAll(values);
                 return values.size();
             } catch (Throwable error) {
+                if (ROLLBACK_SCOPE.get() != null) throw persistenceFailure(error);
                 error.printStackTrace();
                 return -1;
             }
@@ -309,23 +416,76 @@ public final class PrefsDataStore {
     private static void write(String key, Object value,
                               java.util.function.Function<Preferences, MutablePreferences> fn) {
         synchronized (WRITE_LOCK) {
-            RxDataStore<Preferences> s = store;
-            if (s == null) return; // init 前 put 丢弃(装配先 init)
+            EditStore s = editor;
+            if (s == null) {
+                if (ROLLBACK_SCOPE.get() != null) throw new IllegalStateException("PrefsDataStore 尚未初始化");
+                return; // init 前 put 丢弃(装配先 init)
+            }
             try {
-                s.updateDataAsync(prefs -> io.reactivex.rxjava3.core.Single.just(fn.apply(prefs)))
-                        .blockingGet();
+                if (!value.equals(cache.get(key))) recordTouched(key);
+                s.update(fn);
                 // Keep disk order and in-memory order identical for concurrent writers.
                 cache.put(key, value);
             } catch (Throwable th) {
+                if (ROLLBACK_SCOPE.get() != null) throw persistenceFailure(th);
                 th.printStackTrace();
             }
         }
+    }
+
+    private static void recordTouched(String key) {
+        RollbackScope scope = ROLLBACK_SCOPE.get();
+        if (scope != null) scope.touched.add(key);
+    }
+
+    private static void rollback(RollbackScope scope) {
+        if (scope.touched.isEmpty()) return;
+        ConcurrentHashMap<String, Object> restored = new ConcurrentHashMap<>(cache);
+        for (String key : scope.touched) {
+            if (scope.before.containsKey(key)) restored.put(key, scope.before.get(key));
+            else restored.remove(key);
+        }
+        EditStore s = editor;
+        if (s == null) throw new IllegalStateException("PrefsDataStore 尚未初始化");
+        // A single DataStore edit restores only keys this scope touched; unrelated changes survive.
+        s.update(prefs -> {
+            MutablePreferences mutable = prefs.toMutablePreferences();
+            for (String key : scope.touched) removeNamedKey(prefs, mutable, key);
+            for (String key : scope.touched) {
+                if (scope.before.containsKey(key)) setScalar(mutable, key, scope.before.get(key));
+            }
+            return mutable;
+        });
+        cache = restored;
+    }
+
+    private static void removeNamedKey(Preferences prefs, MutablePreferences mutable, String key) {
+        for (Preferences.Key<?> old : new ArrayList<>(prefs.asMap().keySet())) {
+            if (key.equals(old.getName())) mutable.remove(old);
+        }
+    }
+
+    private static void setScalar(MutablePreferences mutable, String key, Object value) {
+        if (value instanceof String) mutable.set(PreferencesKeys.stringKey(key), (String) value);
+        else if (value instanceof Boolean) mutable.set(PreferencesKeys.booleanKey(key), (Boolean) value);
+        else if (value instanceof Integer) mutable.set(PreferencesKeys.intKey(key), (Integer) value);
+        else if (value instanceof Long) mutable.set(PreferencesKeys.longKey(key), (Long) value);
+        else if (value instanceof Float) mutable.set(PreferencesKeys.floatKey(key), (Float) value);
+        else throw new IllegalStateException("无法恢复非标量设置: " + key);
+    }
+
+    private static RuntimeException persistenceFailure(Throwable failure) {
+        if (failure instanceof Error) throw (Error) failure;
+        return failure instanceof RuntimeException ? (RuntimeException) failure
+                : new IllegalStateException("设置持久化失败", failure);
     }
 
     /** 敏感本机设置必须由用户在本机显式操作，不能从共享/备份数据启用。 */
     private static boolean isTransferExcludedKey(String key) {
         return key.startsWith(PRIVATE_KEY_PREFIX) || LAN_PAIRING_CODE_KEY.equals(key)
                 || SystemConfig.KEY_IGNORE_SSL_ERROR.equals(key)
-                || SystemConfig.KEY_SSL_EXCEPTION_HOST.equals(key);
+                || LEGACY_SSL_EXCEPTION_HOST_KEY.equals(key)
+                || LOG_ENABLED_KEY.equals(key) || LOG_LEVEL_KEY.equals(key)
+                || LOG_RETENTION_KEY.equals(key);
     }
 }

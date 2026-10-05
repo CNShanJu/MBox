@@ -51,6 +51,6 @@
         android:paddingTop="10dp"
         android:paddingBottom="10dp"
         android:clipToPadding="false"
-        tools:listitem="@layout/item_stroke_button"
+        tools:listitem="@layout/item_local_backup"
         />
 </androidx.constraintlayout.widget.ConstraintLayout>

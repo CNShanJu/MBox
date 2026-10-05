@@ -467,6 +467,12 @@ public final class ThemeStore {
      * 这样重名时可以直接留在输入框里让用户改名,而不是"保存失败"。
      */
     public static SaveResult save(ThemeDef def) {
+        synchronized (LOCK) {
+            return saveLocked(def);
+        }
+    }
+
+    private static SaveResult saveLocked(ThemeDef def) {
         if (def == null) return new SaveResult(null, "主题数据为空");
         Context ctx = appContext;
         if (ctx == null) return new SaveResult(null, "存储不可用,请重启应用后再试");
@@ -527,6 +533,12 @@ public final class ThemeStore {
      * @return 是否真的删掉了(内置主题、不存在的 id 一律拒绝,返回 false)
      */
     public static boolean delete(String id) {
+        synchronized (LOCK) {
+            return deleteLocked(id);
+        }
+    }
+
+    private static boolean deleteLocked(String id) {
         if (isBuiltinId(id)) return false;
         ThemeDef def = find(id);
         if (def == null) return false;
@@ -882,7 +894,16 @@ public final class ThemeStore {
      * @return {@code ref}(相对 filesDir 的路径);失败返回空串
      */
     public static String registerBackground(File src) {
-        return ThemeBackgroundLibrary.register(appContext, src);
+        synchronized (LOCK) {
+            return ThemeBackgroundLibrary.register(appContext, src);
+        }
+    }
+
+    /** 配置批量导入期间串行化主题文件/背景图修改，供调用方准备和恢复文件快照。 */
+    public static <T> T runWithStorageLock(java.util.concurrent.Callable<T> action) throws Exception {
+        synchronized (LOCK) {
+            return action.call();
+        }
     }
 
     /** {@code ref} → 绝对路径(文件不存在返回空串) */
@@ -897,6 +918,12 @@ public final class ThemeStore {
      * @return 删掉的文件数
      */
     public static int gc() {
+        synchronized (LOCK) {
+            return gcLocked();
+        }
+    }
+
+    private static int gcLocked() {
         List<ThemeDef> themes = userThemes();
         Set<String> refs = new HashSet<>();
         for (ThemeDef d : themeListSnapshot(themes)) {

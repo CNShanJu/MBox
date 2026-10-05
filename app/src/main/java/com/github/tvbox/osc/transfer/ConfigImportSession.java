@@ -23,18 +23,19 @@ public final class ConfigImportSession {
     private String address = "";
     private State state = State.DISCONNECTED;
     private int epoch;
+    private boolean importing;
 
     private final Runnable monitor = () -> {
         ConfigImportSource candidate = source;
         int request = epoch;
-        if (candidate == null) return;
+        if (candidate == null || importing) return;
         HeavyTaskUtil.getBigTaskExecutorService().execute(() -> {
             State checked;
             try { checked = candidate.isConnected() ? State.CONNECTED : State.KICKED; }
             catch (Exception ignored) { checked = State.UNREACHABLE; }
             State result = checked;
             main.post(() -> {
-                if (request != epoch || source != candidate) return;
+                if (importing || request != epoch || source != candidate) return;
                 if (result == State.KICKED) {
                     source = null;
                     epoch++;
@@ -66,6 +67,7 @@ public final class ConfigImportSession {
     public State state() { return state; }
     public String address() { return address; }
     public boolean hasConnection() { return source != null; }
+    public boolean isImporting() { return importing; }
     public JsonObject catalog() { return source == null ? null : source.catalog(); }
 
     public void addListener(Listener listener) {
@@ -75,33 +77,45 @@ public final class ConfigImportSession {
     public void removeListener(Listener listener) { listeners.remove(listener); }
 
     public void importSelected(Set<String> categories, ImportCallback callback) {
+        if (importing) {
+            callback.onComplete(null, "正在导入配置，请勿重复操作");
+            return;
+        }
         ConfigImportSource candidate = source;
-        int request = epoch;
         if (candidate == null) {
             callback.onComplete(null, "连接已断开，请重新连接服务器");
             return;
         }
+        importing = true;
+        main.removeCallbacks(monitor);
+        emit();
         HeavyTaskUtil.getBigTaskExecutorService().execute(() -> {
             String result = null;
             String error = null;
             try { result = candidate.importSelected(categories); }
-            catch (Exception failure) { error = failure.getMessage(); }
+            catch (Exception failure) { error = failure.getMessage() == null
+                    ? failure.getClass().getSimpleName() : failure.getMessage(); }
             String completed = result;
             String message = error;
             main.post(() -> {
-                if (request != epoch || source != candidate) {
-                    callback.onComplete(null, "连接已失效，请重新连接服务器");
-                } else {
+                importing = false;
+                try {
+                    emit();
+                    // 成功表示配置已落盘；后续配对变化不能把已完成的导入改报为失败。
                     callback.onComplete(completed, message);
-                    if (message != null) main.removeCallbacks(monitor);
-                    if (message != null) main.post(monitor);
+                } finally {
+                    main.removeCallbacks(monitor);
+                    if (source != null) main.post(monitor);
                 }
             });
         });
     }
 
     private void emit() {
-        for (Listener listener : listeners) listener.onChanged();
+        for (Listener listener : listeners) {
+            try { listener.onChanged(); }
+            catch (RuntimeException ignored) { }
+        }
     }
 
     private void scheduleNextCheck() {

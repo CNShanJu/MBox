@@ -21,7 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-/** Full local backup using the same manifest and ZIP envelope as configuration transfer. */
+/** Settings and playback-data backup; the independent log database and log files are never included. */
 public final class BackupArchive {
     private static final long MAX_BACKUP_BYTES = 1024L * 1024L * 1024L;
     private final Context context;
@@ -35,17 +35,24 @@ public final class BackupArchive {
         try {
             Map<String, File> entries = new LinkedHashMap<>();
             File prefs = new File(work, ShareManifest.ENTRY_PREFS);
-            try (OutputStream out = new FileOutputStream(prefs)) {
-                out.write(PrefsDataStore.exportJson().getBytes(StandardCharsets.UTF_8));
-            }
-            if (prefs.length() > 32L * 1024 * 1024) throw new IOException("设置数据超过 32 MB");
+            File room = new File(work, ShareManifest.ENTRY_ROOM);
+            // Match configuration-import lock order. Freeze both payloads before doing ZIP work.
+            boolean hasRoom = AppDataManager.runOnDb(() -> PrefsDataStore.runWithRollback(() -> {
+                try (OutputStream out = new FileOutputStream(prefs)) {
+                    out.write(PrefsDataStore.exportJson().getBytes(StandardCharsets.UTF_8));
+                }
+                if (prefs.length() > 32L * 1024 * 1024) throw new IOException("设置数据超过 32 MB");
+                boolean copied = AppDataManager.backup(room);
+                if (copied) {
+                    if (room.length() > 512L * 1024 * 1024) throw new IOException("数据库超过 512 MB");
+                    AppDataManager.validateBackup(room);
+                }
+                return copied;
+            }));
             entries.put(ShareManifest.ENTRY_PREFS, prefs);
             List<String> domains = new ArrayList<>();
             domains.add("prefs");
-            File room = new File(work, ShareManifest.ENTRY_ROOM);
-            boolean hasRoom = AppDataManager.backup(room);
             if (hasRoom) {
-                if (room.length() > 512L * 1024 * 1024) throw new IOException("数据库超过 512 MB");
                 entries.put(ShareManifest.ENTRY_ROOM, room);
                 domains.add("room");
             }
@@ -61,9 +68,7 @@ public final class BackupArchive {
             temporary = File.createTempFile("mbox_backup_", ".tmp", backupDirectory);
             ShareArchives.zip(entries, temporary);
             if (temporary.length() > MAX_BACKUP_BYTES) throw new IOException("备份包超过 1 GB");
-            File target = new File(backupDirectory,
-                    new java.text.SimpleDateFormat("yyyy-MM-dd-HHmmss-SSS", java.util.Locale.ROOT)
-                            .format(new java.util.Date()) + ".zip");
+            File target = uniqueBackupFile(backupDirectory);
             if (!temporary.renameTo(target)) throw new IOException("无法保存备份包");
             temporary = null;
             return target;
@@ -75,6 +80,15 @@ public final class BackupArchive {
 
     /** Source backup is retained; the temporary imported ZIP and unpacked files are always removed. */
     public String restore(File source) throws Exception {
+        return restore(source, false);
+    }
+
+    /** Protected snapshots replace transferable preferences and preserve an originally absent DB. */
+    public String restoreSystem(File source) throws Exception {
+        return restore(source, true);
+    }
+
+    private String restore(File source, boolean systemSnapshot) throws Exception {
         if (source == null || !source.isFile() || source.length() > MAX_BACKUP_BYTES)
             throw new IOException("备份文件无效或超过 1 GB");
         File copied = File.createTempFile("mbox_restore_", ".zip", context.getCacheDir());
@@ -108,10 +122,13 @@ public final class BackupArchive {
             if (manifest.domains().contains("room") && (!room.isFile() || !sqlite(room)))
                 throw new IOException("数据库文件无效");
             boolean roomOk = manifest.domains().contains("room") && AppDataManager.restore(room);
-            int count = PrefsDataStore.importJson(json);
+            if (systemSnapshot && !manifest.domains().contains("room")) AppDataManager.restoreMissingDatabase();
+            String migrated = BackupSettingsCompat.migrateLegacyVideoPurify(json);
+            int count = systemSnapshot ? PrefsDataStore.replaceTransferableJson(migrated)
+                    : PrefsDataStore.importJson(migrated);
             if (count < 0) throw new IOException(roomOk
                     ? "数据库已恢复，但设置写入失败，请重试设置恢复" : "设置写入失败");
-            if (count <= 0 && !roomOk) throw new IOException("备份中无可恢复数据");
+            if (count <= 0 && !roomOk && !systemSnapshot) throw new IOException("备份中无可恢复数据");
             return "设置/订阅" + (roomOk ? "、播放历史/收藏" : "") + " 已恢复";
         } finally {
             copied.delete();
@@ -123,6 +140,16 @@ public final class BackupArchive {
         File dir = new File(context.getCacheDir(), "backup_work_" + UUID.randomUUID());
         if (!dir.mkdir()) throw new IOException("无法创建临时目录");
         return dir;
+    }
+
+    private static File uniqueBackupFile(File directory) throws IOException {
+        String timestamp = new java.text.SimpleDateFormat("yyyy-MM-dd-HH-mm", java.util.Locale.ROOT)
+                .format(new java.util.Date());
+        for (int number = 1; number < 10_000; number++) {
+            File target = new File(directory, timestamp + (number == 1 ? "" : "-" + number) + ".zip");
+            if (!target.exists()) return target;
+        }
+        throw new IOException("无法为备份生成唯一文件名");
     }
 
     private static byte[] read(File file, long max) throws IOException {

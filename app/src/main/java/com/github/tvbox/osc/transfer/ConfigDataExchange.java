@@ -72,7 +72,8 @@ public final class ConfigDataExchange {
         categories.add(category("themes", "自定义主题", themes.size()));
         categories.add(category("settings", "我的设置", settings().size()));
         categories.add(category("history", "历史记录", RoomDataManger.getAllVodRecord(MAX_HISTORY).size()
-                + SubscriptionConfig.getSearchHistory().size()));
+                + SubscriptionConfig.getSearchHistory().size()
+                + SubscriptionConfig.getSearchFavorites().size()));
         result.add("categories", categories);
         JsonArray themeList = new JsonArray();
         for (ThemeDef theme : themes) {
@@ -123,6 +124,7 @@ public final class ConfigDataExchange {
                 List<VodInfo> history = RoomDataManger.getAllVodRecord(MAX_HISTORY);
                 result.add("videos", HISTORY_EXPORT_GSON.toJsonTree(history));
                 result.add("searches", GSON.toJsonTree(SubscriptionConfig.getSearchHistory()));
+                result.add("searchFavorites", GSON.toJsonTree(SubscriptionConfig.getSearchFavorites()));
                 break;
             }
             case "themes": {
@@ -180,8 +182,13 @@ public final class ConfigDataExchange {
             throw new IOException("主题包无效或过大");
         ThemeArchive.ImportResult imported = ThemeArchive.importFrom(archive);
         if (!imported.ok()) throw new IOException(imported.error);
+        if (!imported.warnings.isEmpty())
+            throw new IOException("主题配置未能完整导入：" + android.text.TextUtils.join("、", imported.warnings));
         ThemeDef def = imported.def;
-        if (ThemeStore.isNameTaken(def.getName(), "")) return 0;
+        if (ThemeStore.isNameTaken(def.getName(), "")) {
+            ThemeStore.gc();
+            return 0;
+        }
         def.setId("");
         def.setCreatedAt(0L);
         ThemeStore.SaveResult saved = ThemeStore.save(def);
@@ -227,6 +234,10 @@ public final class ConfigDataExchange {
     }
 
     private String storeLocalSubscription(String content, String suggested) throws Exception {
+        return SubscriptionImportFiles.runLocked(() -> storeLocalSubscriptionLocked(content, suggested));
+    }
+
+    private String storeLocalSubscriptionLocked(String content, String suggested) throws Exception {
         byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
         if (bytes.length > 8 * 1024 * 1024) return "";
         File external = context.getExternalFilesDir(null);
@@ -290,6 +301,7 @@ public final class ConfigDataExchange {
         SystemConfig.importConfig(system);
         Set<String> playerKeys = new HashSet<>(java.util.Arrays.asList("play_type", "play_render", "play_scale",
                 "play_time_step", "ijk_codec", "ijk_cache_play", "background_play_type", "video_purify",
+                "video_purify_mode",
                 "video_speed", "subtitle_open", "subtitle_text_size", "subtitle_time_delay"));
         Map<String, Object> player = new LinkedHashMap<>(values);
         player.keySet().retainAll(playerKeys);
@@ -307,15 +319,14 @@ public final class ConfigDataExchange {
         for (JsonElement element : array(data, "videos")) {
             if (added >= 1000) break;
             if (!element.isJsonObject()) continue;
-            try {
-                VodInfo video = GSON.fromJson(element, VodInfo.class);
-                if (video == null || video.id == null || video.id.isEmpty()
-                        || video.sourceKey == null || video.sourceKey.isEmpty()) continue;
-                // 同一影片以本机观看进度为准，重复导入不能把它回退到旧备份位置。
-                if (HistoryRepositories.history().get(video.sourceKey, video.id) != null) continue;
-                HistoryRepositories.history().save(video.sourceKey, video);
-                added++;
-            } catch (Throwable ignored) { }
+            VodInfo video = GSON.fromJson(element, VodInfo.class);
+            if (video == null || video.id == null || video.id.isEmpty()
+                    || video.sourceKey == null || video.sourceKey.isEmpty()) continue;
+            // 同一影片以本机观看进度为准，重复导入不能把它回退到旧备份位置。
+            if (HistoryRepositories.history().get(video.sourceKey, video.id) != null) continue;
+            // 解析或落盘失败必须交给外层事务回滚，不能吞掉错误后报告导入成功。
+            HistoryRepositories.history().save(video.sourceKey, video);
+            added++;
         }
         List<String> searches = new ArrayList<>(SubscriptionConfig.getSearchHistory());
         for (JsonElement element : array(data, "searches")) {
@@ -327,6 +338,17 @@ public final class ConfigDataExchange {
             }
         }
         SubscriptionConfig.setSearchHistory(searches);
+        List<String> favorites = new ArrayList<>(SubscriptionConfig.getSearchFavorites());
+        Set<String> favoriteSet = new HashSet<>(favorites);
+        for (JsonElement element : array(data, "searchFavorites")) {
+            if (!element.isJsonPrimitive()) continue;
+            String word = element.getAsString().trim();
+            if (!word.isEmpty() && favoriteSet.add(word)) {
+                favorites.add(word);
+                added++;
+            }
+        }
+        SubscriptionConfig.setSearchFavorites(favorites);
         return added;
     }
 

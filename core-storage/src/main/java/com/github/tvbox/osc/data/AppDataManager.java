@@ -35,6 +35,7 @@ public class AppDataManager {
     private static final String DB_NAME = "tvbox";
     private static AppDataManager manager;
     private static AppDataBase dbInstance;
+    private static volatile Thread dbThread;
 
     /**
      * Room 专用单线程执行器:所有 DAO 访问都必须经由 {@link #runOnDb} 提交到该线程执行,
@@ -44,6 +45,7 @@ public class AppDataManager {
     private static final ExecutorService DB_EXECUTOR = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "tvbox-room");
         t.setDaemon(true);
+        dbThread = t;
         return t;
     });
 
@@ -109,8 +111,12 @@ public class AppDataManager {
         return DB_NAME + ".v" + DB_FILE_VERSION + ".db";
     }
 
-    /** 在 Room 专用线程上同步执行一个写/读任务(阻塞调用线程,保证串行)。禁止在任务内再次调用本方法(会死锁) */
+    /** 在 Room 专用线程上同步执行一个写/读任务(阻塞其他线程,保证串行)；专用线程内可重入。 */
     public static void runOnDb(Runnable action) {
+        if (Thread.currentThread() == dbThread) {
+            action.run();
+            return;
+        }
         try {
             DB_EXECUTOR.submit(action).get();
         } catch (InterruptedException e) {
@@ -129,8 +135,9 @@ public class AppDataManager {
         DB_EXECUTOR.execute(action);
     }
 
-    /** 在 Room 专用线程上同步执行并返回结果(阻塞调用线程,保证串行)。禁止在任务内再次调用本方法(会死锁) */
+    /** 在 Room 专用线程上同步执行并返回结果(阻塞其他线程,保证串行)；专用线程内可重入。 */
     public static <T> T runOnDb(Callable<T> action) {
+        if (Thread.currentThread() == dbThread) return callUnchecked(action);
         Future<T> future = DB_EXECUTOR.submit(action);
         try {
             return future.get();
@@ -142,6 +149,55 @@ public class AppDataManager {
             if (cause instanceof RuntimeException) throw (RuntimeException) cause;
             if (cause instanceof Error) throw (Error) cause;
             throw new RuntimeException(cause == null ? e : cause);
+        }
+    }
+
+    /** 操作已成功但事务提交标记或结束失败，数据库提交状态无法确认。 */
+    public static final class TransactionCompletionException extends IllegalStateException {
+        private TransactionCompletionException(Throwable cause) {
+            super("数据库事务提交或结束失败，提交状态需要检查", cause);
+        }
+    }
+
+    /**
+     * 在 Room 专用线程上运行一个数据库事务。操作失败时不标记成功，由 Room 回滚；
+     * 受检异常以 RuntimeException 包装并保留原始 cause。事务结束失败时提交状态需检查。
+     */
+    public static <T> T runInTransaction(Callable<T> action) {
+        if (action == null) throw new IllegalArgumentException("事务操作不能为空");
+        return runOnDb(() -> {
+            AppDataBase db = get();
+            db.beginTransaction();
+            Throwable failure = null;
+            try {
+                T result = callUnchecked(action);
+                try {
+                    db.setTransactionSuccessful();
+                } catch (RuntimeException | Error completionError) {
+                    throw new TransactionCompletionException(completionError);
+                }
+                return result;
+            } catch (RuntimeException | Error error) {
+                failure = error;
+                throw error;
+            } finally {
+                try {
+                    db.endTransaction();
+                } catch (RuntimeException | Error endError) {
+                    if (failure != null) failure.addSuppressed(endError);
+                    else throw new TransactionCompletionException(endError);
+                }
+            }
+        });
+    }
+
+    private static <T> T callUnchecked(Callable<T> action) {
+        try {
+            return action.call();
+        } catch (RuntimeException | Error error) {
+            throw error;
+        } catch (Exception error) {
+            throw new RuntimeException(error);
         }
     }
 
@@ -193,6 +249,38 @@ public class AppDataManager {
             if (e.getCause() instanceof IOException) throw (IOException) e.getCause();
             throw e;
         }
+    }
+
+    /** 校验已生成的数据库备份；不修改运行中的 Room 数据库。 */
+    public static void validateBackup(File path) throws IOException {
+        if (path == null || !path.isFile() || path.length() == 0
+                || path.length() > 512L * 1024L * 1024L)
+            throw new IOException("备份数据库不存在或超过 512 MB");
+        validateRestoreDatabase(path);
+    }
+
+    /** 将恢复前原本不存在的数据库恢复为缺失状态，且只触及本应用数据库及其 sidecar。 */
+    public static void restoreMissingDatabase() throws IOException {
+        try {
+            runOnDb(() -> {
+                if (dbInstance != null) dbInstance.close();
+                dbInstance = null;
+                File db = dbFile();
+                deleteDatabaseFile(new File(db.getPath() + "-journal"));
+                deleteDatabaseFile(new File(db.getPath() + "-wal"));
+                deleteDatabaseFile(new File(db.getPath() + "-shm"));
+                deleteDatabaseFile(db);
+                return null;
+            });
+        } catch (RuntimeException error) {
+            if (error.getCause() instanceof IOException) throw (IOException) error.getCause();
+            throw new IOException("无法恢复数据库缺失状态", error);
+        }
+    }
+
+    private static void deleteDatabaseFile(File file) throws IOException {
+        if (file.exists() && !file.delete())
+            throw new IOException("无法删除数据库文件: " + file.getName());
     }
 
     public static boolean restore(final File path) throws IOException {
