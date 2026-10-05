@@ -1,6 +1,8 @@
 package com.github.tvbox.osc.util;
 
 import java.net.URI;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -62,13 +64,13 @@ public final class M3u8Purifier {
                     Matcher matcher = URI_ATTRIBUTE.matcher(line);
                     StringBuffer replacement = new StringBuffer();
                     while (matcher.find()) {
-                        String absolute = base.resolve(URI.create(matcher.group(1))).toString();
+                        String absolute = resolvePlaylistUri(base, matcher.group(1));
                         matcher.appendReplacement(replacement, Matcher.quoteReplacement("URI=\"" + absolute + "\""));
                     }
                     matcher.appendTail(replacement);
                     result.append(replacement);
                 } else if (!line.trim().isEmpty() && !line.trim().startsWith("#")) {
-                    result.append(base.resolve(URI.create(line.trim())));
+                    result.append(resolvePlaylistUri(base, line.trim()));
                 } else {
                     result.append(line);
                 }
@@ -77,6 +79,144 @@ public final class M3u8Purifier {
             return null;
         }
         return result.toString();
+    }
+
+    private static String resolvePlaylistUri(URI base, String value) {
+        URI reference = URI.create(value);
+        if (!reference.isAbsolute() && reference.getRawAuthority() == null
+                && (reference.getRawPath() == null || reference.getRawPath().isEmpty())
+                && reference.getRawQuery() != null) {
+            // java.net.URI.resolve("?segment=1") drops the base filename; a query-only HLS
+            // reference instead targets the same playlist path with a different query.
+            String text = base.toString();
+            int end = text.length();
+            int query = text.indexOf('?');
+            int fragment = text.indexOf('#');
+            if (query >= 0) end = Math.min(end, query);
+            if (fragment >= 0) end = Math.min(end, fragment);
+            return text.substring(0, end) + reference;
+        }
+        return base.resolve(reference).toString();
+    }
+
+    /**
+     * Keep the existing minority-URL filter as the first pass, then remove ad breaks explicitly
+     * delimited by CUE-OUT/CUE-IN when the playlist is simple enough to rewrite safely.
+     * A missing or ambiguous cue leaves the first pass result unchanged.
+     */
+    public static String removeAds(String playlistUrl, String m3u8content) {
+        if (playlistUrl == null) return null;
+        String minorityResult = removeMinorityUrl(playlistDirectory(playlistUrl), m3u8content);
+        String cueResult = removeCueSignaledAds(playlistUrl,
+                minorityResult == null ? m3u8content : minorityResult);
+        return cueResult == null ? minorityResult : cueResult;
+    }
+
+    private static String playlistDirectory(String playlistUrl) {
+        int end = playlistUrl.length();
+        int query = playlistUrl.indexOf('?');
+        int fragment = playlistUrl.indexOf('#');
+        if (query >= 0) end = Math.min(end, query);
+        if (fragment >= 0) end = Math.min(end, fragment);
+        int scheme = playlistUrl.indexOf("://");
+        int slash = playlistUrl.lastIndexOf('/', end - 1);
+        if (scheme >= 0 && slash <= scheme + 2) return playlistUrl.substring(0, end) + "/";
+        return slash >= 0 ? playlistUrl.substring(0, slash + 1) : "";
+    }
+
+    private static String removeCueSignaledAds(String playlistUrl, String playlist) {
+        String content = stripBom(playlist);
+        if (!content.startsWith("#EXTM3U")) return null;
+        String lineBreak = content.contains("\r\n") ? "\r\n" : "\n";
+        String[] lines = content.split("\\r?\\n", -1);
+        if (!lines[0].trim().equals("#EXTM3U")) return null;
+        boolean ended = false;
+        int totalSegments = 0;
+        for (String raw : lines) {
+            String line = raw.trim();
+            if (line.equals("#EXT-X-ENDLIST")) ended = true;
+            // Removing segments can change implicit IVs, byte offsets, initialization sections,
+            // timing, or rendition alignment. Keep the old filter's result in these cases.
+            if (line.startsWith("#EXT-X-KEY") || line.startsWith("#EXT-X-BYTERANGE")
+                    || line.startsWith("#EXT-X-MAP") || line.startsWith("#EXT-X-MEDIA-SEQUENCE")
+                    || line.startsWith("#EXT-X-DISCONTINUITY")
+                    || line.startsWith("#EXT-X-PROGRAM-DATE-TIME")
+                    || line.startsWith("#EXT-X-DATERANGE")
+                    || line.startsWith("#EXT-X-START:")
+                    || line.startsWith("#EXT-X-STREAM-INF:")
+                    || line.startsWith("#EXT-X-I-FRAME-STREAM-INF:")
+                    || line.startsWith("#EXT-X-MEDIA:")) return null;
+            if (!line.isEmpty() && line.charAt(0) != '#') totalSegments++;
+        }
+        if (!ended || totalSegments < 2) return null;
+
+        List<int[]> adSpans = new ArrayList<>();
+        int start = -1;
+        int segments = 0;
+        int removedSegments = 0;
+        boolean pendingExtinf = false;
+        boolean seenEndlist = false;
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i].trim();
+            if (line.isEmpty()) continue;
+            if (line.equals("#EXTM3U")) {
+                if (i != 0) return null;
+            } else if (line.startsWith("#EXTINF:")) {
+                if (pendingExtinf || seenEndlist) return null;
+                pendingExtinf = true;
+            } else if (isCueOut(line)) {
+                if (start >= 0 || pendingExtinf || seenEndlist) return null;
+                start = i;
+                segments = 0;
+            } else if (isCueIn(line)) {
+                if (start < 0 || segments == 0 || pendingExtinf || seenEndlist) return null;
+                adSpans.add(new int[]{start, i});
+                removedSegments += segments;
+                start = -1;
+            } else if (isCueOutCont(line) || line.startsWith("#EXT-OATCLS-SCTE35")) {
+                if (start < 0 || pendingExtinf || seenEndlist) return null;
+            } else if (line.equals("#EXT-X-ENDLIST")) {
+                if (start >= 0 || pendingExtinf || seenEndlist) return null;
+                seenEndlist = true;
+            } else if (line.charAt(0) == '#') {
+                // Keep only unambiguous playlist-wide tags outside a cue span. A tag between
+                // EXTINF and URI, or within a removed span, may change the next segment.
+                if (start >= 0 || pendingExtinf || seenEndlist) return null;
+            } else {
+                if (!pendingExtinf || seenEndlist) return null;
+                pendingExtinf = false;
+                if (start >= 0) segments++;
+            }
+        }
+        if (start >= 0 || pendingExtinf || !seenEndlist || adSpans.isEmpty()
+                || removedSegments >= totalSegments) return null;
+
+        StringBuilder filtered = new StringBuilder(content.length());
+        int spanIndex = 0;
+        for (int i = 0; i < lines.length; i++) {
+            if (spanIndex < adSpans.size() && i == adSpans.get(spanIndex)[0]) {
+                i = adSpans.get(spanIndex)[1];
+                spanIndex++;
+                continue;
+            }
+            if (filtered.length() > 0) filtered.append(lineBreak);
+            filtered.append(lines[i]);
+        }
+        // The cleaned list is served from loopback, so all remaining relative URIs must
+        // continue to resolve against the original playlist URL (including query-only URIs).
+        return normalizeForLocalPlayback(playlistUrl, filtered.toString());
+    }
+
+    private static boolean isCueOut(String line) {
+        return line.equals("#EXT-X-CUE-OUT") || line.startsWith("#EXT-X-CUE-OUT:");
+    }
+
+    private static boolean isCueIn(String line) {
+        return line.equals("#EXT-X-CUE-IN") || line.startsWith("#EXT-X-CUE-IN:");
+    }
+
+    private static boolean isCueOutCont(String line) {
+        return line.equals("#EXT-X-CUE-OUT-CONT") || line.startsWith("#EXT-X-CUE-OUT-CONT:");
     }
 
     /**

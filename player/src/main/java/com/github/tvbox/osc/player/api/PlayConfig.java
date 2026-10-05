@@ -2,6 +2,8 @@ package com.github.tvbox.osc.player.api;
 
 import com.github.tvbox.osc.config.PrefsDataStore;
 
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -14,7 +16,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * 对外只暴露 查询 / 操作 / 订阅 / 备份：
  * <ul>
  *   <li>查询：getPlayType / getRenderType / getScaleType / getTimeStep / getIjkCodec / isIjkCachePlay /
- *       getBackgroundPlayType / isVideoPurify / getVideoSpeed / 字幕三件套</li>
+ *       getBackgroundPlayType / getVideoPurifyMode / getVideoSpeed / 字幕三件套</li>
  *   <li>操作：对应 setXxx（内部校验 + 持久化 + 广播变更）</li>
  *   <li>订阅：{@link #subscribe(Listener)}——设置页等关注方刷新 UI</li>
  *   <li>备份：{@link #exportConfig()} / {@link #importConfig(Map)}（BackupDialog 聚合）</li>
@@ -32,12 +34,20 @@ public final class PlayConfig {
     private static final String KEY_IJK_CACHE_PLAY = "ijk_cache_play";
     private static final String KEY_BACKGROUND_PLAY_TYPE = "background_play_type";
     private static final String KEY_VIDEO_PURIFY = "video_purify";
+    private static final String KEY_VIDEO_PURIFY_MODE = "video_purify_mode";
     private static final String KEY_VIDEO_SPEED = "video_speed";
     private static final String KEY_SUBTITLE_OPEN = "subtitle_open";
     private static final String KEY_SUBTITLE_TEXT_SIZE = "subtitle_text_size";
     private static final String KEY_SUBTITLE_TIME_DELAY = "subtitle_time_delay";
 
     private static final List<Listener> listeners = new CopyOnWriteArrayList<>();
+
+    public static final int VIDEO_PURIFY_OFF = 0;
+    public static final int VIDEO_PURIFY_FILTER = 1;
+    public static final int VIDEO_PURIFY_ENHANCED = 2;
+    public static final float DEFAULT_VIDEO_SPEED = 3.0f;
+    private static final List<Float> VIDEO_SPEED_OPTIONS = Collections.unmodifiableList(
+            Arrays.asList(2.0f, 3.0f, 4.0f, 5.0f));
 
     private PlayConfig() {
     }
@@ -86,14 +96,27 @@ public final class PlayConfig {
         return mode >= 0 && mode <= 2 ? mode : 0;
     }
 
-    /** 视频净化（播放页净化控件），默认开 */
-    public static boolean isVideoPurify() {
-        return PrefsDataStore.getBoolean(KEY_VIDEO_PURIFY, true);
+    /** 广告过滤模式。旧布尔设置映射到关闭/原有过滤，默认仍是原有过滤。 */
+    public static int getVideoPurifyMode() {
+        int mode = PrefsDataStore.getInt(KEY_VIDEO_PURIFY_MODE, -1);
+        if (mode >= VIDEO_PURIFY_OFF && mode <= VIDEO_PURIFY_ENHANCED) return mode;
+        return PrefsDataStore.getBoolean(KEY_VIDEO_PURIFY, true)
+                ? VIDEO_PURIFY_FILTER : VIDEO_PURIFY_OFF;
     }
 
-    /** 长按倍速值，默认 2.0 */
+    /** 兼容旧调用方：增强过滤同样属于已开启。 */
+    public static boolean isVideoPurify() {
+        return getVideoPurifyMode() != VIDEO_PURIFY_OFF;
+    }
+
+    /** 长按倍速值，未设置时默认 3.0；已保存的选择保持不变。 */
     public static float getVideoSpeed() {
-        return PrefsDataStore.getFloat(KEY_VIDEO_SPEED, 2.0f);
+        return PrefsDataStore.getFloat(KEY_VIDEO_SPEED, DEFAULT_VIDEO_SPEED);
+    }
+
+    /** 设置页与播放页共用的长按倍速选项。 */
+    public static List<Float> getVideoSpeedOptions() {
+        return VIDEO_SPEED_OPTIONS;
     }
 
     /** 字幕开关，默认关 */
@@ -158,14 +181,21 @@ public final class PlayConfig {
         fireChanged();
     }
 
-    public static void setVideoPurify(boolean on) {
-        if (isVideoPurify() == on) return;
-        PrefsDataStore.put(KEY_VIDEO_PURIFY, on);
+    public static void setVideoPurifyMode(int mode) {
+        if (mode < VIDEO_PURIFY_OFF || mode > VIDEO_PURIFY_ENHANCED) return;
+        if (getVideoPurifyMode() == mode && PrefsDataStore.contains(KEY_VIDEO_PURIFY_MODE)) return;
+        PrefsDataStore.put(KEY_VIDEO_PURIFY_MODE, mode);
+        // Retain the old key for older backups/app versions; the new mode key is authoritative.
+        PrefsDataStore.put(KEY_VIDEO_PURIFY, mode != VIDEO_PURIFY_OFF);
         fireChanged();
     }
 
+    public static void setVideoPurify(boolean on) {
+        setVideoPurifyMode(on ? VIDEO_PURIFY_FILTER : VIDEO_PURIFY_OFF);
+    }
+
     public static void setVideoSpeed(float v) {
-        if (Float.compare(getVideoSpeed(), v) == 0) return;
+        if (Float.compare(getVideoSpeed(), v) == 0 && PrefsDataStore.contains(KEY_VIDEO_SPEED)) return;
         PrefsDataStore.put(KEY_VIDEO_SPEED, v);
         fireChanged();
     }
@@ -219,6 +249,7 @@ public final class PlayConfig {
         cfg.put(KEY_IJK_CACHE_PLAY, isIjkCachePlay());
         cfg.put(KEY_BACKGROUND_PLAY_TYPE, getBackgroundPlayType());
         cfg.put(KEY_VIDEO_PURIFY, isVideoPurify());
+        cfg.put(KEY_VIDEO_PURIFY_MODE, getVideoPurifyMode());
         cfg.put(KEY_VIDEO_SPEED, getVideoSpeed());
         cfg.put(KEY_SUBTITLE_OPEN, isSubtitleOpen());
         cfg.put(KEY_SUBTITLE_TEXT_SIZE, getSubtitleTextSize());
@@ -236,7 +267,18 @@ public final class PlayConfig {
         if ((v = cfg.get(KEY_IJK_CODEC)) instanceof String) setIjkCodec((String) v);
         if ((v = cfg.get(KEY_IJK_CACHE_PLAY)) instanceof Boolean) setIjkCachePlay((Boolean) v);
         if ((v = cfg.get(KEY_BACKGROUND_PLAY_TYPE)) instanceof Integer) setBackgroundPlayType((Integer) v);
-        if ((v = cfg.get(KEY_VIDEO_PURIFY)) instanceof Boolean) setVideoPurify((Boolean) v);
+        boolean importedPurifyMode = false;
+        if ((v = cfg.get(KEY_VIDEO_PURIFY_MODE)) instanceof Number) {
+            double value = ((Number) v).doubleValue();
+            int mode = (int) value;
+            if (value == mode && mode >= VIDEO_PURIFY_OFF && mode <= VIDEO_PURIFY_ENHANCED) {
+                setVideoPurifyMode(mode);
+                importedPurifyMode = true;
+            }
+        }
+        if (!importedPurifyMode && (v = cfg.get(KEY_VIDEO_PURIFY)) instanceof Boolean) {
+            setVideoPurify((Boolean) v);
+        }
         if ((v = cfg.get(KEY_VIDEO_SPEED)) instanceof Number) setVideoSpeed(((Number) v).floatValue());
         if ((v = cfg.get(KEY_SUBTITLE_OPEN)) instanceof Boolean) setSubtitleOpen((Boolean) v);
         if ((v = cfg.get(KEY_SUBTITLE_TEXT_SIZE)) instanceof Integer) setSubtitleTextSize((Integer) v);

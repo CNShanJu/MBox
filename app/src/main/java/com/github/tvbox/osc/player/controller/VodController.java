@@ -816,12 +816,12 @@ public class VodController extends BaseController implements PlaybackSettingsCon
 
     @Override public boolean supportsVideoPurify() { return true; }
 
-    @Override public boolean isVideoPurifyEnabled() { return PlayConfig.isVideoPurify(); }
+    @Override public int getVideoPurifyMode() { return PlayConfig.getVideoPurifyMode(); }
 
     @Override
-    public void setVideoPurifyEnabled(boolean enabled) {
-        if (PlayConfig.isVideoPurify() == enabled) return;
-        PlayConfig.setVideoPurify(enabled);
+    public void setVideoPurifyMode(int mode) {
+        if (PlayConfig.getVideoPurifyMode() == mode) return;
+        PlayConfig.setVideoPurifyMode(mode);
         if (listener != null) listener.replay(false);
     }
     // ------------------------------------------------------------------

@@ -19,6 +19,7 @@ import org.junit.Test
 class M3u8PurifierTest {
 
     private val baseDir = "https://cdn.example.com/hls/video/"
+    private val playlistUrl = "${baseDir}index.m3u8?token=1"
     private val header = "#EXTM3U\n"
     private val headerCrlf = "#EXTM3U\r\n"
 
@@ -184,5 +185,143 @@ class M3u8PurifierTest {
         assertEquals(5, nonEmpty.size)
         assertEquals(2, nonEmpty.count { it.startsWith("#EXTINF") })
         assertEquals(2, nonEmpty.count { !it.startsWith("#") })
+    }
+
+    @Test
+    fun cueAdBreakRemovesSamePrefixSegmentsMissedByMinorityFilter() {
+        val content = listOf(
+            "#EXTM3U",
+            "#EXT-X-TARGETDURATION:4",
+            "#EXTINF:4,", "seg_00001.ts",
+            "#EXTINF:4,", "seg_00002.ts",
+            "#EXT-X-CUE-OUT:8",
+            "#EXTINF:4,", "seg_00003.ts",
+            "#EXT-X-CUE-OUT-CONT:4/8",
+            "#EXTINF:4,", "seg_00004.ts",
+            "#EXT-X-CUE-IN",
+            "#EXTINF:4,", "seg_00005.ts",
+            "#EXT-X-ENDLIST",
+        ).joinToString("\r\n")
+
+        assertNull(M3u8Purifier.removeMinorityUrl(baseDir, content))
+        val out = M3u8Purifier.removeAds(playlistUrl, content)!!
+        assertTrue(out.contains("https://cdn.example.com/hls/video/seg_00001.ts"))
+        assertTrue(out.contains("https://cdn.example.com/hls/video/seg_00005.ts"))
+        assertTrue(!out.contains("seg_00003.ts"))
+        assertTrue(!out.contains("seg_00004.ts"))
+        assertTrue(!out.contains("#EXT-X-CUE-"))
+        assertEquals(3, out.split("\r\n").count { it.startsWith("#EXTINF:") })
+    }
+
+    @Test
+    fun cuePassRemovesAdsLeftAfterExistingMinorityPass() {
+        val content = listOf(
+            "#EXTM3U",
+            "#EXTINF:4,", "movie_00001.ts",
+            "#EXTINF:4,", "movie_00002.ts",
+            "#EXT-X-CUE-OUT:8",
+            "#EXTINF:4,", "movie_00003.ts",
+            "#EXTINF:4,", "ads__00004.ts",
+            "#EXT-X-CUE-IN",
+            "#EXTINF:4,", "movie_00005.ts",
+            "#EXT-X-ENDLIST",
+        ).joinToString("\n")
+
+        val old = M3u8Purifier.removeMinorityUrl(baseDir, content)!!
+        assertTrue(old.contains("movie_00003.ts"))
+        assertTrue(!old.contains("ads__00004.ts"))
+        val out = M3u8Purifier.removeAds(playlistUrl, content)!!
+        assertTrue(!out.contains("movie_00003.ts"))
+        assertTrue(!out.contains("ads__00004.ts"))
+        assertTrue(out.contains("movie_00005.ts"))
+    }
+
+    @Test
+    fun incompleteOrComplexCuePlaylistKeepsExistingFallback() {
+        val simple = listOf(
+            "#EXTM3U",
+            "#EXTINF:4,", "seg_00001.ts",
+            "#EXT-X-CUE-OUT:4",
+            "#EXTINF:4,", "seg_00002.ts",
+            "#EXTINF:4,", "seg_00003.ts",
+            "#EXT-X-ENDLIST",
+        ).joinToString("\n")
+        assertNull(M3u8Purifier.removeAds(playlistUrl, simple)) // no CUE-IN
+        assertNull(M3u8Purifier.removeAds(playlistUrl,
+            simple.replace("#EXT-X-CUE-OUT:4", "#EXT-X-CUE-IN")))
+        assertNull(M3u8Purifier.removeAds(playlistUrl,
+            simple.replace("#EXT-X-CUE-OUT:4", "#EXT-X-CUE-OUT:4\n#EXT-X-CUE-OUT:4")))
+        assertNull(M3u8Purifier.removeAds(playlistUrl,
+            simple.replace("#EXT-X-ENDLIST", "#EXT-X-CUE-IN"))) // refreshing playlist
+
+        val paired = simple.replace("#EXT-X-ENDLIST", "#EXT-X-CUE-IN\n#EXT-X-ENDLIST")
+        for (statefulTag in listOf(
+            "#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\"",
+            "#EXT-X-BYTERANGE:100@0",
+            "#EXT-X-MAP:URI=\"init.mp4\"",
+            "#EXT-X-MEDIA-SEQUENCE:10",
+            "#EXT-X-DISCONTINUITY",
+            "#EXT-X-PROGRAM-DATE-TIME:2026-10-05T00:00:00Z",
+            "#EXT-X-DATERANGE:ID=\"ad\",CLASS=\"ad\"",
+        )) {
+            assertNull(statefulTag, M3u8Purifier.removeAds(playlistUrl,
+                paired.replace("#EXTM3U", "#EXTM3U\n$statefulTag")))
+        }
+    }
+
+    @Test
+    fun newPassLeavesOldOutputUntouchedWithoutCueMarkers() {
+        val content = listOf(
+            "#EXTM3U",
+            "#EXTINF:4,", "seg_00001.ts",
+            "#EXTINF:4,", "seg_00002.ts",
+            "#EXTINF:4,", "adblock0000.ts",
+            "#EXT-X-ENDLIST",
+        ).joinToString("\n")
+        assertEquals(M3u8Purifier.removeMinorityUrl(baseDir, content),
+            M3u8Purifier.removeAds(playlistUrl, content))
+        assertEquals(M3u8Purifier.removeMinorityUrl(baseDir, content),
+            M3u8Purifier.removeAds("${baseDir}index.m3u8?redirect=/another/path", content))
+    }
+
+    @Test
+    fun cuePassResolvesQueryOnlySegmentUrisAgainstPlaylistUrl() {
+        val content = listOf(
+            "#EXTM3U",
+            "#EXTINF:4,", "?segment=1",
+            "#EXT-X-CUE-OUT:4",
+            "#EXTINF:4,", "?segment=2",
+            "#EXT-X-CUE-IN",
+            "#EXTINF:4,", "?segment=3",
+            "#EXT-X-ENDLIST",
+        ).joinToString("\n")
+
+        val out = M3u8Purifier.removeAds(playlistUrl, content)!!
+        assertTrue(out.contains("https://cdn.example.com/hls/video/index.m3u8?segment=1"))
+        assertTrue(out.contains("https://cdn.example.com/hls/video/index.m3u8?segment=3"))
+        assertTrue(!out.contains("?segment=2"))
+    }
+
+    @Test
+    fun cuePassRejectsAmbiguousSegmentRecords() {
+        val clean = listOf(
+            "#EXTM3U",
+            "#EXTINF:4,", "seg_00001.ts",
+            "#EXT-X-CUE-OUT:4",
+            "#EXTINF:4,", "seg_00002.ts",
+            "#EXT-X-CUE-IN",
+            "#EXTINF:4,", "seg_00003.ts",
+            "#EXT-X-ENDLIST",
+        ).joinToString("\n")
+        assertNotNull(M3u8Purifier.removeAds(playlistUrl, clean))
+        for (malformed in listOf(
+            clean.replace("#EXT-X-CUE-OUT:4", "#EXT-X-CUE-OUT:4\nseg_00009.ts"),
+            clean.replace("#EXT-X-CUE-OUT:4", "#EXTINF:4,\n#EXT-X-CUE-OUT:4"),
+            clean.replace("#EXT-X-CUE-IN", "#EXTINF:4,\n#EXT-X-CUE-IN"),
+            clean.replace("#EXTINF:4,\nseg_00002.ts", "#EXTINF:4,\n#EXTINF:4,\nseg_00002.ts"),
+            clean.replace("#EXTINF:4,\nseg_00002.ts", "#EXTINF:4,\n#EXT-X-ASSET:ID=\"ad\"\nseg_00002.ts"),
+        )) {
+            assertNull(malformed, M3u8Purifier.removeAds(playlistUrl, malformed))
+        }
     }
 }

@@ -20,6 +20,7 @@ import com.lxj.xpopup.core.BasePopupView;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 
 /**
  * 播放设置内容协调器（合并 PlayingControlDialog / PlayingControlRightDialog 的重复 UI 逻辑）。
@@ -65,6 +66,7 @@ final class PlayingControlPanel {
     }
 
     private void initView() {
+        mBinding.longPressSpeed.setText(longPressSpeedLabel(mController.getLongPressSpeed()));
         mBinding.scale.setText(mController.settingsScaleBtn().getText());
         mBinding.playTimeStart.setText(mController.settingsTimeStartBtn().getText());
         mBinding.playTimeEnd.setText(mController.settingsTimeSkipBtn().getText());
@@ -73,7 +75,7 @@ final class PlayingControlPanel {
         mBinding.renderMode.setText(PlayerHelper.getRenderName(mController.getRenderType()));
         mBinding.videoPurifySection.setVisibility(mController.supportsVideoPurify()
                 ? View.VISIBLE : View.GONE);
-        updateVideoPurifyUi(mController.isVideoPurifyEnabled());
+        updateVideoPurifyUi(mController.getVideoPurifyMode());
         mBinding.backgroundPlay.setText(BackgroundPlaySettings.currentLabel());
         mBinding.lanPush.setVisibility(mController.supportsLanPush()
                 && ControlManager.get().lanState() == ControlManager.LAN_ACTIVE
@@ -82,7 +84,8 @@ final class PlayingControlPanel {
         updateSpeedUi();
         // 「点击型」小组件按钮的点击特效(按下整键透明度 80% 再恢复):倍速那几个是"选择型",
         // 靠选中态换色反馈,不套这个特效(用户口径:"一种是选择按钮一种是点击按钮")
-        for (int id : new int[]{R.id.scale, R.id.player, R.id.decode, R.id.render_mode, R.id.background_play,
+        for (int id : new int[]{R.id.long_press_speed, R.id.scale, R.id.player, R.id.decode,
+                R.id.render_mode, R.id.video_purify_row, R.id.background_play,
                 R.id.subtitle, R.id.voice, R.id.replay, R.id.refresh, R.id.start_end_reset, R.id.lan_push}) {
             com.github.tvbox.osc.ui.kit.WidgetPressEffect.attach(mBinding.getRoot().findViewById(id));
         }
@@ -98,7 +101,8 @@ final class PlayingControlPanel {
         mBinding.speed4.setOnClickListener(view -> setSpeed(mBinding.speed4));
         mBinding.speed5.setOnClickListener(view -> setSpeed(mBinding.speed5));
 
-        // 缩放:点击直接列出所有选项选择
+        // 长按倍速走全局配置；缩放沿用当前视频的设置。两项均点击列出选项。
+        mBinding.longPressSpeed.setOnClickListener(view -> showLongPressSpeedDialog());
         mBinding.scale.setOnClickListener(view -> showScaleDialog());
         mBinding.playTimeStart.setOnClickListener(view -> changeAndUpdateText(mBinding.playTimeStart, mController.settingsTimeStartBtn()));
         mBinding.playTimeEnd.setOnClickListener(view -> changeAndUpdateText(mBinding.playTimeEnd, mController.settingsTimeSkipBtn()));
@@ -132,12 +136,7 @@ final class PlayingControlPanel {
         mBinding.player.setOnClickListener(view -> showPlayerDialog());
         mBinding.decode.setOnClickListener(view -> changeAndUpdateText(mBinding.decode, mController.settingsIjkBtn()));
         mBinding.renderMode.setOnClickListener(view -> showRenderDialog());
-        mBinding.videoPurifyRow.setOnClickListener(view -> {
-            boolean enabled = !mController.isVideoPurifyEnabled();
-            updateVideoPurifyUi(enabled);
-            mBinding.videoPurifyRow.setEnabled(false);
-            dismissWith(() -> mController.setVideoPurifyEnabled(enabled));
-        });
+        mBinding.videoPurifyRow.setOnClickListener(view -> showVideoPurifyDialog());
         mBinding.backgroundPlay.setOnClickListener(view -> showBackgroundPlayDialog());
 
         // 其他
@@ -175,6 +174,36 @@ final class PlayingControlPanel {
     private void setSpeed(TextView textView) {
         mController.setSpeed(textView.getText().toString().replace("x", ""));
         updateSpeedUi();
+    }
+
+    private static String longPressSpeedLabel(float speed) {
+        return Float.toString(speed) + "x";
+    }
+
+    /** 与设置页共用选项和持久化值；在线、本地播放器下次长按都立即读取新值。 */
+    private void showLongPressSpeedDialog() {
+        List<String> speeds = new ArrayList<>();
+        for (float speed : mController.getLongPressSpeedOptions()) {
+            speeds.add(Float.toString(speed));
+        }
+        SelectDialog<String> dialog = new SelectDialog<>(mActivity);
+        dialog.setTip("长按倍速");
+        dialog.setAdapter(new SelectDialogAdapter.SelectDialogInterface<String>() {
+            @Override
+            public void click(String value, int pos) {
+                dialog.cancel();
+                if (value == null) return;
+                mController.setLongPressSpeed(Float.parseFloat(value));
+                mBinding.longPressSpeed.setText(longPressSpeedLabel(mController.getLongPressSpeed()));
+            }
+
+            @Override
+            public String getDisplay(String value) {
+                return value == null ? "" : value + "x";
+            }
+        }, SelectDialogAdapter.stringDiff, speeds,
+                speeds.indexOf(Float.toString(mController.getLongPressSpeed())));
+        DialogCoordinator.centerInHostView(mActivity, dialog).show();
     }
 
     /** 缩放:列出所有选项直接选择 */
@@ -227,9 +256,34 @@ final class PlayingControlPanel {
         DialogCoordinator.centerInHostView(mActivity, dialog).show();
     }
 
-    private void updateVideoPurifyUi(boolean enabled) {
-        mBinding.switchVideoPurify.setChecked(enabled);
-        mBinding.videoPurifyRow.setContentDescription("广告过滤，" + (enabled ? "已开启" : "已关闭"));
+    private void updateVideoPurifyUi(int mode) {
+        String label = mActivity.getResources().getStringArray(R.array.video_purify_modes)[mode];
+        mBinding.videoPurifyRow.setText(label);
+        mBinding.videoPurifyRow.setContentDescription("广告过滤，" + label);
+    }
+
+    private void showVideoPurifyDialog() {
+        final int current = mController.getVideoPurifyMode();
+        ArrayList<String> modes = new ArrayList<>(Arrays.asList(
+                mActivity.getResources().getStringArray(R.array.video_purify_modes)));
+        SelectDialog<String> dialog = new SelectDialog<>(mActivity);
+        dialog.setTip("广告过滤");
+        dialog.setAdapter(new SelectDialogAdapter.SelectDialogInterface<String>() {
+            @Override
+            public void click(String value, int pos) {
+                dialog.cancel();
+                if (pos == current) return;
+                updateVideoPurifyUi(pos);
+                mBinding.videoPurifyRow.setEnabled(false);
+                dismissWith(() -> mController.setVideoPurifyMode(pos));
+            }
+
+            @Override
+            public String getDisplay(String value) {
+                return value;
+            }
+        }, SelectDialogAdapter.stringDiff, modes, current);
+        DialogCoordinator.centerInHostView(mActivity, dialog).show();
     }
 
     /** 渲染方式:当前视频独立选择 TextureView / SurfaceView。 */
