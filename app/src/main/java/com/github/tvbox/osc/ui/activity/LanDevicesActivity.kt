@@ -1,5 +1,7 @@
 package com.github.tvbox.osc.ui.activity
 
+import android.os.Handler
+import android.os.Looper
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.content.ContextCompat
@@ -14,13 +16,27 @@ import java.util.Date
 
 /** 局域网服务的下级页：查看和管理已配对设备。 */
 class LanDevicesActivity : BaseVbActivity<ActivityLanDevicesBinding>() {
+    private val refreshHandler = Handler(Looper.getMainLooper())
+    private val refreshTask = object : Runnable {
+        override fun run() {
+            refreshDevices()
+            refreshHandler.postDelayed(this, 10_000L)
+        }
+    }
+
     override fun init() {
         mBinding.btnRefreshDevices.setOnClickListener { refreshDevices() }
     }
 
     override fun onResume() {
         super.onResume()
-        refreshDevices()
+        refreshHandler.removeCallbacks(refreshTask)
+        refreshTask.run()
+    }
+
+    override fun onPause() {
+        refreshHandler.removeCallbacks(refreshTask)
+        super.onPause()
     }
 
     private fun refreshDevices() {
@@ -28,13 +44,13 @@ class LanDevicesActivity : BaseVbActivity<ActivityLanDevicesBinding>() {
         mBinding.llDevices.removeAllViews()
         if (!manager.isLanServing) {
             mBinding.tvDeviceCount.text = "局域网服务未运行"
-            mBinding.llDevices.addView(label("开启服务并重启应用后，已配对的设备会显示在这里。", false))
+            mBinding.llDevices.addView(label("开启局域网服务后，在线设备会显示在这里。", false))
             return
         }
-        val devices = manager.pairedDevices()
-        mBinding.tvDeviceCount.text = "已配对 ${devices.size} 台设备"
+        val devices = manager.connectedDevices()
+        mBinding.tvDeviceCount.text = "在线 ${devices.size} 台设备"
         if (devices.isEmpty()) {
-            mBinding.llDevices.addView(label("暂无设备，配对后会显示在这里。", false))
+            mBinding.llDevices.addView(label("暂无在线设备，请在其他设备上打开局域网页面。", false))
             return
         }
         devices.forEach(::addDevice)
@@ -43,16 +59,16 @@ class LanDevicesActivity : BaseVbActivity<ActivityLanDevicesBinding>() {
     private fun addDevice(device: RemoteServer.LanDevice) {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(0, dp(12), 0, dp(14))
+            setBackgroundResource(R.drawable.bg_large_round_float)
+            setPadding(dp(16), dp(14), dp(16), dp(16))
         }
         val type = if (device.kind == "browser") "浏览器" else "MBox"
         row.addView(label("${device.name} · $type", true))
         val idle = ((System.currentTimeMillis() - device.lastSeen) / 1000).coerceAtLeast(0)
         val time = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT)
             .format(Date(device.connectedAt))
-        val status = if (idle <= 60) "在线" else "暂时离线"
         val playing = device.currentTitle()
-        row.addView(label("地址 ${device.ip}\n连接于 $time · $status · 最近活动 $idle 秒前" +
+        row.addView(label("地址 ${device.ip}\n连接于 $time · 最近活动 $idle 秒前" +
             if (playing.isEmpty()) "" else "\n已推送 $playing", false))
         row.addView(label("踢出并撤销配对", true).apply {
             setTextColor(ContextCompat.getColor(this@LanDevicesActivity, R.color.text_danger))
@@ -66,7 +82,10 @@ class LanDevicesActivity : BaseVbActivity<ActivityLanDevicesBinding>() {
                 }
             }
         })
-        mBinding.llDevices.addView(row)
+        mBinding.llDevices.addView(row, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { bottomMargin = dp(12) })
     }
 
     private fun label(text: String, primary: Boolean) = TextView(this).apply {

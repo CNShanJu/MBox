@@ -20,6 +20,7 @@ import com.github.tvbox.osc.config.SystemConfig;
 import com.github.tvbox.osc.config.LanSessionConfig;
 import com.github.tvbox.osc.log.Category;
 import com.github.tvbox.osc.log.LogStore;
+import com.github.tvbox.osc.service.LanServerService;
 import com.github.tvbox.osc.transfer.ConfigDataExchange;
 import com.github.tvbox.osc.transfer.ConfigBundle;
 import com.github.tvbox.osc.transfer.SubscriptionImportFiles;
@@ -47,6 +48,7 @@ import java.net.NetworkInterface;
 import java.net.SocketException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.Calendar;
 import java.util.Comparator;
@@ -56,6 +58,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.security.SecureRandom;
@@ -79,7 +82,7 @@ import org.brotli.dec.BrotliInputStream;
  */
 public class RemoteServer extends NanoHTTPD {
     private Context mContext;
-    public static int serverPort = 9978;
+    public static volatile int serverPort = 9978;
     private boolean isStarted = false;
     private DataReceiver mDataReceiver;
     private ArrayList < RequestProcess > getRequestList = new ArrayList < > ();
@@ -99,7 +102,10 @@ public class RemoteServer extends NanoHTTPD {
     private volatile boolean sessionsPersistenceClosed;
     private static final long ACTIVE_DEVICE_WINDOW_MS = 60000;
     private static final long SESSION_WINDOW_MS = 600000;
+    private static final long MAX_PLAYBACK_TIME_MS = TimeUnit.DAYS.toMillis(7);
     private volatile EpisodeCast episodeCast;
+    /** 最近一次成功发布的浏览器投屏，不随详情页面生命周期结束。 */
+    private volatile String activeBrowserId;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
 
     public interface NextEpisodeHandler {
@@ -121,6 +127,122 @@ public class RemoteServer extends NanoHTTPD {
             this.episodes = new ArrayList<>(episodes);
             this.selectedIndex = selectedIndex;
             this.handler = handler;
+        }
+    }
+
+    /** 浏览器实际播放状态的不可变快照，仅供当前投屏页面读取。 */
+    public static final class BrowserPlaybackState {
+        public final long positionMs;
+        public final long durationMs;
+        public final boolean paused;
+        public final long updatedAtMs;
+        public final long revision;
+        public final boolean active;
+        public final boolean online;
+        public final String title;
+        public final String deviceName;
+
+        private BrowserPlaybackState(long positionMs, long durationMs, boolean paused,
+                                     long updatedAtMs, long revision, boolean online, String title,
+                                     String deviceName) {
+            this.positionMs = positionMs;
+            this.durationMs = durationMs;
+            this.paused = paused;
+            this.updatedAtMs = updatedAtMs;
+            this.revision = revision;
+            this.active = true;
+            this.online = online;
+            this.title = title;
+            this.deviceName = deviceName;
+        }
+    }
+
+    /** 详情页可重建的定位快照；与页面 owner 和临时选集回调分开保存。 */
+    public static final class BrowserCastDetail {
+        public final String sessionId;
+        public final String sourceKey;
+        public final String vodId;
+        public final String vodName;
+        public final String playFlag;
+        public final int selectedIndex;
+        public final boolean reverseSort;
+        public final String episodeName;
+        public final String episodeUrl;
+
+        private BrowserCastDetail(String sessionId, String sourceKey, String vodId,
+                                  String vodName, String playFlag, int selectedIndex,
+                                  boolean reverseSort, String episodeName, String episodeUrl) {
+            this.sessionId = sessionId;
+            this.sourceKey = sourceKey;
+            this.vodId = vodId;
+            this.vodName = vodName;
+            this.playFlag = playFlag;
+            this.selectedIndex = selectedIndex;
+            this.reverseSort = reverseSort;
+            this.episodeName = episodeName;
+            this.episodeUrl = episodeUrl;
+        }
+
+        BrowserCastDetail withSelectedIndex(int index) {
+            return new BrowserCastDetail(sessionId, sourceKey, vodId, vodName,
+                    playFlag, index, reverseSort, episodeName, episodeUrl);
+        }
+    }
+
+    static BrowserCastDetail nextBrowserCastDetail(BrowserCastDetail previous,
+                                                    String sourceKey, String vodId,
+                                                    String vodName, String playFlag,
+                                                    int selectedIndex, boolean reverseSort,
+                                                    String episodeName, String episodeUrl) {
+        String sessionId = previous != null && sourceKey.equals(previous.sourceKey)
+                && vodId.equals(previous.vodId) ? previous.sessionId : UUID.randomUUID().toString();
+        return new BrowserCastDetail(sessionId, sourceKey, vodId, vodName, playFlag,
+                selectedIndex, reverseSort, episodeName, episodeUrl);
+    }
+
+    static boolean browserCastSessionMatches(BrowserCastDetail detail, String sessionId) {
+        return detail != null && sessionId != null && sessionId.equals(detail.sessionId);
+    }
+
+    static final class BrowserPlaybackCommand {
+        final long id;
+        final long revision;
+        final String action;
+        final long positionMs;
+
+        BrowserPlaybackCommand(long id, long revision, String action, long positionMs) {
+            this.id = id;
+            this.revision = revision;
+            this.action = action;
+            this.positionMs = positionMs;
+        }
+    }
+
+    /** 浏览器按 ID 顺序执行并确认；队列满时拒绝新命令，不能默默覆盖先前操作。 */
+    static final class BrowserCommandQueue {
+        private static final int CAPACITY = 32;
+        private final ArrayDeque<BrowserPlaybackCommand> pending = new ArrayDeque<>();
+        private long lastIssuedId;
+
+        boolean enqueue(long revision, String action, long positionMs) {
+            if (pending.size() >= CAPACITY || lastIssuedId == Long.MAX_VALUE) return false;
+            pending.addLast(new BrowserPlaybackCommand(++lastIssuedId, revision, action, positionMs));
+            return true;
+        }
+
+        boolean acknowledge(long lastCommandId) {
+            if (lastCommandId < 0 || lastCommandId > lastIssuedId) return false;
+            while (!pending.isEmpty() && pending.peekFirst().id <= lastCommandId)
+                pending.removeFirst();
+            return true;
+        }
+
+        List<BrowserPlaybackCommand> pending() {
+            return new ArrayList<>(pending);
+        }
+
+        void clear() {
+            pending.clear();
         }
     }
 
@@ -181,6 +303,12 @@ public class RemoteServer extends NanoHTTPD {
         private final String token;
         private volatile JsonObject playback;
         private volatile long playbackRevision;
+        private volatile BrowserCastDetail browserCastDetail;
+        private long browserPositionMs;
+        private long browserDurationMs;
+        private boolean browserPaused;
+        private long browserStateUpdatedAtMs;
+        private final BrowserCommandQueue browserCommands = new BrowserCommandQueue();
         private volatile long nextRequestedRevision;
         private volatile long loggedMediaFailureRevision = -1;
         private volatile long lastSlowMediaLogAt;
@@ -270,7 +398,18 @@ public class RemoteServer extends NanoHTTPD {
         for (LanDevice device : devices.values()) {
             if (now - device.lastSeen > SESSION_WINDOW_MS) {
                 if (devices.remove(device.token, device)) {
-                    clearCastMedia(device);
+                    synchronized (this) {
+                        if (device.id.equals(activeBrowserId)) {
+                            activeBrowserId = null;
+                            EpisodeCast cast = episodeCast;
+                            if (cast != null && device.id.equals(cast.deviceId)) episodeCast = null;
+                            revokeBrowserPlayback(device);
+                            notifyBrowserCastChanged();
+                        } else {
+                            device.browserCastDetail = null;
+                            clearCastMedia(device);
+                        }
+                    }
                     expired = true;
                     LogStore.log(Category.SYSTEM, "局域网配对会话过期 device=" + deviceRef(device));
                 }
@@ -282,7 +421,7 @@ public class RemoteServer extends NanoHTTPD {
         return paired;
     }
 
-    public boolean kickDevice(String id) {
+    public synchronized boolean kickDevice(String id) {
         if (id == null) return false;
         for (LanDevice device : devices.values()) {
             if (id.equals(device.id)) {
@@ -290,7 +429,14 @@ public class RemoteServer extends NanoHTTPD {
                 if (cast != null && id.equals(cast.deviceId)) clearEpisodeCast();
                 boolean removed = devices.remove(device.token, device);
                 if (removed) {
-                    clearCastMedia(device);
+                    if (device.id.equals(activeBrowserId)) {
+                        activeBrowserId = null;
+                        revokeBrowserPlayback(device);
+                        notifyBrowserCastChanged();
+                    } else {
+                        device.browserCastDetail = null;
+                        clearCastMedia(device);
+                    }
                     persistSessions(true);
                     LogStore.log(Category.SYSTEM, "局域网设备已踢出 device=" + deviceRef(device));
                 }
@@ -300,15 +446,21 @@ public class RemoteServer extends NanoHTTPD {
         return false;
     }
 
-    public void setEpisodeCast(String owner, String deviceId, List<String> episodes, int selectedIndex,
+    public synchronized void setEpisodeCast(String owner, String deviceId, List<String> episodes, int selectedIndex,
                                NextEpisodeHandler handler) {
         EpisodeCast previous = episodeCast;
         if (previous != null && !previous.deviceId.equals(deviceId)) {
             for (LanDevice device : devices.values()) {
                 if (device.id.equals(previous.deviceId)) {
                     device.playback = null;
+                    resetBrowserPlayback(device);
+                    device.browserCastDetail = null;
                     device.castProxyPaths.clear();
                     clearCastMedia(device);
+                    if (device.id.equals(activeBrowserId)) {
+                        activeBrowserId = null;
+                        notifyBrowserCastChanged();
+                    }
                     break;
                 }
             }
@@ -317,8 +469,6 @@ public class RemoteServer extends NanoHTTPD {
         for (LanDevice device : devices.values()) {
             if (device.id.equals(deviceId) && device.playback != null) {
                 JsonObject state = device.playback.deepCopy();
-                state.addProperty("revision", ++device.playbackRevision);
-                for (CastMedia media : device.castMedia.values()) media.revision = device.playbackRevision;
                 addEpisodeState(state, episodeCast);
                 device.playback = state;
                 break;
@@ -326,13 +476,54 @@ public class RemoteServer extends NanoHTTPD {
         }
     }
 
-    public void clearEpisodeCast(String owner) {
+    public synchronized void clearEpisodeCast(String owner) {
         EpisodeCast cast = episodeCast;
         if (cast != null && owner != null && owner.equals(cast.owner)) episodeCast = null;
     }
 
-    public void clearEpisodeCast() {
+    public synchronized void clearEpisodeCast() {
         episodeCast = null;
+    }
+
+    /** 登记当前投屏的详情定位；同一视频换线路、换集或排序时沿用 sessionId。 */
+    public synchronized BrowserCastDetail setBrowserCastDetail(String owner, String sourceKey,
+                                                                String vodId, String vodName,
+                                                                String playFlag, int selectedIndex,
+                                                                boolean reverseSort,
+                                                                String episodeName,
+                                                                String episodeUrl) {
+        if (sourceKey == null || sourceKey.trim().isEmpty() || sourceKey.length() > 8192
+                || vodId == null || vodId.trim().isEmpty() || vodId.length() > 8192
+                || selectedIndex < 0 || selectedIndex > 100000) return null;
+        LanDevice device = currentBrowserDevice(owner, false);
+        if (device == null) return null;
+        EpisodeCast cast = episodeCast;
+        if (cast == null) return null;
+        cast.selectedIndex = selectedIndex;
+        BrowserCastDetail detail = nextBrowserCastDetail(device.browserCastDetail,
+                sourceKey, vodId, vodName == null ? "" : vodName,
+                playFlag == null ? "" : playFlag, selectedIndex, reverseSort,
+                episodeName == null ? "" : episodeName,
+                episodeUrl == null ? "" : episodeUrl);
+        device.browserCastDetail = detail;
+        notifyBrowserCastChanged();
+        return detail;
+    }
+
+    /** 只把新详情页的选集回调接回现有浏览器轮次，不重新推送媒体。 */
+    public synchronized BrowserCastDetail attachBrowserCastDetail(String owner, String sessionId,
+                                                                   List<String> episodes,
+                                                                   NextEpisodeHandler handler) {
+        if (owner == null || owner.isEmpty() || sessionId == null || handler == null
+                || episodes == null) return null;
+        LanDevice device = currentActiveBrowserDevice(false);
+        BrowserCastDetail detail = device == null ? null : device.browserCastDetail;
+        if (!browserCastSessionMatches(detail, sessionId)
+                || (!episodes.isEmpty() && (detail.selectedIndex < 0
+                || detail.selectedIndex >= episodes.size()))) return null;
+        setEpisodeCast(owner, device.id, episodes,
+                episodes.isEmpty() ? -1 : detail.selectedIndex, handler);
+        return device.browserCastDetail;
     }
 
     public boolean updateEpisodeCast(String owner, String title, String url, int selectedIndex,
@@ -340,14 +531,21 @@ public class RemoteServer extends NanoHTTPD {
         return updateEpisodeCast(owner, title, url, selectedIndex, episodes, headers, null);
     }
 
-    public boolean updateEpisodeCast(String owner, String title, String url, int selectedIndex,
+    public synchronized boolean updateEpisodeCast(String owner, String title, String url, int selectedIndex,
                                      List<String> episodes, Map<String, String> headers,
                                      String headerOrigin) {
         EpisodeCast cast = episodeCast;
         if (cast != null && owner != null && owner.equals(cast.owner)) {
             cast.selectedIndex = selectedIndex;
             if (episodes != null) cast.episodes = new ArrayList<>(episodes);
-            return publishBrowserPlayback(cast.deviceId, title, url, headers, headerOrigin);
+            boolean published = publishBrowserPlaybackInternal(cast.deviceId, title, url, headers,
+                    headerOrigin, true);
+            if (published) {
+                LanDevice device = currentBrowserDevice(owner, false);
+                if (device != null && device.browserCastDetail != null)
+                    device.browserCastDetail = device.browserCastDetail.withSelectedIndex(selectedIndex);
+            }
+            return published;
         }
         return false;
     }
@@ -365,7 +563,8 @@ public class RemoteServer extends NanoHTTPD {
 
     private boolean requestNextEpisode(LanDevice device, String rawRevision) {
         EpisodeCast cast = episodeCast;
-        if (device == null || cast == null || !device.id.equals(cast.deviceId) || cast.handler == null) return false;
+        if (device == null || cast == null || !device.id.equals(cast.deviceId)
+                || cast.handler == null || cast.episodes.isEmpty()) return false;
         long revision;
         try { revision = Long.parseLong(rawRevision); } catch (Exception ignored) { return false; }
         synchronized (device) {
@@ -433,6 +632,246 @@ public class RemoteServer extends NanoHTTPD {
         state.addProperty("selectedIndex", cast.selectedIndex);
     }
 
+    private static void resetBrowserPlayback(LanDevice device) {
+        device.browserPositionMs = 0;
+        device.browserDurationMs = 0;
+        device.browserPaused = false;
+        device.browserStateUpdatedAtMs = 0;
+        device.browserCommands.clear();
+    }
+
+    private void notifyBrowserCastChanged() {
+        // 通知方法本身投递到主线程，不在服务实例锁内反向查询 ControlManager。
+        LanServerService.refreshCastNotification();
+    }
+
+    private static void revokeBrowserPlayback(LanDevice device) {
+        device.playback = null;
+        device.browserCastDetail = null;
+        device.nextRequestedRevision = -1;
+        resetBrowserPlayback(device);
+        device.castProxyPaths.clear();
+        clearCastMedia(device);
+    }
+
+    /** 最近一次发布的浏览器会话，不依赖详情页或选集 handler。 */
+    private LanDevice currentActiveBrowserDevice(boolean requireOnline) {
+        String activeId = activeBrowserId;
+        if (activeId == null) return null;
+        long now = System.currentTimeMillis();
+        for (LanDevice device : devices.values()) {
+            if (!activeId.equals(device.id) || !"browser".equals(device.kind)
+                    || devices.get(device.token) != device || device.playback == null
+                    || device.playbackRevision <= 0
+                    || (requireOnline && now - device.lastSeen > ACTIVE_DEVICE_WINDOW_MS)) continue;
+            return device;
+        }
+        return null;
+    }
+
+    /** owner 和在线浏览器必须仍指向同一轮发布；所有调用在服务实例锁内。 */
+    private LanDevice currentBrowserDevice(String owner, boolean requireOnline) {
+        EpisodeCast cast = episodeCast;
+        LanDevice device = currentActiveBrowserDevice(requireOnline);
+        return owner != null && cast != null && owner.equals(cast.owner)
+                && device != null && device.id.equals(cast.deviceId) ? device : null;
+    }
+
+    private static BrowserPlaybackState playbackSnapshot(LanDevice device) {
+        boolean online = System.currentTimeMillis() - device.lastSeen <= ACTIVE_DEVICE_WINDOW_MS;
+        return new BrowserPlaybackState(device.browserPositionMs, device.browserDurationMs,
+                device.browserPaused, device.browserStateUpdatedAtMs, device.playbackRevision,
+                online, device.currentTitle(), device.name);
+    }
+
+    /** 手机播放器使用的浏览器进度快照；离线仍保留状态，online=false。 */
+    public synchronized BrowserPlaybackState browserPlaybackState(String owner) {
+        EpisodeCast cast = episodeCast;
+        if (owner == null || cast == null || !owner.equals(cast.owner)
+                || !cast.deviceId.equals(activeBrowserId)) return null;
+        LanDevice device = currentBrowserDevice(owner, false);
+        return device == null ? null : playbackSnapshot(device);
+    }
+
+    /** 局域网服务入口可在详情页销毁后继续读取浏览器实际播放状态。 */
+    public synchronized BrowserPlaybackState activeBrowserPlaybackState() {
+        LanDevice device = currentActiveBrowserDevice(false);
+        return device == null ? null : playbackSnapshot(device);
+    }
+
+    /** 当前活动投屏的详情定位，不依赖临时选集 handler 或详情页 owner。 */
+    public synchronized BrowserCastDetail activeBrowserCastDetail() {
+        LanDevice device = currentActiveBrowserDevice(false);
+        return device == null ? null : device.browserCastDetail;
+    }
+
+    private static boolean enqueueBrowserCommand(LanDevice device, String action, long positionMs) {
+        if (!("play".equals(action) || "pause".equals(action) || "seek".equals(action))
+                || positionMs < 0 || positionMs > MAX_PLAYBACK_TIME_MS) return false;
+        if (device == null) return false;
+        return device.browserCommands.enqueue(device.playbackRevision, action, positionMs);
+    }
+
+    /** 手机控制命令只发送到该 owner 当前的浏览器播放轮次。 */
+    public synchronized boolean controlBrowserPlayback(String owner, String action, long positionMs) {
+        return enqueueBrowserCommand(currentBrowserDevice(owner, true), action, positionMs);
+    }
+
+    /** 全局入口控制当前浏览器播放，不依赖详情页生命周期。 */
+    public synchronized boolean controlActiveBrowserPlayback(String action, long positionMs) {
+        return enqueueBrowserCommand(currentActiveBrowserDevice(true), action, positionMs);
+    }
+
+    /** 退出投屏时撤销本轮媒体和控制；浏览器下一次轮询收到 revision=0。 */
+    public synchronized boolean stopBrowserPlayback(String owner) {
+        EpisodeCast cast = episodeCast;
+        if (owner == null || cast == null || !owner.equals(cast.owner)) return false;
+        LanDevice device = currentBrowserDevice(owner, false);
+        episodeCast = null;
+        if (device == null) {
+            if (cast.deviceId.equals(activeBrowserId)) {
+                activeBrowserId = null;
+                for (LanDevice stale : devices.values()) {
+                    if (cast.deviceId.equals(stale.id)) {
+                        revokeBrowserPlayback(stale);
+                        break;
+                    }
+                }
+                notifyBrowserCastChanged();
+            }
+            return true;
+        }
+        activeBrowserId = null;
+        revokeBrowserPlayback(device);
+        notifyBrowserCastChanged();
+        return true;
+    }
+
+    /** 全局入口停止最近一次浏览器投屏，旧媒体能力立即撤销。 */
+    public synchronized boolean stopActiveBrowserPlayback() {
+        String activeId = activeBrowserId;
+        if (activeId == null) return false;
+        LanDevice device = currentActiveBrowserDevice(false);
+        activeBrowserId = null;
+        EpisodeCast cast = episodeCast;
+        if (cast != null && activeId.equals(cast.deviceId)) episodeCast = null;
+        if (device != null) revokeBrowserPlayback(device);
+        else for (LanDevice stale : devices.values()) {
+            if (activeId.equals(stale.id)) {
+                revokeBrowserPlayback(stale);
+                break;
+            }
+        }
+        notifyBrowserCastChanged();
+        return true;
+    }
+
+    private synchronized JsonObject playbackForBrowser(LanDevice device) {
+        if (devices.get(device.token) != device || !device.id.equals(activeBrowserId)) {
+            JsonObject idle = new JsonObject();
+            idle.addProperty("revision", 0);
+            return idle;
+        }
+        JsonObject playback = device.playback;
+        if (playback == null) {
+            JsonObject idle = new JsonObject();
+            idle.addProperty("revision", 0);
+            return idle;
+        }
+        JsonObject state = playback.deepCopy();
+        state.remove("episodes");
+        state.remove("selectedIndex");
+        state.addProperty("positionMs", device.browserPositionMs);
+        state.addProperty("durationMs", device.browserDurationMs);
+        state.addProperty("paused", device.browserPaused);
+        EpisodeCast cast = episodeCast;
+        if (cast != null && device.id.equals(cast.deviceId) && cast.handler != null)
+            addEpisodeState(state, cast);
+        JsonArray instructions = new JsonArray();
+        BrowserPlaybackCommand last = null;
+        for (BrowserPlaybackCommand command : device.browserCommands.pending()) {
+            if (command.revision != device.playbackRevision) continue;
+            JsonObject instruction = new JsonObject();
+            instruction.addProperty("id", command.id);
+            instruction.addProperty("action", command.action);
+            instruction.addProperty("positionMs", command.positionMs);
+            instructions.add(instruction);
+            last = command;
+        }
+        state.add("commands", instructions);
+        if (last != null) {
+            JsonObject compatible = new JsonObject();
+            compatible.addProperty("id", last.id);
+            compatible.addProperty("action", last.action);
+            compatible.addProperty("positionMs", last.positionMs);
+            state.add("command", compatible);
+        }
+        return state;
+    }
+
+    private synchronized Response recordBrowserPlaybackState(LanDevice device,
+                                                              Map<String, String> params) {
+        if (device == null || !"browser".equals(device.kind) || devices.get(device.token) != device)
+            return createPlainTextResponse(Response.Status.FORBIDDEN, "forbidden");
+        final long revision;
+        final long positionMs;
+        final long durationMs;
+        try {
+            revision = Long.parseLong(params.get("revision"));
+            positionMs = Long.parseLong(params.get("positionMs"));
+            durationMs = Long.parseLong(params.get("durationMs"));
+        } catch (Exception ignored) {
+            return createPlainTextResponse(Response.Status.BAD_REQUEST, "invalid playback state");
+        }
+        String paused = params.get("paused");
+        if (revision <= 0 || positionMs < 0 || durationMs < 0
+                || positionMs > MAX_PLAYBACK_TIME_MS || durationMs > MAX_PLAYBACK_TIME_MS
+                || !("true".equals(paused) || "false".equals(paused)))
+            return createPlainTextResponse(Response.Status.BAD_REQUEST, "invalid playback state");
+        if (device.playback == null || !currentCastRevision(activeBrowserId, device.id,
+                device.playbackRevision, revision))
+            return jsonResponse(Response.Status.OK, "{\"ok\":false}");
+        String rawLastCommandId = params.get("lastCommandId");
+        if (rawLastCommandId != null) {
+            final long lastCommandId;
+            try { lastCommandId = Long.parseLong(rawLastCommandId); }
+            catch (NumberFormatException invalid) {
+                return createPlainTextResponse(Response.Status.BAD_REQUEST, "invalid command id");
+            }
+            if (!device.browserCommands.acknowledge(lastCommandId))
+                return createPlainTextResponse(Response.Status.BAD_REQUEST, "invalid command id");
+        }
+        device.browserPositionMs = positionMs;
+        device.browserDurationMs = durationMs;
+        device.browserPaused = "true".equals(paused);
+        device.browserStateUpdatedAtMs = System.currentTimeMillis();
+        return jsonResponse(Response.Status.OK, "{\"ok\":true}");
+    }
+
+    /** 旧页面延迟送达的离开请求不得结束后来发布的轮次。 */
+    private synchronized Response leaveBrowserPlayback(LanDevice device, String rawRevision) {
+        if (device == null || !"browser".equals(device.kind) || devices.get(device.token) != device)
+            return createPlainTextResponse(Response.Status.FORBIDDEN, "forbidden");
+        final long revision;
+        try { revision = Long.parseLong(rawRevision); }
+        catch (Exception ignored) {
+            return createPlainTextResponse(Response.Status.BAD_REQUEST, "invalid revision");
+        }
+        if (revision <= 0)
+            return createPlainTextResponse(Response.Status.BAD_REQUEST, "invalid revision");
+        if (device.playback == null || !currentCastRevision(activeBrowserId, device.id,
+                device.playbackRevision, revision))
+            return jsonResponse(Response.Status.OK, "{\"ok\":false}");
+        stopActiveBrowserPlayback();
+        return jsonResponse(Response.Status.OK, "{\"ok\":true}");
+    }
+
+    static boolean currentCastRevision(String activeId, String deviceId,
+                                       long currentRevision, long requestRevision) {
+        return activeId != null && activeId.equals(deviceId) && currentRevision > 0
+                && requestRevision == currentRevision;
+    }
+
     private Response recordPlaybackEvent(LanDevice device, Map<String, String> params) {
         if (device == null || !"browser".equals(device.kind))
             return createPlainTextResponse(Response.Status.FORBIDDEN, "forbidden");
@@ -441,12 +880,14 @@ public class RemoteServer extends NanoHTTPD {
                 || "media_error".equals(event) || "hls_error".equals(event)
                 || "hls_warning".equals(event) || "startup_stalled".equals(event)
                 || "playback_engine".equals(event)
+                || "audio_config".equals(event) || "media_rate".equals(event)
+                || "user_reload".equals(event)
                 || "rebuffer".equals(event)
                 || "unsupported".equals(event)))
             return createPlainTextResponse(Response.Status.BAD_REQUEST, "invalid event");
         String detail = params.get("detail");
         if (detail == null) detail = "";
-        if (detail.length() > 48 || !detail.matches("[A-Za-z0-9_:-]*"))
+        if (detail.length() > 96 || !detail.matches("[A-Za-z0-9_.:-]*"))
             return createPlainTextResponse(Response.Status.BAD_REQUEST, "invalid detail");
         long revision;
         try { revision = Long.parseLong(params.get("revision")); }
@@ -458,13 +899,23 @@ public class RemoteServer extends NanoHTTPD {
                 device.loggedPlaybackEventRevision = revision;
                 device.loggedPlaybackEvents.clear();
             }
-            if (!device.loggedPlaybackEvents.add(event))
+            boolean diagnostic = "audio_config".equals(event) || "media_rate".equals(event);
+            String key = diagnostic ? event + ":" + detail : event;
+            if (diagnostic && !device.loggedPlaybackEvents.contains(key)) {
+                int count = 0;
+                for (String logged : device.loggedPlaybackEvents)
+                    if (logged.startsWith(event + ":")) count++;
+                if (count >= 4) return jsonResponse(Response.Status.OK, "{\"ok\":true}");
+            }
+            if (!device.loggedPlaybackEvents.add(key))
                 return jsonResponse(Response.Status.OK, "{\"ok\":true}");
         }
         String message = "局域网投屏浏览器 " + event + " device=" + deviceRef(device)
                 + " revision=" + revision + (detail.isEmpty() ? "" : " detail=" + detail);
         if ("playing".equals(event)) LogStore.success(Category.PLAYER, message);
-        else if ("autoplay_blocked".equals(event) || "playback_engine".equals(event))
+        else if ("autoplay_blocked".equals(event) || "playback_engine".equals(event)
+                || "audio_config".equals(event) || "media_rate".equals(event)
+                || "user_reload".equals(event))
             LogStore.log(Category.PLAYER, message);
         else LogStore.fail(Category.PLAYER, message);
         return jsonResponse(Response.Status.OK, "{\"ok\":true}");
@@ -477,10 +928,15 @@ public class RemoteServer extends NanoHTTPD {
     /** 用户手动更新配对码时撤销旧会话，旧码和已配对令牌立即失效。 */
     public synchronized String rotatePairingCode() {
         pairingCode = SystemConfig.regenerateLanPairingCode();
-        for (LanDevice device : devices.values()) clearCastMedia(device);
+        for (LanDevice device : devices.values()) {
+            device.browserCastDetail = null;
+            clearCastMedia(device);
+        }
         devices.clear();
+        activeBrowserId = null;
         failedPairings.clear();
         clearEpisodeCast();
+        notifyBrowserCastChanged();
         return pairingCode;
     }
 
@@ -496,6 +952,12 @@ public class RemoteServer extends NanoHTTPD {
 
     public synchronized boolean publishBrowserPlayback(String deviceId, String title, String url,
                                                        Map<String, String> headers, String headerOrigin) {
+        return publishBrowserPlaybackInternal(deviceId, title, url, headers, headerOrigin, false);
+    }
+
+    private boolean publishBrowserPlaybackInternal(String deviceId, String title, String url,
+                                                   Map<String, String> headers, String headerOrigin,
+                                                   boolean preserveEpisodeCast) {
         if (url == null || url.trim().isEmpty()) {
             LogStore.fail(Category.PLAYER, "局域网投屏发布失败 reason=empty_url");
             return false;
@@ -543,6 +1005,8 @@ public class RemoteServer extends NanoHTTPD {
         }
         JsonObject state = new JsonObject();
         state.addProperty("revision", ++target.playbackRevision);
+        target.playback = null;
+        resetBrowserPlayback(target);
         state.addProperty("title", title == null ? "手机推送的视频" : title);
         clearCastMedia(target);
         target.castClient = relayClient;
@@ -564,11 +1028,26 @@ public class RemoteServer extends NanoHTTPD {
         if (playable.startsWith("/") && LanCastUrlRules.isProxyPath(playable.split("\\?", 2)[0])) {
             target.castProxyPaths.add(playable);
         }
+        String previousActiveId = activeBrowserId;
         target.playback = state;
+        activeBrowserId = target.id;
+        if (!preserveEpisodeCast) {
+            episodeCast = null;
+            target.browserCastDetail = null;
+        }
+        if (previousActiveId != null && !previousActiveId.equals(target.id)) {
+            for (LanDevice previous : devices.values()) {
+                if (previousActiveId.equals(previous.id)) {
+                    revokeBrowserPlayback(previous);
+                    break;
+                }
+            }
+        }
         LogStore.success(Category.PLAYER, "局域网投屏已发送 device=" + deviceRef(target)
                 + " revision=" + target.playbackRevision
                 + " relay=" + (!playable.startsWith("/") || LanCastUrlRules.isProxyPath(localPath))
                 + " pinnedPlaylist=" + (pinnedPlaylist != null));
+        notifyBrowserCastChanged();
         return true;
     }
 
@@ -821,9 +1300,14 @@ public class RemoteServer extends NanoHTTPD {
             persistSessions(true);
         } finally {
             synchronized (this) { sessionsPersistenceClosed = true; }
-            for (LanDevice device : devices.values()) clearCastMedia(device);
+            for (LanDevice device : devices.values()) {
+                device.browserCastDetail = null;
+                clearCastMedia(device);
+            }
             devices.clear();
+            activeBrowserId = null;
             clearEpisodeCast();
+            notifyBrowserCastChanged();
         }
     }
 
@@ -851,13 +1335,12 @@ public class RemoteServer extends NanoHTTPD {
             }
             if (fileName.equals("/api/videos/media")) return serveMediaVideo(session);
             if (fileName.equals("/api/playback")) {
-                if (!isAuthorized(session, session.getParms())) {
+                LanDevice device = authorizedDevice(session);
+                if (device == null) {
                     logPlaybackAuthDenied();
                     return createPlainTextResponse(Response.Status.FORBIDDEN, "forbidden");
                 }
-                LanDevice device = authorizedDevice(session);
-                JsonObject state = device == null ? null : device.playback;
-                return jsonResponse(Response.Status.OK, state == null ? "{\"revision\":0}" : state.toString());
+                return jsonResponse(Response.Status.OK, playbackForBrowser(device).toString());
             }
             if (fileName.equals("/api/cast/media")) return serveCastMedia(session);
             if (fileName.equals("/api/lan/catalog")) {
@@ -1114,6 +1597,10 @@ public class RemoteServer extends NanoHTTPD {
 
     /** POST 处理:解析 body 后统一做管理鉴权,再分发到各处理函数 */
     private Response serveFilePost(IHTTPSession session, String fileName) {
+        // Cookie 属于浏览器自动携带的凭据；写接口必须来自本服务同源页面。
+        // 显式且有效的 X-TVBox-Token 客户端、无 Cookie 的本机内部调用不受影响。
+        if (!fileName.equals("/api/pair") && !trustedCookieWriteOrigin(session))
+            return createPlainTextResponse(Response.Status.FORBIDDEN, "forbidden origin");
         boolean managed = fileName.equals("/action") || fileName.equals("/upload")
                 || fileName.equals("/newFolder") || fileName.equals("/delFolder") || fileName.equals("/delFile");
         if (managed && !isAuthorized(session, session.getParms())) {
@@ -1121,7 +1608,9 @@ public class RemoteServer extends NanoHTTPD {
         }
         boolean playbackAction = fileName.equals("/api/playback/next")
                 || fileName.equals("/api/playback/select")
-                || fileName.equals("/api/playback/event");
+                || fileName.equals("/api/playback/event")
+                || fileName.equals("/api/playback/state")
+                || fileName.equals("/api/playback/leave");
         if (playbackAction
                 && authorizedDevice(session) == null) {
             return createPlainTextResponse(Response.Status.FORBIDDEN, "forbidden");
@@ -1132,7 +1621,8 @@ public class RemoteServer extends NanoHTTPD {
                 if (playbackAction && length == null) {
                     return createPlainTextResponse(Response.Status.BAD_REQUEST, "content length required");
                 }
-                if (Long.parseLong(length == null ? "0" : length) > 1024) {
+                long byteCount = Long.parseLong(length == null ? "0" : length);
+                if (byteCount < 0 || byteCount > 1024) {
                     return createPlainTextResponse(Response.Status.BAD_REQUEST, "request too large");
                 }
             } catch (NumberFormatException ignored) {
@@ -1186,6 +1676,14 @@ public class RemoteServer extends NanoHTTPD {
         if (fileName.equals("/api/playback/event")) {
             LanDevice device = authorizedDevice(session);
             return recordPlaybackEvent(device, params);
+        }
+        if (fileName.equals("/api/playback/state")) {
+            LanDevice device = authorizedDevice(session);
+            return recordBrowserPlaybackState(device, params);
+        }
+        if (fileName.equals("/api/playback/leave")) {
+            LanDevice device = authorizedDevice(session);
+            return leaveBrowserPlayback(device, params.get("revision"));
         }
         // 管理/变更类接口统一要求已配对会话；回环地址本身不是身份凭据。
         for (RequestProcess process : postRequestList) {
@@ -1527,6 +2025,57 @@ public class RemoteServer extends NanoHTTPD {
         return result;
     }
 
+    private boolean trustedCookieWriteOrigin(IHTTPSession session) {
+        Map<String, String> headers = session.getHeaders();
+        if (headers == null) return true;
+        String cookie = headers.get("cookie");
+        if (cookie == null || !cookie.contains("mbox_lan=")) return true;
+        String headerToken = headers.get("x-tvbox-token");
+        LanDevice explicit = headerToken == null ? null : devices.get(headerToken);
+        if (explicit != null && System.currentTimeMillis() - explicit.lastSeen <= SESSION_WINDOW_MS)
+            return true;
+        String origin = headers.get("origin");
+        String source = origin != null ? origin : headers.get("referer");
+        return sameOriginForCookieWrite(source, headers.get("host"), serverPort);
+    }
+
+    /** IP 字面量阻断 DNS rebinding；来源必须与浏览器正在访问的本服务端口相同。 */
+    static boolean sameOriginForCookieWrite(String source, String rawHost, int port) {
+        if (source == null || rawHost == null || source.length() > 2048 || rawHost.length() > 255)
+            return false;
+        try {
+            java.net.URI from = new java.net.URI(source);
+            java.net.URI target = new java.net.URI("http://" + rawHost);
+            String sourceHost = from.getHost();
+            String targetHost = target.getHost();
+            return "http".equalsIgnoreCase(from.getScheme())
+                    && from.getRawUserInfo() == null && from.getRawFragment() == null
+                    && sourceHost != null && targetHost != null
+                    && numericLanHost(targetHost)
+                    && sourceHost.equalsIgnoreCase(targetHost)
+                    && from.getPort() == port && target.getPort() == port;
+        } catch (Exception invalid) {
+            return false;
+        }
+    }
+
+    private static boolean numericLanHost(String rawHost) {
+        String host = rawHost;
+        if (host.startsWith("[") && host.endsWith("]"))
+            host = host.substring(1, host.length() - 1);
+        if ("localhost".equalsIgnoreCase(host)) return true;
+        String[] octets = host.split("\\.", -1);
+        if (octets.length == 4) {
+            for (String octet : octets) {
+                if (octet.isEmpty() || octet.length() > 3 || !octet.matches("[0-9]+")) return false;
+                int value = Integer.parseInt(octet);
+                if (value > 255) return false;
+            }
+            return true;
+        }
+        return host.indexOf(':') >= 0 && host.matches("[0-9a-fA-F:]+");
+    }
+
     private LanDevice authorizedDevice(IHTTPSession session) {
         String token = null;
         Map<String, String> headers = session.getHeaders();
@@ -1549,8 +2098,20 @@ public class RemoteServer extends NanoHTTPD {
         if (device != null) {
             long now = System.currentTimeMillis();
             if (now - device.lastSeen > SESSION_WINDOW_MS) {
-                devices.remove(device.token, device);
-                clearCastMedia(device);
+                if (devices.remove(device.token, device)) {
+                    synchronized (this) {
+                        if (device.id.equals(activeBrowserId)) {
+                            activeBrowserId = null;
+                            EpisodeCast cast = episodeCast;
+                            if (cast != null && device.id.equals(cast.deviceId)) episodeCast = null;
+                            revokeBrowserPlayback(device);
+                            notifyBrowserCastChanged();
+                        } else {
+                            device.browserCastDetail = null;
+                            clearCastMedia(device);
+                        }
+                    }
+                }
                 persistSessions(true);
                 LogStore.log(Category.SYSTEM, "局域网配对会话过期 device=" + deviceRef(device));
                 return null;

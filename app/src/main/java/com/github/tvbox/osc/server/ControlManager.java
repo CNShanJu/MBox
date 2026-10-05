@@ -1,12 +1,15 @@
 package com.github.tvbox.osc.server;
 
 import android.content.Context;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 
 import com.github.tvbox.osc.config.SystemConfig;
 import com.github.tvbox.osc.log.Category;
 import com.github.tvbox.osc.log.LogStore;
 import com.github.tvbox.osc.service.LanServerService;
+import com.github.tvbox.osc.util.HeavyTaskUtil;
 
 import java.io.IOException;
 import java.util.regex.Matcher;
@@ -20,6 +23,12 @@ import tv.danmaku.ijk.media.player.IjkMediaPlayer;
  * @description:
  */
 public class ControlManager {
+    private static final int DEFAULT_PORT = 9978;
+    private static final int PORT_LIMIT = 9999;
+    private static final int STARTUP_PORT_ATTEMPTS = 5;
+    private static final long STARTUP_PORT_RETRY_MS = 200L;
+    private static final long HOME_RELEASE_GRACE_MS = 1000L;
+    private static final Handler MAIN_HANDLER = new Handler(Looper.getMainLooper());
     private static volatile ControlManager instance;
     private volatile RemoteServer mServer = null;
     public static Context mContext;
@@ -42,6 +51,8 @@ public class ControlManager {
      * 不代表这个进程里的服务真的对外可达 —— 设置页要如实区分这两种情形(见 {@link #lanState()})。
      */
     private volatile boolean lanBound = false;
+    private int homeHostCount;
+    private long homeHostEpoch;
 
     private ControlManager() {
 
@@ -62,13 +73,33 @@ public class ControlManager {
         mContext = context;
     }
 
+    /** Activity 重建期间保留本机监听；最后一个主页销毁后再确认服务是否仍被占用。 */
+    public synchronized void acquireHomeHost() {
+        homeHostCount++;
+        homeHostEpoch++;
+    }
+
+    public synchronized void releaseHomeHost() {
+        if (homeHostCount == 0) return;
+        homeHostCount--;
+        long releasedEpoch = ++homeHostEpoch;
+        if (homeHostCount != 0) return;
+        MAIN_HANDLER.postDelayed(() -> HeavyTaskUtil.executeBigTask(() -> {
+            synchronized (ControlManager.this) {
+                if (homeHostCount == 0 && homeHostEpoch == releasedEpoch && !lanBound) {
+                    stopServer();
+                }
+            }
+        }), HOME_RELEASE_GRACE_MS);
+    }
+
     /**
      * 服务基址。服务未起(或已停)时不再抛 NPE:给一个端口正确的默认基址
      * (App.onCreate 注入 ApiConfig.lanBase 时服务通常还没起,原来只能靠调用方 try/catch 兜)
      */
     public String getAddress(boolean local) {
         RemoteServer s = mServer;
-        if (s != null) return local ? s.getLoadAddress() : s.getServerAddress();
+        if (s != null && s.isStarting()) return local ? s.getLoadAddress() : s.getServerAddress();
         String host = (local || mContext == null) ? "127.0.0.1" : RemoteServer.getLocalIPAddress(mContext);
         return "http://" + host + ":" + RemoteServer.serverPort + "/";
     }
@@ -173,6 +204,12 @@ public class ControlManager {
         return server != null && server.isStarting() && lanBound;
     }
 
+    /** 当前本机 HTTP 监听是否已完成端口绑定。 */
+    public boolean isLocalServing() {
+        RemoteServer server = mServer;
+        return server != null && server.isStarting();
+    }
+
     public boolean kickDevice(String id) {
         RemoteServer server = mServer;
         return server != null && server.isStarting() && lanBound && server.kickDevice(id);
@@ -183,6 +220,28 @@ public class ControlManager {
         RemoteServer server = mServer;
         if (server != null && server.isStarting() && lanBound)
             server.setEpisodeCast(owner, deviceId, episodes, selectedIndex, handler);
+    }
+
+    /** 保存当前浏览器投屏的详情定位，供局域网入口返回同一轮播放。 */
+    public RemoteServer.BrowserCastDetail setBrowserCastDetail(String owner, String sourceKey,
+                                                                String vodId, String vodName,
+                                                                String playFlag, int selectedIndex,
+                                                                boolean reverseSort,
+                                                                String episodeName,
+                                                                String episodeUrl) {
+        RemoteServer server = mServer;
+        return server != null && server.isStarting() && lanBound
+                ? server.setBrowserCastDetail(owner, sourceKey, vodId, vodName,
+                playFlag, selectedIndex, reverseSort, episodeName, episodeUrl) : null;
+    }
+
+    /** 详情页重建后仅重绑现有选集回调，不发布新媒体。 */
+    public RemoteServer.BrowserCastDetail attachBrowserCastDetail(String owner, String sessionId,
+                                                                   java.util.List<String> episodes,
+                                                                   RemoteServer.NextEpisodeHandler handler) {
+        RemoteServer server = mServer;
+        return server != null && server.isStarting() && lanBound
+                ? server.attachBrowserCastDetail(owner, sessionId, episodes, handler) : null;
     }
 
     public boolean updateEpisodeCast(String owner, String title, String url, int selectedIndex,
@@ -214,7 +273,68 @@ public class ControlManager {
         if (server != null) server.clearEpisodeCast(owner);
     }
 
+    /** 当前手机页面所投浏览器的实际播放状态；null 表示已断开或 owner 不匹配。 */
+    public RemoteServer.BrowserPlaybackState browserPlaybackState(String owner) {
+        RemoteServer server = mServer;
+        return server != null && server.isStarting() && lanBound
+                ? server.browserPlaybackState(owner) : null;
+    }
+
+    /** 局域网入口读取当前浏览器投屏，不依赖详情页是否仍存在。 */
+    public RemoteServer.BrowserPlaybackState activeBrowserPlaybackState() {
+        RemoteServer server = mServer;
+        return server != null && server.isStarting() && lanBound
+                ? server.activeBrowserPlaybackState() : null;
+    }
+
+    /** 活动投屏对应的详情定位；投屏结束、换设备或会话过期后为 null。 */
+    public RemoteServer.BrowserCastDetail activeBrowserCastDetail() {
+        RemoteServer server = mServer;
+        return server != null && server.isStarting() && lanBound
+                ? server.activeBrowserCastDetail() : null;
+    }
+
+    /** 手机播放控件向当前浏览器投屏轮次发命令。 */
+    public boolean controlBrowserPlayback(String owner, String action, long positionMs) {
+        RemoteServer server = mServer;
+        return server != null && server.isStarting() && lanBound
+                && server.controlBrowserPlayback(owner, action, positionMs);
+    }
+
+    /** 从局域网入口控制当前浏览器投屏。 */
+    public boolean controlActiveBrowserPlayback(String action, long positionMs) {
+        RemoteServer server = mServer;
+        return server != null && server.isStarting() && lanBound
+                && server.controlActiveBrowserPlayback(action, positionMs);
+    }
+
+    /** 手机退出投屏时停止网页并撤销该轮媒体访问。 */
+    public boolean stopBrowserPlayback(String owner) {
+        RemoteServer server = mServer;
+        return server != null && server.isStarting() && lanBound
+                && server.stopBrowserPlayback(owner);
+    }
+
+    /** 从局域网入口结束当前浏览器投屏。 */
+    public boolean stopActiveBrowserPlayback() {
+        RemoteServer server = mServer;
+        return server != null && server.isStarting() && lanBound
+                && server.stopActiveBrowserPlayback();
+    }
+
     public synchronized void startServer() {
+        startServerInternal(false);
+    }
+
+    /**
+     * 开屏预取的后台启动入口。备份还原紧接着拉起新进程时，旧进程可能尚未释放 9978；
+     * 先有限次等待默认端口，再尝试其他端口，避免固定本机订阅地址落到错误端口。
+     */
+    public synchronized boolean startServerForStartup() {
+        return startServerInternal(Looper.myLooper() != Looper.getMainLooper());
+    }
+
+    private boolean startServerInternal(boolean retryPreferred) {
         // 对外监听必须晚于前台通知就绪；预取、Activity 重建等入口只能先开回环。
         boolean lanEnabled = SystemConfig.isLanServerEnabled()
                 && LanServerService.isForegroundReady()
@@ -223,10 +343,15 @@ public class ControlManager {
         RemoteServer running = mServer;
         if (running != null) {
             // 已在跑且绑定方式就是当前配置:复用(本方法是幂等的,首页每次 init 都会调用)
-            if (running.isStarting() && lanBound == lanEnabled) {
+            if (running.isStarting() && lanBound == lanEnabled
+                    && (!retryPreferred || RemoteServer.serverPort == DEFAULT_PORT)) {
                 com.github.tvbox.osc.util.OkGoHelper.setLocalFileReadAccess(
                         RemoteServer.serverPort, running.getLocalReadToken());
-                return;
+                return true;
+            }
+            if (running.isStarting() && retryPreferred
+                    && RemoteServer.serverPort != DEFAULT_PORT) {
+                Log.i("TVBox-Server", "刷新配置时重新尝试默认端口 " + DEFAULT_PORT);
             }
             // 已停(首页销毁过)或绑定方式变了(开关改动后重启应用):必须停旧实例再重建。
             // 历史实现只在 stopServer 里 stop 而不清引用,于是这里被 "mServer != null" 直接挡掉 ——
@@ -240,7 +365,7 @@ public class ControlManager {
             if (running.isStarting()) {
                 // 旧监听可能仍对外开放，保留实例和绑定状态供设置页如实显示。
                 Log.e("TVBox-Server", "旧服务仍在监听，暂不重建本机服务");
-                return;
+                return false;
             }
             mServer = null;
             lanBound = false;
@@ -248,12 +373,14 @@ public class ControlManager {
         }
         // 默认仅绑定本机回环:本 App 的订阅/本地播放/代理全部走 127.0.0.1,无需对局域网开放端口。
         // 需要局域网文件共享/远程管理(web 控制台)时,显式开启 HawkConfig.LAN_SERVER_ENABLE 后重启生效。
-        final int preferredPort = RemoteServer.serverPort; // 首选端口(默认 9978);被占用时下面循环 +1 重试
-        boolean started = false;
-        do {
-            int tryPort = RemoteServer.serverPort;
-            mServer = new RemoteServer(lanEnabled ? null : "127.0.0.1", tryPort, mContext);
-            mServer.setDataReceiver(new DataReceiver() {
+        final int preferredPort = DEFAULT_PORT;
+        int preferredAttempts = retryPreferred ? STARTUP_PORT_ATTEMPTS : 1;
+        for (int attempt = 0; attempt < preferredAttempts + PORT_LIMIT - DEFAULT_PORT - 1; attempt++) {
+            int tryPort = attempt < preferredAttempts
+                    ? preferredPort : preferredPort + 1 + attempt - preferredAttempts;
+            RemoteServer.serverPort = tryPort;
+            RemoteServer candidate = new RemoteServer(lanEnabled ? null : "127.0.0.1", tryPort, mContext);
+            candidate.setDataReceiver(new DataReceiver() {
                 @Override
                 public void onTextReceived(String text) {
                     // 历史遗留:曾广播 SearchReceiver 触发局域网推送搜索,但 SearchReceiver.onReceive
@@ -271,40 +398,59 @@ public class ControlManager {
                 }
             });
             try {
-                mServer.start();
+                candidate.start();
+                mServer = candidate;
                 com.github.tvbox.osc.util.OkGoHelper.setLocalFileReadAccess(
-                        tryPort, mServer.getLocalReadToken());
+                        tryPort, candidate.getLocalReadToken());
                 lanBound = lanEnabled; // 记下本次实例的实际绑定方式(供 lanState 区分"已开但没重启")
-                IjkMediaPlayer.setDotPort(SystemConfig.getDohUrl() > 0, RemoteServer.serverPort);
+                IjkMediaPlayer.setDotPort(SystemConfig.getDohUrl() > 0, tryPort);
                 // server 就绪后注入局域网地址(:spider 模块 ApiConfig 用,替代直接依赖本类)
                 try {
-                    com.github.tvbox.osc.api.ApiConfig.setLanBase(mServer.getLoadAddress());
+                    com.github.tvbox.osc.api.ApiConfig.setLanBase(candidate.getLoadAddress());
                 } catch (Throwable ignored) {
                 }
-                started = true;
                 // 端口回退可见性:9978 被占时这里静默 +1 重试,而第三方源里写死的
                 // 127.0.0.1:9978 代理地址(do=js/do=m3u8 等)会因此连不上(ECONNREFUSED);
                 // 应用侧以前不打任何日志,只能靠第三方 adjustPort 日志猜,这里补上实际端口。
                 if (tryPort == preferredPort) {
-                    Log.i("TVBox-Server", "本机服务已启动: " + mServer.getLoadAddress());
+                    Log.i("TVBox-Server", "本机服务已启动: " + candidate.getLoadAddress());
                 } else {
                     Log.w("TVBox-Server", preferredPort + " 被占用,本机服务回退到 " + tryPort
                             + ";源里写死 127.0.0.1:" + preferredPort + " 的代理地址会连不上");
                 }
                 if (lanEnabled) LogStore.success(Category.SYSTEM,
                         "局域网服务已启动 port=" + tryPort);
-                break;
+                return true;
             } catch (IOException ex) {
-                RemoteServer.serverPort++;
-                mServer.stop();
+                try {
+                    candidate.stop();
+                } catch (Throwable stopError) {
+                    Log.e("TVBox-Server", "端口绑定失败后关闭服务实例失败", stopError);
+                }
+                if (candidate.isStarting()) {
+                    // 不能丢掉可能仍在监听的实例，供局域网状态和关闭路径如实处理。
+                    mServer = candidate;
+                    lanBound = lanEnabled;
+                    return false;
+                }
+                if (attempt + 1 < preferredAttempts) {
+                    try {
+                        Thread.sleep(STARTUP_PORT_RETRY_MS);
+                    } catch (InterruptedException interrupted) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
             }
-        } while (RemoteServer.serverPort < 9999);
-        if (!started) {
-            com.github.tvbox.osc.util.OkGoHelper.clearLocalFileReadAccess();
-            Log.w("TVBox-Server", "本机服务启动失败:从 " + preferredPort + " 起连续端口都被占用");
-            if (lanEnabled) LogStore.fail(Category.SYSTEM,
-                    "局域网服务启动失败 reason=port_unavailable");
         }
+        mServer = null;
+        lanBound = false;
+        RemoteServer.serverPort = DEFAULT_PORT;
+        com.github.tvbox.osc.util.OkGoHelper.clearLocalFileReadAccess();
+        Log.w("TVBox-Server", "本机服务启动失败:从 " + preferredPort + " 起连续端口都被占用");
+        if (lanEnabled) LogStore.fail(Category.SYSTEM,
+                "局域网服务启动失败 reason=port_unavailable");
+        return false;
     }
 
     /**

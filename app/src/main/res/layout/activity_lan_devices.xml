@@ -22,9 +22,7 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:background="@drawable/bg_large_round_float"
-            android:orientation="vertical"
-            android:padding="16dp">
+            android:orientation="vertical">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -36,7 +34,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="已配对设备"
+                    android:text="在线设备"
                     android:textColor="@color/text_foreground"
                     android:textSize="16sp"
                     android:textStyle="bold" />

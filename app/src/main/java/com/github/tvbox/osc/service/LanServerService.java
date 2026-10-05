@@ -30,6 +30,8 @@ import com.github.tvbox.osc.log.Category;
 import com.github.tvbox.osc.log.LogStore;
 import com.github.tvbox.osc.server.ControlManager;
 import com.github.tvbox.osc.ui.activity.LanServiceActivity;
+import com.github.tvbox.osc.ui.activity.DetailActivity;
+import com.github.tvbox.osc.server.RemoteServer;
 import com.github.tvbox.osc.util.HeavyTaskUtil;
 
 import java.util.concurrent.atomic.AtomicLong;
@@ -45,6 +47,7 @@ public final class LanServerService extends Service {
     private static final CopyOnWriteArraySet<StateListener> STATE_LISTENERS = new CopyOnWriteArraySet<>();
     private static final Handler MAIN_HANDLER = new Handler(Looper.getMainLooper());
     private static volatile long foregroundOwner;
+    private static volatile LanServerService activeInstance;
     private static final long NOTIFICATION_CHECK_INTERVAL_MS = 15_000L;
     private final Handler notificationHandler = new Handler(Looper.getMainLooper());
     private final Runnable notificationCheck = new Runnable() {
@@ -64,12 +67,15 @@ public final class LanServerService extends Service {
                     notificationHandler.postDelayed(this, NOTIFICATION_CHECK_INTERVAL_MS);
                 }
             } else {
+                refreshCastNotification();
                 notificationHandler.postDelayed(this, NOTIFICATION_CHECK_INTERVAL_MS);
             }
         }
     };
     private long ownerId;
     private volatile boolean destroyed;
+    private boolean castNotificationShown;
+    private String castNotificationSessionId;
     private PowerManager.WakeLock cpuLock;
     private WifiManager.WifiLock wifiLock;
     private BroadcastReceiver notificationBlockReceiver;
@@ -122,13 +128,49 @@ public final class LanServerService extends Service {
                 report(result, START_ACTIVE);
                 return;
             }
-            if (failClosed(context, "局域网前台服务启动失败: " + unavailable, 0)) stop(context);
-            report(result, 0);
+            boolean alreadyForeground = isForegroundReady();
+            Context appContext = context.getApplicationContext();
+            HeavyTaskUtil.executeBigTask(() -> {
+                if (failClosed(appContext, "局域网前台服务启动失败: " + unavailable, 0)
+                        && alreadyForeground) stop(appContext);
+                report(result, 0);
+            });
         }
     }
 
     public static boolean isForegroundReady() {
         return foregroundOwner != 0;
+    }
+
+    /** 投屏开始或结束时更新同一条常驻通知；进度上报不需要刷新通知。 */
+    public static void refreshCastNotification() {
+        MAIN_HANDLER.post(() -> {
+            LanServerService service = activeInstance;
+            if (service != null) service.refreshCastNotificationIfChanged();
+        });
+    }
+
+    private boolean hasActiveBrowserCast() {
+        return ControlManager.get().isLanServing()
+                && ControlManager.get().activeBrowserPlaybackState() != null;
+    }
+
+    private void refreshCastNotificationIfChanged() {
+        if (destroyed || foregroundOwner != ownerId || !canShowNotification(this)) return;
+        boolean castActive = hasActiveBrowserCast();
+        RemoteServer.BrowserCastDetail detail = ControlManager.get().activeBrowserCastDetail();
+        String castSession = detail == null ? null : detail.sessionId;
+        if (castActive == castNotificationShown
+                && java.util.Objects.equals(castSession, castNotificationSessionId)) return;
+        NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        if (manager == null) return;
+        try {
+            manager.notify(NOTIFICATION_ID, notification(castActive));
+            castNotificationShown = castActive;
+            castNotificationSessionId = castSession;
+        } catch (RuntimeException unavailable) {
+            LogStore.fail(Category.SYSTEM, "局域网投屏通知更新失败: " + unavailable);
+        }
     }
 
     /** 只有通知可在通知栏展示时，才允许服务对局域网绑定。 */
@@ -204,16 +246,18 @@ public final class LanServerService extends Service {
                 notifyStateChanged();
                 return;
             }
+            // 尚在排队的 startForegroundService 必须先进入 onStartCommand 完成前台提升，
+            // 再由开关关闭分支自行 stopSelf；这里抢先 stopService 会留下 fgRequired 超时。
+            boolean alreadyForeground = foregroundOwner != 0;
             foregroundOwner = 0;
-            stop(context);
+            if (alreadyForeground) stop(context);
         }
         notifyStateChanged();
         restoreLoopback(manager);
     }
 
-    @Override public void onCreate() {
-        super.onCreate();
-        ensureChannel(this);
+    private void registerNotificationBlockReceiver() {
+        if (notificationBlockReceiver != null) return;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             notificationBlockReceiver = new BroadcastReceiver() {
                 @Override public void onReceive(Context context, Intent intent) {
@@ -234,6 +278,32 @@ public final class LanServerService extends Service {
     }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
+        final long startOwner;
+        try {
+            ensureChannel(this);
+            castNotificationShown = hasActiveBrowserCast();
+            RemoteServer.BrowserCastDetail detail = ControlManager.get().activeBrowserCastDetail();
+            castNotificationSessionId = detail == null ? null : detail.sessionId;
+            startForeground(NOTIFICATION_ID, notification(castNotificationShown));
+            synchronized (LanServerService.class) {
+                ownerId = NEXT_OWNER.incrementAndGet();
+                foregroundOwner = ownerId;
+                activeInstance = this;
+                startOwner = ownerId;
+            }
+            notificationHandler.removeCallbacks(notificationCheck);
+            notificationHandler.postDelayed(notificationCheck, NOTIFICATION_CHECK_INTERVAL_MS);
+        } catch (RuntimeException unavailable) {
+            // 连前台都进不去时先取消所有待处理的启动请求，不能让关闭端口的 I/O
+            // 占着主线程，直到系统的前台服务启动计时器触发崩溃。
+            stopSelf();
+            ResultReceiver result = intent == null ? null : intent.getParcelableExtra(EXTRA_START_RESULT);
+            HeavyTaskUtil.executeBigTask(() -> {
+                failClosed(this, "局域网前台服务进入失败: " + unavailable, 0);
+                report(result, 0);
+            });
+            return START_NOT_STICKY;
+        }
         ResultReceiver result = intent == null ? null : intent.getParcelableExtra(EXTRA_START_RESULT);
         if (!SystemConfig.isLanServerEnabled()) {
             report(result, 0);
@@ -241,32 +311,20 @@ public final class LanServerService extends Service {
             return START_NOT_STICKY;
         }
         if (!canShowNotification(this)) {
-            boolean closed = failClosed(this, "局域网通知权限或通知频道不可用，已关闭局域网服务", 0);
-            report(result, 0);
-            if (closed) stopSelf(startId);
+            HeavyTaskUtil.executeBigTask(() -> {
+                boolean closed = failClosed(this,
+                        "局域网通知权限或通知频道不可用，已关闭局域网服务", startOwner);
+                report(result, 0);
+                if (closed) stopSelf(startId);
+            });
             return START_NOT_STICKY;
         }
-        final long startOwner;
-        try {
-            startForeground(NOTIFICATION_ID, notification());
-            synchronized (LanServerService.class) {
-                ownerId = NEXT_OWNER.incrementAndGet();
-                foregroundOwner = ownerId;
-                startOwner = ownerId;
-            }
-            notificationHandler.removeCallbacks(notificationCheck);
-            notificationHandler.postDelayed(notificationCheck, NOTIFICATION_CHECK_INTERVAL_MS);
-        } catch (RuntimeException unavailable) {
-            boolean closed = failClosed(this, "局域网前台服务进入失败: " + unavailable, 0);
-            report(result, 0);
-            if (closed) stopSelf(startId);
-            return START_NOT_STICKY;
-        }
+        registerNotificationBlockReceiver();
         // 通知先进入前台，再在共享执行器绑定端口；避免冷启动时阻塞开屏动画。
         HeavyTaskUtil.executeBigTask(() -> {
             String failure = null;
             try {
-                ControlManager.get().startServer();
+                ControlManager.get().startServerForStartup();
             } catch (RuntimeException unavailable) {
                 failure = "局域网监听启动失败: " + unavailable;
             }
@@ -298,22 +356,37 @@ public final class LanServerService extends Service {
                     && SystemConfig.isLanServerEnabled() && ControlManager.get().isLanServing()
                     ? START_ACTIVE : 0);
             notifyStateChanged();
+            refreshCastNotification();
         });
         return START_STICKY;
     }
 
-    private Notification notification() {
-        Intent open = new Intent(this, LanServiceActivity.class);
-        open.putExtra(LanServiceActivity.EXTRA_FROM_NOTIFICATION, true);
+    private Notification notification(boolean castActive) {
+        RemoteServer.BrowserCastDetail detail = castActive
+                ? ControlManager.get().activeBrowserCastDetail() : null;
+        Intent open;
+        if (detail != null) {
+            open = new Intent(this, DetailActivity.class);
+            open.putExtra("id", detail.vodId);
+            open.putExtra("sourceKey", detail.sourceKey);
+            open.putExtra("vodName", detail.vodName);
+            open.putExtra("browserCastSessionId", detail.sessionId);
+        } else {
+            open = new Intent(this, LanServiceActivity.class);
+            open.putExtra(LanServiceActivity.EXTRA_FROM_NOTIFICATION, true);
+        }
         open.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         PendingIntent pending = PendingIntent.getActivity(this, NOTIFICATION_ID, open,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        String title = castActive ? "MBox 正在投屏" : "MBox 局域网服务已开启";
+        String description = castActive ? (detail == null ? "点此返回投屏控制" : "点此返回播放详情")
+                : "点此查看访问地址、配对码和已连接设备";
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             // Android 12+ 默认可能延后展示前台服务通知；局域网监听需要立即可见的提醒。
             return new Notification.Builder(this, CHANNEL_ID)
                     .setSmallIcon(R.drawable.app_icon)
-                    .setContentTitle("MBox 局域网服务已开启")
-                    .setContentText("点此查看访问地址、配对码和已连接设备")
+                    .setContentTitle(title)
+                    .setContentText(description)
                     .setContentIntent(pending)
                     .setCategory(Notification.CATEGORY_SERVICE)
                     .setOngoing(true)
@@ -323,8 +396,8 @@ public final class LanServerService extends Service {
         }
         return new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setSmallIcon(R.drawable.app_icon)
-                .setContentTitle("MBox 局域网服务已开启")
-                .setContentText("点此查看访问地址、配对码和已连接设备")
+                .setContentTitle(title)
+                .setContentText(description)
                 .setContentIntent(pending)
                 .setCategory(NotificationCompat.CATEGORY_SERVICE)
                 .setOngoing(true)
@@ -352,6 +425,7 @@ public final class LanServerService extends Service {
         destroyed = true;
         synchronized (LanServerService.class) {
             if (foregroundOwner == ownerId) foregroundOwner = 0;
+            if (activeInstance == this) activeInstance = null;
         }
         notificationHandler.removeCallbacks(notificationCheck);
         if (notificationBlockReceiver != null) {
@@ -364,7 +438,9 @@ public final class LanServerService extends Service {
             wifiLock = null;
             cpuLock = null;
         }
-        ControlManager.get().stopLanWhenNotificationGone();
+        // startServer/stopServer 串行持有 ControlManager 的锁，等待端口重绑时
+        // 不能占住主线程，否则下一次 startForegroundService 的生命周期回调会超时。
+        HeavyTaskUtil.executeBigTask(() -> ControlManager.get().stopLanWhenNotificationGone());
         super.onDestroy();
     }
 

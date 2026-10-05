@@ -9,12 +9,15 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.os.ResultReceiver
+import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.widget.LinearLayout
+import android.widget.SeekBar
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
@@ -23,8 +26,10 @@ import com.blankj.utilcode.util.AppUtils
 import com.blankj.utilcode.util.ClipboardUtils
 import com.github.tvbox.osc.R
 import com.github.tvbox.osc.base.BaseVbActivity
+import com.github.tvbox.osc.cast.api.DlnaCastControl
 import com.github.tvbox.osc.config.SystemConfig
 import com.github.tvbox.osc.databinding.ActivityLanServiceBinding
+import com.github.tvbox.osc.di.AppCompositionRoot
 import com.github.tvbox.osc.server.ControlManager
 import com.github.tvbox.osc.service.LanServerService
 import com.github.tvbox.osc.transfer.ConfigImportSession
@@ -43,6 +48,13 @@ import com.lxj.xpopup.XPopup
 class LanServiceActivity : BaseVbActivity<ActivityLanServiceBinding>() {
     companion object {
         const val EXTRA_FROM_NOTIFICATION = "from_lan_notification"
+        const val EXTRA_DLNA_GENERATION = "dlna_cast_generation"
+    }
+
+    protected override fun allowDirectColdStart(): Boolean =
+        intent?.getBooleanExtra(EXTRA_FROM_NOTIFICATION, false) == true
+    private val dlnaCastControl: DlnaCastControl by lazy(LazyThreadSafetyMode.NONE) {
+        AppCompositionRoot.dlnaCastControl()
     }
     private val importSession = ConfigImportSession.get()
     private val importListener = ConfigImportSession.Listener { renderImportConnection() }
@@ -52,8 +64,29 @@ class LanServiceActivity : BaseVbActivity<ActivityLanServiceBinding>() {
     private var lanStartToken = 0L
     private var lanStartInFlight = false
     private var lanStartTimeout: Runnable? = null
+    private val castRefreshHandler = Handler(Looper.getMainLooper())
+    private var castSeekDragging = false
+    private var castSeekPendingUntil = 0L
+    private var castSeekPendingRevision = -1L
+    private var notificationDlnaGeneration: Long? = null
+    private var displayedDlnaGeneration = -1L
+    private val castRefresh = object : Runnable {
+        override fun run() {
+            if (!lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED) ||
+                isFinishing || isDestroyed) return
+            val power = getSystemService(POWER_SERVICE) as? PowerManager
+            if (power?.isInteractive != false) {
+                renderCastControl()
+                renderDlnaControl()
+            }
+            castRefreshHandler.postDelayed(this, 1_000L)
+        }
+    }
     private val lanStateListener = LanServerService.StateListener {
-        if (!isFinishing && !isDestroyed) renderStatus()
+        if (!isFinishing && !isDestroyed) {
+            renderStatus()
+            renderCastControl()
+        }
     }
     private val scanLanQr = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         ++importNavigationToken
@@ -74,6 +107,7 @@ class LanServiceActivity : BaseVbActivity<ActivityLanServiceBinding>() {
         if (intent?.getBooleanExtra(EXTRA_FROM_NOTIFICATION, false) == true) {
             com.github.tvbox.osc.base.App.getInstance().isNormalStart = true
         }
+        notificationDlnaGeneration = dlnaGenerationFrom(intent)
         mBinding.llLanServer.setOnClickListener { view ->
             FastClickCheckUtil.check(view)
             val enabled = SystemConfig.isLanServerEnabled()
@@ -87,6 +121,107 @@ class LanServiceActivity : BaseVbActivity<ActivityLanServiceBinding>() {
             }
         }
         mBinding.btnOpenLanConsole.setOnClickListener { openConsole() }
+        mBinding.btnCastOpenDetail.setOnClickListener {
+            // 点击时重新读取活动会话，避免卡片刷新与跳转之间投屏已被替换。
+            val detail = ControlManager.get().activeBrowserCastDetail()
+            if (detail == null || detail.sessionId.isNullOrBlank() ||
+                detail.sourceKey.isNullOrBlank() || detail.vodId.isNullOrBlank()) {
+                renderCastControl()
+                AppBubble.toast("当前投屏没有可返回的播放详情")
+                return@setOnClickListener
+            }
+            startActivity(Intent(this, DetailActivity::class.java)
+                .putExtra("id", detail.vodId)
+                .putExtra("sourceKey", detail.sourceKey)
+                .putExtra("vodName", detail.vodName)
+                .putExtra("browserCastSessionId", detail.sessionId))
+        }
+        mBinding.btnCastPause.setOnClickListener {
+            val state = ControlManager.get().activeBrowserPlaybackState() ?: run {
+                renderCastControl()
+                return@setOnClickListener
+            }
+            if (!ControlManager.get().controlActiveBrowserPlayback(
+                    if (state.paused) "play" else "pause", 0L)) {
+                AppBubble.toast("电脑暂未连接，请稍后重试")
+                renderCastControl()
+            }
+        }
+        mBinding.btnCastStop.setOnClickListener {
+            if (ControlManager.get().activeBrowserPlaybackState() == null) {
+                renderCastControl()
+                return@setOnClickListener
+            }
+            ConfirmDialog.show(this, "结束投屏",
+                "将结束电脑上的当前投屏，手机播放不受影响。", "结束投屏") {
+                if (!ControlManager.get().stopActiveBrowserPlayback()) {
+                    AppBubble.toast("投屏已结束")
+                }
+                renderCastControl()
+                LanServerService.refreshCastNotification()
+            }
+        }
+        mBinding.btnDlnaCastStop.setOnClickListener {
+            // The button is bound to the displayed generation. A replacement cast between this
+            // click and the confirmation cannot be stopped by the old page or notification.
+            val expected = displayedDlnaGeneration
+            if (expected < 0L) {
+                renderDlnaControl()
+                return@setOnClickListener
+            }
+            ConfirmDialog.show(this, "停止 DLNA 投屏",
+                "将向电视发送停止命令，并关闭本轮投屏媒体服务。", "停止投屏") {
+                if (isFinishing || isDestroyed ||
+                    !lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) return@show
+                val accepted = dlnaCastControl.cancel(expected) { success, message ->
+                    if (!isFinishing && !isDestroyed &&
+                        lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+                        renderDlnaControl()
+                        val current = dlnaCastControl.status()
+                        if (!success && (current == null || current.generation == expected) &&
+                            (notificationDlnaGeneration == null || notificationDlnaGeneration == expected))
+                            AppBubble.toast(message)
+                    }
+                }
+                if (!accepted) {
+                    renderDlnaControl()
+                    val current = dlnaCastControl.status()
+                    AppBubble.toast(if (current?.generation == expected && current.stopping)
+                        "正在停止 DLNA 投屏" else "该轮 DLNA 投屏已结束")
+                } else {
+                    renderDlnaControl()
+                }
+            }
+        }
+        mBinding.seekCastProgress.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
+                if (!fromUser) return
+                val duration = ControlManager.get().activeBrowserPlaybackState()?.durationMs ?: 0L
+                mBinding.tvCastPosition.text = formatCastTime(
+                    (duration.coerceAtLeast(0L).toDouble() * progress / seekBar.max).toLong())
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar) {
+                castSeekDragging = true
+                castSeekPendingUntil = 0L
+            }
+
+            override fun onStopTrackingTouch(seekBar: SeekBar) {
+                castSeekDragging = false
+                val state = ControlManager.get().activeBrowserPlaybackState()
+                val duration = state?.durationMs ?: 0L
+                if (duration > 0L) {
+                    val position = (duration.toDouble() * seekBar.progress / seekBar.max).toLong()
+                    if (ControlManager.get().controlActiveBrowserPlayback("seek", position)) {
+                        castSeekPendingUntil = SystemClock.uptimeMillis() + 2_500L
+                        castSeekPendingRevision = state!!.revision
+                    } else {
+                        AppBubble.toast("电脑暂未连接，请稍后重试")
+                        renderCastControl()
+                    }
+                } else renderCastControl()
+            }
+        })
         mBinding.btnRotatePairingCode.setOnClickListener {
             ConfirmDialog.show(this, "更新配对码",
                 "更新后，已配对设备会断开连接，需要输入新配对码重新连接。", "确认更新") {
@@ -136,6 +271,21 @@ class LanServiceActivity : BaseVbActivity<ActivityLanServiceBinding>() {
         }
         renderStatus()
         renderImportConnection()
+        castRefreshHandler.removeCallbacks(castRefresh)
+        castRefreshHandler.post(castRefresh)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        notificationDlnaGeneration = dlnaGenerationFrom(intent)
+        renderDlnaControl()
+    }
+
+    override fun onPause() {
+        castRefreshHandler.removeCallbacks(castRefresh)
+        castSeekDragging = false
+        super.onPause()
     }
 
     override fun onStart() {
@@ -152,6 +302,7 @@ class LanServiceActivity : BaseVbActivity<ActivityLanServiceBinding>() {
     }
 
     override fun onDestroy() {
+        castRefreshHandler.removeCallbacks(castRefresh)
         lanStartTimeout?.let { mBinding.root.removeCallbacks(it) }
         lanStartTimeout = null
         super.onDestroy()
@@ -209,6 +360,77 @@ class LanServiceActivity : BaseVbActivity<ActivityLanServiceBinding>() {
         mBinding.tvImportConnection.setTextColor(ContextCompat.getColor(this,
             if (importSession.state() == ConfigImportSession.State.KICKED) R.color.text_danger
             else R.color.text_sub_foreground))
+    }
+
+    private fun renderCastControl() {
+        val state = ControlManager.get().activeBrowserPlaybackState()
+        mBinding.panelCastControl.visibility = if (state == null) View.GONE else View.VISIBLE
+        val detail = if (state == null) null else ControlManager.get().activeBrowserCastDetail()
+        mBinding.btnCastOpenDetail.visibility = if (detail != null &&
+            !detail.sessionId.isNullOrBlank() && !detail.sourceKey.isNullOrBlank() &&
+            !detail.vodId.isNullOrBlank()) View.VISIBLE else View.GONE
+        if (state == null) {
+            castSeekPendingUntil = 0L
+            castSeekPendingRevision = -1L
+            return
+        }
+        mBinding.tvCastTitle.text = state.title.ifBlank { "电脑正在播放的视频" }
+        val device = state.deviceName.ifBlank { "电脑" }
+        mBinding.tvCastDevice.text = if (state.online)
+            "$device · ${if (state.paused) "已暂停" else "播放中"}"
+        else "$device · 连接暂时中断，等待电脑重新连接"
+        mBinding.btnCastPause.isEnabled = state.online
+        mBinding.btnCastPause.text = if (state.paused) "播放" else "暂停"
+        val duration = state.durationMs.coerceAtLeast(0L)
+        val position = state.positionMs.coerceIn(0L, if (duration > 0L) duration else Long.MAX_VALUE)
+        mBinding.seekCastProgress.isEnabled = state.online && duration > 0L
+        if (castSeekPendingRevision != state.revision ||
+            SystemClock.uptimeMillis() >= castSeekPendingUntil) castSeekPendingUntil = 0L
+        if (!castSeekDragging && castSeekPendingUntil == 0L) {
+            mBinding.seekCastProgress.progress = if (duration > 0L)
+                (position.toDouble() * mBinding.seekCastProgress.max / duration).toInt()
+            else 0
+            mBinding.tvCastPosition.text = formatCastTime(position)
+        }
+        mBinding.tvCastDuration.text = if (duration > 0L) formatCastTime(duration) else "--:--"
+    }
+
+    private fun dlnaGenerationFrom(entry: Intent?): Long? =
+        if (entry?.getBooleanExtra(EXTRA_FROM_NOTIFICATION, false) == true &&
+            entry.hasExtra(EXTRA_DLNA_GENERATION))
+            entry.getLongExtra(EXTRA_DLNA_GENERATION, -1L).takeIf { it >= 0L }
+        else null
+
+    private fun renderDlnaControl() {
+        val active = dlnaCastControl.status()
+        val expected = notificationDlnaGeneration
+        val matched = active != null && (expected == null || active.generation == expected)
+        mBinding.panelDlnaCast.visibility = if (matched || expected != null) View.VISIBLE else View.GONE
+        displayedDlnaGeneration = if (matched) active!!.generation else -1L
+        if (!matched) {
+            val preparing = expected != null && dlnaCastControl.preparing(expected)
+            mBinding.tvDlnaCastDevice.text = if (preparing)
+                "正在准备 DLNA 投屏" else "此通知对应的 DLNA 投屏已结束"
+            mBinding.tvDlnaCastState.text = if (preparing)
+                "等待电视确认，确认后可在此停止投屏" else ""
+            mBinding.btnDlnaCastStop.visibility = View.GONE
+            return
+        }
+        mBinding.tvDlnaCastDevice.text = active!!.deviceName.orEmpty().ifBlank { "电视设备" }
+        mBinding.tvDlnaCastState.text = if (active.stopping)
+            "正在向电视发送停止命令…" else "投屏请求已发送，媒体服务正在运行"
+        mBinding.btnDlnaCastStop.visibility = View.VISIBLE
+        mBinding.btnDlnaCastStop.isEnabled = !active.stopping
+    }
+
+    private fun formatCastTime(milliseconds: Long): String {
+        val totalSeconds = milliseconds.coerceAtLeast(0L) / 1_000L
+        val hours = totalSeconds / 3_600L
+        val minutes = (totalSeconds / 60L) % 60L
+        val seconds = totalSeconds % 60L
+        return if (hours > 0L) String.format(java.util.Locale.ROOT,
+            "%d:%02d:%02d", hours, minutes, seconds)
+        else String.format(java.util.Locale.ROOT, "%02d:%02d", minutes, seconds)
     }
 
     private fun renderStatus() {
@@ -388,6 +610,10 @@ class LanServiceActivity : BaseVbActivity<ActivityLanServiceBinding>() {
     }
 
     private fun restartAppForLan() {
+        if (packageManager.getLaunchIntentForPackage(packageName) == null) {
+            AppBubble.toast("重启失败，请手动重开应用")
+            return
+        }
         com.github.tvbox.osc.config.SystemConfig.markInternalRestart()
         try {
             ControlManager.get().stopServer()
@@ -403,19 +629,12 @@ class LanServiceActivity : BaseVbActivity<ActivityLanServiceBinding>() {
             AppBubble.toast("局域网监听未能停止，请稍后再试")
             return
         }
+        // 仅清任务栈会留下旧进程的服务单例与端口状态；这里需要真正重启进程。
         try {
-            val launch = packageManager.getLaunchIntentForPackage(packageName)
-            if (launch != null) {
-                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-                    or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                startActivity(launch)
-                return
-            }
+            AppUtils.relaunchApp(true)
+            error("重启未执行")
         } catch (error: Throwable) {
-            Log.w("MBox-Lan", "重启应用失败，尝试兜底方式", error)
-        }
-        try { AppUtils.relaunchApp(true) }
-        catch (error: Throwable) {
+            Log.w("MBox-Lan", "重启应用失败", error)
             com.github.tvbox.osc.config.SystemConfig.clearInternalRestart()
             AppBubble.toast("重启失败，请手动重开应用")
         }
