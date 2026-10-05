@@ -11,10 +11,12 @@ let playingQueue = [];
 let currentVideoIndex = -1;
 let playbackRevision = 0;
 let castHls = null;
+let castHlsManifestReady = false;
 let castPlaybackStarted = false;
 let castRebufferReported = false;
 let castPlayGeneration = 0;
 let castPlayFailureName = null;
+let castHlsFatal = false;
 let castStartup = null;
 let castRetryCount = 0;
 let castRetryTimer = null;
@@ -22,7 +24,92 @@ const MAX_CAST_RETRIES = 2;
 let playbackPollEpoch = 0;
 let playbackPollTimer = null;
 let playbackPollPending = null;
+let lastPlaybackCommandId = 0;
+let pendingCastSeek = null;
+let castDesiredPaused = false;
+let castSource = null;
+let castAudioSignature = '';
+let castAudioReports = 0;
+let castStateReportingActive = false;
+let castStateReportTimer = null;
+let castStateSending = false;
+let castStatePendingSnapshot = null;
+let castEpisodeSignature = '';
+let castAbandonedRevision = 0;
+let lastPlaybackLeaveRevision = 0;
 let noticeTimer;
+
+function castStateSnapshot() {
+  if (!playbackRevision) return null;
+  const player = $('castVideo');
+  const milliseconds = seconds => Number.isFinite(seconds) && seconds > 0
+    ? String(Math.round(seconds * 1000)) : '0';
+  return {revision:String(playbackRevision),positionMs:milliseconds(player.currentTime),
+    durationMs:milliseconds(player.duration),paused:String(!!player.paused),
+    lastCommandId:String(lastPlaybackCommandId)};
+}
+function sendCastStateSnapshot(snapshot) {
+  if (!snapshot) return;
+  if (castStateSending) { castStatePendingSnapshot = snapshot; return; }
+  castStateSending = true;
+  fetch('/api/playback/state', {method:'POST',credentials:'same-origin',cache:'no-store',
+    headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},
+    body:new URLSearchParams(snapshot)
+  }).catch(() => {}).finally(() => {
+    castStateSending = false;
+    const pending = castStatePendingSnapshot;
+    castStatePendingSnapshot = null;
+    if (pending) sendCastStateSnapshot(pending);
+  });
+}
+function stopCastStateReporting() {
+  castStateReportingActive = false;
+  clearTimeout(castStateReportTimer);
+  castStateReportTimer = null;
+}
+function reportCastState(immediate = false) {
+  if (!castStateReportingActive || page !== 'cast' || $('dashboard').hidden || !playbackRevision) return;
+  if (immediate) {
+    clearTimeout(castStateReportTimer);
+    castStateReportTimer = null;
+    sendCastStateSnapshot(castStateSnapshot());
+  } else if (!castStateReportTimer) {
+    castStateReportTimer = setTimeout(() => {
+      castStateReportTimer = null;
+      if (castStateReportingActive) sendCastStateSnapshot(castStateSnapshot());
+    }, 1000);
+  }
+}
+function resetCastView() {
+  $('castTitle').textContent = '等待手机推送';
+  $('castStatus').textContent = '等待播放';
+  $('castMessage').textContent = '在手机播放器设置中选择「推送到电脑播放」。';
+  $('castEpisodeCount').textContent = '等待手机推送视频';
+  $('castEpisodes').textContent = '';
+}
+function leaveActiveCast(preferBeacon = false) {
+  const revision = playbackRevision;
+  if (!revision || revision === lastPlaybackLeaveRevision) return Promise.resolve();
+  lastPlaybackLeaveRevision = revision;
+  castAbandonedRevision = revision;
+  resetPlaybackPolling();
+  stopCastStateReporting();
+  clearCastPlayer();
+  playbackRevision = 0;
+  lastPlaybackCommandId = 0;
+  castEpisodeSignature = '';
+  clearCastRetry();
+  resetCastView();
+  const body = new URLSearchParams({revision:String(revision)});
+  if (preferBeacon && typeof navigator.sendBeacon === 'function') {
+    try {
+      if (navigator.sendBeacon('/api/playback/leave', body)) return Promise.resolve();
+    } catch (_) { /* Fall through to a keepalive request. */ }
+  }
+  return fetch('/api/playback/leave', {method:'POST',credentials:'same-origin',cache:'no-store',
+    keepalive:true,headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},
+    body}).catch(() => {});
+}
 
 function cancelPlaybackPollTimer() {
   clearTimeout(playbackPollTimer);
@@ -72,6 +159,12 @@ function notice(message) {
 }
 function disconnected() {
   resetPlaybackPolling();
+  stopCastStateReporting();
+  lastPlaybackCommandId = 0;
+  pendingCastSeek = null;
+  castEpisodeSignature = '';
+  castAbandonedRevision = 0;
+  lastPlaybackLeaveRevision = 0;
   $('dashboard').hidden = true;
   $('pairPanel').hidden = false;
   $('pairError').textContent = '';
@@ -99,7 +192,7 @@ async function postForm(path, data) {
 }
 function sendPlaybackEvent(event, detail = '') {
   if (!playbackRevision) return;
-  const safeDetail = String(detail).replace(/[^A-Za-z0-9_:-]/g,'').slice(0,48);
+  const safeDetail = String(detail).replace(/[^A-Za-z0-9_.:-]/g,'').slice(0,96);
   fetch('/api/playback/event', {method:'POST',credentials:'same-origin',cache:'no-store',
     headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'},
     body:new URLSearchParams({revision:String(playbackRevision),event,detail:safeDetail})
@@ -130,7 +223,7 @@ async function showDashboard() {
 async function showPage(route, incomingState) {
   if (!routeUrl[route]) route = 'home';
   if (page === 'video' && route !== 'video') $('video').pause();
-  if (page === 'cast' && route !== 'cast') $('castVideo').pause();
+  if (page === 'cast' && route !== 'cast') leaveActiveCast();
   page = route;
   for (const name of Object.keys(routeUrl)) $(name + 'Page').hidden = name !== route;
   for (const link of document.querySelectorAll('a[data-route]')) {
@@ -310,7 +403,8 @@ async function pollPlayback(force = false, expectedRevision = null) {
     try {
       const state = await (await request('/api/playback', undefined, epoch)).json();
       if (epoch !== playbackPollEpoch || $('dashboard').hidden) return;
-      if (page !== 'cast' && state.revision && state.revision !== playbackRevision)
+      if (page !== 'cast' && state.revision && state.revision !== playbackRevision
+          && state.revision !== castAbandonedRevision)
         await navigate('cast', state);
       else await applyPlaybackState(state, force && page === 'cast', epoch);
     } catch (error) {
@@ -327,38 +421,169 @@ async function pollPlayback(force = false, expectedRevision = null) {
   }
 }
 async function applyPlaybackState(state, force, epoch) {
+  if (state.revision && state.revision === castAbandonedRevision) return;
   if (!state.revision) {
+    stopCastStateReporting();
+    lastPlaybackCommandId = 0;
+    pendingCastSeek = null;
+    castEpisodeSignature = '';
+    castAbandonedRevision = 0;
+    lastPlaybackLeaveRevision = 0;
     if (playbackRevision) {
       playbackRevision = 0;
       clearCastRetry();
       clearCastPlayer();
-      $('castTitle').textContent = '等待手机推送';
-      $('castStatus').textContent = '等待播放';
-      $('castMessage').textContent = '在手机播放器设置中选择「推送到电脑播放」。';
-      $('castEpisodeCount').textContent = '等待手机推送视频';
-      $('castEpisodes').textContent = '';
+      resetCastView();
     }
     return;
   }
-  if (page !== 'cast' || state.revision === playbackRevision && !force) return;
-  if (state.revision !== playbackRevision) clearCastRetry();
-  playbackRevision = state.revision;
-  $('castTitle').textContent = state.title || '手机推送的视频';
-  $('castStatus').textContent = '手机推送';
-  renderCastEpisodes(state.episodes || [], state.selectedIndex);
-  await playCast(state.url || '', !!state.hls, !!state.nativeVideo, epoch);
+  if (page !== 'cast') return;
+  const newRevision = state.revision !== playbackRevision;
+  if (newRevision || force) {
+    if (newRevision) {
+      clearCastRetry();
+      lastPlaybackCommandId = 0;
+      castEpisodeSignature = '';
+      castAbandonedRevision = 0;
+      lastPlaybackLeaveRevision = 0;
+    }
+    playbackRevision = state.revision;
+    $('castTitle').textContent = state.title || '手机推送的视频';
+    $('castStatus').textContent = '手机推送';
+    await playCast(state.url || '', !!state.hls, !!state.nativeVideo, epoch,
+      Number(state.positionMs) || 0, !!state.paused);
+  }
+  syncCastEpisodes(state.episodes, state.selectedIndex);
+  applyPlaybackCommands(state.commands, state.command, state.revision, epoch);
 }
 function clearCastPlayer() {
+  stopCastStateReporting();
   clearCastStartupWatch();
   castPlayGeneration++;
   const player = $('castVideo');
   player.pause();
   if (castHls) { castHls.destroy(); castHls = null; }
+  castHlsManifestReady = false;
   player.removeAttribute('src');
   player.load();
   castPlaybackStarted = false;
   castRebufferReported = false;
   castPlayFailureName = null;
+  castHlsFatal = false;
+  pendingCastSeek = null;
+  castDesiredPaused = false;
+  castSource = null;
+  castAudioSignature = '';
+  castAudioReports = 0;
+  $('castReload').disabled = true;
+}
+// Audio init segments contain one audio track. Its mdhd timescale is the sample rate used by MSE.
+function castAudioSampleRate(bytes) {
+  if (!bytes || !bytes.buffer || !Number.isInteger(bytes.byteLength)) return 0;
+  try {
+    const data = new DataView(bytes.buffer, bytes.byteOffset || 0, bytes.byteLength);
+    const find = (start, end, depth) => {
+      if (depth > 4) return 0;
+      for (let offset = start; offset + 8 <= end;) {
+        const rawSize = data.getUint32(offset);
+        const size = rawSize === 0 ? end - offset : rawSize;
+        if (size < 8 || size > end - offset) return 0;
+        const type = String.fromCharCode(data.getUint8(offset + 4), data.getUint8(offset + 5),
+          data.getUint8(offset + 6), data.getUint8(offset + 7));
+        if (type === 'mdhd') {
+          const version = data.getUint8(offset + 8);
+          const rateOffset = version === 0 ? 20 : version === 1 ? 28 : -1;
+          if (rateOffset < 0 || rateOffset + 4 > size) return 0;
+          const rate = data.getUint32(offset + rateOffset);
+          return rate >= 8000 && rate <= 384000 ? rate : 0;
+        }
+        if (type === 'moov' || type === 'trak' || type === 'mdia') {
+          const rate = find(offset + 8, offset + size, depth + 1);
+          if (rate) return rate;
+        }
+        offset += size;
+      }
+      return 0;
+    };
+    return find(0, data.byteLength, 0);
+  } catch (_) { return 0; }
+}
+function reportCastAudio(track, manifestCodec) {
+  if (!track || castAudioReports >= 4) return;
+  const codec = String(track.codec || 'unknown').replace(/[^A-Za-z0-9.]/g,'').slice(0,20);
+  const declared = String(track.levelCodec || manifestCodec || 'unknown')
+    .replace(/[^A-Za-z0-9.]/g,'').slice(0,20);
+  const channels = Number(track.metadata && track.metadata.channelCount);
+  const signature = 'codec:' + codec + '_declared:' + declared + '_hz:'
+    + castAudioSampleRate(track.initSegment) + '_ch:'
+    + (Number.isInteger(channels) && channels >= 1 && channels <= 32 ? channels : 0);
+  if (signature === castAudioSignature) return;
+  castAudioSignature = signature;
+  castAudioReports++;
+  sendPlaybackEvent('audio_config', signature);
+}
+async function reloadCastPlayback() {
+  const source = castSource;
+  if (!source || source.revision !== playbackRevision || page !== 'cast' || $('dashboard').hidden) return;
+  const player = $('castVideo');
+  const waitingSeek = pendingCastSeek && pendingCastSeek.revision === playbackRevision
+    && pendingCastSeek.generation === castPlayGeneration ? pendingCastSeek : null;
+  const positionMs = waitingSeek ? waitingSeek.positionMs
+    : Number.isFinite(player.currentTime) && player.currentTime > 0
+      ? Math.round(player.currentTime * 1000) : 0;
+  const paused = player.readyState < 1 && !castPlaybackStarted ? castDesiredPaused : player.paused;
+  const rate = Number.isFinite(player.playbackRate) && player.playbackRate > 0
+    ? player.playbackRate : 1;
+  sendPlaybackEvent('user_reload', 'at:' + positionMs + '_rate:' + Math.round(rate * 1000)
+    + '_paused:' + Number(paused));
+  clearCastRetry();
+  await playCast(source.url, source.hlsHint, source.nativeHint, playbackPollEpoch,
+    positionMs, paused, rate);
+}
+function tryApplyCastSeek() {
+  const seek = pendingCastSeek;
+  const player = $('castVideo');
+  if (!seek || seek.revision !== playbackRevision || seek.generation !== castPlayGeneration ||
+      player.readyState < 1 || page !== 'cast' || $('dashboard').hidden) return;
+  pendingCastSeek = null;
+  try {
+    const seconds = seek.positionMs / 1000;
+    player.currentTime = Number.isFinite(player.duration) && player.duration > 0
+      ? Math.min(seconds, player.duration) : seconds;
+    reportCastState(true);
+  } catch (_) {
+    $('castMessage').textContent = '当前视频尚不能跳转到指定进度。';
+  }
+}
+function applyPlaybackCommand(command, revision, epoch) {
+  if (!command || revision !== playbackRevision || page !== 'cast' || $('dashboard').hidden) return;
+  const id = Number(command.id);
+  if (!Number.isSafeInteger(id) || id <= lastPlaybackCommandId || id <= 0) return;
+  if (command.action !== 'play' && command.action !== 'pause' && command.action !== 'seek') return;
+  const positionMs = Number(command.positionMs);
+  if (command.action === 'seek' && (!Number.isSafeInteger(positionMs) || positionMs < 0)) return;
+  lastPlaybackCommandId = id;
+  const player = $('castVideo');
+  if (command.action === 'seek') {
+    pendingCastSeek = {revision,generation:castPlayGeneration,positionMs};
+    tryApplyCastSeek();
+  } else if (command.action === 'pause') {
+    castDesiredPaused = true;
+    clearCastStartupWatch();
+    player.pause();
+    reportCastState(true);
+  } else {
+    castDesiredPaused = false;
+    if (!castHls || castHlsManifestReady || player.readyState >= 1)
+      startCastPlayback(player, epoch, castPlayGeneration);
+  }
+}
+function applyPlaybackCommands(commands, legacyCommand, revision, epoch) {
+  const ordered = Array.isArray(commands) ? commands.slice() : legacyCommand ? [legacyCommand] : [];
+  ordered.sort((left, right) => Number(left && left.id) - Number(right && right.id));
+  const acknowledged = lastPlaybackCommandId;
+  for (const command of ordered) applyPlaybackCommand(command, revision, epoch);
+  if (lastPlaybackCommandId !== acknowledged) reportCastState(true);
 }
 function renderCastEpisodes(episodes, selectedIndex) {
   const list = $('castEpisodes'); list.textContent = '';
@@ -378,6 +603,14 @@ function renderCastEpisodes(episodes, selectedIndex) {
     };
     row.append(button); list.append(row);
   });
+}
+function syncCastEpisodes(episodes, selectedIndex) {
+  const list = Array.isArray(episodes) ? episodes : [];
+  const selected = Number.isInteger(selectedIndex) ? selectedIndex : -1;
+  const signature = JSON.stringify([list, selected]);
+  if (signature === castEpisodeSignature) return;
+  castEpisodeSignature = signature;
+  renderCastEpisodes(list, selected);
 }
 function isHlsUrl(url) {
   return /m3u8/i.test(url) || /^\/(?:proxy|api\/cast\/media)(?:\?|$)/i.test(url);
@@ -425,6 +658,7 @@ function castErrorName(error) {
 }
 function reportCastPlayFailure(error, epoch, generation) {
   if (!currentCastPlay(epoch, generation)) return;
+  if (castHls && castHlsFatal) return;
   const name = castErrorName(error);
   castPlayFailureName = name;
   clearCastStartupWatch();
@@ -437,6 +671,8 @@ function reportCastPlayFailure(error, epoch, generation) {
   }
 }
 function startCastPlayback(player, epoch, generation) {
+  if (!castStartup && !castPlaybackStarted && player.readyState < 2)
+    startCastStartupWatch(player, epoch, generation);
   try {
     const started = player.play();
     if (started && typeof started.catch === 'function')
@@ -445,43 +681,68 @@ function startCastPlayback(player, epoch, generation) {
     reportCastPlayFailure(error, epoch, generation);
   }
 }
-async function playCast(url, hlsHint, nativeHint, epoch = playbackPollEpoch) {
+async function playCast(url, hlsHint, nativeHint, epoch = playbackPollEpoch,
+    initialPositionMs = 0, initialPaused = false, initialRate = 1) {
   clearCastPlayer();
   const generation = castPlayGeneration;
   const player = $('castVideo');
   if (!url) { $('castMessage').textContent = '手机没有发送可播放地址。'; return; }
+  castSource = {revision:playbackRevision,url,hlsHint,nativeHint};
+  $('castReload').disabled = false;
+  player.defaultPlaybackRate = initialRate;
+  player.playbackRate = initialRate;
+  if ('preservesPitch' in player) player.preservesPitch = true;
+  castStateReportingActive = true;
+  castDesiredPaused = initialPaused;
+  if (Number.isSafeInteger(initialPositionMs) && initialPositionMs > 0)
+    pendingCastSeek = {revision:playbackRevision,generation,positionMs:initialPositionMs};
   $('castMessage').textContent = '正在载入手机推送的视频…';
   const hlsSource = !nativeHint && (hlsHint || isHlsUrl(url));
   if (hlsSource && window.Hls && Hls.isSupported()) {
     sendPlaybackEvent('playback_engine', 'hlsjs');
     // Give the relay room for short network stalls while limiting long-play memory use.
-    const hls = new Hls({
+    const config = {
       backBufferLength: 30,
       maxBufferLength: 60,
       maxMaxBufferLength: 120,
       maxBufferSize: 96 * 1024 * 1024,
       lowLatencyMode: false
-    });
+    };
+    // Load the requested fragment directly instead of starting at zero then seeking after metadata.
+    if (Number.isSafeInteger(initialPositionMs) && initialPositionMs > 0)
+      config.startPosition = initialPositionMs / 1000;
+    const hls = new Hls(config);
     castHls = hls;
-    const startup = startCastStartupWatch(player, epoch, generation);
+    if (!castDesiredPaused) startCastStartupWatch(player, epoch, generation);
+    const currentStartup = () => castHls === hls && currentCastPlay(epoch, generation)
+      ? castStartup : null;
     let reportedNonfatal = false;
+    hls.on(Hls.Events.FRAG_PARSING_INIT_SEGMENT,(_,data) => {
+      if (castHls !== hls || !currentCastPlay(epoch, generation)) return;
+      const level = hls.levels && data && data.frag && hls.levels[data.frag.level];
+      reportCastAudio(data && data.tracks && data.tracks.audio, level && level.audioCodec);
+    });
     hls.on(Hls.Events.MANIFEST_PARSED,() => {
       if (castHls !== hls || !currentCastPlay(epoch, generation)) return;
-      updateCastStartupStage(startup, 1, 'manifest_parsed', '清单已解析');
-      startCastPlayback(player, epoch, generation);
+      castHlsManifestReady = true;
+      updateCastStartupStage(currentStartup(), 1, 'manifest_parsed', '清单已解析');
+      if (!castDesiredPaused) startCastPlayback(player, epoch, generation);
     });
     hls.on(Hls.Events.FRAG_LOADING,() => {
+      const startup = currentStartup();
+      if (!startup) return;
       if (startup.firstFragment) return;
       startup.firstFragment = true;
       updateCastStartupStage(startup, 2, 'first_fragment_loading', '首片加载');
     });
     hls.on(Hls.Events.FRAG_PARSED,() =>
-      updateCastStartupStage(startup, 3, 'fragment_parsed', '首片已解析'));
+      updateCastStartupStage(currentStartup(), 3, 'fragment_parsed', '首片已解析'));
     hls.on(Hls.Events.BUFFER_APPENDED,() =>
-      updateCastStartupStage(startup, 4, 'buffer_appended', '视频数据已写入缓冲区'));
+      updateCastStartupStage(currentStartup(), 4, 'buffer_appended', '视频数据已写入缓冲区'));
     hls.on(Hls.Events.ERROR,(_,data) => {
       if (castHls !== hls || !currentCastPlay(epoch, generation)) return;
-      const detail = String(data && data.details || 'unknown').slice(0, 80);
+      const rawDetail = String(data && data.details || 'unknown');
+      const detail = /^[A-Za-z][A-Za-z0-9]{0,79}$/.test(rawDetail) ? rawDetail : 'unknown';
       if (!data || !data.fatal) {
         if (!reportedNonfatal) {
           reportedNonfatal = true;
@@ -491,15 +752,21 @@ async function playCast(url, hlsHint, nativeHint, epoch = playbackPollEpoch) {
           $('castMessage').textContent = '视频加载遇到问题（' + detail + '），播放器正在继续尝试。';
         return;
       }
-      if (/^\/(?:proxy|api\/cast\/media)(?:\?|$)/i.test(url) && !hlsHint) {
+      const httpCode = Number(data.response && data.response.code);
+      const status = Number.isInteger(httpCode) && httpCode >= 400 && httpCode <= 599
+        ? '（HTTP ' + httpCode + '）' : '';
+      sendPlaybackEvent('hls_error', detail + status);
+      if (/^\/(?:proxy|api\/cast\/media)(?:\?|$)/i.test(url)
+          && !hlsHint && detail === 'manifestParsingError') {
         castHls = null; hls.destroy();
-        updateCastStartupStage(startup, 2, 'native_fallback', '浏览器原生播放');
+        castHlsManifestReady = false;
+        updateCastStartupStage(castStartup, 2, 'native_fallback', '浏览器原生播放');
         player.src = url; player.load();
-        startCastPlayback(player, epoch, generation);
+        if (!castDesiredPaused) startCastPlayback(player, epoch, generation);
       } else {
+        castHlsFatal = true;
         clearCastStartupWatch();
-        $('castMessage').textContent = 'M3U8 加载失败：' + detail;
-        sendPlaybackEvent('hls_error', detail);
+        $('castMessage').textContent = 'M3U8 加载失败：' + detail + status;
         scheduleCastRetry();
       }
     });
@@ -517,9 +784,9 @@ async function playCast(url, hlsHint, nativeHint, epoch = playbackPollEpoch) {
     sendPlaybackEvent('playback_engine', 'native_hls');
   } else sendPlaybackEvent('playback_engine', 'native_video');
   player.src = url;
-  startCastStartupWatch(player, epoch, generation);
+  if (!castDesiredPaused) startCastStartupWatch(player, epoch, generation);
   player.load();
-  startCastPlayback(player, epoch, generation);
+  if (!castDesiredPaused) startCastPlayback(player, epoch, generation);
 }
 function onVideoEnded() {
   if (!$('autoNext').checked) return;
@@ -581,10 +848,13 @@ $('pairForm').addEventListener('submit',async event => {
 });
 $('logoutButton').onclick = async () => {
   if (!confirm('退出与这台 MBox 的连接？下次访问需要重新输入配对码。')) return;
+  await leaveActiveCast();
   try { await request('/api/logout',{method:'POST'}); }
   catch (error) { if (!$('dashboard').hidden) notice(error.message); return; }
   disconnected();
 };
+window.addEventListener('pagehide',() => { leaveActiveCast(true); });
+window.addEventListener('beforeunload',() => { leaveActiveCast(true); });
 document.addEventListener('keydown',event => {
   if (event.code !== 'Space' || (page !== 'video' && page !== 'cast') || $('dashboard').hidden) return;
   const player = $(page === 'cast' ? 'castVideo' : 'video');
@@ -601,6 +871,12 @@ $('video').addEventListener('error',() => {
   if ($('video').src) $('videoMessage').textContent = '浏览器无法播放此格式。可换用 MP4 或 WebM 视频。';
 });
 $('castVideo').addEventListener('ended',onCastEnded);
+$('castReload').onclick = reloadCastPlayback;
+$('castVideo').addEventListener('ratechange',() => {
+  if (castStateReportingActive)
+    sendPlaybackEvent('media_rate', 'rate:' + Math.round($('castVideo').playbackRate * 1000)
+      + '_pitch:' + Number($('castVideo').preservesPitch !== false));
+});
 $('castVideo').addEventListener('playing',() => {
   if ($('dashboard').hidden || page !== 'cast' || !playbackRevision) return;
   castPlaybackStarted = true;
@@ -609,7 +885,23 @@ $('castVideo').addEventListener('playing',() => {
   cancelCastRetryTimer();
   $('castMessage').textContent = '正在播放手机推送的视频。';
   sendPlaybackEvent('playing');
+  reportCastState(true);
 });
+$('castVideo').addEventListener('play',() => {
+  if (castStateReportingActive) castDesiredPaused = false;
+  reportCastState(true);
+});
+$('castVideo').addEventListener('pause',() => {
+  if (castStateReportingActive) {
+    castDesiredPaused = true;
+    clearCastStartupWatch();
+  }
+  reportCastState(true);
+});
+$('castVideo').addEventListener('seeking',() => reportCastState(true));
+$('castVideo').addEventListener('seeked',() => reportCastState(true));
+$('castVideo').addEventListener('timeupdate',() => reportCastState());
+$('castVideo').addEventListener('durationchange',() => reportCastState(true));
 $('castVideo').addEventListener('waiting',() => {
   if (!castPlaybackStarted || castRebufferReported) return;
   castRebufferReported = true;
@@ -617,6 +909,8 @@ $('castVideo').addEventListener('waiting',() => {
 });
 $('castVideo').addEventListener('loadedmetadata',() => {
   updateCastStartupStage(castStartup, 5, 'loadedmetadata', '媒体信息已读取');
+  tryApplyCastSeek();
+  reportCastState(true);
   castStartupReady();
 });
 $('castVideo').addEventListener('loadeddata',castStartupReady);

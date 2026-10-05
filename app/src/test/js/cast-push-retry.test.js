@@ -14,7 +14,11 @@ function browserHarness(initialPlayback = null, initialPath = '/cast.html') {
   const instances = [];
   const requests = [];
   const events = [];
+  const states = [];
+  const leaves = [];
+  const beacons = [];
   const documentListeners = new Map();
+  const windowListeners = new Map();
   let nextTimer = 1;
   let playbackGate = null;
   let hlsSupported = true;
@@ -36,15 +40,22 @@ function browserHarness(initialPlayback = null, initialPath = '/cast.html') {
       value: '',
       src: '',
       readyState: 0,
+      currentTime: 0,
+      duration: NaN,
+      paused: true,
+      playbackRate: 1,
+      preservesPitch: true,
       style: {setProperty() {}},
       classList: {toggle() {}},
       append() {},
       addEventListener(name, listener) { listeners.set(name, listener); },
       emit(name) { listeners.get(name)(); },
       querySelectorAll() { return []; },
-      pause() { this.pauseCalls = (this.pauseCalls || 0) + 1; },
+      pause() { this.pauseCalls = (this.pauseCalls || 0) + 1; this.paused = true; },
       load() {},
-      play() { return this.playImpl ? this.playImpl() : Promise.resolve(); },
+      play() { this.playCalls = (this.playCalls || 0) + 1;
+        this.paused = false;
+        return this.playImpl ? this.playImpl() : Promise.resolve(); },
       canPlayType() { return this.canPlayTypeResult || ''; },
       removeAttribute(name) { attributes.delete(name); if (name === 'src') this.src = ''; },
       hasAttribute(name) { return attributes.has(name); },
@@ -54,7 +65,8 @@ function browserHarness(initialPlayback = null, initialPath = '/cast.html') {
 
   class FakeHls {
     static Events = {MANIFEST_PARSED: 'manifest', ERROR: 'error', FRAG_LOADING: 'frag_loading',
-      FRAG_PARSED: 'frag_parsed', BUFFER_APPENDED: 'buffer_appended'};
+      FRAG_PARSED: 'frag_parsed', BUFFER_APPENDED: 'buffer_appended',
+      FRAG_PARSING_INIT_SEGMENT: 'init_segment'};
     static isSupported() { return hlsSupported; }
     constructor(config) { this.config = config; this.handlers = new Map(); instances.push(this); }
     on(event, handler) { this.handlers.set(event, handler); }
@@ -65,8 +77,14 @@ function browserHarness(initialPlayback = null, initialPath = '/cast.html') {
     fragmentLoading() { this.handlers.get(FakeHls.Events.FRAG_LOADING)(); }
     fragmentParsed() { this.handlers.get(FakeHls.Events.FRAG_PARSED)(); }
     bufferAppended() { this.handlers.get(FakeHls.Events.BUFFER_APPENDED)(); }
+    audioInit(track) { this.handlers.get(FakeHls.Events.FRAG_PARSING_INIT_SEGMENT)(null,
+      {tracks:{audio:track}}); }
     warn(details) { this.handlers.get(FakeHls.Events.ERROR)(null, {fatal: false, details}); }
-    fail() { this.handlers.get(FakeHls.Events.ERROR)(null, {fatal: true, details: 'manifestLoadError'}); }
+    fail(details = 'manifestLoadError', code) {
+      this.handlers.get(FakeHls.Events.ERROR)(null, {
+        fatal: true, details, response: code === undefined ? undefined : {code}
+      });
+    }
   }
 
   const document = {
@@ -82,7 +100,13 @@ function browserHarness(initialPlayback = null, initialPath = '/cast.html') {
     querySelectorAll() { return []; },
     createElement() { return element(); }
   };
-  const window = {Hls: FakeHls, addEventListener() {}};
+  const window = {Hls: FakeHls,
+    addEventListener(name, listener) { windowListeners.set(name, listener); },
+    emit(name) { windowListeners.get(name)(); }};
+  const navigator = {sendBeacon(url, body) {
+    beacons.push({url, body:Object.fromEntries(body)});
+    return true;
+  }};
   const location = {pathname: initialPath};
   const context = vm.createContext({
     document,
@@ -91,7 +115,7 @@ function browserHarness(initialPlayback = null, initialPath = '/cast.html') {
     location,
     history: {pushState(_state, _title, url) { location.pathname = url; }},
     sessionStorage: {setItem() {}},
-    navigator: {},
+    navigator,
     URLSearchParams,
     setInterval() { throw new Error('page should not use fixed intervals'); },
     setTimeout(callback, delay) { const id = nextTimer++; timers.set(id, {callback, delay}); return id; },
@@ -99,6 +123,9 @@ function browserHarness(initialPlayback = null, initialPath = '/cast.html') {
     fetch: async (url, options) => {
       requests.push(url);
       if (url === '/api/playback/event') events.push(Object.fromEntries(options.body));
+      if (url === '/api/playback/state') states.push(Object.fromEntries(options.body));
+      if (url === '/api/playback/leave') leaves.push({body:Object.fromEntries(options.body),
+        keepalive:options.keepalive});
       const snapshot = {...playback};
       if (url === '/api/playback' && playbackGate) await playbackGate;
       const data = url === '/api/playback' ? snapshot :
@@ -111,11 +138,15 @@ function browserHarness(initialPlayback = null, initialPath = '/cast.html') {
   return {
     context,
     document,
+    window,
     elements,
     timers,
     instances,
     requests,
     events,
+    states,
+    leaves,
+    beacons,
     setPlayback(state) { playback = state; },
     setPlaybackGate(promise) { playbackGate = promise; },
     setHlsSupported(supported) { hlsSupported = supported; },
@@ -239,10 +270,33 @@ async function testPlayErrors() {
   const fallback = browserHarness({...state, hls: false, nativeVideo: false});
   fallback.elements.get('castVideo').playImpl = () => Promise.reject(namedError('NotSupportedError'));
   await fallback.flush();
-  fallback.instances[0].fail();
+  fallback.instances[0].fail('manifestParsingError');
   await fallback.flush();
   assert.match(fallback.elements.get('castMessage').textContent, /NotSupportedError/,
-    'extensionless HLS fallback reports native play rejection');
+    'only a non-playlist body falls back to native playback');
+  assert.equal(fallback.instances[0].destroyed, true);
+  assert.equal(fallback.elements.get('castVideo').src, '/api/cast/media?id=1');
+  assert.equal(fallback.events.find(event => event.event === 'hls_error').detail,
+    'manifestParsingError');
+
+  const networkFailure = browserHarness({...state, hls: false, nativeVideo: false});
+  const pendingPlay = deferred();
+  networkFailure.elements.get('castVideo').playImpl = () => pendingPlay.promise;
+  await networkFailure.flush();
+  networkFailure.instances[0].manifest();
+  networkFailure.instances[0].fail('manifestLoadError', 502);
+  pendingPlay.reject(namedError('NotSupportedError'));
+  await networkFailure.flush();
+  assert.equal(networkFailure.instances[0].destroyed, undefined,
+    'a manifest network failure must not be disguised as a native fallback');
+  assert.equal(networkFailure.elements.get('castVideo').src, '');
+  assert.match(networkFailure.elements.get('castMessage').textContent,
+    /M3U8 加载失败：manifestLoadError（HTTP 502）/);
+  assert.doesNotMatch(networkFailure.elements.get('castMessage').textContent,
+    /NotSupportedError|api\/cast\/media|id=1/,
+    'a later play rejection cannot hide the HLS error or reveal its capability URL');
+  assert.equal(networkFailure.events.find(event => event.event === 'hls_error').detail,
+    'manifestLoadErrorHTTP502');
 
   const switched = browserHarness(state);
   const oldPlay = deferred();
@@ -480,6 +534,299 @@ async function testRetryDoesNotReloadNewPush() {
   assert.equal(browser.timerFor('playbackPollTimer').delay, 30000);
 }
 
+async function testRemoteControlsAndStateReporting() {
+  const state = {revision: 1, title: '同步测试', url: '/api/cast/media?id=1',
+    hls: false, nativeVideo: true, episodes: [], positionMs: 0, durationMs: 0, paused: false};
+  const browser = browserHarness(state);
+  await browser.flush();
+  const player = browser.elements.get('castVideo');
+  player.currentTime = 12.5;
+  player.duration = 100;
+  player.paused = false;
+  player.emit('timeupdate');
+  assert.equal(browser.timerFor('castStateReportTimer').delay, 1000,
+    'frequent progress events report at a bounded rate');
+  browser.fireTimer('castStateReportTimer');
+  await browser.flush();
+  assert.deepEqual({...browser.states.at(-1)},
+    {revision:'1', positionMs:'12500', durationMs:'100000', paused:'false', lastCommandId:'0'});
+
+  player.currentTime = 13;
+  player.paused = true;
+  player.emit('pause');
+  await browser.flush();
+  assert.equal(browser.states.at(-1).positionMs, '13000',
+    'pause reports the current position without waiting for throttle');
+  assert.equal(browser.states.at(-1).paused, 'true');
+
+  player.readyState = 0;
+  browser.setPlayback({...state, command:{id:1, action:'seek', positionMs:42000}});
+  await browser.runPoll();
+  assert.equal(player.currentTime, 13, 'seek waits until metadata is available');
+  player.readyState = 1;
+  player.emit('loadedmetadata');
+  await browser.flush();
+  assert.equal(player.currentTime, 42);
+  assert.equal(browser.states.at(-1).positionMs, '42000');
+  assert.equal(browser.states.at(-1).lastCommandId, '1');
+  const playerLoads = player.playCalls;
+  player.currentTime = 20;
+  await browser.runPoll();
+  assert.equal(player.currentTime, 20, 'repeated command id executes only once');
+  assert.equal(player.playCalls, playerLoads, 'same revision does not reload the player');
+
+  const pauses = player.pauseCalls;
+  browser.setPlayback({...state, command:{id:2, action:'pause', positionMs:42000}});
+  await browser.runPoll();
+  assert.equal(player.pauseCalls, pauses + 1, 'phone pause controls the browser player');
+  assert.equal(browser.states.at(-1).paused, 'true');
+  assert.equal(browser.states.at(-1).lastCommandId, '2');
+  browser.setPlayback({...state, command:{id:3, action:'play', positionMs:42000}});
+  await browser.runPoll();
+  assert.equal(player.playCalls, playerLoads + 1, 'phone play controls the browser player');
+  player.emit('play');
+  await browser.flush();
+  assert.equal(browser.states.at(-1).paused, 'false');
+  assert.equal(browser.states.at(-1).lastCommandId, '3');
+
+  browser.setPlayback({revision:0, command:{id:4, action:'pause', positionMs:0}});
+  await browser.runPoll();
+  assert.equal(player.src, '', 'revocation clears the media');
+  const reported = browser.states.length;
+  player.emit('timeupdate');
+  assert.equal(browser.timerFor('castStateReportTimer'), null,
+    'revocation stops progress reports');
+  assert.equal(browser.states.length, reported);
+}
+
+async function testLeavingAndReenteringCastPage() {
+  const state = {revision:1, title:'返回测试', url:'/api/cast/media?id=1',
+    hls:false, nativeVideo:true, episodes:[], positionMs:25000, durationMs:90000, paused:false};
+  const browser = browserHarness(state);
+  await browser.flush();
+  const player = browser.elements.get('castVideo');
+  player.currentTime = 25;
+  player.duration = 90;
+  await vm.runInContext("showPage('home')", browser.context);
+  await browser.flush();
+  assert.equal(player.src, '', 'leaving cast releases the media source');
+  assert.deepEqual(browser.leaves[0], {body:{revision:'1'}, keepalive:true},
+    'leaving cast sends one revision-scoped leave request');
+  const plays = player.playCalls;
+  browser.setPlayback({...state, command:{id:1, action:'play', positionMs:25000}});
+  await browser.runPoll();
+  assert.equal(player.playCalls, plays, 'off-page poll does not execute a command');
+  await vm.runInContext("showPage('cast')", browser.context);
+  await browser.flush();
+  assert.equal(player.playCalls, plays,
+    'returning before the leave response cannot resurrect the abandoned revision');
+  assert.equal(browser.leaves.length, 1);
+  browser.setPlayback({revision:0});
+  await browser.runPoll();
+  browser.setPlayback({...state, revision:2, title:'新一轮推送'});
+  await browser.runPoll();
+  assert.ok(player.playCalls > plays, 'a new revision plays after the old one leaves');
+  assert.equal(browser.elements.get('castTitle').textContent, '新一轮推送');
+}
+
+async function testPageHideLeavesOnceButVisibilityDoesNot() {
+  const browser = browserHarness({revision:1, title:'离页测试', url:'/api/cast/media?id=1',
+    hls:false, nativeVideo:true, episodes:[]});
+  await browser.flush();
+  browser.document.hidden = true;
+  browser.document.emit('visibilitychange');
+  assert.equal(browser.leaves.length + browser.beacons.length, 0,
+    'ordinary hidden tabs keep the cast session');
+  browser.window.emit('beforeunload');
+  browser.window.emit('pagehide');
+  assert.deepEqual(browser.beacons, [{url:'/api/playback/leave', body:{revision:'1'}}],
+    'closing the page sends one beacon for the current revision');
+  assert.equal(browser.leaves.length, 0, 'a successful beacon needs no duplicate fetch');
+}
+
+async function testOrderedRemoteCommandQueue() {
+  const state = {revision:1, title:'命令队列', url:'/api/cast/media?id=1',
+    hls:false, nativeVideo:true, episodes:[], paused:true};
+  const browser = browserHarness(state);
+  await browser.flush();
+  const player = browser.elements.get('castVideo');
+  player.readyState = 1;
+  player.duration = 90;
+  const pauses = player.pauseCalls;
+  browser.setPlayback({...state, commands:[
+    {id:3,action:'pause',positionMs:20000},
+    {id:1,action:'seek',positionMs:20000},
+    {id:2,action:'play',positionMs:20000}
+  ], command:{id:3,action:'pause',positionMs:20000}});
+  await browser.runPoll();
+  assert.equal(player.currentTime, 20);
+  assert.equal(player.playCalls, 1);
+  assert.equal(player.pauseCalls, pauses + 1);
+  assert.equal(browser.states.at(-1).lastCommandId, '3',
+    'state POST acknowledges the highest command id applied in order');
+  await browser.runPoll();
+  assert.equal(player.playCalls, 1, 'repeated queued commands are not replayed');
+  assert.equal(player.pauseCalls, pauses + 1);
+}
+
+async function testRejectedRemotePlayIsNotRepeated() {
+  const state = {revision:1, title:'暂停测试', url:'/api/cast/media?id=1',
+    hls:false, nativeVideo:true, episodes:[], paused:true};
+  const browser = browserHarness(state);
+  await browser.flush();
+  const player = browser.elements.get('castVideo');
+  assert.equal(player.playCalls || 0, 0, 'paused state does not autoplay');
+  player.playImpl = () => Promise.reject(namedError('NotAllowedError'));
+  browser.setPlayback({...state, command:{id:1, action:'play', positionMs:0}});
+  await browser.runPoll();
+  assert.match(browser.elements.get('castMessage').textContent, /浏览器阻止了自动播放/);
+  await browser.runPoll();
+  assert.equal(player.playCalls, 1, 'the rejected command is not retried on each poll');
+}
+
+async function testEpisodeControlsFollowSameRevision() {
+  const state = {revision:1, title:'选集同步', url:'/api/cast/media?id=1',
+    hls:false, nativeVideo:true, episodes:['1','2'], selectedIndex:0};
+  const browser = browserHarness(state);
+  await browser.flush();
+  assert.match(browser.elements.get('castEpisodeCount').textContent, /2 集/);
+  const loads = browser.elements.get('castVideo').playCalls;
+  browser.setPlayback({...state, episodes:undefined, selectedIndex:undefined});
+  await browser.runPoll();
+  assert.match(browser.elements.get('castEpisodeCount').textContent, /没有可选集/,
+    'detached phone episode handler removes stale browser controls');
+  assert.equal(browser.elements.get('castVideo').playCalls, loads,
+    'episode availability changing does not reload the video');
+  browser.setPlayback({...state, episodes:['1','2','3'], selectedIndex:1});
+  await browser.runPoll();
+  assert.match(browser.elements.get('castEpisodeCount').textContent, /3 集/,
+    'episode controls may also arrive after the initial push in the same revision');
+  assert.equal(browser.elements.get('castVideo').playCalls, loads);
+}
+
+async function testPausedHlsRemotePlay() {
+  const state = {revision:1, title:'暂停的 HLS', url:'/api/cast/media?id=1',
+    hls:true, nativeVideo:false, episodes:[], paused:true};
+  const browser = browserHarness(state);
+  await browser.flush();
+  const player = browser.elements.get('castVideo');
+  const hls = browser.instances[0];
+  assert.equal(browser.timerFor('castStartup && castStartup.timer'), null,
+    'intentionally paused HLS has no startup stall timer');
+  assert.doesNotThrow(() => {
+    hls.fragmentLoading(); hls.fragmentParsed(); hls.bufferAppended();
+  }, 'fragments arriving before play must not dereference an absent startup watch');
+  hls.manifest();
+  await browser.flush();
+  assert.equal(player.playCalls || 0, 0, 'paused HLS does not autoplay after manifest');
+  browser.setPlayback({...state, command:{id:1, action:'play', positionMs:0}});
+  await browser.runPoll();
+  assert.equal(player.playCalls, 1,
+    'remote play starts HLS even when metadata is not yet ready after manifest');
+  hls.fragmentLoading();
+  assert.equal(vm.runInContext('castStartup.code', browser.context), 'first_fragment_loading',
+    'a newly started watchdog follows fragments after remote play');
+
+  const early = browserHarness(state);
+  await early.flush();
+  early.setPlayback({...state, command:{id:1, action:'play', positionMs:0}});
+  await early.runPoll();
+  assert.equal(early.elements.get('castVideo').playCalls || 0, 0,
+    'play command before manifest waits for HLS readiness');
+  early.instances[0].manifest();
+  await early.flush();
+  assert.equal(early.elements.get('castVideo').playCalls, 1,
+    'manifest completion starts a queued remote play');
+}
+
+function audioInitSegment(rate, version = 0) {
+  const mdhd = Buffer.alloc(version === 0 ? 32 : 44);
+  mdhd.writeUInt32BE(mdhd.length, 0);
+  mdhd.write('mdhd', 4);
+  mdhd[8] = version;
+  mdhd.writeUInt32BE(rate, version === 0 ? 20 : 28);
+  const box = (type, body) => {
+    const bytes = Buffer.alloc(body.length + 8);
+    bytes.writeUInt32BE(bytes.length, 0);
+    bytes.write(type, 4);
+    body.copy(bytes, 8);
+    return bytes;
+  };
+  return box('moov', box('trak', box('mdia', mdhd)));
+}
+
+async function testAudioDiagnostics() {
+  const browser = browserHarness();
+  await browser.flush();
+  const track = {codec:'mp4a.40.2',levelCodec:'mp4a.40.5',metadata:{channelCount:2},
+    initSegment:audioInitSegment(48000)};
+  browser.instances[0].audioInit(track);
+  browser.instances[0].audioInit(track);
+  assert.equal(browser.events.filter(event => event.event === 'audio_config').length, 1,
+    'repeated fragments with identical audio config do not flood logs');
+  assert.equal(browser.events.find(event => event.event === 'audio_config').detail,
+    'codec:mp4a.40.2_declared:mp4a.40.5_hz:48000_ch:2');
+  for (const rate of [44100,24000,22050,16000])
+    browser.instances[0].audioInit({...track,initSegment:audioInitSegment(rate, 1)});
+  assert.equal(browser.events.filter(event => event.event === 'audio_config').length, 4,
+    'audio configuration changes have a bounded log budget');
+  const malformed = audioInitSegment(48000);
+  malformed.writeUInt32BE(0xffffffff, 0);
+  browser.context.testAudioBytes = malformed;
+  assert.equal(vm.runInContext('castAudioSampleRate(testAudioBytes)', browser.context), 0,
+    'malformed MP4 boxes cannot escape segment bounds');
+  browser.setPlayback({revision:2,url:'/api/cast/media?id=2',hls:true,episodes:[]});
+  await vm.runInContext('pollPlayback()', browser.context);
+  browser.instances[0].audioInit(track);
+  assert.equal(browser.events.filter(event => event.event === 'audio_config').length, 4,
+    'old decoder callbacks cannot report into a newer movie');
+  browser.instances[1].audioInit(track);
+  assert.equal(browser.events.filter(event => event.event === 'audio_config').length, 5);
+}
+
+async function testReloadPreservesPlayback() {
+  const browser = browserHarness({revision:8,url:'/api/cast/media?id=8',hls:true,
+    positionMs:869000,paused:false,episodes:[]});
+  await browser.flush();
+  assert.equal(browser.instances[0].config.startPosition, 869,
+    'resume loads the requested HLS fragment directly');
+  const player = browser.elements.get('castVideo');
+  player.readyState = 1;
+  player.duration = 3600;
+  player.emit('loadedmetadata');
+  player.currentTime = 912.5;
+  player.paused = true;
+  player.playbackRate = 1.25;
+  const playsBefore = player.playCalls || 0;
+  await browser.elements.get('castReload').onclick();
+  assert.equal(browser.instances.length, 2);
+  assert.equal(browser.instances[0].destroyed, true);
+  assert.equal(browser.instances[1].config.startPosition, 912.5);
+  assert.equal(player.playbackRate, 1.25);
+  browser.instances[1].manifest();
+  player.emit('loadedmetadata');
+  assert.equal(player.currentTime, 912.5);
+  assert.equal(player.paused, true, 'reloading a paused video must not start playing');
+  assert.equal(player.playCalls || 0, playsBefore);
+  assert.equal(vm.runInContext('playbackRevision', browser.context), 8,
+    'manual reload keeps the cast session and does not republish it');
+  assert.equal(browser.leaves.length, 0);
+  assert.ok(browser.events.some(event => event.event === 'user_reload'));
+  vm.runInContext('disconnected()', browser.context);
+  await browser.elements.get('castReload').onclick();
+  assert.equal(browser.instances.length, 2, 'disconnected reload cannot revive old media');
+  assert.equal(browser.elements.get('castReload').disabled, true);
+  const loading = browserHarness({revision:9,url:'/api/cast/media?id=9',hls:true,
+    positionMs:869000,paused:false,episodes:[]});
+  await loading.flush();
+  await loading.elements.get('castReload').onclick();
+  assert.equal(loading.instances[1].config.startPosition, 869,
+    'reloading before metadata preserves a still-pending resume position');
+  loading.instances[1].manifest();
+  assert.equal(loading.elements.get('castVideo').paused, false,
+    'reloading before startup preserves the intended play state');
+}
+
 async function main() {
   const browser = browserHarness();
   await browser.flush();
@@ -538,6 +885,15 @@ async function main() {
   await testStartupStall();
   await testPlaybackPolling();
   await testRetryDoesNotReloadNewPush();
+  await testRemoteControlsAndStateReporting();
+  await testLeavingAndReenteringCastPage();
+  await testPageHideLeavesOnceButVisibilityDoesNot();
+  await testOrderedRemoteCommandQueue();
+  await testRejectedRemotePlayIsNotRepeated();
+  await testEpisodeControlsFollowSameRevision();
+  await testPausedHlsRemotePlay();
+  await testAudioDiagnostics();
+  await testReloadPreservesPlayback();
   console.log('cast-push-retry.test.js: passed');
 }
 
