@@ -75,9 +75,10 @@
         <!-- 兼容旧引用 -->
         <item name="colorAccent">@color/md_primary</item>
         <item name="colorPrimaryDark">@color/md_primary</item>
-        <!-- 系统输入框的光标与选区句柄跟随文字主色。 -->
+        <!-- 句柄和光标跟随主题文字主色；选区背景为不透明纯色。 -->
         <item name="colorControlActivated">@color/text_foreground</item>
         <item name="android:colorControlActivated">@color/text_foreground</item>
+        <item name="android:textColorHighlight">@color/selection_highlight</item>
         <!--默认window窗口(activity)背景颜色,避免activity跳转/回跳白屏-->
         <item name="android:windowBackground">@color/windowBackground</item>
     </style>

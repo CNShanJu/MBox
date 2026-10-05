@@ -44,6 +44,9 @@
     <!--    通用颜色-->
     <color name="white">#FFFFFF</color>
     <color name="black">#000000</color>
+    <!-- 选区背景使用不透明纯色；句柄沿用主题文字主色。 -->
+    <color name="selection_highlight">#6671E5</color>
+    <color name="selection_text">#FFFFFF</color>
     <color name="text_foreground">@color/text_main</color>
     <!-- 文字分级:正常/普通强调=text_main，次要=text_sub，占位=text_hint，禁用=text_disable；
          链接与空心选中高亮=text_highlight。 -->

@@ -164,8 +164,7 @@ public class ThemeResources extends Resources {
      */
     private Drawable tintIfThemed(Drawable d, int id) {
         if (d == null) return null;
-        // 旧系统的 EditText 没有公开句柄/光标 setter；框架从 Context 的 Resources
-        // 加载 Material 句柄与光标时，在这里把默认强调色替换为当前文字主色。
+        // 旧系统没有公开句柄 setter；平台 Material 句柄和光标按主题文字主色着色。
         if ((id >>> 24) == 0x01) {
             try {
                 String entry = getResourceEntryName(id);

@@ -233,32 +233,40 @@ public final class ThemeInflaterFactory implements LayoutInflater.Factory2 {
         }
         // style 与父 style 的收尾一趟(内联已在上面处理完,这里只补"布局没写、但 style 里有"的那些)
         applyResolvedStyleAttrs(view, context, attrs, palette);
-        if (view instanceof EditText && android.os.Build.VERSION.SDK_INT >= 29) {
-            tintTextHandlesAndCursor((EditText) view, palette.get("text_main"));
+        if (view instanceof TextView) {
+            TextView textView = (TextView) view;
+            if (view instanceof EditText || textView.isTextSelectable()) {
+                TextSelectionStyle.install(textView);
+                if (android.os.Build.VERSION.SDK_INT >= 29) {
+                    applySelectionDrawables(textView, palette.get("text_main"));
+                }
+            }
         }
     }
 
-    /** API 29+ 可直接设置句柄与闪烁光标，覆盖系统主题缓存里的旧强调色。 */
+    /** API 29+ 将平台句柄和光标按当前主题文字主色着色。 */
     @androidx.annotation.RequiresApi(29)
-    private static void tintTextHandlesAndCursor(EditText editText, int color) {
+    private static void applySelectionDrawables(TextView textView, int cursorColor) {
         try {
-            Drawable middle = tintedHandle(editText.getTextSelectHandle(), editText, color);
-            Drawable left = tintedHandle(editText.getTextSelectHandleLeft(), editText, color);
-            Drawable right = tintedHandle(editText.getTextSelectHandleRight(), editText, color);
-            Drawable cursor = tintedHandle(editText.getTextCursorDrawable(), editText, color);
-            if (middle != null) editText.setTextSelectHandle(middle);
-            if (left != null) editText.setTextSelectHandleLeft(left);
-            if (right != null) editText.setTextSelectHandleRight(right);
-            if (cursor != null) editText.setTextCursorDrawable(cursor);
+            Drawable middle = tintedSelectionDrawable(textView.getTextSelectHandle(), textView, cursorColor);
+            Drawable left = tintedSelectionDrawable(textView.getTextSelectHandleLeft(), textView, cursorColor);
+            Drawable right = tintedSelectionDrawable(textView.getTextSelectHandleRight(), textView, cursorColor);
+            if (middle != null) textView.setTextSelectHandle(middle);
+            if (left != null) textView.setTextSelectHandleLeft(left);
+            if (right != null) textView.setTextSelectHandleRight(right);
+            if (textView instanceof EditText) {
+                Drawable cursor = tintedSelectionDrawable(textView.getTextCursorDrawable(), textView, cursorColor);
+                if (cursor != null) textView.setTextCursorDrawable(cursor);
+            }
         } catch (Throwable ignored) {
-            // 某些系统没有提供默认句柄或光标时，保留平台原样。
+            // ROM 若不支持公开 setter，资源层仍会按主题文字色着色平台句柄。
         }
     }
 
-    private static Drawable tintedHandle(Drawable original, EditText editText, int color) {
+    private static Drawable tintedSelectionDrawable(Drawable original, TextView textView, int color) {
         if (original == null) return null;
         Drawable.ConstantState state = original.getConstantState();
-        Drawable copy = (state == null ? original : state.newDrawable(editText.getResources())).mutate();
+        Drawable copy = (state == null ? original : state.newDrawable(textView.getResources())).mutate();
         androidx.core.graphics.drawable.DrawableCompat.setTint(copy, color);
         return copy;
     }

@@ -139,7 +139,7 @@ public class VideoDetailDialog extends SheetResizableBottomPopup {
             }
             mTvFold.setOnClickListener(v -> toggleFold());
             mTvDes.setMovementMethod(LinkMovementMethod.getInstance());
-            mTvDes.setHighlightColor(android.graphics.Color.TRANSPARENT);
+            mTvDes.setHighlightColor(ContextCompat.getColor(getContext(), R.color.selection_highlight));
 
             TextPaint paint = mTvDes.getPaint();
             float density = getResources().getDisplayMetrics().density;

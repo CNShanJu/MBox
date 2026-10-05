@@ -2,4 +2,5 @@
 <resources>
     <!-- 全局页面背景层(所有 Activity 共用的 body 底图)在内容容器中的 id,见 ui/kit/PageBackgroundView -->
     <item name="page_background_layer" type="id"/>
+    <item name="text_selection_style_observer" type="id"/>
 </resources>
