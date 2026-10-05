@@ -26,6 +26,7 @@ import com.github.tvbox.osc.databinding.ActivitySubscriptionBinding
 import com.github.tvbox.osc.spiderapi.LiveChannelConfigProviders
 import com.github.tvbox.osc.spiderapi.LiveChannelConfigApi
 import com.github.tvbox.osc.transfer.ConfigBundle
+import com.github.tvbox.osc.transfer.SubscriptionImportFiles
 import com.github.tvbox.osc.ui.adapter.LiveSourceAdapter
 import com.github.tvbox.osc.ui.adapter.SubscriptionAdapter
 import com.github.tvbox.osc.ui.dialog.AttachActionDialog
@@ -1214,10 +1215,15 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
         }
     }
 
-    /** 应用专属导入目录(外部存储根下,clan:// 副本可被本地文件服务器读取,无需额外存储权限) */
+    /** 应用专属导入目录路径；创建留给持锁的实际写入点。 */
     private fun importDir(): File {
         val external = getExternalFilesDir(null) ?: throw java.io.IOException("应用存储目录不可用")
-        val dir = File(external, "subscription_import")
+        return File(external, "subscription_import")
+    }
+
+    /** 只在持有 SubscriptionImportFiles 锁的写入路径调用。 */
+    private fun ensureImportDir(): File {
+        val dir = importDir()
         if (!dir.isDirectory && !dir.mkdirs()) throw java.io.IOException("无法创建订阅目录")
         return dir
     }
@@ -1658,8 +1664,10 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
             val base = sanitizeImportName(name)
             val dot = base.lastIndexOf('.')
             val stem = if (dot > 0) base.substring(0, dot) else base
-            val file = File(importDir(), stem + "_" + contentDigest(text) + ".json")
-            if (!file.exists()) file.writeText(text, Charsets.UTF_8)
+            val fileName = stem + "_" + contentDigest(text) + ".json"
+            val file = SubscriptionImportFiles.runLocked {
+                File(ensureImportDir(), fileName).also { if (!it.exists()) it.writeText(text, Charsets.UTF_8) }
+            }
             addLocalFileSubscription(file, name, checked)
         } catch (t: Throwable) {
             LogStore.fail(Category.SUBSCRIPTION, "订阅: JSON 导入保存本地文件失败 (${exceptionType(t)})")
@@ -1741,17 +1749,20 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
             val dot = base.lastIndexOf('.')
             val stem = if (dot > 0) base.substring(0, dot) else base
             val ext = if (dot > 0) base.substring(dot) else ".json"
-            val file = File(importDir(), stem + "_" + contentDigest(content) + ext)
-            val atomic = android.util.AtomicFile(file)
-            val output = atomic.startWrite()
-            try {
-                output.write(bytes)
-                atomic.finishWrite(output)
-            } catch (failure: Throwable) {
-                atomic.failWrite(output)
-                throw failure
+            val fileName = stem + "_" + contentDigest(content) + ext
+            SubscriptionImportFiles.runLocked {
+                val file = File(ensureImportDir(), fileName)
+                val atomic = android.util.AtomicFile(file)
+                val output = atomic.startWrite()
+                try {
+                    output.write(bytes)
+                    atomic.finishWrite(output)
+                } catch (failure: Throwable) {
+                    atomic.failWrite(output)
+                    throw failure
+                }
+                file
             }
-            file
         } catch (t: Throwable) {
             LogStore.fail(Category.SUBSCRIPTION, "订阅: 写入内部订阅文件失败 (${exceptionType(t)})")
             null
@@ -1760,9 +1771,12 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
 
     /** 删除订阅时清掉它的内部副本(仅本地导入/JSON 导入的 clan:// 条目有);非内部文件空操作 */
     private fun deleteLibraryFileOf(sub: Subscription?) {
-        val f = sub?.let { libraryFileOf(it.url) } ?: return
+        if (sub == null) return
         try {
-            if (f.isFile) f.delete()
+            SubscriptionImportFiles.runLocked {
+                val file = libraryFileOf(sub.url)
+                if (file?.isFile == true) file.delete()
+            }
         } catch (t: Throwable) {
             LogStore.fail(Category.SUBSCRIPTION, "订阅: 删除订阅内部文件失败 (${exceptionType(t)})")
         }
@@ -1850,12 +1864,35 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
             val dot = base.lastIndexOf('.')
             val stem = if (dot > 0) base.substring(0, dot) else base
             val ext = if (dot > 0) base.substring(dot) else ""
-            val target = File(importDir(), stem + "_" + uriDigest(uri) + ext)
-            if (target.exists()) return target
-            contentResolver.openInputStream(uri)?.use { input ->
-                FileOutputStream(target).use { output -> input.copyTo(output) }
-            } ?: return null
-            target
+            val fileName = stem + "_" + uriDigest(uri) + ext
+            val existing = SubscriptionImportFiles.runLocked {
+                File(importDir(), fileName).takeIf { it.exists() }
+            }
+            if (existing != null) return existing
+            // SAF providers can block on remote reads; stage outside the directory lock.
+            val staged = File.createTempFile("subscription_copy_", ".tmp", cacheDir)
+            try {
+                contentResolver.openInputStream(uri)?.use { input ->
+                    FileOutputStream(staged).use { output -> input.copyTo(output) }
+                } ?: return null
+                SubscriptionImportFiles.runLocked {
+                    val target = File(ensureImportDir(), fileName)
+                    if (!target.exists()) {
+                        val atomic = android.util.AtomicFile(target)
+                        val output = atomic.startWrite()
+                        try {
+                            staged.inputStream().use { input -> input.copyTo(output) }
+                            atomic.finishWrite(output)
+                        } catch (failure: Throwable) {
+                            atomic.failWrite(output)
+                            throw failure
+                        }
+                    }
+                    target
+                }
+            } finally {
+                staged.delete()
+            }
         } catch (t: Throwable) {
             LogStore.fail(Category.SUBSCRIPTION, "订阅: 本地文件复制失败 (${exceptionType(t)})")
             null

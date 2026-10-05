@@ -5,6 +5,7 @@ import android.os.Looper;
 import android.os.SystemClock;
 
 import com.github.tvbox.osc.spiderapi.CmsApiRules;
+import com.github.tvbox.osc.transfer.SubscriptionImportFiles;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -176,17 +177,20 @@ public final class CmsSiteImporter {
         File dest = new File(outDir, "cms_" + key + ".json");
         String json = CmsApiRules.buildSubscriptionJson(key, name, kind, api);
         try {
-            File parent = dest.getParentFile();
-            if (parent != null && !parent.exists() && !parent.mkdirs()) {
-                throw new java.io.IOException("mkdirs failed");
-            }
-            OutputStreamWriter writer =
-                    new OutputStreamWriter(new FileOutputStream(dest), "UTF-8");
-            try {
-                writer.write(json);
-            } finally {
-                writer.close();
-            }
+            SubscriptionImportFiles.runLocked(() -> {
+                File parent = dest.getParentFile();
+                if (parent != null && !parent.exists() && !parent.mkdirs()) {
+                    throw new java.io.IOException("mkdirs failed");
+                }
+                OutputStreamWriter writer =
+                        new OutputStreamWriter(new FileOutputStream(dest), "UTF-8");
+                try {
+                    writer.write(json);
+                } finally {
+                    writer.close();
+                }
+                return null;
+            });
         } catch (Throwable ignored) {
             com.github.tvbox.osc.log.LogStore.fail(com.github.tvbox.osc.log.Category.SUBSCRIPTION, "订阅导入: 采集源配置写入失败");
             return null;

@@ -6,6 +6,7 @@ import android.os.SystemClock;
 
 import com.github.tvbox.osc.spiderapi.CmsApiRules;
 import com.github.tvbox.osc.spiderapi.HtmlSiteRules;
+import com.github.tvbox.osc.transfer.SubscriptionImportFiles;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -257,17 +258,20 @@ public final class HtmlSiteImporter {
     private static File write(File outDir, String key, String json) {
         File dest = new File(outDir, key + ".json");
         try {
-            File parent = dest.getParentFile();
-            if (parent != null && !parent.exists() && !parent.mkdirs()) {
-                throw new java.io.IOException("mkdirs failed");
-            }
-            if (dest.exists() && !dest.canWrite()) dest.setWritable(true);
-            OutputStreamWriter writer = new OutputStreamWriter(new FileOutputStream(dest), "UTF-8");
-            try {
-                writer.write(json);
-            } finally {
-                writer.close();
-            }
+            SubscriptionImportFiles.runLocked(() -> {
+                File parent = dest.getParentFile();
+                if (parent != null && !parent.exists() && !parent.mkdirs()) {
+                    throw new java.io.IOException("mkdirs failed");
+                }
+                if (dest.exists() && !dest.canWrite()) dest.setWritable(true);
+                OutputStreamWriter writer = new OutputStreamWriter(new FileOutputStream(dest), "UTF-8");
+                try {
+                    writer.write(json);
+                } finally {
+                    writer.close();
+                }
+                return null;
+            });
         } catch (Throwable ignored) {
             com.github.tvbox.osc.log.LogStore.fail(com.github.tvbox.osc.log.Category.SUBSCRIPTION, "订阅导入: 抓取源配置写入失败");
             return null;

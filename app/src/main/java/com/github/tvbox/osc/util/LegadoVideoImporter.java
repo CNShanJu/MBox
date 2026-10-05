@@ -6,6 +6,7 @@ import android.os.Looper;
 import com.github.tvbox.osc.log.Category;
 import com.github.tvbox.osc.log.LogStore;
 import com.github.tvbox.osc.spiderapi.CmsApiRules;
+import com.github.tvbox.osc.transfer.SubscriptionImportFiles;
 import com.google.gson.JsonObject;
 
 import java.io.File;
@@ -101,12 +102,14 @@ public final class LegadoVideoImporter {
     private static File write(File outDir, String key, String json) {
         File file = new File(outDir, key + ".json");
         try {
-            if (!outDir.exists() && !outDir.mkdirs()) return null;
-            try (OutputStreamWriter writer = new OutputStreamWriter(
-                    new FileOutputStream(file), StandardCharsets.UTF_8)) {
-                writer.write(json);
-            }
-            return file;
+            return SubscriptionImportFiles.runLocked(() -> {
+                if (!outDir.exists() && !outDir.mkdirs()) return null;
+                try (OutputStreamWriter writer = new OutputStreamWriter(
+                        new FileOutputStream(file), StandardCharsets.UTF_8)) {
+                    writer.write(json);
+                }
+                return file;
+            });
         } catch (Exception ignored) {
             return null;
         }
