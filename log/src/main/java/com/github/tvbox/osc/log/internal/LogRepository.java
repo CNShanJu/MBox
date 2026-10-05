@@ -40,6 +40,18 @@ public final class LogRepository {
     private static final long CLEAR_TIMEOUT_MS = 10_000;
 
     private final LogDatabase db;
+    private final BatchWriter batchWriter;
+
+    /** Only write-batch failures count here; cleanup and query failures have separate outcomes. */
+    private final Object writeOutcomeLock = new Object();
+    private long writeFailureCount;
+    private long acknowledgedWriteFailureCount;
+
+    interface BatchWriter {
+        void insertAll(List<LogEntry> batch);
+        int count();
+        void trimTo(int keep);
+    }
 
     /** 写通道：所有落库/清理/清空串行，避免 Room 并发写 */
     private final ExecutorService writeExecutor = Executors.newSingleThreadExecutor(r -> {
@@ -71,6 +83,17 @@ public final class LogRepository {
 
     public LogRepository(@Nullable LogDatabase db) {
         this.db = db;
+        this.batchWriter = db == null ? null : new BatchWriter() {
+            @Override public void insertAll(List<LogEntry> batch) { db.logDao().insertAll(batch); }
+            @Override public int count() { return db.logDao().count(); }
+            @Override public void trimTo(int keep) { db.logDao().trimTo(keep); }
+        };
+    }
+
+    /** JVM test seam for the write barrier; production always uses the Room constructor. */
+    LogRepository(BatchWriter batchWriter) {
+        this.db = null;
+        this.batchWriter = batchWriter;
     }
 
     /** 降级模式（未 init / no-op）判断 */
@@ -88,8 +111,13 @@ public final class LogRepository {
 
     /** 批量落库 + 超上限 trim（写 executor 串行执行）；降级模式空操作 */
     public void insertAllAsync(final List<LogEntry> batch) {
-        if (db == null || batch == null || batch.isEmpty()) return;
-        writeExecutor.execute(() -> insertBatch(batch));
+        if (batchWriter == null || batch == null || batch.isEmpty()) return;
+        try {
+            writeExecutor.execute(() -> insertBatch(batch));
+        } catch (Throwable failure) {
+            recordWriteFailure();
+            logWriteFailure("无法排入业务日志写队列", failure);
+        }
     }
 
     /**
@@ -102,44 +130,81 @@ public final class LogRepository {
      * @return true=已落库(或降级模式无需落库);false=超时未完成
      */
     public boolean insertAllBlocking(final List<LogEntry> batch, long timeoutMs) {
-        if (db == null || batch == null || batch.isEmpty()) return true;
+        if (batchWriter == null || batch == null || batch.isEmpty()) return true;
         if (Thread.currentThread() == writeThread) {
             // 极端情况:崩溃就发生在写线程上 —— 不能再往自己身上提交任务等它,直接同步写
-            insertBatch(batch);
-            return true;
+            return insertBatch(batch);
         }
-        Future<?> future = writeExecutor.submit(() -> insertBatch(batch));
         try {
-            future.get(Math.max(1L, timeoutMs), TimeUnit.MILLISECONDS);
-            return true;
+            Future<Boolean> future = writeExecutor.submit(() -> insertBatch(batch));
+            return future.get(Math.max(1L, timeoutMs), TimeUnit.MILLISECONDS);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            return false;
         } catch (Throwable th) {
-            Log.e("LogRepository", "崩溃日志等待落库失败/超时", th);
+            logWriteFailure("业务日志等待落库失败/超时", th);
             return false;
         }
     }
 
-    /** 等待已排入写队列的日志落库，供查询前建立读写顺序。 */
+    /** Wait for queued batches and report failures since the previous completed write barrier once. */
     public boolean awaitWrites(long timeoutMs) {
-        if (db == null || Thread.currentThread() == writeThread) return true;
+        if (batchWriter == null) return true;
+        final long previouslyAcknowledged;
+        synchronized (writeOutcomeLock) {
+            previouslyAcknowledged = acknowledgedWriteFailureCount;
+        }
+        if (Thread.currentThread() == writeThread) {
+            return acknowledgeWriteFailures(previouslyAcknowledged, currentWriteFailureCount());
+        }
         try {
-            writeExecutor.submit(() -> { }).get(Math.max(1L, timeoutMs), TimeUnit.MILLISECONDS);
-            return true;
+            // The returned count is sampled on the write thread after all earlier batches.
+            Future<Long> barrier = writeExecutor.submit(this::currentWriteFailureCount);
+            long failuresThroughBarrier = barrier.get(Math.max(1L, timeoutMs), TimeUnit.MILLISECONDS);
+            return acknowledgeWriteFailures(previouslyAcknowledged, failuresThroughBarrier);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            return false;
         } catch (Throwable th) {
-            Log.e("LogRepository", "等待业务日志写入失败/超时", th);
+            logWriteFailure("等待业务日志写入失败/超时", th);
             return false;
         }
     }
 
     /** 单线程写通道的实际写入体(异步/同步两条路径共用) */
-    private void insertBatch(List<LogEntry> batch) {
+    private boolean insertBatch(List<LogEntry> batch) {
         try {
-            db.logDao().insertAll(batch);
-            if (db.logDao().count() > MAX_ROWS) {
-                db.logDao().trimTo(MAX_ROWS);
+            batchWriter.insertAll(batch);
+            if (batchWriter.count() > MAX_ROWS) {
+                batchWriter.trimTo(MAX_ROWS);
             }
+            return true;
         } catch (Throwable th) {
-            Log.e("LogRepository", "日志落库失败", th);
+            recordWriteFailure();
+            logWriteFailure("日志落库失败", th);
+            return false;
         }
+    }
+
+    private void recordWriteFailure() {
+        synchronized (writeOutcomeLock) { writeFailureCount++; }
+    }
+
+    private long currentWriteFailureCount() {
+        synchronized (writeOutcomeLock) { return writeFailureCount; }
+    }
+
+    private boolean acknowledgeWriteFailures(long previouslyAcknowledged, long throughBarrier) {
+        synchronized (writeOutcomeLock) {
+            acknowledgedWriteFailureCount = Math.max(acknowledgedWriteFailureCount, throughBarrier);
+        }
+        return throughBarrier == previouslyAcknowledged;
+    }
+
+    private static void logWriteFailure(String message, Throwable failure) {
+        // Never let the asynchronous writer's diagnostic escape into the uncaught-exception path.
+        try { Log.e("LogRepository", message, failure); }
+        catch (Throwable ignored) { }
     }
 
     /** 按保留天数清理（异步）；降级模式空操作 */

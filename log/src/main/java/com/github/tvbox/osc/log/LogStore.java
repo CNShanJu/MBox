@@ -279,6 +279,16 @@ public final class LogStore {
         return repository.queryByTask(taskKey, limit, offset);
     }
 
+    /**
+     * Flush pending business logs and wait up to {@code timeoutMs} for earlier queued writes.
+     * Call from a background thread before an intentional process restart. An uninitialized
+     * logger is a safe no-op; false means timeout or a database write failed.
+     * This does not run retention cleanup or change the business operation's result.
+     */
+    public boolean flushPendingBlocking(long timeoutMs) {
+        return collector.flushNowBlocking(timeoutMs);
+    }
+
     // ------------------------------------------------------------------
     // 开关 / 级别
     // ------------------------------------------------------------------

@@ -65,12 +65,12 @@ public final class LogCollector {
     }
 
     /**
-     * 立即 flush 并<b>等它写完</b>（崩溃捕获专用）。
+     * 立即 flush 并<b>等它写完</b>（崩溃捕获、进程重启前等场景）。
      * <p>
      * 未捕获异常处理完就会杀进程,异步 flush 大概率来不及 → 首次崩溃库里是空的。
      * 这里阻塞到落库完成或超时(超时只影响日志,不影响崩溃处理本身)。
      *
-     * @return true=已落库;false=超时未落库
+     * @return true=等待范围内的批次写入成功;false=超时或写库失败
      */
     public boolean flushNowBlocking(long timeoutMs) {
         final List<LogEntry> batch;
@@ -84,7 +84,12 @@ public final class LogCollector {
             }
         }
         // 定时 flush 可能已取走 pending，但异步写入仍排在仓储队列里。
-        if (batch != null && onWriteThread) return repository.insertAllBlocking(batch, timeoutMs);
+        if (batch != null && onWriteThread) {
+            boolean inserted = repository.insertAllBlocking(batch, timeoutMs);
+            // Also consume a failure from an earlier batch on this same writer thread.
+            boolean earlierBatches = repository.awaitWrites(timeoutMs);
+            return inserted && earlierBatches;
+        }
         return repository.awaitWrites(timeoutMs);
     }
 }
