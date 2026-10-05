@@ -6,6 +6,8 @@ import com.github.tvbox.osc.config.PrefsDataStore;
 import com.github.tvbox.osc.data.AppDataManager;
 import com.github.tvbox.osc.share.ShareArchives;
 import com.github.tvbox.osc.share.ShareManifest;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
 import java.io.File;
@@ -24,6 +26,12 @@ import java.util.UUID;
 /** Settings and playback-data backup; the independent log database and log files are never included. */
 public final class BackupArchive {
     private static final long MAX_BACKUP_BYTES = 1024L * 1024L * 1024L;
+    /** 只为读取旧版备份保留，不再创建或安装独立开屏图片。 */
+    private static final long MAX_SPLASH_IMAGE_BYTES = 32L * 1024L * 1024L;
+    private static final String ENTRY_SPLASH_IMAGE = "splash-bg.webp";
+    private static final String DOMAIN_SPLASH_IMAGE = "splash_bg";
+    private static final String[] LEGACY_SPLASH_KEYS = {
+            "splash_bg_mode", "splash_bg_color", "splash_bg_image", "splash_image_lottie"};
     private final Context context;
 
     public BackupArchive(Context context) { this.context = context.getApplicationContext(); }
@@ -100,30 +108,46 @@ public final class BackupArchive {
             if (manifest == null || !manifest.isReadableByCurrentVersion()
                     || !"mbox-backup.zip".equals(manifest.fileName())
                     || !manifest.domains().contains("prefs")
-                    || manifest.domains().size() > 2
-                    || !java.util.Arrays.asList("prefs", "room").containsAll(manifest.domains()))
+                    || manifest.domains().size() > 3
+                    || new java.util.HashSet<>(manifest.domains()).size() != manifest.domains().size()
+                    || !java.util.Arrays.asList("prefs", "room", DOMAIN_SPLASH_IMAGE)
+                            .containsAll(manifest.domains()))
                 throw new IOException("备份包清单无效");
             ShareArchives.check(copied, manifest);
             ShareArchives.extract(copied, work);
             File[] files = work.listFiles();
-            if (files == null || files.length != (manifest.domains().contains("room") ? 3 : 2))
+            boolean hasLegacyImage = manifest.domains().contains(DOMAIN_SPLASH_IMAGE);
+            int expectedFiles = 2 + (manifest.domains().contains("room") ? 1 : 0)
+                    + (hasLegacyImage ? 1 : 0);
+            if (files == null || files.length != expectedFiles)
                 throw new IOException("备份包条目不完整");
             for (File file : files) {
                 if (!file.isFile() || !(ShareManifest.ENTRY_PREFS.equals(file.getName())
                         || ShareManifest.ENTRY_ROOM.equals(file.getName())
+                        || (hasLegacyImage && ENTRY_SPLASH_IMAGE.equals(file.getName()))
                         || ShareManifest.ENTRY_MANIFEST.equals(file.getName())))
                     throw new IOException("备份包包含未知条目");
             }
             File prefs = new File(work, ShareManifest.ENTRY_PREFS);
             if (!prefs.isFile() || prefs.length() > 32L * 1024 * 1024) throw new IOException("设置数据缺失或过大");
             String json = new String(read(prefs, 32L * 1024 * 1024), StandardCharsets.UTF_8);
-            if (!JsonParser.parseString(json).isJsonObject()) throw new IOException("设置数据格式无效");
+            JsonElement parsed = JsonParser.parseString(json);
+            if (!parsed.isJsonObject()) throw new IOException("设置数据格式无效");
+            JsonObject settings = parsed.getAsJsonObject();
+            if (hasLegacyImage) {
+                File legacyImage = new File(work, ENTRY_SPLASH_IMAGE);
+                if (!legacyImage.isFile() || legacyImage.length() <= 0
+                        || legacyImage.length() > MAX_SPLASH_IMAGE_BYTES)
+                    throw new IOException("旧版开屏背景图缺失或无效");
+            }
+            // 系统保护回滚需精确恢复原键集合；普通还原忽略已经没有消费者的旧全局开屏键。
+            if (!systemSnapshot) removeLegacySplashSettings(settings);
             File room = new File(work, ShareManifest.ENTRY_ROOM);
             if (manifest.domains().contains("room") && (!room.isFile() || !sqlite(room)))
                 throw new IOException("数据库文件无效");
             boolean roomOk = manifest.domains().contains("room") && AppDataManager.restore(room);
             if (systemSnapshot && !manifest.domains().contains("room")) AppDataManager.restoreMissingDatabase();
-            String migrated = BackupSettingsCompat.migrateLegacyVideoPurify(json);
+            String migrated = BackupSettingsCompat.migrateLegacyVideoPurify(settings.toString());
             int count = systemSnapshot ? PrefsDataStore.replaceTransferableJson(migrated)
                     : PrefsDataStore.importJson(migrated);
             if (count < 0) throw new IOException(roomOk
@@ -171,6 +195,10 @@ public final class BackupArchive {
             if (in.read(header) != header.length) return false;
         }
         return "SQLite format 3\u0000".equals(new String(header, StandardCharsets.US_ASCII));
+    }
+
+    private static void removeLegacySplashSettings(JsonObject settings) {
+        for (String key : LEGACY_SPLASH_KEYS) settings.remove(key);
     }
 
     private static void copy(File source, File target, long max) throws IOException {

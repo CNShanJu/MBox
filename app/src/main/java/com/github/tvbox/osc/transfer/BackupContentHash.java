@@ -68,7 +68,8 @@ public final class BackupContentHash {
             while (entries.hasMoreElements()) {
                 ZipEntry entry = entries.nextElement();
                 String name = entry.getName();
-                if (entry.isDirectory() || !(PREFS.equals(name) || ROOM.equals(name) || MANIFEST.equals(name))
+                if (entry.isDirectory() || !(PREFS.equals(name) || ROOM.equals(name)
+                        || MANIFEST.equals(name))
                         || !seen.add(name)) {
                     throw new IOException("备份 ZIP 条目无效");
                 }
