@@ -703,6 +703,17 @@ public final class ThemeStore {
         return def != null ? paletteOf(def) : builtinPalette(activeType());
     }
 
+    /** 当前主题的开屏背景。内置默认主题也从 JSON 读取，调用方拿到的是独立副本。 */
+    public static ThemeDef.SplashBackground activeSplashBackground() {
+        ThemeDef def = resolveActive();
+        if (def == null) {
+            ThemeType type = activeType();
+            def = findPreset(defaultPresetId(type));
+        }
+        ThemeDef.SplashBackground splash = def == null ? null : def.getSplashBackground();
+        return splash == null ? new ThemeDef.SplashBackground() : splash.copy();
+    }
+
     /** 设置页那一行显示的当前主题名 */
     public static String activeDisplayName() {
         ThemeDef def = resolveActive();
@@ -911,6 +922,12 @@ public final class ThemeStore {
         return ThemeBackgroundLibrary.resolvePath(appContext, ref);
     }
 
+    /** 开屏图可来自主题图库或打包的内置主题资源。无效引用返回空串。 */
+    public static String resolveSplashBackgroundPath(String ref) {
+        String bundled = bundledBackgroundSource(ref);
+        return bundled.isEmpty() ? ThemeBackgroundLibrary.resolvePath(appContext, ref) : bundled;
+    }
+
     /**
      * 回收背景图:删掉没有被任何主题引用的文件。
      * <p>引用集合由<b>所有用户主题</b>汇总 —— 包括没被选中的那些(它们随时可能被切回来)。
@@ -927,8 +944,7 @@ public final class ThemeStore {
         List<ThemeDef> themes = userThemes();
         Set<String> refs = new HashSet<>();
         for (ThemeDef d : themeListSnapshot(themes)) {
-            String name = ThemeBackgroundLibrary.refOf(d);
-            if (!name.isEmpty()) refs.add(name);
+            addBackgroundRefs(refs, d);
         }
         return ThemeBackgroundLibrary.gc(appContext, refs);
     }
@@ -937,10 +953,18 @@ public final class ThemeStore {
     public static Set<String> referencedBackgrounds() {
         Set<String> refs = new HashSet<>();
         for (ThemeDef d : themeListSnapshot(userThemes())) {
-            String name = ThemeBackgroundLibrary.refOf(d);
-            if (!name.isEmpty()) refs.add(name);
+            addBackgroundRefs(refs, d);
         }
         return refs;
+    }
+
+    private static void addBackgroundRefs(Set<String> refs, ThemeDef def) {
+        String page = ThemeBackgroundLibrary.refOf(def);
+        if (!page.isEmpty()) refs.add(page);
+        // A previously picked splash image remains in the theme when the user selects
+        // a solid/theme color, so switching back does not require another import.
+        String splash = ThemeBackgroundLibrary.splashRefOf(def);
+        if (!splash.isEmpty()) refs.add(splash);
     }
 
     /** 用一个不受缓存影响的快照做遍历(gc 期间别的线程可能刚保存/删除) */
@@ -991,14 +1015,9 @@ public final class ThemeStore {
             String v = builtin.get(k.key);
             if (v != null) def.setColor(k.key, v);
         }
-        ThemeShapePalette shapes = builtinShapes(def.getType());
-        for (ThemeSpec.ShapeKey key : ThemeSpec.shapeKeys()) {
-            if (key.kind == ThemeSpec.ShapeKey.Kind.RADIUS) {
-                def.setRadius(key.key, shapes.radiusDp(key.key));
-            } else {
-                def.setStroke(key.key, shapes.strokeDp(key.key));
-            }
-        }
+        def.radii().clear();
+        def.strokes().clear();
+        def.materializeShapes(builtinShapes(def.getType()));
     }
 
     /** 收集全部用户主题(含各自 ref)→ 供归档打包 */

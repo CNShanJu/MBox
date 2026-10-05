@@ -19,8 +19,11 @@ import java.util.Map;
  *   <li><b>{@link #colors} 永远物化全部 {@link ThemeSpec#all()} 键</b>({@link #materialize}):
  *       缺键从同类型内置主题补齐。这样"编辑页每行都有值可显示""导出给别人用时对方拿到的是完整主题",
  *       也避免了"少写一个键 → 运行时按别的主题的色兜底"这种难查的观感问题;</li>
- *   <li><b>背景只有三种模式</b>(见 {@link Background}):跟随默认 / 纯色 / 图片。摆放(缩放、位置、
- *       透明度、遮罩)仍归全局的"设置背景图"页,主题只管"用哪张图/什么纯色",避免同一件事两处配置;</li>
+ *   <li><b>圆角与描边只保存显式覆盖</b>:未配置的键继承同类型内置形状,
+ *       修改默认圆角后,只改过颜色的主题也会跟着更新;</li>
+ *   <li><b>页面背景</b>(见 {@link Background}):跟随默认 / 纯色 / 图片；</li>
+ *   <li><b>开屏背景</b>(见 {@link SplashBackground}):跟随本主题页面底色 / 自选纯色 / 图片。
+ *       两者分别归主题管理，切换主题时一并切换；</li>
  *   <li><b>图片用相对路径引用</b>:{@code theme_bg/<hash>.webp},相对应用私有目录 ——
  *       导出成 zip 后路径依然成立,导入方解出来的图落在同一个相对位置,JSON 不用改写。</li>
  * </ul>
@@ -34,9 +37,11 @@ public final class ThemeDef {
      * 格式版本:加字段/改键名时靠它做兼容(导入方不认识的更高版本会被拒绝)。
      *
      * <p>v2(2026-09):底色/状态/危险色那批键改过名；v3 增加 radii/strokes；
-     * v4 恢复独立的实心按钮背景色。旧格式读入时迁移，保存后统一写新格式。
+     * v4 恢复独立的实心按钮背景色；v5 把开屏背景收进主题；
+     * v6 的 radii/strokes 只保存显式覆盖,缺省值继承内置形状。
+     * 旧格式读入时迁移，保存后统一写新格式。
      */
-    public static final int SCHEMA = 4;
+    public static final int SCHEMA = 6;
 
     private int schema = SCHEMA;
     private String kind = KIND;
@@ -47,11 +52,14 @@ public final class ThemeDef {
     private long createdAt = 0L;
     /** 可配置项:键 → 值(颜色 {@code #RRGGBB}/{@code #AARRGGBB},透明度 {@code "0".."100"}) */
     private final LinkedHashMap<String, String> colors = new LinkedHashMap<>();
-    /** schema 3:语义圆角(dp,无单位后缀) */
+    /** 显式语义圆角覆盖(dp,无单位后缀);缺键继承 inheritedShapes */
     private final LinkedHashMap<String, Float> radii = new LinkedHashMap<>();
-    /** schema 3:描边宽度(dp,无单位后缀) */
+    /** 显式描边宽度覆盖(dp,无单位后缀);缺键继承 inheritedShapes */
     private final LinkedHashMap<String, Float> strokes = new LinkedHashMap<>();
+    /** 调色板本身不可变,可在副本间共享;由存储层注入当前内置形状。 */
+    private ThemeShapePalette inheritedShapes = ThemeShapePalette.defaults();
     private Background background = new Background();
+    private SplashBackground splashBackground = new SplashBackground();
 
     /** 背景图引用(相对应用私有目录;见类注释) */
     public static final class Background {
@@ -161,10 +169,57 @@ public final class ThemeDef {
         }
     }
 
+    /** 开屏背景只属于本主题；缺省时用本主题的 {@code bg_body} 播放开屏动画。 */
+    public static final class SplashBackground {
+        public static final String MODE_THEME = "theme";
+        public static final String MODE_SOLID = "solid";
+        public static final String MODE_IMAGE = "image";
+        public static final float DEFAULT_ANCHOR = 0.5f;
+
+        private String mode = MODE_THEME;
+        private String color = "";
+        private String ref = "";
+        /** 相对铺满屏幕的倍率；0 表示按图片大小自动决定。 */
+        private float zoom = 0f;
+        private float anchorX = DEFAULT_ANCHOR;
+        private float anchorY = DEFAULT_ANCHOR;
+        private boolean lottieOnImage = true;
+
+        public String getMode() { return mode; }
+        public void setMode(String mode) {
+            this.mode = MODE_SOLID.equals(mode) || MODE_IMAGE.equals(mode) ? mode : MODE_THEME;
+        }
+        public String getColor() { return color; }
+        public void setColor(String color) { this.color = color == null ? "" : color; }
+        public String getRef() { return ref; }
+        public void setRef(String ref) { this.ref = ref == null ? "" : ref; }
+        public float getZoom() { return zoom; }
+        public void setZoom(float zoom) { this.zoom = zoom; }
+        public float getAnchorX() { return anchorX; }
+        public void setAnchorX(float anchorX) { this.anchorX = anchorX; }
+        public float getAnchorY() { return anchorY; }
+        public void setAnchorY(float anchorY) { this.anchorY = anchorY; }
+        public boolean isLottieOnImage() { return lottieOnImage; }
+        public void setLottieOnImage(boolean lottieOnImage) { this.lottieOnImage = lottieOnImage; }
+        public boolean isImage() { return MODE_IMAGE.equals(mode); }
+
+        public SplashBackground copy() {
+            SplashBackground b = new SplashBackground();
+            b.mode = mode;
+            b.color = color;
+            b.ref = ref;
+            b.zoom = zoom;
+            b.anchorX = anchorX;
+            b.anchorY = anchorY;
+            b.lottieOnImage = lottieOnImage;
+            return b;
+        }
+    }
+
     public ThemeDef() {
     }
 
-    /** 新建一个空主题:全部键取该类型内置主题的值,背景=跟随默认 */
+    /** 新建一个空主题:颜色取内置值,形状与背景跟随默认。 */
     public static ThemeDef blank(ThemeType type, Map<String, String> builtinInput) {
         ThemeDef def = new ThemeDef();
         def.type = type == null ? ThemeType.BRIGHT : type;
@@ -177,7 +232,6 @@ public final class ThemeDef {
             }
         }
         def.materialize(builtinInput);
-        def.materializeShapes(ThemeShapePalette.defaults());
         return def;
     }
 
@@ -198,18 +252,21 @@ public final class ThemeDef {
         return filled;
     }
 
-    /** 用同类型内置形状补齐 schema 1/2 或残缺 schema 3。 */
+    /**
+     * 设置缺省形状来源,并移除无效覆盖。继承的值只由 getter 提供,不写入覆盖表。
+     *
+     * @return 本次采用继承值的键
+     */
     public List<String> materializeShapes(ThemeShapePalette builtin) {
-        ThemeShapePalette fallback = builtin == null ? ThemeShapePalette.defaults() : builtin;
+        inheritedShapes = builtin == null ? ThemeShapePalette.defaults() : builtin;
+        radii.entrySet().removeIf(entry -> !ThemeShapePalette.isRadiusKey(entry.getKey())
+                || entry.getValue() == null || !ThemeShapePalette.isValid(entry.getKey(), entry.getValue()));
+        strokes.entrySet().removeIf(entry -> !ThemeShapePalette.isStrokeKey(entry.getKey())
+                || entry.getValue() == null || !ThemeShapePalette.isValid(entry.getKey(), entry.getValue()));
         List<String> filled = new ArrayList<>();
         for (ThemeSpec.ShapeKey key : ThemeSpec.shapeKeys()) {
             LinkedHashMap<String, Float> map = key.kind == ThemeSpec.ShapeKey.Kind.RADIUS ? radii : strokes;
-            Float current = map.get(key.key);
-            if (current != null && ThemeShapePalette.isValid(key.key, current)) continue;
-            float value = key.kind == ThemeSpec.ShapeKey.Kind.RADIUS
-                    ? fallback.radiusDp(key.key) : fallback.strokeDp(key.key);
-            map.put(key.key, value);
-            filled.add(key.key);
+            if (!map.containsKey(key.key)) filled.add(key.key);
         }
         return filled;
     }
@@ -248,7 +305,9 @@ public final class ThemeDef {
         d.colors.putAll(colors);
         d.radii.putAll(radii);
         d.strokes.putAll(strokes);
+        d.inheritedShapes = inheritedShapes;
         d.background = background.copy();
+        d.splashBackground = splashBackground.copy();
         return d;
     }
 
@@ -318,19 +377,21 @@ public final class ThemeDef {
 
     public float radius(String key) {
         Float value = radii.get(key);
-        return value == null ? ThemeShapePalette.defaultRadius(key) : value;
+        return value != null && ThemeShapePalette.isValid(key, value)
+                ? value : inheritedShapes.radiusDp(key);
     }
 
     public float stroke(String key) {
         Float value = strokes.get(key);
-        return value == null ? ThemeShapePalette.defaultStroke(key) : value;
+        return value != null && ThemeShapePalette.isValid(key, value)
+                ? value : inheritedShapes.strokeDp(key);
     }
 
-    /** 写圆角:超上限**夹到上限**(与构建期 readRadii、与 ThemeShapePalette 同口径),负数/NaN 才回默认 */
+    /** 写圆角:超上限夹到上限;负数、NaN 或无穷值移除覆盖,恢复继承。 */
     public void setRadius(String key, float value) {
         if (!ThemeShapePalette.isRadiusKey(key)) return;
         if (!Float.isFinite(value) || value < 0f) {
-            radii.put(key, ThemeShapePalette.defaultRadius(key));
+            radii.remove(key);
         } else {
             radii.put(key, Math.min(value, ThemeShapePalette.maxOf(key)));
         }
@@ -340,7 +401,7 @@ public final class ThemeDef {
     public void setStroke(String key, float value) {
         if (!ThemeShapePalette.isStrokeKey(key)) return;
         if (!Float.isFinite(value) || value < 0f) {
-            strokes.put(key, ThemeShapePalette.defaultStroke(key));
+            strokes.remove(key);
         } else {
             strokes.put(key, Math.min(value, ThemeShapePalette.maxOf(key)));
         }
@@ -362,5 +423,22 @@ public final class ThemeDef {
     /** 是否"看起来有背景图"(导出时据此决定要不要打包图片) */
     public boolean hasBackgroundImage() {
         return background.isImage() && !background.getRef().isEmpty();
+    }
+
+    public SplashBackground getSplashBackground() {
+        return splashBackground;
+    }
+
+    public void setSplashBackground(SplashBackground splashBackground) {
+        this.splashBackground = splashBackground == null ? new SplashBackground() : splashBackground;
+    }
+
+    /** 是否保存过开屏图片；即使目前显示纯色也保留引用，方便切回图片。 */
+    public boolean hasSplashBackgroundImage() {
+        return !splashBackground.getRef().isEmpty();
+    }
+
+    public String splashBackgroundRef() {
+        return splashBackground.getRef();
     }
 }

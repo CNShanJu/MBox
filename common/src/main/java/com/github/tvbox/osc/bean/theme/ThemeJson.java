@@ -15,14 +15,17 @@ import java.util.Map;
  * <pre>
  * {
  *   "kind": "mbox-theme",          // 认这个字段才知道"这是 MBox 主题"
- *   "schema": 4,                   // 格式版本
+ *   "schema": 6,                   // 格式版本
  *   "id": "t1738...",              // 本地主键(导入时会换新的)
  *   "name": "暗夜紫",
  *   "type": "dark",                // bright | dark(与内置主题文件同词)
  *   "colors": { "bg_body": "#141218", "bg_card_alpha": 60 },
- *   "radii": { "radius_dialog": 16 },
+ *   "radii": { "radius_dialog": 16 }, // 仅列出显式覆盖;空对象继承默认
  *   "strokes": { "stroke_widget_btn": 0.5 },
- *   "background": { "mode": "image", "ref": "theme_bg/3f2a....webp" }
+ *   "background": { "mode": "image", "ref": "theme_bg/3f2a....webp" },
+ *   "splashBackground": { "mode": "theme", "color": "", "ref": "",
+ *                         "zoom": 0, "anchorX": 0.5, "anchorY": 0.5,
+ *                         "lottieOnImage": true }
  * }
  * </pre>
  *
@@ -35,7 +38,24 @@ public final class ThemeJson {
     /** 已知的非颜色顶层字段(解析时不算"不认识的键") */
     private static final String[] META_FIELDS = {
             "kind", "schema", "id", "name", "type", "default", "createdAt", "desc", "background",
+            "splashBackground",
             "colors", "radii", "strokes"};
+
+    /** schema 3–5 新建草稿曾自动写入的圆角快照,不随今后的代码默认值改变。 */
+    private static final Map<String, Float> LEGACY_DEFAULT_RADII;
+
+    static {
+        java.util.LinkedHashMap<String, Float> radii = new java.util.LinkedHashMap<>();
+        radii.put(ThemeShapePalette.RADIUS_BACKGROUND, 26f);
+        radii.put(ThemeShapePalette.RADIUS_DIALOG, 16f);
+        radii.put(ThemeShapePalette.RADIUS_CARD, 16f);
+        radii.put(ThemeShapePalette.RADIUS_BTN, 12f);
+        radii.put(ThemeShapePalette.RADIUS_WIDGET_BTN, 12f);
+        radii.put(ThemeShapePalette.RADIUS_SEARCH, 16f);
+        radii.put(ThemeShapePalette.COMMON_CORNERS, 12f);
+        radii.put(ThemeShapePalette.RADIUS_THUMB, 8f);
+        LEGACY_DEFAULT_RADII = java.util.Collections.unmodifiableMap(radii);
+    }
 
     /**
      * <b>旧键名迁移表</b>(v1 → v2,2026-09 那批重命名;已经写进用户手机的 {@code filesDir/themes/*.json}
@@ -170,10 +190,13 @@ public final class ThemeJson {
         JsonObject radii = new JsonObject();
         JsonObject strokes = new JsonObject();
         for (ThemeSpec.ShapeKey key : ThemeSpec.shapeKeys()) {
+            Float value = key.kind == ThemeSpec.ShapeKey.Kind.RADIUS
+                    ? def.radii().get(key.key) : def.strokes().get(key.key);
+            if (value == null || !ThemeShapePalette.isValid(key.key, value)) continue;
             if (key.kind == ThemeSpec.ShapeKey.Kind.RADIUS) {
-                radii.addProperty(key.key, def.radius(key.key));
+                radii.addProperty(key.key, value);
             } else {
-                strokes.addProperty(key.key, def.stroke(key.key));
+                strokes.addProperty(key.key, value);
             }
         }
         o.add("radii", radii);
@@ -192,6 +215,18 @@ public final class ThemeJson {
             bg.addProperty("scrim", b.isScrim());
         }
         o.add("background", bg);
+
+        // 非当前模式的自选颜色/图片仍要留下，切回去时不必重新选。
+        ThemeDef.SplashBackground splash = def.getSplashBackground();
+        JsonObject splashJson = new JsonObject();
+        splashJson.addProperty("mode", splash.getMode());
+        splashJson.addProperty("color", splash.getColor());
+        splashJson.addProperty("ref", splash.getRef());
+        splashJson.addProperty("zoom", splash.getZoom());
+        splashJson.addProperty("anchorX", splash.getAnchorX());
+        splashJson.addProperty("anchorY", splash.getAnchorY());
+        splashJson.addProperty("lottieOnImage", splash.isLottieOnImage());
+        o.add("splashBackground", splashJson);
 
         return INDENTED.toJson(o);
     }
@@ -321,6 +356,12 @@ public final class ThemeJson {
 
         readShapes(o, "radii", ThemeSpec.ShapeKey.Kind.RADIUS, def, warnings);
         readShapes(o, "strokes", ThemeSpec.ShapeKey.Kind.STROKE, def, warnings);
+        if (schema <= 5 && hasLegacyDefaultRadii(o)) {
+            // 旧编辑器把整组模型兜底圆角写成了用户覆盖,即使用户只改了颜色。
+            // 只迁移完整且精确匹配的旧默认组;任何自选值、缺项或未知项都保留。
+            // v6 显式写出同样的数值也保留,避免把后续手动配置误判成旧默认。
+            def.radii().clear();
+        }
 
         // 分组格式的顶层只允许元信息与三个分组;未知项忽略并记录。
         if (nestedColors) {
@@ -358,12 +399,93 @@ public final class ThemeJson {
             def.setBackground(b);
         }
 
+        JsonObject splashJson = o.has("splashBackground") && o.get("splashBackground").isJsonObject()
+                ? o.getAsJsonObject("splashBackground") : null;
+        if (splashJson != null) {
+            ThemeDef.SplashBackground splash = new ThemeDef.SplashBackground();
+            String mode = orEmpty(str(splashJson, "mode"));
+            if (ThemeDef.SplashBackground.MODE_SOLID.equals(mode)
+                    || ThemeDef.SplashBackground.MODE_IMAGE.equals(mode)) {
+                splash.setMode(mode);
+            } else if (!mode.isEmpty() && !ThemeDef.SplashBackground.MODE_THEME.equals(mode)) {
+                warnings.add("开屏背景模式无效，已改为跟随主题");
+            }
+
+            String color = orEmpty(str(splashJson, "color"));
+            if (!color.isEmpty()) {
+                if (color.matches("(?i)#(?:[0-9a-f]{6}|FF[0-9a-f]{6})")) {
+                    splash.setColor(ThemeColorPalette.toHex(ThemeColorPalette.parseColor(color, 0xFF000000)));
+                } else {
+                    warnings.add("开屏背景色无效，已忽略");
+                }
+            }
+
+            String ref = orEmpty(str(splashJson, "ref"));
+            if (!ref.isEmpty()) {
+                if (validSplashImageRef(ref)) splash.setRef(ref);
+                else warnings.add("开屏背景图引用无效，已忽略");
+            }
+
+            splash.setZoom(splashFloat(splashJson, "zoom", 0f, 0f, 20f, warnings));
+            splash.setAnchorX(splashFloat(splashJson, "anchorX",
+                    ThemeDef.SplashBackground.DEFAULT_ANCHOR, 0f, 1f, warnings));
+            splash.setAnchorY(splashFloat(splashJson, "anchorY",
+                    ThemeDef.SplashBackground.DEFAULT_ANCHOR, 0f, 1f, warnings));
+            JsonElement lottie = splashJson.get("lottieOnImage");
+            if (lottie != null && !lottie.isJsonNull()) {
+                if (lottie.isJsonPrimitive() && lottie.getAsJsonPrimitive().isBoolean()) {
+                    splash.setLottieOnImage(lottie.getAsBoolean());
+                } else {
+                    warnings.add("开屏动画开关无效，已按开启处理");
+                }
+            }
+
+            if (splash.isImage() && splash.getRef().isEmpty()) {
+                splash.setMode(ThemeDef.SplashBackground.MODE_THEME);
+                warnings.add("开屏背景图缺失，已改为跟随主题");
+            } else if (ThemeDef.SplashBackground.MODE_SOLID.equals(splash.getMode())
+                    && splash.getColor().isEmpty()) {
+                splash.setMode(ThemeDef.SplashBackground.MODE_THEME);
+                warnings.add("开屏背景色缺失，已改为跟随主题");
+            }
+            def.setSplashBackground(splash);
+        }
+
         return new Result(def, null, warnings);
+    }
+
+    private static boolean validSplashImageRef(String ref) {
+        return ref.matches("(?i)theme_bg/[a-z0-9_-]+\\.(webp|png|jpg|jpeg)")
+                || ref.matches("(?i)file:///android_asset/theme/backgrounds/[a-z0-9_-]+\\.(webp|png|jpg|jpeg)");
+    }
+
+    private static float splashFloat(JsonObject object, String key, float fallback, float min, float max,
+                                     List<String> warnings) {
+        JsonElement raw = object.get(key);
+        if (raw == null || raw.isJsonNull()) return fallback;
+        Float value = decimal(raw);
+        if (value != null && Float.isFinite(value) && value >= min && value <= max) return value;
+        warnings.add("开屏背景的 " + key + " 无效，已使用默认值");
+        return fallback;
     }
 
     private static boolean isOpaqueButtonColor(String value) {
         return value != null
                 && value.trim().matches("(?i)#?(?:[0-9a-f]{6}|FF[0-9a-f]{6})");
+    }
+
+    /** 只识别旧版新建草稿自动固化的完整默认组,不逐键猜测用户意图。 */
+    private static boolean hasLegacyDefaultRadii(JsonObject root) {
+        JsonElement raw = root.get("radii");
+        if (raw == null || !raw.isJsonObject()) return false;
+        JsonObject values = raw.getAsJsonObject();
+        if (values.size() != LEGACY_DEFAULT_RADII.size()) return false;
+        for (Map.Entry<String, Float> entry : LEGACY_DEFAULT_RADII.entrySet()) {
+            Float value = decimal(values.get(entry.getKey()));
+            if (value == null || !ThemeShapePalette.isValid(entry.getKey(), value)
+                    || Float.compare(value, entry.getValue()) != 0) return false;
+        }
+        return true;
     }
 
     private static void readShapes(JsonObject root, String field, ThemeSpec.ShapeKey.Kind kind,

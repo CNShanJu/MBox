@@ -124,7 +124,8 @@ public class ThemeColorAliasesCoverageTest {
                 new String(Files.readAllBytes(asset.toPath()), StandardCharsets.UTF_8)).getAsJsonObject();
         Map<String, String> input = new HashMap<>();
         for (String key : o.keySet()) {
-            if ("type".equals(key) || "desc".equals(key)) continue;
+            if ("type".equals(key) || "desc".equals(key)
+                    || !o.get(key).isJsonPrimitive()) continue;
             input.put(key, o.get(key).getAsString());
         }
         ThemePalette palette = ThemePaletteFactory.derive(input, null);

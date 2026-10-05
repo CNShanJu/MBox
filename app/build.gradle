@@ -231,19 +231,20 @@ tasks.matching { it.name.startsWith('package') }.configureEach { t ->
 // (体积 42MB 看着正常,装上去却缺资源:圆角、布局、颜色这些**资源层**改动全都不生效)。
 // 这类包的成因与上面那条一样:AS 的部署优化/Apply Changes 会把 debug 的资源包挪走/删掉。
 //
-// 处理:preBuild 时扫一遍 processed_res/<变体>/,哪个变体"目录在、却一个 *.ap_ 都没有",
+// 处理:preBuild 时递归扫描 processed_res/<变体>/,哪个变体"目录在、却一个 *.ap_ 都没有",
 // 就把那个目录删掉 —— 目录没了,processXxxResources 立刻变成"输出缺失",本次构建自动重跑并补回 .ap_。
 // 只在真的缺资源包时动手(正常构建零影响),把"要人工删目录/清缓存"变成自动恢复。
 // ------------------------------------------------------------------
 def hasProcessedResAp = { File dir ->
-    dir.listFiles()?.any { it.isFile() && it.name.endsWith('.ap_') } == true
+    // AGP 把包放在 debug/out/resources-debug.ap_；只看变体目录第一层会误报并反复删掉正常产物。
+    fileTree(dir).matching { include '**/*.ap_' }.files.any { it.isFile() }
 }
 tasks.matching { it.name == 'preBuild' }.configureEach { t ->
     t.doFirst {
         def root = new File(t.project.layout.buildDirectory.get().asFile, 'intermediates/processed_res')
         root.listFiles()?.each { vd ->
             if (vd.isDirectory() && !hasProcessedResAp(vd)) {
-                logger.warn("WARN: ${vd.name} 变体的资源包(processed_res/*.ap_)不见了 —— 删掉该目录让资源重新编译" +
+                logger.warn("WARN: ${vd.name} 变体的资源包(processed_res/**/*.ap_)不见了 —— 删掉该目录让资源重新编译" +
                         "(否则这次打出来的 APK 会缺 res/ 与 resources.arsc,装到机器上资源层改动全都不生效)")
                 //noinspection ResultOfMethodCallIgnored
                 vd.deleteDir()
@@ -360,7 +361,7 @@ def defaultRadii = [
         radius_background: 26,
         radius_dialog    : 20,
         radius_card      : 18,
-        radius_btn       : 14,
+        radius_btn       : 24,
         // 小组件按钮高 34dp:0～15dp 是普通圆角,16dp 接近胶囊,17dp 是标准胶囊。
         // 编辑器允许并原样保存 0～17dp；超过半高只会饱和,不应靠裁剪制造不对称圆角。
         radius_widget_btn: 26,
@@ -380,10 +381,10 @@ def defaultRadii = [
         // **缩略图专用**(2026-10-01):「下载页小封面」与「本地视频行的小图」这两处的图。
         // 它们以前跟卡片档走(radius_card):面板档一调大,56×74dp 的小封面圆角就吃掉大半个边,
         // 观感是"小图被切成了圆片"(用户口径"小图片的圆角太大了")。
-        // 单独立档后可以只调它、与卡片/抽屉/按钮互不影响;默认 10dp。
+        // 单独立档后可以只调它、与卡片/抽屉/按钮互不影响;默认 12dp。
         // **刻意不进主题编辑器的界面**(用户口径"主题配置里不给圆角配置选项"):要改就改
-        // assets/theme/theme_radii.json(或自定义主题 JSON)的 radius_thumb。
-        radius_thumb     : 10
+        // assets/theme/radius/theme_radii.json(或自定义主题 JSON)的 radius_thumb。
+        radius_thumb     : 12
 ]
 
 // 主题文件缺失时的兜底(与仓库内文件同值)
@@ -429,12 +430,13 @@ static def readTheme(def file, def defaults) {
             }
         }
         // 元信息与背景配置不参与颜色派生,也不该被"不认识的键"告警误伤
-        def unknown = json.keySet().findAll { !(it in ['type', 'name', 'default', 'background', 'desc']) && !defaults.containsKey(it) }
+        def unknown = json.keySet().findAll { !(it in ['type', 'name', 'default', 'background', 'splashBackground', 'desc']) && !defaults.containsKey(it) }
         if (unknown) println "WARN: ${file.name} 里有不认识的键(已忽略): ${unknown.join(', ')}"
         def d = json['desc']
         if (d instanceof Map) d.each { k, v -> if (v instanceof String) desc[k] = v }
         def staleDesc = desc.keySet().findAll { !defaults.containsKey(it)
-                && !(it == 'background' && json['background'] instanceof Map) }
+                && !(it == 'background' && json['background'] instanceof Map)
+                && !(it == 'splashBackground' && json['splashBackground'] instanceof Map) }
         if (staleDesc) println "WARN: ${file.name} 的 desc 里有不存在的键: ${staleDesc.join(', ')}"
         def noDesc = defaults.keySet().findAll { !desc.containsKey(it) }
         if (noDesc) println "WARN: ${file.name} 的 desc 缺少这些键的说明: ${noDesc.join(', ')}"

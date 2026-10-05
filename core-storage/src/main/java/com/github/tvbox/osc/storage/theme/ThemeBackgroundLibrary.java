@@ -14,15 +14,16 @@ import java.util.Collection;
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
- * 主题背景图库:所有<b>自定义主题</b>的背景图都存这里,一个主题一张,按内容 hash 命名。
+ * 主题背景图库:所有<b>自定义主题</b>的页面与开屏背景图都存这里,按内容 hash 命名。
  *
  * <p>为什么要单独一个目录 + hash 命名:
  * <ul>
- *   <li><b>去重</b>:用户给三个主题选了同一张壁纸,磁盘上只有一份(文件名就是内容摘要),
+ *   <li><b>去重</b>:用户给页面、开屏或不同主题选了同一张图,磁盘上只有一份(文件名就是内容摘要),
  *       主题 JSON 里存的是同一个 {@code ref};</li>
- *   <li><b>可回收</b>:主题被删、或背景从图片改成纯色之后,如果<b>没有别的主题</b>再引用这个 ref,
+ *   <li><b>可回收</b>:主题被删、或图片引用被清除之后,如果<b>没有别的背景</b>再引用这个 ref,
  *       就把文件删掉(见 {@link #gc})."删除主题却把图留着"会让私有目录无限长大;</li>
  *   <li><b>可导出</b>:{@code ref} 是相对应用私有目录的路径({@code theme_bg/<hash>.webp}),
  *       导出成 zip 时按同样的相对路径打包,导入方解出来路径依然成立,JSON 一个字都不用改。</li>
@@ -40,6 +41,9 @@ public final class ThemeBackgroundLibrary {
 
     /** 文件名长度:sha256 十六进制取前 32 位(128 bit)。够长到不会撞,又不至于把文件名撑得没法看 */
     private static final int NAME_LEN = 32;
+    /** Theme JSON is untrusted input. A ref may only name one image directly inside theme_bg. */
+    private static final Pattern SAFE_IMAGE_NAME = Pattern.compile(
+            "[A-Za-z0-9_-]+\\.(?:webp|png|jpg|jpeg)", Pattern.CASE_INSENSITIVE);
 
     private ThemeBackgroundLibrary() {
     }
@@ -49,13 +53,28 @@ public final class ThemeBackgroundLibrary {
         if (context == null) return null;
         File d = new File(context.getFilesDir(), DIR);
         if (!d.exists() && !d.mkdirs()) return null;
-        return d;
+        try {
+            File canonical = d.getCanonicalFile();
+            return canonical.getParentFile().equals(context.getFilesDir().getCanonicalFile())
+                    && canonical.isDirectory() ? canonical : null;
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
-    /** {@code ref} → 绝对文件(不做存在性检查) */
+    /** {@code ref} → 主题图库中的文件；拒绝绝对路径、目录穿越与逃逸的符号链接。 */
     public static File resolve(Context context, String ref) {
-        if (context == null || ref == null || ref.trim().isEmpty()) return null;
-        return new File(context.getFilesDir(), ref.trim());
+        if (context == null) return null;
+        String name = safeNameFromRef(ref);
+        if (name.isEmpty()) return null;
+        try {
+            File library = new File(context.getFilesDir(), DIR).getCanonicalFile();
+            if (!library.getParentFile().equals(context.getFilesDir().getCanonicalFile())) return null;
+            File image = new File(library, name).getCanonicalFile();
+            return library.equals(image.getParentFile()) ? image : null;
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
     /** {@code ref} → 绝对路径(文件不存在时返回空串,调用方据此退回"纯色") */
@@ -72,7 +91,7 @@ public final class ThemeBackgroundLibrary {
         // 绝对路径(旧写法/手改)只取文件名,归一到 theme_bg/ 下
         int slash = s.lastIndexOf('/');
         if (slash >= 0) s = s.substring(slash + 1);
-        return s.isEmpty() ? "" : DIR + "/" + s;
+        return safeImageName(s) ? DIR + "/" + s : "";
     }
 
     /**
@@ -182,15 +201,35 @@ public final class ThemeBackgroundLibrary {
     public static String refOf(ThemeDef def) {
         if (def == null || def.getBackground() == null) return "";
         if (!ThemeDef.Background.MODE_IMAGE.equals(def.getBackground().getMode())) return "";
-        return fileNameOf(def.getBackground().getRef());
+        return safeNameFromRef(def.getBackground().getRef());
+    }
+
+    /** 开屏图片切到纯色后仍保留其引用，供下次切回时直接使用。 */
+    public static String splashRefOf(ThemeDef def) {
+        if (def == null || def.getSplashBackground() == null) return "";
+        return safeNameFromRef(def.getSplashBackground().getRef());
     }
 
     private static String fileNameOf(String ref) {
         if (ref == null) return "";
-        String s = ref.trim().replace('\\', '/');
-        if (s.isEmpty()) return "";
-        int slash = s.lastIndexOf('/');
-        return slash >= 0 ? s.substring(slash + 1) : s;
+        String s = ref.trim();
+        if (s.startsWith(DIR + "/")) return safeNameFromRef(s);
+        return safeImageName(s) ? s : "";
+    }
+
+    /** Strict stored ref validation; normalization of legacy archive names is separate. */
+    public static boolean isSafeRef(String ref) {
+        return !safeNameFromRef(ref).isEmpty();
+    }
+
+    private static String safeNameFromRef(String ref) {
+        if (ref == null || !ref.startsWith(DIR + "/")) return "";
+        String name = ref.substring(DIR.length() + 1);
+        return safeImageName(name) ? name : "";
+    }
+
+    private static boolean safeImageName(String name) {
+        return name != null && SAFE_IMAGE_NAME.matcher(name).matches();
     }
 
     private static String extensionOf(File f) {
@@ -198,8 +237,9 @@ public final class ThemeBackgroundLibrary {
         int dot = name.lastIndexOf('.');
         if (dot < 0) return ".webp";
         String ext = name.substring(dot);
-        // 只放行图片扩展名:图库里不该出现别的类型(扩展名跟着内容走,便于人肉辨认)
-        return ext.length() >= 2 && ext.length() <= 5 ? ext : ".webp";
+        // 与安全引用校验保持一致，避免注册后得到不能读取的 ref。
+        return ".png".equals(ext) || ".jpg".equals(ext)
+                || ".jpeg".equals(ext) || ".webp".equals(ext) ? ext : ".webp";
     }
 
     /** 文件内容的 sha256 十六进制(小写) */

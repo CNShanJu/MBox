@@ -49,7 +49,8 @@ public class ThemeDerivationParityTest {
         Map<String, String> out = new LinkedHashMap<>();
         for (String key : o.keySet()) {
             if ("type".equals(key) || "name".equals(key) || "default".equals(key)
-                    || "desc".equals(key) || "background".equals(key)) continue;
+                    || "desc".equals(key) || "background".equals(key)
+                    || "splashBackground".equals(key)) continue;
             out.put(key, o.get(key).getAsString());
         }
         return out;
@@ -165,6 +166,17 @@ public class ThemeDerivationParityTest {
                                         && !backgroundDesc.get(key).getAsString().trim().isEmpty());
                     }
                 }
+                assertTrue(asset + " 缺少开屏背景配置", json.has("splashBackground"));
+                assertTrue(asset + " 的 desc.splashBackground 应为对象",
+                        desc.has("splashBackground") && desc.get("splashBackground").isJsonObject());
+                JsonObject splash = json.getAsJsonObject("splashBackground");
+                JsonObject splashDesc = desc.getAsJsonObject("splashBackground");
+                assertEquals(asset + " 的开屏背景说明字段与配置不一致",
+                        splash.keySet(), splashDesc.keySet());
+                assertEquals(asset + " 应默认跟随本主题背景色", "theme",
+                        splash.get("mode").getAsString());
+                assertTrue(asset + " 应默认播放开屏动画",
+                        splash.get("lottieOnImage").getAsBoolean());
                 for (String key : input.keySet()) {
                     assertNotNull(asset + " 里有 ThemeSpec 不认识的键: " + key,
                             ThemeSpec.byKey(key));

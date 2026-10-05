@@ -3,7 +3,6 @@ package com.github.tvbox.osc.storage.theme;
 import com.github.tvbox.osc.bean.theme.ThemeDef;
 import com.github.tvbox.osc.bean.theme.ThemeJson;
 
-import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
@@ -11,9 +10,12 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Enumeration;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
+import java.util.zip.ZipFile;
 import java.util.zip.ZipOutputStream;
 
 /**
@@ -23,13 +25,14 @@ import java.util.zip.ZipOutputStream;
  * <ul>
  *   <li><b>不带背景图</b> → 就一个 {@code .json}(纯文本,微信里直接发文件即可,
  *       甚至可以复制文本粘贴给别人);</li>
- *   <li><b>带背景图</b> → 打成一个 {@code .zip},里面是
+ *   <li><b>引用用户图片</b> → 打成一个 {@code .zip},里面是
  *       <pre>
  *         暗夜紫.json
  *         theme_bg/3f2a....webp
+ *         theme_bg/7a9b....webp     // 若开屏使用另一张图
  *       </pre>
- *       zip 内部的目录结构与 App 私有目录<b>完全一致</b>:主题 JSON 里那行背景图路径
- *       ({@code theme_bg/<hash>.webp})解出来就是同一个位置,导入方不需要改写 JSON 的任何字段。</li>
+ *       页面与开屏引用同一张图时只打包一次；图片条目与 JSON 的顺序没有要求。
+ *       开屏若引用 App 内置 asset，则只保留 JSON 中的 asset 引用。</li>
  * </ul>
  *
  * <h3>安全(AGENTS §七:归档防 Zip Slip)</h3>
@@ -48,7 +51,9 @@ public final class ThemeArchive {
 
     /** 单个条目的大小上限(背景图导入本来就限 30MB,这里留一倍余量防解压炸弹) */
     private static final long MAX_ENTRY_BYTES = 64L * 1024 * 1024;
-    /** zip 里最多看多少个条目(正常就 2 个:json + 图) */
+    /** 主题 JSON 正常只有几 KB，不接受异常庞大的元数据。 */
+    private static final long MAX_JSON_BYTES = 1024L * 1024;
+    /** zip 里最多看多少个条目(正常至多 3 个:json + 页面图 + 开屏图) */
     private static final int MAX_ENTRIES = 16;
 
     private ThemeArchive() {
@@ -94,9 +99,31 @@ public final class ThemeArchive {
         String base = safeFileName(def.getName());
         String json = ThemeJson.toJson(def);
 
-        File image = def.hasBackgroundImage() ? resolveImage(def) : null;
+        String pageRef = def.hasBackgroundImage() ? imageRef(def.getBackground().getRef()) : "";
+        String splashRawRef = def.getSplashBackground().getRef();
+        boolean bundledSplash = isBundledSplashRef(splashRawRef);
+        String splashRef = splashRawRef == null || splashRawRef.isEmpty() || bundledSplash
+                ? "" : imageRef(splashRawRef);
+        if (def.hasBackgroundImage() && pageRef.isEmpty()) {
+            return new ExportResult(null, "主题背景图引用无效", false);
+        }
+        if (splashRawRef != null && !splashRawRef.isEmpty()
+                && !bundledSplash && splashRef.isEmpty()) {
+            return new ExportResult(null, "开屏背景图引用无效", false);
+        }
+        Map<String, File> images = new LinkedHashMap<>();
+        if (!pageRef.isEmpty()) {
+            File image = resolveImage(pageRef);
+            if (image == null) return new ExportResult(null, "主题背景图缺失或无效", false);
+            images.put(pageRef, image);
+        }
+        if (!splashRef.isEmpty() && !images.containsKey(splashRef)) {
+            File image = resolveImage(splashRef);
+            if (image == null) return new ExportResult(null, "开屏背景图缺失或无效", false);
+            images.put(splashRef, image);
+        }
 
-        if (image == null) {
+        if (images.isEmpty()) {
             File out = uniqueFile(destDir, base, EXT_JSON);
             return ThemeFiles.writeUtf8Atomic(out, json)
                     ? new ExportResult(out, null, false)
@@ -111,14 +138,16 @@ public final class ThemeArchive {
             zos.write(json.getBytes(StandardCharsets.UTF_8));
             zos.closeEntry();
 
-            // zip 内部路径与 App 私有目录一致:JSON 里那行 theme_bg/<hash>.webp 解出来就在同一个位置
-            zos.putNextEntry(new ZipEntry(ThemeBackgroundLibrary.normalizeRef(def.getBackground().getRef())));
-            try (InputStream in = new FileInputStream(image)) {
-                byte[] buf = new byte[64 * 1024];
-                int n;
-                while ((n = in.read(buf)) > 0) zos.write(buf, 0, n);
+            // 条目名只使用通过校验的主题图库相对引用，避免写出绝对路径或目录穿越。
+            for (Map.Entry<String, File> entry : images.entrySet()) {
+                zos.putNextEntry(new ZipEntry(entry.getKey()));
+                try (InputStream in = new FileInputStream(entry.getValue())) {
+                    byte[] buf = new byte[64 * 1024];
+                    int n;
+                    while ((n = in.read(buf)) > 0) zos.write(buf, 0, n);
+                }
+                zos.closeEntry();
             }
-            zos.closeEntry();
         } catch (Throwable th) {
             ThemeFiles.deleteQuietly(out);
             return new ExportResult(null, "导出失败: " + th.getClass().getSimpleName(), false);
@@ -129,12 +158,33 @@ public final class ThemeArchive {
     /** 主题包建议文件名(标题栏/分享文案里显示用) */
     public static String suggestedFileName(ThemeDef def) {
         if (def == null) return "theme";
-        return safeFileName(def.getName()) + (def.hasBackgroundImage() ? EXT_ZIP : EXT_JSON);
+        return safeFileName(def.getName())
+                + (def.hasBackgroundImage() || !imageRef(def.getSplashBackground().getRef()).isEmpty()
+                ? EXT_ZIP : EXT_JSON);
     }
 
-    private static File resolveImage(ThemeDef def) {
-        File f = ThemeBackgroundLibrary.resolve(ThemeStore.context(), def.getBackground().getRef());
-        return (f != null && f.isFile()) ? f : null;
+    /** 只接受主题图库中的单个图片文件名，不能让导出读取任意本机路径。 */
+    private static String imageRef(String raw) {
+        return ThemeBackgroundLibrary.isSafeRef(raw) ? raw : "";
+    }
+
+    /** 打包在 App 里的开屏素材在每台设备上都有，保留原引用即可。 */
+    private static boolean isBundledSplashRef(String ref) {
+        return ref != null && ref.matches(
+                "(?i)file:///android_asset/theme/backgrounds/[a-z0-9_-]+\\.(webp|png|jpg|jpeg)");
+    }
+
+    private static File resolveImage(String ref) {
+        if (ThemeStore.context() == null) return null;
+        try {
+            File dir = new File(ThemeStore.context().getFilesDir(), ThemeBackgroundLibrary.DIR)
+                    .getCanonicalFile();
+            File image = new File(ThemeStore.context().getFilesDir(), ref).getCanonicalFile();
+            return dir.equals(image.getParentFile()) && image.isFile()
+                    && image.length() > 0 && image.length() <= MAX_ENTRY_BYTES ? image : null;
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
     // ------------------------------------------------------------------
@@ -191,13 +241,24 @@ public final class ThemeArchive {
         ThemeDef def = r.def;
         def.materialize(ThemeStore.builtinInput(def.getType()));
         def.materializeShapes(ThemeStore.builtinShapes(def.getType()));
-        // 粘贴进来的 JSON 若声明了背景图,那张图在本机大概率不存在:退化成"跟随默认"并提示
+        // 粘贴进来的 JSON 若引用了本机不存在的图，两种背景分别退回安全状态。
         List<String> warnings = new ArrayList<>(r.warnings);
-        if (def.hasBackgroundImage() && ThemeBackgroundLibrary.resolvePath(ThemeStore.context(),
-                def.getBackground().getRef()).isEmpty()) {
-            warnings.add("主题包里的背景图不见了,已改为跟随默认背景");
-            def.getBackground().setMode(ThemeDef.Background.MODE_DEFAULT);
-            def.getBackground().setRef("");
+        if (def.hasBackgroundImage()) {
+            String ref = imageRef(def.getBackground().getRef());
+            if (ref.isEmpty() || resolveImage(ref) == null) {
+                clearPageImage(def, warnings, "主题包里的背景图不见了,已改为跟随默认背景");
+            } else {
+                def.getBackground().setRef(ref);
+            }
+        }
+        if (!def.getSplashBackground().getRef().isEmpty()
+                && !isBundledSplashRef(def.getSplashBackground().getRef())) {
+            String ref = imageRef(def.getSplashBackground().getRef());
+            if (ref.isEmpty() || resolveImage(ref) == null) {
+                clearSplashImage(def, warnings, "主题包里的开屏背景图不见了,已清除图片引用");
+            } else {
+                def.getSplashBackground().setRef(ref);
+            }
         }
         return new ImportResult(def, null, warnings, false);
     }
@@ -209,78 +270,115 @@ public final class ThemeArchive {
     }
 
     private static ImportResult importZip(File zip) {
-        ThemeDef def = null;
         List<String> warnings = new ArrayList<>();
-        boolean withImage = false;
-        File tmpImage = null;
         File cacheDir = ThemeStore.cacheDir();
         if (cacheDir == null) return new ImportResult(null, "存储不可用,请重启应用后再试", null, false);
-
-        try (ZipInputStream zis = new ZipInputStream(
-                new BufferedInputStream(new FileInputStream(zip)))) {
-            ZipEntry entry;
-            int seen = 0;
-            while ((entry = zis.getNextEntry()) != null) {
-                if (++seen > MAX_ENTRIES) {
-                    warnings.add("主题包里的文件过多,只读了前 " + MAX_ENTRIES + " 个");
-                    break;
-                }
+        ThemeDef def;
+        String pageRef;
+        String splashRawRef;
+        String splashRef;
+        boolean bundledSplash;
+        Map<String, File> extracted = new LinkedHashMap<>();
+        // ZipFile 只枚举目录、不解压无关条目；图片排在 JSON 前面也能正确匹配。
+        try (ZipFile archive = new ZipFile(zip)) {
+            List<ZipEntry> entries = new ArrayList<>();
+            Enumeration<? extends ZipEntry> all = archive.entries();
+            while (all.hasMoreElements() && entries.size() <= MAX_ENTRIES) {
+                entries.add(all.nextElement());
+            }
+            if (entries.size() > MAX_ENTRIES) {
+                return new ImportResult(null, "主题包里的文件过多", null, false);
+            }
+            ThemeJson.Result parsed = null;
+            for (ZipEntry entry : entries) {
                 if (entry.isDirectory()) continue;
-                // 条目名只用来"认出这是不是主题 JSON / 是不是那张背景图",
-                // 绝不拿来当落盘路径(防 Zip Slip,见类注释)
-                String entryName = entry.getName() == null ? "" : entry.getName().replace('\\', '/');
-                String fileName = entryName.substring(entryName.lastIndexOf('/') + 1);
-
-                if (def == null && fileName.toLowerCase(java.util.Locale.ROOT).endsWith(EXT_JSON)) {
-                    String text = readEntryText(zis);
+                String name = entry.getName() == null ? "" : entry.getName().replace('\\', '/');
+                String fileName = name.substring(name.lastIndexOf('/') + 1);
+                if (!fileName.toLowerCase(java.util.Locale.ROOT).endsWith(EXT_JSON)) continue;
+                try (InputStream input = archive.getInputStream(entry)) {
+                    String text = readEntryText(input);
                     if (text == null) return new ImportResult(null, "主题包里的 JSON 读不出来", null, false);
-                    ThemeJson.Result r = ThemeJson.parse(text);
-                    if (r.def == null) return new ImportResult(null, r.error, null, false);
-                    def = r.def;
-                    warnings.addAll(r.warnings);
-                    continue;
+                    parsed = ThemeJson.parse(text);
+                    if (parsed.def == null) return new ImportResult(null, parsed.error, null, false);
                 }
-                if (def != null && def.hasBackgroundImage() && tmpImage == null
-                        && fileName.equals(imageFileNameOf(def))) {
-                    File tmp = new File(cacheDir, "theme_import_" + System.currentTimeMillis() + ".webp");
-                    if (copyEntry(zis, tmp)) tmpImage = tmp;
+                break;
+            }
+            if (parsed == null) {
+                return new ImportResult(null, "主题包里没有找到主题文件(.json)", null, false);
+            }
+            def = parsed.def;
+            warnings.addAll(parsed.warnings);
+            def.materialize(ThemeStore.builtinInput(def.getType()));
+            def.materializeShapes(ThemeStore.builtinShapes(def.getType()));
+
+            pageRef = def.hasBackgroundImage() ? imageRef(def.getBackground().getRef()) : "";
+            splashRawRef = def.getSplashBackground().getRef();
+            bundledSplash = isBundledSplashRef(splashRawRef);
+            splashRef = splashRawRef.isEmpty() || bundledSplash ? "" : imageRef(splashRawRef);
+            if (!pageRef.isEmpty()) extracted.put(pageRef, null);
+            if (!splashRef.isEmpty()) extracted.put(splashRef, null);
+
+            for (ZipEntry entry : entries) {
+                if (entry.isDirectory()) continue;
+                // 不拿条目名拼落盘路径；只认与主题引用完全一致的图库相对路径。
+                String name = entry.getName() == null ? "" : entry.getName().replace('\\', '/');
+                if (!extracted.containsKey(name) || extracted.get(name) != null) continue;
+                File tmp = null;
+                try (InputStream input = archive.getInputStream(entry)) {
+                    String suffix = name.substring(name.lastIndexOf('.'));
+                    tmp = File.createTempFile("theme_import_", suffix, cacheDir);
+                    if (copyEntry(input, tmp)) extracted.put(name, tmp);
+                    else ThemeFiles.deleteQuietly(tmp);
+                } catch (Throwable ignored) {
+                    // 一张图解压失败不影响另一张图和主题本体。
+                    ThemeFiles.deleteQuietly(tmp);
                 }
             }
         } catch (Throwable th) {
-            ThemeFiles.deleteQuietly(tmpImage);
+            for (File file : extracted.values()) ThemeFiles.deleteQuietly(file);
             return new ImportResult(null, "主题包解析失败,可能文件已损坏", null, false);
         }
 
-        if (def == null) {
-            ThemeFiles.deleteQuietly(tmpImage);
-            return new ImportResult(null, "主题包里没有找到主题文件(.json)", null, false);
-        }
-        def.materialize(ThemeStore.builtinInput(def.getType()));
-        def.materializeShapes(ThemeStore.builtinShapes(def.getType()));
-
-        // 背景图:收进图库(按内容 hash 去重,重复的图直接复用)
-        if (tmpImage != null) {
-            String ref = ThemeStore.registerBackground(tmpImage);
-            if (ref.isEmpty()) {
-                warnings.add("背景图导入失败,已改为跟随默认背景");
-                def.getBackground().setMode(ThemeDef.Background.MODE_DEFAULT);
-                def.getBackground().setRef("");
-            } else {
-                def.getBackground().setMode(ThemeDef.Background.MODE_IMAGE);
-                def.getBackground().setRef(ref);
-                withImage = true;
+        Map<String, String> imported = new LinkedHashMap<>();
+        for (Map.Entry<String, File> image : extracted.entrySet()) {
+            File tmp = image.getValue();
+            if (tmp == null) continue;
+            try {
+                String ref = ThemeStore.registerBackground(tmp);
+                if (!ref.isEmpty()) imported.put(image.getKey(), ref);
+            } catch (Throwable ignored) {
+                // 保存失败只让当前图片回退，其余图片仍可导入。
+            } finally {
+                ThemeFiles.deleteQuietly(tmp);
             }
-        } else if (def.hasBackgroundImage()) {
-            warnings.add("主题包里的背景图不见了,已改为跟随默认背景");
-            def.getBackground().setMode(ThemeDef.Background.MODE_DEFAULT);
-            def.getBackground().setRef("");
         }
-        return new ImportResult(def, null, warnings, withImage);
+        if (def.hasBackgroundImage()) {
+            String ref = imported.get(pageRef);
+            if (ref == null) clearPageImage(def, warnings,
+                    "主题包里的背景图缺失或无效,已改为跟随默认背景");
+            else def.getBackground().setRef(ref);
+        }
+        if (!splashRawRef.isEmpty() && !bundledSplash) {
+            String ref = imported.get(splashRef);
+            if (ref == null) clearSplashImage(def, warnings,
+                    "主题包里的开屏背景图缺失或无效,已清除图片引用");
+            else def.getSplashBackground().setRef(ref);
+        }
+        return new ImportResult(def, null, warnings, !imported.isEmpty());
     }
 
-    private static String imageFileNameOf(ThemeDef def) {
-        String ref = ThemeBackgroundLibrary.normalizeRef(def.getBackground().getRef());
-        return ref.substring(ref.lastIndexOf('/') + 1).toLowerCase(java.util.Locale.ROOT);
+    private static void clearPageImage(ThemeDef def, List<String> warnings, String warning) {
+        warnings.add(warning);
+        def.getBackground().setMode(ThemeDef.Background.MODE_DEFAULT);
+        def.getBackground().setRef("");
+    }
+
+    private static void clearSplashImage(ThemeDef def, List<String> warnings, String warning) {
+        warnings.add(warning);
+        def.getSplashBackground().setRef("");
+        if (ThemeDef.SplashBackground.MODE_IMAGE.equals(def.getSplashBackground().getMode())) {
+            def.getSplashBackground().setMode(ThemeDef.SplashBackground.MODE_THEME);
+        }
     }
 
     private static String readEntryText(InputStream in) {
@@ -291,7 +389,7 @@ public final class ThemeArchive {
             int n;
             while ((n = in.read(buf)) > 0) {
                 total += n;
-                if (total > MAX_ENTRY_BYTES) return null;
+                if (total > MAX_JSON_BYTES) return null;
                 bos.write(buf, 0, n);
             }
             return new String(bos.toByteArray(), StandardCharsets.UTF_8);

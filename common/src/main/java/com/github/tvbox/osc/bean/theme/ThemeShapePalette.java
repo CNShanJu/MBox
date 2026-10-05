@@ -30,7 +30,7 @@ public final class ThemeShapePalette {
         radii.put(RADIUS_WIDGET_BTN, 12f);
         radii.put(RADIUS_SEARCH, 16f);
         radii.put(COMMON_CORNERS, 12f);
-        // 缩略图档的运行时兜底:老的自定义主题 JSON 里没有这个键时取它(小图上一个克制的圆角)
+        // 仅在内置资产不可用时兜底；主题缺键正常继承 theme_radii.json。
         radii.put(RADIUS_THUMB, 8f);
         DEFAULT_RADII = Collections.unmodifiableMap(radii);
 

@@ -20,6 +20,16 @@
 
   "download_active": "#1890FF",
 
+  "splashBackground": {
+    "mode": "theme",
+    "color": "",
+    "ref": "",
+    "zoom": 0,
+    "anchorX": 0.5,
+    "anchorY": 0.5,
+    "lottieOnImage": true
+  },
+
   "background": {
     "mode": "image",
     "ref": "file:///android_asset/theme/backgrounds/lotus.png",
@@ -31,6 +41,15 @@
   },
 
   "desc": {
+    "splashBackground": {
+      "mode": "开屏背景来源：theme=跟随本主题的 bg_body 纯色（默认）；solid=使用 color 指定的纯色；image=使用 ref 指定的图片。这里不使用 background 配置的页面背景图",
+      "color": "仅 mode=solid 时生效，填不透明颜色 #RRGGBB；改回 mode=theme 即恢复跟随 bg_body。切换到图片后仍保留此颜色，方便切回",
+      "ref": "仅 mode=image 时生效：用户图片填 theme_bg/文件名，内置图片填 file:///android_asset/theme/backgrounds/文件名。切换到纯色后仍保留图片，方便切回",
+      "zoom": "仅 mode=image 时生效：相对全屏铺满的缩放倍率；0 表示自动决定大小",
+      "anchorX": "仅 mode=image 时生效：水平位置，0=靠左、0.5=居中、1=靠右",
+      "anchorY": "仅 mode=image 时生效：垂直位置，0=靠上、0.5=居中、1=靠下",
+      "lottieOnImage": "仅 mode=image 时生效：true=图片上叠加开屏动画，false=只显示图片；theme 和 solid 模式始终播放开屏动画"
+    },
     "background": {
       "mode": "图片背景模式",
       "ref": "App 内置的透明莲花图片",

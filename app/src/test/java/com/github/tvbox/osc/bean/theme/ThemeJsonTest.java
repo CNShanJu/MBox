@@ -34,7 +34,9 @@ public class ThemeJsonTest {
                 new String(Files.readAllBytes(f.toPath()), StandardCharsets.UTF_8)).getAsJsonObject();
         Map<String, String> out = new LinkedHashMap<>();
         for (String key : o.keySet()) {
-            if ("type".equals(key) || "name".equals(key) || "default".equals(key) || "desc".equals(key)) continue;
+            if ("type".equals(key) || "name".equals(key) || "default".equals(key)
+                    || "desc".equals(key) || "background".equals(key)
+                    || "splashBackground".equals(key)) continue;
             out.put(key, o.get(key).getAsString());
         }
         return out;
@@ -47,6 +49,8 @@ public class ThemeJsonTest {
         def.setColor("bg_body", "#101018");
         def.setColor("brand", "#7C4DFF");
         def.setColor("btn_confirm_bg", "#2468AC");
+        def.setRadius(ThemeShapePalette.RADIUS_DIALOG, 22f);
+        def.setStroke(ThemeShapePalette.STROKE_WIDGET_BTN, 0.75f);
         def.getBackground().setMode(ThemeDef.Background.MODE_IMAGE);
         def.getBackground().setRef("theme_bg/0123456789abcdef0123456789abcdef.webp");
         return def;
@@ -86,7 +90,7 @@ public class ThemeJsonTest {
         assertEquals("type 必须与内置主题文件同词(bright/dark),否则两边不能互用",
                 "dark", o.get("type").getAsString());
         JsonObject colors = o.getAsJsonObject("colors");
-        assertTrue("颜色必须收在 schema 4 的 colors 对象里",
+        assertTrue("颜色必须收在 colors 对象里",
                 colors.has("bg_body") && colors.has("success"));
         assertFalse("强调文字已由文字主色派生,导出时不应重复写", colors.has("text_accent"));
         assertEquals("实心按钮底色必须作为独立配置导出", "#2468AC",
@@ -96,6 +100,12 @@ public class ThemeJsonTest {
         assertTrue("圆角与描边必须分组输出", o.has("radii") && o.has("strokes"));
         assertTrue("dp 数值不带单位后缀",
                 o.getAsJsonObject("radii").get("radius_dialog").getAsJsonPrimitive().isNumber());
+        assertEquals("明确设置的圆角应按数字导出", 22f,
+                o.getAsJsonObject("radii").get("radius_dialog").getAsFloat(), 0.0001f);
+        assertEquals("明确设置的描边应按数字导出", 0.75f,
+                o.getAsJsonObject("strokes").get("stroke_widget_btn").getAsFloat(), 0.0001f);
+        assertEquals(ThemeDef.SplashBackground.MODE_THEME,
+                o.getAsJsonObject("splashBackground").get("mode").getAsString());
     }
 
     @Test
@@ -111,6 +121,7 @@ public class ThemeJsonTest {
         assertTrue("desc 应静默忽略,不该报警告: " + r.warnings, r.warnings.isEmpty());
         assertEquals("内置主题文件里的每个键都要被读进来",
                 "#faf8ff".toUpperCase(), r.def.color("bg_body").toUpperCase());
+        assertEquals(ThemeDef.SplashBackground.MODE_THEME, r.def.getSplashBackground().getMode());
     }
 
     @Test
@@ -122,7 +133,8 @@ public class ThemeJsonTest {
         assertEquals("#3366FF", r.def.color("btn_confirm_bg"));
         assertEquals(0xFF3366FF, ThemePaletteFactory.derive(r.def.colors(), null).get("btn_select_bg"));
         JsonObject saved = JsonParser.parseString(ThemeJson.toJson(r.def)).getAsJsonObject();
-        assertEquals("迁移后按新格式保存，以便将来移除旧格式分支", 4, saved.get("schema").getAsInt());
+        assertEquals("迁移后按新格式保存，以便将来移除旧格式分支",
+                ThemeDef.SCHEMA, saved.get("schema").getAsInt());
         assertEquals("#3366FF", saved.getAsJsonObject("colors").get("btn_confirm_bg").getAsString());
     }
 
@@ -281,6 +293,65 @@ public class ThemeJsonTest {
         assertEquals(ThemeDef.Background.DEFAULT_ANCHOR, b.getAnchorY(), 0.0001f);
         assertEquals(ThemeDef.Background.DEFAULT_ALPHA, b.getAlpha());
         assertTrue(b.isScrim());
+    }
+
+    @Test
+    public void splashBackgroundKeepsInactiveChoicesAndPlacement() throws Exception {
+        ThemeDef def = sample();
+        ThemeDef.SplashBackground splash = def.getSplashBackground();
+        splash.setMode(ThemeDef.SplashBackground.MODE_SOLID);
+        splash.setColor("#345678");
+        splash.setRef("theme_bg/abcdef.webp");
+        splash.setZoom(1.75f);
+        splash.setAnchorX(0.25f);
+        splash.setAnchorY(0.8f);
+        splash.setLottieOnImage(false);
+
+        ThemeDef copied = def.copy();
+        copied.getSplashBackground().setColor("#FFFFFF");
+        assertEquals("草稿副本不能改回原主题", "#345678", splash.getColor());
+
+        ThemeJson.Result parsed = ThemeJson.parse(ThemeJson.toJson(def));
+        assertNull(parsed.error);
+        assertTrue(parsed.warnings.toString(), parsed.warnings.isEmpty());
+        ThemeDef.SplashBackground back = parsed.def.getSplashBackground();
+        assertEquals(ThemeDef.SplashBackground.MODE_SOLID, back.getMode());
+        assertEquals("#345678", back.getColor());
+        assertEquals("theme_bg/abcdef.webp", back.getRef());
+        assertTrue("纯色模式也要保留之前选过的图片供切回", parsed.def.hasSplashBackgroundImage());
+        assertEquals(1.75f, back.getZoom(), 0.0001f);
+        assertEquals(0.25f, back.getAnchorX(), 0.0001f);
+        assertEquals(0.8f, back.getAnchorY(), 0.0001f);
+        assertFalse(back.isLottieOnImage());
+    }
+
+    @Test
+    public void oldThemeWithoutSplashBackgroundFollowsTheme() {
+        ThemeJson.Result parsed = ThemeJson.parse("{\"kind\":\"mbox-theme\",\"schema\":4,"
+                + "\"colors\":{\"bg_body\":\"#123456\"}}");
+        assertNull(parsed.error);
+        assertEquals(ThemeDef.SplashBackground.MODE_THEME,
+                parsed.def.getSplashBackground().getMode());
+        assertTrue(parsed.def.getSplashBackground().isLottieOnImage());
+    }
+
+    @Test
+    public void malformedSplashBackgroundFallsBackWithoutUnsafeRef() {
+        ThemeJson.Result parsed = ThemeJson.parse("{\"kind\":\"mbox-theme\",\"schema\":5,"
+                + "\"colors\":{\"bg_body\":\"#123456\"},"
+                + "\"splashBackground\":{\"mode\":\"image\",\"ref\":\"../../secret.webp\","
+                + "\"color\":\"#80112233\",\"zoom\":99,\"anchorX\":-1,"
+                + "\"anchorY\":\"bad\",\"lottieOnImage\":\"bad\"}}");
+        assertNull(parsed.error);
+        assertEquals(ThemeDef.SplashBackground.MODE_THEME,
+                parsed.def.getSplashBackground().getMode());
+        assertEquals("", parsed.def.getSplashBackground().getRef());
+        assertEquals("", parsed.def.getSplashBackground().getColor());
+        assertEquals(0f, parsed.def.getSplashBackground().getZoom(), 0f);
+        assertEquals(0.5f, parsed.def.getSplashBackground().getAnchorX(), 0f);
+        assertEquals(0.5f, parsed.def.getSplashBackground().getAnchorY(), 0f);
+        assertTrue(parsed.def.getSplashBackground().isLottieOnImage());
+        assertFalse(parsed.warnings.isEmpty());
     }
 
     @Test
