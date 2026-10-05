@@ -123,7 +123,7 @@ public abstract class BaseController extends BaseVideoController implements Gest
     private boolean mPausedBeforeSeeking;
     private boolean mSuppressPlayFeedback;
     private boolean mPictureInPicture;
-    private int mReservedProgressTimeChars = -1;
+    private int mReservedProgressTimeLength = -1;
     private static final long PLAY_FEEDBACK_DURATION_MS = 2500L;
     private final Runnable mHidePlayFeedback = () -> {
         if (mCenterPlaybackStatus != null && mCurPlayState != VideoView.STATE_PAUSED) {
@@ -430,19 +430,19 @@ public abstract class BaseController extends BaseVideoController implements Gest
         super.setProgress(duration, position);
     }
 
-    /** Reserve the longest displayed timestamp so changing digits cannot resize the seek bar. */
+    /** Reserve the total time's format with every digit shown as 8, then keep that width during playback. */
     protected void updateProgressTimeLabels(TextView currentTime, TextView totalTime, int duration, int position) {
         String currentText = PlayerUtils.stringForTime(position);
         String totalText = PlayerUtils.stringForTime(duration);
-        String widthSample = duration > 0 ? totalText : "0:00:00";
-        int reservedChars = Math.max(mReservedProgressTimeChars,
-                Math.max(widthSample.length(), currentText.length()));
-        if (mReservedProgressTimeChars != reservedChars) {
-            float characterWidth = currentTime.getPaint().measureText("0");
-            int width = (int) Math.ceil(characterWidth * reservedChars)
+        if (mReservedProgressTimeLength != totalText.length()) {
+            char[] widthSample = totalText.toCharArray();
+            for (int i = 0; i < widthSample.length; i++) {
+                if (Character.isDigit(widthSample[i])) widthSample[i] = '8';
+            }
+            int width = (int) Math.ceil(currentTime.getPaint().measureText(new String(widthSample)))
                     + currentTime.getCompoundPaddingLeft() + currentTime.getCompoundPaddingRight();
             currentTime.setMinWidth(width);
-            mReservedProgressTimeChars = reservedChars;
+            mReservedProgressTimeLength = totalText.length();
         }
         currentTime.setText(currentText);
         totalTime.setText(totalText);
@@ -492,6 +492,7 @@ public abstract class BaseController extends BaseVideoController implements Gest
         switch (playState) {
             case VideoView.STATE_IDLE: // 新会话起点(切集/重播前 release)
                 mEverPrepared = false;
+                mReservedProgressTimeLength = -1;
                 break;
             case VideoView.STATE_PLAYING:
             case VideoView.STATE_PREPARED: // 已出画面

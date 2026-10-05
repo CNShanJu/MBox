@@ -157,6 +157,10 @@ public class VodController extends BaseController implements PlaybackSettingsCon
     public TextView mZimuBtn;
     public TextView mAudioTrackBtn;
     private ImageView mIvPlayStatus;
+    private boolean browserRemote;
+    private long browserPositionMs;
+    private long browserDurationMs;
+    private boolean browserPaused = true;
     private ImageView mIvFullscreen;
     private View mChooseSeries;
     private View mChooseDownload;
@@ -321,7 +325,7 @@ public class VodController extends BaseController implements PlaybackSettingsCon
                     return;
                 }
 
-                long duration = mControlWrapper.getDuration();
+                long duration = browserRemote ? browserDurationMs : mControlWrapper.getDuration();
                 long newPosition = (duration * progress) / seekBar.getMax();
                 if (mCurrentTime != null)
                     mCurrentTime.setText(stringForTime((int) newPosition));
@@ -339,9 +343,17 @@ public class VodController extends BaseController implements PlaybackSettingsCon
             public void onStopTrackingTouch(SeekBar seekBar) {
                 myHandle.removeCallbacks(myRunnable);
                 myHandle.postDelayed(myRunnable, dismissTimeOperationBar);
-                long duration = mControlWrapper.getDuration();
+                long duration = browserRemote ? browserDurationMs : mControlWrapper.getDuration();
                 long newPosition = (duration * seekBar.getProgress()) / seekBar.getMax();
-                mControlWrapper.seekTo((int) newPosition);
+                if (browserRemote) {
+                    if (duration > 0 && listener != null
+                            && listener.controlBrowserCast("seek", newPosition)) {
+                        browserPositionMs = newPosition;
+                        renderBrowserRemoteProgress();
+                    }
+                } else {
+                    mControlWrapper.seekTo((int) newPosition);
+                }
                 mIsDragging = false;
                 finishSeeking(true);
                 mControlWrapper.startProgress();
@@ -929,6 +941,9 @@ public class VodController extends BaseController implements PlaybackSettingsCon
     }
 
     public interface VodControlListener {
+        /** 本机真正恢复播放后，宿主可撤下手机暂停的提示。 */
+        void onLocalPlaybackStarted();
+
         void chooseSeries();
 
         void playNext(boolean rmProgress);
@@ -942,6 +957,9 @@ public class VodController extends BaseController implements PlaybackSettingsCon
         void updatePlayerCfg();
 
         void replay(boolean replay);
+
+        /** 投屏期间由宿主把手机控制指令发送到已配对的电脑。 */
+        boolean controlBrowserCast(String action, long positionMs);
 
         void errReplay();
 
@@ -978,8 +996,66 @@ public class VodController extends BaseController implements PlaybackSettingsCon
 
     private boolean skipEnd = true;
 
+    public void setBrowserRemote(boolean active) {
+        browserRemote = active;
+        setBrowserEpisodeControls(true);
+        setGestureEnabled(!active);
+        if (active) {
+            browserPaused = true;
+            browserPositionMs = 0;
+            browserDurationMs = 0;
+            renderBrowserRemoteProgress();
+            if (mControlWrapper != null) mControlWrapper.show();
+        } else if (mSeekBar != null) {
+            mSeekBar.setEnabled(true);
+        }
+    }
+
+    public void setBrowserEpisodeControls(boolean enabled) {
+        if (mNextBtn != null) mNextBtn.setEnabled(enabled);
+        if (mPreBtn != null) mPreBtn.setEnabled(enabled);
+        if (mChooseSeries != null) mChooseSeries.setEnabled(enabled);
+    }
+
+    public void updateBrowserRemote(long positionMs, long durationMs, boolean paused) {
+        if (!browserRemote) return;
+        browserDurationMs = Math.max(0, durationMs);
+        browserPositionMs = Math.max(0, Math.min(positionMs, browserDurationMs > 0
+                ? browserDurationMs : positionMs));
+        browserPaused = paused;
+        renderBrowserRemoteProgress();
+    }
+
+    private void renderBrowserRemoteProgress() {
+        if (!browserRemote || mSeekBar == null || mIsDragging) return;
+        int duration = (int) Math.min(Integer.MAX_VALUE, browserDurationMs);
+        int position = (int) Math.min(Integer.MAX_VALUE, browserPositionMs);
+        updateProgressTimeLabels(mCurrentTime, mTotalTime, duration, position);
+        mSeekBar.setEnabled(duration > 0);
+        mSeekBar.setProgress(duration > 0 ? (int) (position * 1.0 / duration * mSeekBar.getMax()) : 0);
+        mIvPlayStatus.setImageResource(browserPaused ? R.drawable.ic_play : R.drawable.ic_pause);
+    }
+
+    @Override
+    public void togglePlay() {
+        if (!browserRemote) {
+            super.togglePlay();
+            return;
+        }
+        boolean play = browserPaused;
+        if (listener != null && listener.controlBrowserCast(play ? "play" : "pause", 0)) {
+            browserPaused = !play;
+            renderBrowserRemoteProgress();
+        }
+    }
+
     @Override
     protected void setProgress(int duration, int position) {
+
+        if (browserRemote) {
+            renderBrowserRemoteProgress();
+            return;
+        }
 
         if (mIsDragging) {
             return;
@@ -1020,9 +1096,16 @@ public class VodController extends BaseController implements PlaybackSettingsCon
     public void tvSlideStop() {
         if (!simSlideStart)
             return;
-        mControlWrapper.seekTo(simSeekPosition);
+        if (browserRemote) {
+            if (listener != null && listener.controlBrowserCast("seek", simSeekPosition)) {
+                browserPositionMs = simSeekPosition;
+                renderBrowserRemoteProgress();
+            }
+        } else {
+            mControlWrapper.seekTo(simSeekPosition);
+        }
         finishSeeking(true);
-        if (!mControlWrapper.isPlaying())
+        if (!browserRemote && !mControlWrapper.isPlaying())
             mControlWrapper.start();
         simSlideStart = false;
         simSeekPosition = 0;
@@ -1031,7 +1114,8 @@ public class VodController extends BaseController implements PlaybackSettingsCon
     }
 
     public void tvSlideStart(int dir) {
-        int duration = (int) mControlWrapper.getDuration();
+        int duration = browserRemote ? (int) Math.min(Integer.MAX_VALUE, browserDurationMs)
+                : (int) mControlWrapper.getDuration();
         if (duration <= 0)
             return;
         if (!simSlideStart) {
@@ -1040,7 +1124,8 @@ public class VodController extends BaseController implements PlaybackSettingsCon
         }
         // 每次10秒
         simSlideOffset += (10000.0f * dir);
-        int currentPosition = (int) mControlWrapper.getCurrentPosition();
+        int currentPosition = browserRemote ? (int) Math.min(Integer.MAX_VALUE, browserPositionMs)
+                : (int) mControlWrapper.getCurrentPosition();
         int position = (int) (simSlideOffset + currentPosition);
         if (position > duration) position = duration;
         if (position < 0) position = 0;
@@ -1069,12 +1154,18 @@ public class VodController extends BaseController implements PlaybackSettingsCon
     protected void onPlayStateChanged(int playState) {
         super.onPlayStateChanged(playState);
         if (isLock && !isLocked()) setLocked(true);
+        if (browserRemote) {
+            videoPlayState = playState;
+            renderBrowserRemoteProgress();
+            return;
+        }
         com.github.tvbox.osc.service.PlayService.onPlaybackNotify(null);
         videoPlayState = playState;
         switch (playState) {
             case VideoView.STATE_IDLE:
                 break;
             case VideoView.STATE_PLAYING:
+                if (listener != null) listener.onLocalPlaybackStarted();
                 hasPlayedOnce = true;
                 startProgress();
                 mIvPlayStatus.setImageResource(R.drawable.ic_pause);
@@ -1139,7 +1230,7 @@ public class VodController extends BaseController implements PlaybackSettingsCon
             myHandle.postDelayed(myRunnable, dismissTimeOperationBar);
             return super.dispatchKeyEvent(event);
         }
-        boolean isInPlayback = isInPlaybackState();
+        boolean isInPlayback = browserRemote || isInPlaybackState();
         if (action == KeyEvent.ACTION_DOWN) {
             if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT || keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
                 if (isInPlayback) {
@@ -1176,6 +1267,7 @@ public class VodController extends BaseController implements PlaybackSettingsCon
 
     @Override
     public void onLongPress(MotionEvent e) {
+        if (browserRemote) return;
         if (videoPlayState != VideoView.STATE_PAUSED) {
             fromLongPress = true;
             try {
@@ -1230,6 +1322,19 @@ public class VodController extends BaseController implements PlaybackSettingsCon
     /** 全屏与详情页预览使用同一曲边双击区域，中央保持暂停/播放。 */
     @Override
     public boolean onDoubleTap(MotionEvent e) {
+        if (browserRemote) {
+            int direction = DoubleTapSeekPolicy.direction(e.getX(), e.getY(), getWidth(), getHeight());
+            if (direction == 0) togglePlay();
+            else if (browserDurationMs > 0 && listener != null) {
+                long target = Math.max(0, Math.min(browserDurationMs,
+                        browserPositionMs + direction * 10_000L));
+                if (listener.controlBrowserCast("seek", target)) {
+                    browserPositionMs = target;
+                    renderBrowserRemoteProgress();
+                }
+            }
+            return true;
+        }
         if (isLock || isLocked() || !isInPlaybackState()) return true;
         // 已展开控件的触摸区域不响应跳转，画面左右侧才交给双击手势。
         if (mProgressRoot.getVisibility() == VISIBLE) return true;

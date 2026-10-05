@@ -272,7 +272,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:fontFamily="monospace"
-                android:gravity="start|center_vertical"
+                android:gravity="end|center_vertical"
                 android:paddingEnd="@dimen/dp_10"
                 android:paddingRight="@dimen/dp_10"
                 android:text="00:00"
