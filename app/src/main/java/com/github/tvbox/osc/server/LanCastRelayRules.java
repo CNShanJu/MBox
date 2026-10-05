@@ -32,6 +32,30 @@ public final class LanCastRelayRules {
         URI base;
         try { base = new URI(baseUrl); }
         catch (Exception ignored) { return playlist; }
+        return rewriteParsed(playlist, base,
+                (source, raw, kind) -> relayUrl(source, raw, kind, register));
+    }
+
+    @FunctionalInterface
+    interface ResourceRewriter {
+        String rewrite(URI base, String raw, ResourceKind kind);
+    }
+
+    /** Shared HLS parser; browser casting supplies its own URI policy without changing DLNA rules. */
+    static String rewriteWithUriPolicy(String playlist, String baseUrl, ResourceRewriter rewriter) {
+        URI base;
+        try { base = new URI(baseUrl); }
+        catch (Exception error) {
+            throw new IllegalStateException("invalid playlist base URL", error);
+        }
+        String scheme = base.getScheme();
+        if (base.getHost() == null || !("http".equalsIgnoreCase(scheme)
+                || "https".equalsIgnoreCase(scheme)))
+            throw new IllegalStateException("invalid playlist base URL");
+        return rewriteParsed(playlist, base, rewriter);
+    }
+
+    private static String rewriteParsed(String playlist, URI base, ResourceRewriter rewriter) {
         StringBuilder result = new StringBuilder(playlist.length() + 128);
         String[] lines = playlist.split("\n", -1);
         boolean nextPlaylist = false;
@@ -45,7 +69,7 @@ public final class LanCastRelayRules {
                 Matcher matcher = ATTRIBUTE_URI.matcher(line);
                 StringBuffer rewritten = new StringBuffer();
                 while (matcher.find()) {
-                    String media = relayUrl(base, matcher.group(1), attributeKind, register);
+                    String media = rewriter.rewrite(base, matcher.group(1), attributeKind);
                     matcher.appendReplacement(rewritten, Matcher.quoteReplacement(
                             "URI=\"" + media + "\""));
                 }
@@ -53,8 +77,8 @@ public final class LanCastRelayRules {
                 line = rewritten.toString();
                 if (trimmed.startsWith("#EXT-X-STREAM-INF:")) nextPlaylist = true;
             } else if (!trimmed.isEmpty()) {
-                line = relayUrl(base, trimmed,
-                        nextPlaylist ? ResourceKind.PLAYLIST : ResourceKind.SEGMENT, register);
+                line = rewriter.rewrite(base, trimmed,
+                        nextPlaylist ? ResourceKind.PLAYLIST : ResourceKind.SEGMENT);
                 nextPlaylist = false;
             }
             result.append(line);

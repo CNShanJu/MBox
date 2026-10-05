@@ -13,7 +13,56 @@ let playbackRevision = 0;
 let castHls = null;
 let castPlaybackStarted = false;
 let castRebufferReported = false;
+let castPlayGeneration = 0;
+let castPlayFailureName = null;
+let castStartup = null;
+let castRetryCount = 0;
+let castRetryTimer = null;
+const MAX_CAST_RETRIES = 2;
+let playbackPollEpoch = 0;
+let playbackPollTimer = null;
+let playbackPollPending = null;
 let noticeTimer;
+
+function cancelPlaybackPollTimer() {
+  clearTimeout(playbackPollTimer);
+  playbackPollTimer = null;
+}
+function resetPlaybackPolling() {
+  playbackPollEpoch++;
+  cancelPlaybackPollTimer();
+  playbackPollPending = null;
+}
+function schedulePlaybackPoll() {
+  if ($('dashboard').hidden || playbackPollPending || playbackPollTimer) return;
+  const epoch = playbackPollEpoch;
+  const delay = document.hidden ? 30000 : page === 'cast' && playbackRevision ? 2000 : 5000;
+  playbackPollTimer = setTimeout(() => {
+    playbackPollTimer = null;
+    if (epoch === playbackPollEpoch && !$('dashboard').hidden) pollPlayback();
+  }, delay);
+}
+
+function cancelCastRetryTimer() {
+  clearTimeout(castRetryTimer);
+  castRetryTimer = null;
+}
+function clearCastRetry() {
+  cancelCastRetryTimer();
+  castRetryCount = 0;
+}
+function scheduleCastRetry() {
+  if (!playbackRevision || castRetryTimer || castRetryCount >= MAX_CAST_RETRIES ||
+      castPlaybackStarted || page !== 'cast' || $('dashboard').hidden) return;
+  const revision = playbackRevision;
+  const attempt = ++castRetryCount;
+  $('castMessage').textContent += ' 正在重试（' + attempt + '/' + MAX_CAST_RETRIES + '）…';
+  castRetryTimer = setTimeout(() => {
+    castRetryTimer = null;
+    if (!castPlaybackStarted && page === 'cast' && !$('dashboard').hidden && playbackRevision === revision)
+      pollPlayback(true, revision);
+  }, attempt * 2000);
+}
 
 function notice(message) {
   $('notice').textContent = message;
@@ -22,6 +71,7 @@ function notice(message) {
   noticeTimer = setTimeout(() => $('notice').hidden = true, 4200);
 }
 function disconnected() {
+  resetPlaybackPolling();
   $('dashboard').hidden = true;
   $('pairPanel').hidden = false;
   $('pairError').textContent = '';
@@ -33,10 +83,14 @@ function disconnected() {
   $('video').load();
   clearCastPlayer();
   playbackRevision = 0;
+  clearCastRetry();
 }
-async function request(path, options) {
+async function request(path, options, expectedPollEpoch) {
   const response = await fetch(path, {credentials:'same-origin',cache:'no-store',...options});
-  if (response.status === 403) { disconnected(); throw new Error('请先输入手机上的配对码'); }
+  if (response.status === 403) {
+    if (expectedPollEpoch === undefined || expectedPollEpoch === playbackPollEpoch) disconnected();
+    throw new Error('请先输入手机上的配对码');
+  }
   if (!response.ok) throw new Error('请求失败：' + response.status);
   return response;
 }
@@ -63,15 +117,17 @@ async function pair(code) {
   await showDashboard();
 }
 async function showDashboard() {
+  resetPlaybackPolling();
+  const epoch = playbackPollEpoch;
   $('pairPanel').hidden = true;
   $('dashboard').hidden = false;
   $('mainNav').hidden = false;
   $('logoutButton').hidden = false;
   $('connection').textContent = '已连接服务器';
-  await loadTheme().catch(() => {});
-  await showPage(page);
+  await loadTheme(epoch).catch(() => {});
+  if (epoch === playbackPollEpoch && !$('dashboard').hidden) await showPage(page);
 }
-async function showPage(route) {
+async function showPage(route, incomingState) {
   if (!routeUrl[route]) route = 'home';
   if (page === 'video' && route !== 'video') $('video').pause();
   if (page === 'cast' && route !== 'cast') $('castVideo').pause();
@@ -91,18 +147,18 @@ async function showPage(route) {
     await listFiles(folder).catch(error => notice(error.message));
   } else if (route === 'video') {
     await loadVideoLibrary().catch(error => notice(error.message));
-  } else if (route === 'cast') {
-    await pollPlayback();
   }
-  if (route !== 'cast') await checkIncoming();
+  if (incomingState && route === 'cast') await applyPlaybackState(incomingState, false, playbackPollEpoch);
+  else await pollPlayback();
 }
-function navigate(route) {
+function navigate(route, incomingState) {
   if (!routeUrl[route]) return;
   if (location.pathname !== routeUrl[route]) history.pushState({route},'',routeUrl[route]);
-  showPage(route);
+  return showPage(route, incomingState);
 }
-async function loadTheme() {
-  const theme = await (await request('/api/theme')).json();
+async function loadTheme(epoch = playbackPollEpoch) {
+  const theme = await (await request('/api/theme', undefined, epoch)).json();
+  if (epoch !== playbackPollEpoch || $('dashboard').hidden) return;
   const colors = theme.colors || {};
   const names = {bg_body:'--bg',bg_surface:'--surface',text_main:'--text',text_sub:'--sub',
     text_highlight:'--accent',btn_select_bg:'--button',btn_select_text:'--button-text',btn_cancel_bg:'--stroke'};
@@ -238,38 +294,63 @@ function playLocal(index, queue = folderVideos) {
   player.play().catch(() => { $('videoMessage').textContent = '视频已载入，点击播放器的播放键。'; });
   highlightCurrentVideo();
 }
-async function pollPlayback() {
-  try {
-    const state = await (await request('/api/playback')).json();
-    if (!state.revision) {
-      if (playbackRevision) {
-        playbackRevision = 0;
-        clearCastPlayer();
-        $('castTitle').textContent = '等待手机推送';
-        $('castStatus').textContent = '等待播放';
-        $('castMessage').textContent = '在手机播放器设置中选择「推送到电脑播放」。';
-        $('castEpisodeCount').textContent = '等待手机推送视频';
-        $('castEpisodes').textContent = '';
-      }
-      return;
+async function pollPlayback(force = false, expectedRevision = null) {
+  if ($('dashboard').hidden) return;
+  if (force && expectedRevision !== null && playbackRevision !== expectedRevision) return;
+  const epoch = playbackPollEpoch;
+  if (playbackPollPending) {
+    await playbackPollPending;
+    if (force && epoch === playbackPollEpoch && page === 'cast' && !castPlaybackStarted
+        && (expectedRevision === null || playbackRevision === expectedRevision))
+      return pollPlayback(true, expectedRevision);
+    return;
+  }
+  cancelPlaybackPollTimer();
+  const pending = (async () => {
+    try {
+      const state = await (await request('/api/playback', undefined, epoch)).json();
+      if (epoch !== playbackPollEpoch || $('dashboard').hidden) return;
+      if (page !== 'cast' && state.revision && state.revision !== playbackRevision)
+        await navigate('cast', state);
+      else await applyPlaybackState(state, force && page === 'cast', epoch);
+    } catch (error) {
+      if (epoch !== playbackPollEpoch || $('dashboard').hidden) return;
+      if (page === 'cast') $('castMessage').textContent = '读取推送状态失败：' + error.message;
+      if (force) scheduleCastRetry();
     }
-    if (state.revision === playbackRevision) return;
-    playbackRevision = state.revision;
-    $('castTitle').textContent = state.title || '手机推送的视频';
-    $('castStatus').textContent = '手机推送';
-    renderCastEpisodes(state.episodes || [], state.selectedIndex);
-    await playCast(state.url || '', !!state.hls, !!state.nativeVideo);
-  } catch (error) {
-    if (!$('dashboard').hidden) $('castMessage').textContent = '读取推送状态失败：' + error.message;
+  })();
+  playbackPollPending = pending;
+  try { await pending; }
+  finally {
+    if (playbackPollPending === pending) playbackPollPending = null;
+    if (epoch === playbackPollEpoch) schedulePlaybackPoll();
   }
 }
-async function checkIncoming() {
-  try {
-    const state = await (await request('/api/playback')).json();
-    if (state.revision && state.revision !== playbackRevision) navigate('cast');
-  } catch (_) { /* request 已显示配对状态 */ }
+async function applyPlaybackState(state, force, epoch) {
+  if (!state.revision) {
+    if (playbackRevision) {
+      playbackRevision = 0;
+      clearCastRetry();
+      clearCastPlayer();
+      $('castTitle').textContent = '等待手机推送';
+      $('castStatus').textContent = '等待播放';
+      $('castMessage').textContent = '在手机播放器设置中选择「推送到电脑播放」。';
+      $('castEpisodeCount').textContent = '等待手机推送视频';
+      $('castEpisodes').textContent = '';
+    }
+    return;
+  }
+  if (page !== 'cast' || state.revision === playbackRevision && !force) return;
+  if (state.revision !== playbackRevision) clearCastRetry();
+  playbackRevision = state.revision;
+  $('castTitle').textContent = state.title || '手机推送的视频';
+  $('castStatus').textContent = '手机推送';
+  renderCastEpisodes(state.episodes || [], state.selectedIndex);
+  await playCast(state.url || '', !!state.hls, !!state.nativeVideo, epoch);
 }
 function clearCastPlayer() {
+  clearCastStartupWatch();
+  castPlayGeneration++;
   const player = $('castVideo');
   player.pause();
   if (castHls) { castHls.destroy(); castHls = null; }
@@ -277,6 +358,7 @@ function clearCastPlayer() {
   player.load();
   castPlaybackStarted = false;
   castRebufferReported = false;
+  castPlayFailureName = null;
 }
 function renderCastEpisodes(episodes, selectedIndex) {
   const list = $('castEpisodes'); list.textContent = '';
@@ -300,50 +382,144 @@ function renderCastEpisodes(episodes, selectedIndex) {
 function isHlsUrl(url) {
   return /m3u8/i.test(url) || /^\/(?:proxy|api\/cast\/media)(?:\?|$)/i.test(url);
 }
-async function playCast(url, hlsHint, nativeHint) {
+function currentCastPlay(epoch, generation) {
+  return epoch === playbackPollEpoch && generation === castPlayGeneration
+    && page === 'cast' && !$('dashboard').hidden;
+}
+function clearCastStartupWatch() {
+  if (!castStartup) return;
+  clearTimeout(castStartup.timer);
+  castStartup = null;
+}
+function startCastStartupWatch(player, epoch, generation) {
+  const startup = {epoch, generation, code:'initializing', label:'初始化', rank:0, firstFragment:false,
+    timer:null};
+  castStartup = startup;
+  startup.timer = setTimeout(() => {
+    startup.timer = null;
+    if (castStartup !== startup || !currentCastPlay(epoch, generation)) return;
+    if (castPlaybackStarted || player.readyState >= 2) {
+      clearCastStartupWatch();
+      return;
+    }
+    $('castMessage').textContent = '视频仍未准备好（阶段：' + startup.label + '）。';
+    sendPlaybackEvent('startup_stalled', startup.code);
+  }, 30000);
+  return startup;
+}
+function updateCastStartupStage(startup, rank, code, label) {
+  if (startup && castStartup === startup
+      && currentCastPlay(startup.epoch, startup.generation) && rank >= startup.rank) {
+    startup.rank = rank;
+    startup.code = code;
+    startup.label = label;
+  }
+}
+function castStartupReady() {
+  if (castStartup && currentCastPlay(castStartup.epoch, castStartup.generation)
+      && $('castVideo').readyState >= 2) clearCastStartupWatch();
+}
+function castErrorName(error) {
+  const name = error && typeof error.name === 'string' ? error.name : '';
+  return /^[A-Za-z][A-Za-z0-9]{0,47}$/.test(name) ? name : 'UnknownError';
+}
+function reportCastPlayFailure(error, epoch, generation) {
+  if (!currentCastPlay(epoch, generation)) return;
+  const name = castErrorName(error);
+  castPlayFailureName = name;
+  clearCastStartupWatch();
+  if (name === 'NotAllowedError') {
+    $('castMessage').textContent = '浏览器阻止了自动播放，请点击播放器的播放键。';
+    sendPlaybackEvent('autoplay_blocked');
+  } else {
+    $('castMessage').textContent = '视频播放失败（' + name + '）。请检查视频地址与浏览器格式支持。';
+    sendPlaybackEvent('media_error', name);
+  }
+}
+function startCastPlayback(player, epoch, generation) {
+  try {
+    const started = player.play();
+    if (started && typeof started.catch === 'function')
+      started.catch(error => reportCastPlayFailure(error, epoch, generation));
+  } catch (error) {
+    reportCastPlayFailure(error, epoch, generation);
+  }
+}
+async function playCast(url, hlsHint, nativeHint, epoch = playbackPollEpoch) {
   clearCastPlayer();
+  const generation = castPlayGeneration;
   const player = $('castVideo');
   if (!url) { $('castMessage').textContent = '手机没有发送可播放地址。'; return; }
   $('castMessage').textContent = '正在载入手机推送的视频…';
-  if (!nativeHint && (hlsHint || isHlsUrl(url)) && !player.canPlayType('application/vnd.apple.mpegurl')) {
-    if (!window.Hls || !Hls.isSupported()) {
-      $('castMessage').textContent = '此浏览器不支持 M3U8 播放。';
-      sendPlaybackEvent('unsupported','hls');
-      return;
-    }
-    const hls = new Hls(); castHls = hls;
-    hls.on(Hls.Events.MANIFEST_PARSED,() => {
-      if (castHls !== hls) return;
-      player.play().then(() => $('castMessage').textContent = '正在播放手机推送的视频。')
-        .catch(error => {
-          $('castMessage').textContent = '视频已载入，点击播放器的播放键。';
-          if (error.name === 'NotAllowedError') sendPlaybackEvent('autoplay_blocked');
-        });
+  const hlsSource = !nativeHint && (hlsHint || isHlsUrl(url));
+  if (hlsSource && window.Hls && Hls.isSupported()) {
+    sendPlaybackEvent('playback_engine', 'hlsjs');
+    // Give the relay room for short network stalls while limiting long-play memory use.
+    const hls = new Hls({
+      backBufferLength: 30,
+      maxBufferLength: 60,
+      maxMaxBufferLength: 120,
+      maxBufferSize: 96 * 1024 * 1024,
+      lowLatencyMode: false
     });
+    castHls = hls;
+    const startup = startCastStartupWatch(player, epoch, generation);
+    let reportedNonfatal = false;
+    hls.on(Hls.Events.MANIFEST_PARSED,() => {
+      if (castHls !== hls || !currentCastPlay(epoch, generation)) return;
+      updateCastStartupStage(startup, 1, 'manifest_parsed', '清单已解析');
+      startCastPlayback(player, epoch, generation);
+    });
+    hls.on(Hls.Events.FRAG_LOADING,() => {
+      if (startup.firstFragment) return;
+      startup.firstFragment = true;
+      updateCastStartupStage(startup, 2, 'first_fragment_loading', '首片加载');
+    });
+    hls.on(Hls.Events.FRAG_PARSED,() =>
+      updateCastStartupStage(startup, 3, 'fragment_parsed', '首片已解析'));
+    hls.on(Hls.Events.BUFFER_APPENDED,() =>
+      updateCastStartupStage(startup, 4, 'buffer_appended', '视频数据已写入缓冲区'));
     hls.on(Hls.Events.ERROR,(_,data) => {
-      if (castHls !== hls || !data.fatal) return;
+      if (castHls !== hls || !currentCastPlay(epoch, generation)) return;
+      const detail = String(data && data.details || 'unknown').slice(0, 80);
+      if (!data || !data.fatal) {
+        if (!reportedNonfatal) {
+          reportedNonfatal = true;
+          sendPlaybackEvent('hls_warning', detail);
+        }
+        if (!castPlaybackStarted && !castPlayFailureName)
+          $('castMessage').textContent = '视频加载遇到问题（' + detail + '），播放器正在继续尝试。';
+        return;
+      }
       if (/^\/(?:proxy|api\/cast\/media)(?:\?|$)/i.test(url) && !hlsHint) {
         castHls = null; hls.destroy();
+        updateCastStartupStage(startup, 2, 'native_fallback', '浏览器原生播放');
         player.src = url; player.load();
-        player.play().catch(error => {
-          $('castMessage').textContent = '视频已载入，点击播放器的播放键。';
-          if (error.name === 'NotAllowedError') sendPlaybackEvent('autoplay_blocked');
-        });
+        startCastPlayback(player, epoch, generation);
       } else {
-        $('castMessage').textContent = 'M3U8 加载失败：' + (data.details || '网络或视频格式错误');
-        sendPlaybackEvent('hls_error',data.details || 'unknown');
+        clearCastStartupWatch();
+        $('castMessage').textContent = 'M3U8 加载失败：' + detail;
+        sendPlaybackEvent('hls_error', detail);
+        scheduleCastRetry();
       }
     });
     hls.loadSource(url);
     hls.attachMedia(player);
     return;
   }
-  player.src = url; player.load();
-  try { await player.play(); $('castMessage').textContent = '正在播放手机推送的视频。'; }
-  catch (error) {
-    $('castMessage').textContent = '视频已载入，点击播放器的播放键。';
-    if (error.name === 'NotAllowedError') sendPlaybackEvent('autoplay_blocked');
-  }
+  if (hlsSource) {
+    if (!player.canPlayType('application/vnd.apple.mpegurl')) {
+      $('castMessage').textContent = '此浏览器不支持 M3U8 播放。';
+      sendPlaybackEvent('playback_engine', 'unsupported_hls');
+      sendPlaybackEvent('unsupported', 'hls');
+      return;
+    }
+    sendPlaybackEvent('playback_engine', 'native_hls');
+  } else sendPlaybackEvent('playback_engine', 'native_video');
+  player.src = url;
+  startCastStartupWatch(player, epoch, generation);
+  player.load();
+  startCastPlayback(player, epoch, generation);
 }
 function onVideoEnded() {
   if (!$('autoNext').checked) return;
@@ -426,7 +602,12 @@ $('video').addEventListener('error',() => {
 });
 $('castVideo').addEventListener('ended',onCastEnded);
 $('castVideo').addEventListener('playing',() => {
+  if ($('dashboard').hidden || page !== 'cast' || !playbackRevision) return;
   castPlaybackStarted = true;
+  castPlayFailureName = null;
+  clearCastStartupWatch();
+  cancelCastRetryTimer();
+  $('castMessage').textContent = '正在播放手机推送的视频。';
   sendPlaybackEvent('playing');
 });
 $('castVideo').addEventListener('waiting',() => {
@@ -434,11 +615,21 @@ $('castVideo').addEventListener('waiting',() => {
   castRebufferReported = true;
   sendPlaybackEvent('rebuffer');
 });
+$('castVideo').addEventListener('loadedmetadata',() => {
+  updateCastStartupStage(castStartup, 5, 'loadedmetadata', '媒体信息已读取');
+  castStartupReady();
+});
+$('castVideo').addEventListener('loadeddata',castStartupReady);
+$('castVideo').addEventListener('canplay',castStartupReady);
 $('castVideo').addEventListener('error',() => {
   if ($('castVideo').hasAttribute('src') && !castHls) {
-    $('castMessage').textContent = '浏览器无法播放此视频格式，或播放地址已失效。';
+    clearCastStartupWatch();
     const mediaError = $('castVideo').error;
-    sendPlaybackEvent('media_error',String(mediaError ? mediaError.code : 0));
+    const code = String(mediaError ? mediaError.code : 0);
+    if (!castPlayFailureName)
+      $('castMessage').textContent = '视频解码或读取失败（MediaError ' + code + '）。';
+    sendPlaybackEvent('media_error', castPlayFailureName || 'code:' + code);
+    scheduleCastRetry();
   }
 });
 $('refreshFiles').onclick = () => listFiles(folder).catch(error => notice(error.message));
@@ -462,8 +653,12 @@ request('/api/session').then(showDashboard).catch(error => {
   disconnected();
   if (error.message !== '请先输入手机上的配对码') $('pairError').textContent = '连接失败：' + error.message;
 });
-setInterval(() => { if (!$('dashboard').hidden) loadTheme().catch(() => {}); },10000);
-setInterval(() => {
+document.addEventListener('visibilitychange',() => {
   if ($('dashboard').hidden) return;
-  if (page === 'cast') pollPlayback(); else checkIncoming();
-},2000);
+  cancelPlaybackPollTimer();
+  if (document.hidden) schedulePlaybackPoll();
+  else {
+    loadTheme(playbackPollEpoch).catch(() => {});
+    pollPlayback();
+  }
+});

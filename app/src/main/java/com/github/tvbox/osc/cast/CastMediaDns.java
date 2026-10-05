@@ -14,7 +14,7 @@ import java.util.Map;
 import okhttp3.Dns;
 
 /** DNS policy used by one cast relay's actual OkHttp connections. */
-final class CastMediaDns implements Dns {
+public final class CastMediaDns implements Dns {
     private static final int MAX_PINNED_HOSTS = 256;
 
     private final Dns delegate;
@@ -28,7 +28,7 @@ final class CastMediaDns implements Dns {
         this(delegate, selectedHost, null);
     }
 
-    CastMediaDns(Dns delegate, String selectedHost, String playlistOriginHost) {
+    public CastMediaDns(Dns delegate, String selectedHost, String playlistOriginHost) {
         if (delegate == null) throw new IllegalArgumentException("delegate == null");
         this.delegate = delegate;
         this.selectedHost = normalize(selectedHost);

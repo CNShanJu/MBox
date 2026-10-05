@@ -8,6 +8,7 @@ import com.github.tvbox.osc.server.LanCastRelayRules;
 import com.github.tvbox.osc.server.RemoteServer;
 import com.github.tvbox.osc.log.Category;
 import com.github.tvbox.osc.log.LogStore;
+import com.github.tvbox.osc.util.MediaRelayCleanup;
 import com.github.tvbox.osc.util.OkGoHelper;
 
 import org.brotli.dec.BrotliInputStream;
@@ -23,6 +24,7 @@ import java.io.InputStream;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -192,11 +194,11 @@ public final class CastMediaRelay {
                 throw new IOException("Media relay failed to start", error);
             }
         } finally {
-            if (!retainedClient && scopedClient != null) scopedClient.connectionPool().evictAll();
+            if (!retainedClient) MediaRelayCleanup.evictConnections(scopedClient);
         }
     }
 
-    /** Immediately revoke this cast URL, close active streams, and unbind the listener. */
+    /** Immediately revoke this cast URL and unbind the listener; release streams in the background. */
     public synchronized void stop() {
         closeCurrent(true);
     }
@@ -786,14 +788,21 @@ public final class CastMediaRelay {
                     || (streams.isEmpty() && now - lastUsedAt > IDLE_MS);
         }
 
-        void close() {
+        private synchronized boolean addStream(Closeable stream) {
+            if (closed) return false;
+            streams.add(stream);
+            return true;
+        }
+
+        synchronized void close() {
+            if (closed) return;
             closed = true;
-            for (Closeable stream : streams) {
-                try { stream.close(); } catch (IOException ignored) { }
-            }
+            targets.clear();
+            idsByUrl.clear();
+            targetUrlChars = 0;
+            ArrayList<Closeable> toClose = new ArrayList<>(streams);
             streams.clear();
-            synchronized (this) { targets.clear(); idsByUrl.clear(); targetUrlChars = 0; }
-            if (client != null) client.connectionPool().evictAll();
+            MediaRelayCleanup.closeResources(toClose, client);
         }
     }
 
@@ -805,12 +814,15 @@ public final class CastMediaRelay {
         private volatile boolean closed;
 
         RelayStream(InputStream source, Session session, okhttp3.Response upstream,
-                    boolean reportSegment) {
+                    boolean reportSegment) throws IOException {
             super(source);
             this.session = session;
             this.upstream = upstream;
             this.reportSegment = reportSegment;
-            session.streams.add(this);
+            if (!session.addStream(this)) {
+                close();
+                throw new IOException("Cast stopped");
+            }
         }
 
         private void check() throws IOException {

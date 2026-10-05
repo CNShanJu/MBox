@@ -281,7 +281,8 @@ public class CastListDialog extends AppCenterPopupView {
             return;
         }
         String id = target.browserId;
-        if (ControlManager.get().pushToBrowser(id, castVideo.getName(), castVideo.getUri(), headers)) {
+        if (ControlManager.get().pushToBrowser(id, castVideo.getName(), castVideo.getUri(),
+                headers, headerOrigin)) {
             if (started != null) started.onCastStarted(id);
             else ControlManager.get().clearEpisodeCast();
             AppBubble.toast("已发送播放请求，请在电脑查看播放状态");
