@@ -136,21 +136,11 @@
                             android:layout_height="wrap_content"
                             android:orientation="vertical">
 
-                            <TextView
-                                android:id="@+id/tv_hint"
-                                android:layout_width="wrap_content"
-                                android:layout_height="wrap_content"
-                                android:paddingHorizontal="8dp"
-                                android:text="单指拖动调整位置,双指等比缩放"
-                                android:textColor="@color/text_sub_foreground"
-                                android:textSize="12sp" />
-
                             <!-- 预设之一:尺寸(3 个,一行放得下 4 字标签,不会被截断);
                                  点一下立即套用当前状态对应的项会高亮 -->
                             <LinearLayout
                                 android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
-                                android:layout_marginTop="6dp"
                                 android:orientation="horizontal"
                                 android:paddingHorizontal="8dp">
 
@@ -172,7 +162,7 @@
                             </LinearLayout>
 
                             <!-- 预设之二:位置(5 个,标签统一 2 字 —— 五个等分格每格只有 50 来 dp,
-                                 4 字标签在这个宽度上必被 ellipsize 掉;"居中/左上…"配上上面的拖动提示已足够清楚) -->
+                                 4 字标签在这个宽度上必被 ellipsize 掉) -->
                             <LinearLayout
                                 android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
@@ -207,6 +197,7 @@
                             </LinearLayout>
 
                             <LinearLayout
+                                android:id="@+id/ll_alpha"
                                 android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="6dp"

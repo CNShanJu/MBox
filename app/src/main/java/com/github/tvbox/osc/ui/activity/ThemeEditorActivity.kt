@@ -1,7 +1,6 @@
 package com.github.tvbox.osc.ui.activity
 
 import android.content.Intent
-import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.text.Editable
 import android.text.TextWatcher
@@ -25,7 +24,7 @@ import com.github.tvbox.osc.log.Category
 import com.github.tvbox.osc.log.LogStore
 import com.github.tvbox.osc.storage.theme.ThemeArchive
 import com.github.tvbox.osc.storage.theme.ThemeStore
-import com.github.tvbox.osc.theme.ThemeRuntime
+import com.github.tvbox.osc.ui.kit.ThemeColorValueView
 import com.github.tvbox.osc.ui.adapter.SelectDialogAdapter
 import com.github.tvbox.osc.ui.adapter.SelectDialogAdapter.SelectDialogInterface
 import com.github.tvbox.osc.ui.dialog.ColorPickerDialog
@@ -38,6 +37,7 @@ import com.github.tvbox.osc.util.FastClickCheckUtil
 import com.github.tvbox.osc.util.HeavyTaskUtil
 import com.github.tvbox.osc.util.PicassoLoad
 import com.blankj.utilcode.util.ClipboardUtils
+import com.squareup.picasso.Picasso
 import java.io.File
 import java.util.LinkedHashMap
 
@@ -49,8 +49,8 @@ import java.util.LinkedHashMap
  *   <li><b>主题类型</b>:亮色 / 暗色。它决定这个主题按哪种明暗渲染(夜间模式、弹窗气泡、状态栏),
  *       也是"每个色值恢复默认"的取值来源。改了类型而颜色还没动过时会顺手按新类型的内置主题重新填充
  *       (否则会得到一个"说是暗色、其实是浅色"的主题);已经调过的颜色一律保持不动。</li>
- *   <li><b>颜色项</b>:按 {@link ThemeSpec} 的类目列出可配置项;每项都能<b>直接改十六进制文本</b>,
- *       也能点色块开取色板。透明度项给数字(0-100),没有色板。</li>
+ *   <li><b>颜色项</b>:按 {@link ThemeSpec} 的类目列出可配置项;点颜色行打开取色板，
+ *       取色板内可输入十六进制值。透明度项仍输入数字(0-100)。</li>
  *   <li><b>圆角项不在本页**(用户口径"主题配置里不给圆角配置选项"):圆角只在
  *       {@code assets/theme/radius/theme_radii.json}(或自定义主题 JSON 的 radii)里改 ——
  *       页面里只剩一个"边框线粗细"({@code stroke_widget_btn})的形状项。
@@ -73,6 +73,7 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
         private const val REQ_PICK_BG = 0x0E01
         private const val REQ_EXPORT_FILE = 0x0E02
         private const val REQ_IMPORT_FILE = 0x0E03
+        private const val REQ_PICK_SPLASH_BG = 0x0E04
 
         /** 页面背景色:在颜色列表里不重复列,归下面的「背景」块(纯色就是它) */
         private const val BG_BODY_KEY = "bg_body"
@@ -93,8 +94,8 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
     private class Row(
         val key: ThemeKey,
         val label: TextView,
-        val swatch: View,
-        val input: EditText
+        val colorValue: ThemeColorValueView?,
+        val input: TextView
     )
 
     private class ShapeRow(
@@ -122,12 +123,13 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
         buildShapeRows()
         bindType()
         bindBackground()
+        bindSplashBackground()
         bindActions()
         refreshHeader()
         refreshAllValues()
     }
 
-    /** schema 3 形状项:数值统一为 dp,输入框不带 dp 后缀;右侧色块就是实时预览。 */
+    /** schema 3 形状项:数值统一为 dp,输入框不带 dp 后缀。 */
     private fun buildShapeRows() {
         val card = LinearLayout(this)
         card.orientation = LinearLayout.VERTICAL
@@ -155,10 +157,9 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
     private fun bindShapeRow(key: ThemeSpec.ShapeKey, rowView: View) {
         val label = rowView.findViewById<TextView>(R.id.tv_label)
         val input = rowView.findViewById<EditText>(R.id.et_value)
-        // 形状项**不显示色块预览**(用户口径"小组件描边为啥前面还有颜色预览块…边框颜色跟着文字颜色走,
-        // 移除颜色预览块"):原来那块画的是"小组件按钮的小样"(底/描边/文字全是主题色),
-        // 看着像"这里能设颜色",其实这一项只能设**粗细**;边框色已一律跟文字色走,没有可预览的颜色。
-        rowView.findViewById<View>(R.id.v_swatch).visibility = View.GONE
+        // 描边粗细是数字项，不显示颜色组件。
+        rowView.findViewById<View>(R.id.color_value).visibility = View.GONE
+        input.visibility = View.VISIBLE
         label.text = key.label
         input.hint = "0-${formatDp(key.maxDp)}"
         input.inputType = android.text.InputType.TYPE_CLASS_NUMBER or
@@ -220,22 +221,23 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
 
     private fun bindRow(key: ThemeKey, rowView: View) {
         val label = rowView.findViewById<TextView>(R.id.tv_label)
-        val swatch = rowView.findViewById<View>(R.id.v_swatch)
-        val input = rowView.findViewById<EditText>(R.id.et_value)
+        val colorValue = rowView.findViewById<ThemeColorValueView>(R.id.color_value)
+        val numericInput = rowView.findViewById<EditText>(R.id.et_value)
+        val input: TextView = if (key.isAlpha) numericInput else colorValue.valueView
         label.text = key.label
         // 说明文字(item_theme_color 的 tv_desc)已从行布局里去掉:每一项只留名称,说明改由主题文件 /
         // ThemeSpec 承载(编辑页不再逐项解释"这颜色用在哪")。要恢复就把布局里的 tv_desc 解注释并把
         // 这里的 desc 接线一起加回来。
 
         if (key.isAlpha) {
-            // 透明度项:没有色板,输入 0-100 的整数
-            swatch.visibility = View.GONE
-            input.hint = "0-100"
-            input.inputType = android.text.InputType.TYPE_CLASS_NUMBER
-            input.maxLengthCompat(3)
+            // 透明度是数字项，继续保留 0-100 的输入。
+            colorValue.visibility = View.GONE
+            numericInput.visibility = View.VISIBLE
+            numericInput.hint = "0-100"
+            numericInput.inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            numericInput.maxLengthCompat(3)
         } else {
-            swatch.isClickable = true
-            swatch.setOnClickListener {
+            val openPicker = View.OnClickListener {
                 FastClickCheckUtil.check(it)
                 // 注意:这里不能捕获 draft —— 导入主题包会整份换掉草稿,捕获的旧对象会把编辑写丢
                 // key.opaqueOnly(文字主色与实心按钮底色):取色板不给透明度那一行,只收纯色
@@ -243,6 +245,8 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
                     setValue(key, hex)
                 }
             }
+            rowView.setOnClickListener(openPicker)
+            colorValue.setOnClickListener(openPicker)
         }
         input.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
@@ -252,7 +256,7 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
                 if (isValid(key, text)) {
                     input.setTextColor(ContextCompat.getColor(this@ThemeEditorActivity, R.color.text_foreground))
                     draft?.setColor(key.key, normalize(key, text))
-                    // 同一个键可能有两行(bg_body 在颜色卡与「背景」块各有一行):一起刷新,免得两处值看着不一样
+                    // 同一颜色若出现在多处，同步显示值和色点。
                     syncRows(key.key, text, input)
                     updateSwatch(key)
                 } else {
@@ -260,11 +264,11 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
                 }
             }
         })
-        rows.getOrPut(key.key) { ArrayList() }.add(Row(key, label, swatch, input))
+        rows.getOrPut(key.key) { ArrayList() }.add(Row(key, label, if (key.isAlpha) null else colorValue, input))
     }
 
-    /** 把同一个键的其它输入框同步成刚改的值(改了哪个框就跳过哪个) */
-    private fun syncRows(key: String, text: String, source: EditText) {
+    /** 把同一个键的其它展示值同步成刚改的值。 */
+    private fun syncRows(key: String, text: String, source: TextView) {
         for (row in rows[key].orEmpty()) {
             if (row.input === source) continue
             if (row.input.text.toString() == text) continue
@@ -301,30 +305,19 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
     private fun setValue(key: ThemeKey, value: String) {
         for (row in rows[key.key].orEmpty()) {
             row.input.setText(value)
-            row.input.setSelection(row.input.text.length)
+            if (row.input is EditText) row.input.setSelection(row.input.text.length)
         }
     }
 
-    /** 色块填充:颜色项直接用该色;透明度项用它的底色叠上该透明度(直观看出"透多少") */
+    /** 所有颜色展示共用圆形色点。 */
     private fun updateSwatch(key: ThemeKey) {
         if (draft == null || key.isAlpha) return
         for (row in rows[key.key].orEmpty()) {
             val v = row.input.text.toString().trim()
             val color = if (isValid(key, v)) ThemeColorPalette.parseColor(normalize(key, v), 0xFF1F2937.toInt())
             else 0x00000000
-            row.swatch.background = swatchDrawable(color)
+            row.colorValue?.setColor(color)
         }
-    }
-
-    private fun swatchDrawable(color: Int): GradientDrawable {
-        val g = GradientDrawable()
-        // 覆盖布局中的 bg_theme_field 时保留它的 common_corners 圆角档。
-        g.cornerRadius = if (ThemeRuntime.snapshot() == null) resources.getDimension(R.dimen.common_corners)
-        else ThemeRuntime.shapePalette().radiusPx(
-            ThemeShapePalette.COMMON_CORNERS, resources.displayMetrics.density)
-        g.setColor(color)
-        g.setStroke(dp(1), ContextCompat.getColor(this, R.color.btn_stroke))
-        return g
     }
 
     // ------------------------------------------------------------------
@@ -369,12 +362,11 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
     }
 
     // ------------------------------------------------------------------
-    // 背景:一个开关切"纯色 / 背景图"
+    // 背景:选择"纯色 / 背景图"
     // ------------------------------------------------------------------
 
     /**
-     * 背景只有两种形态,**用一个开关切**:关=纯色(用本主题的页面背景色 bg_body,取色方式与上面的颜色项完全一样),
-     * 开=背景图(预览居中 / 描述居左 / 按钮居中)。
+     * 背景只有两种形态:纯色使用本主题的页面背景色 bg_body，背景图展开预览与调整入口。
      * <p>模型里仍保留 MODE_DEFAULT(「跟随该类型内置默认背景」)以兼容导入的主题包,
      * 界面上它等价于纯色 —— 「恢复默认」按钮会把颜色与模式一起退回该类型的内置值。
      */
@@ -391,34 +383,41 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
             resetBackgroundToDefault()
         }
 
-        mBinding.btnBgPick.setOnClickListener {
+        mBinding.flBgPreview.setOnClickListener {
             FastClickCheckUtil.check(it)
             pickBackground()
         }
-        mBinding.switchBgImage.setChecked(draft?.hasBackgroundImage() == true)
-        mBinding.switchBgImage.setOnClickListener(null)
         mBinding.llBgImageRow.setOnClickListener {
             FastClickCheckUtil.check(it)
-            setImageBackground(!(draft?.hasBackgroundImage() ?: false))
+            val d = draft ?: return@setOnClickListener
+            showBackgroundModeDialog("背景", d.background.isImage) { image ->
+                setImageBackground(image)
+            }
         }
-        mBinding.switchBgImage.isClickable = false
-        mBinding.llBgImageRow.isClickable = true
     }
 
     private fun bgBodyKey(): ThemeKey = ThemeSpec.byKey(BG_BODY_KEY) ?: ThemeSpec.all()[0]
 
-    /** 开关:切"背景图"(开)与"纯色"(关);从图片切走时只改模式,旧图交给保存时的回收统一清理 */
+    private fun showBackgroundModeDialog(title: String, image: Boolean, onSelected: (Boolean) -> Unit) {
+        val dialog = SelectDialog<String>(this)
+        dialog.setTip(title)
+        dialog.setAdapter(object : SelectDialogInterface<String?> {
+            override fun click(value: String?, pos: Int) = onSelected(pos == 1)
+            override fun getDisplay(value: String?): String = value ?: ""
+        }, SelectDialogAdapter.stringDiff, arrayListOf("纯色", "背景图"), if (image) 1 else 0)
+        dialog.show()
+    }
+
+    /** 选定图片模式后展开操作区，由用户选择或调整图片。 */
     private fun setImageBackground(on: Boolean) {
         val d = draft ?: return
+        if (on == d.background.isImage) return
         if (on) {
-            if (d.hasBackgroundImage()) return
-            // 打开开关但还没有图:直接进选图流程(选完才算真的切过去)
-            mBinding.switchBgImage.setChecked(false)
-            pickBackground()
-            return
+            d.background.mode = ThemeDef.Background.MODE_IMAGE
+        } else {
+            d.background.mode = ThemeDef.Background.MODE_SOLID
+            d.background.ref = ""
         }
-        d.background.mode = ThemeDef.Background.MODE_SOLID
-        d.background.ref = ""
         refreshBackground()
     }
 
@@ -433,7 +432,6 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
         d.background.mode = ThemeDef.Background.MODE_DEFAULT
         d.background.ref = ""
         refreshBackground()
-        AppBubble.toast("背景已恢复默认")
     }
 
     /**
@@ -493,26 +491,27 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
         refreshBackground()
     }
 
-    /** 按当前草稿渲染:开关位置、纯色/图片两块谁显示、图片预览 */
+    /** 按当前草稿渲染:类型文字、纯色/图片操作区、图片预览。 */
     private fun refreshBackground() {
         val d = draft ?: return
-        val image = d.hasBackgroundImage()
-        mBinding.switchBgImage.setChecked(image)
+        refreshSplashThemeBackgroundChoice()
+        val image = d.background.isImage
+        mBinding.tvBgMode.text = if (image) "背景图" else "纯色"
         mBinding.llBgImage.visibility = if (image) View.VISIBLE else View.GONE
         mBinding.llBgSolid.visibility = if (image) View.GONE else View.VISIBLE
         mBinding.btnBgReset.visibility = if (image) View.GONE else View.VISIBLE
-        mBinding.btnBgPick.text = if (image) "调整图片" else "选择图片"
         // 取色行的色块跟着 bg_body 走(与上面颜色项同一份值、同一个控件)
         updateSwatch(bgBodyKey())
         if (!image) {
-            mBinding.ivBg.setImageDrawable(null)
+            PicassoLoad.clear(mBinding.ivBg)
             return
         }
         val path = ThemeStore.resolveBackgroundPath(d.background.ref)
+        mBinding.flBgPreview.contentDescription = if (path.isEmpty()) "选择主题背景图" else "调整主题背景图"
         if (path.isEmpty()) {
             // 图没了(文件被清理/手改过主题包):清掉旧图,别留一张过期的预览
-            mBinding.ivBg.setImageDrawable(null)
-            mBinding.ivBg.setTag(null)
+            PicassoLoad.clear(mBinding.ivBg)
+            PicassoLoad.setLoadingPlaceholder(mBinding.ivBg)
             return
         }
         val ref = d.background.ref
@@ -520,8 +519,168 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
         // 视图还没量过就发起会一直停在加载态(预览看着就像"只显示了占位图")
         mBinding.ivBg.post {
             val cur = draft ?: return@post
-            if (cur.background.ref != ref) return@post // 期间又换了图:这次加载作废
+            if (!cur.background.isImage || cur.background.ref != ref) return@post
             PicassoLoad.intoFile(mBinding.ivBg, File(path))
+        }
+    }
+
+    /** 开屏背景跟随这份主题；纯色默认取本主题的 bg_body。 */
+    private fun bindSplashBackground() {
+        mBinding.llSplashImageRow.setOnClickListener {
+            FastClickCheckUtil.check(it)
+            val splash = draft?.splashBackground ?: return@setOnClickListener
+            showBackgroundModeDialog("开屏背景", splash.isImage) { image ->
+                val current = draft?.splashBackground ?: return@showBackgroundModeDialog
+                if (image == current.isImage) return@showBackgroundModeDialog
+                current.mode = if (image) ThemeDef.SplashBackground.MODE_IMAGE
+                else if (current.color.isEmpty()) ThemeDef.SplashBackground.MODE_THEME
+                else ThemeDef.SplashBackground.MODE_SOLID
+                refreshSplashBackground()
+            }
+        }
+        mBinding.llSplashColor.setOnClickListener {
+            FastClickCheckUtil.check(it)
+            val d = draft ?: return@setOnClickListener
+            val splash = d.splashBackground
+            val initial = if (splash.mode == ThemeDef.SplashBackground.MODE_SOLID
+                && splash.color.isNotEmpty()) splash.color else d.color(BG_BODY_KEY)
+            ColorPickerDialog.show(this, "开屏纯色", initial, true) { hex ->
+                val current = draft?.splashBackground ?: return@show
+                current.color = hex
+                current.mode = ThemeDef.SplashBackground.MODE_SOLID
+                refreshSplashBackground()
+            }
+        }
+        mBinding.splashColorValue.setOnClickListener { mBinding.llSplashColor.performClick() }
+        mBinding.btnSplashReset.setOnClickListener {
+            FastClickCheckUtil.check(it)
+            val splash = draft?.splashBackground ?: return@setOnClickListener
+            splash.mode = ThemeDef.SplashBackground.MODE_THEME
+            splash.color = ""
+            refreshSplashBackground()
+        }
+        mBinding.flSplashBgPreview.setOnClickListener {
+            FastClickCheckUtil.check(it)
+            pickSplashBackground()
+        }
+        mBinding.btnSplashUseTheme.setOnClickListener {
+            FastClickCheckUtil.check(it)
+            useThemeBackgroundForSplash()
+        }
+        mBinding.switchSplashAnimation.isClickable = false
+        mBinding.llSplashAnimation.setOnClickListener {
+            FastClickCheckUtil.check(it)
+            val splash = draft?.splashBackground ?: return@setOnClickListener
+            splash.setLottieOnImage(!splash.isLottieOnImage)
+            mBinding.switchSplashAnimation.isChecked = splash.isLottieOnImage
+        }
+    }
+
+    private fun pickSplashBackground() {
+        val d = draft ?: return
+        val splash = d.splashBackground
+        val intent = Intent(this, BackgroundSettingActivity::class.java)
+        intent.putExtra(BackgroundSettingActivity.EXTRA_THEME_MODE, true)
+        intent.putExtra(BackgroundSettingActivity.EXTRA_SPLASH_MODE, true)
+        intent.putExtra(BackgroundSettingActivity.EXTRA_SPLASH_COLOR,
+            ThemeColorPalette.parseColor(d.color(BG_BODY_KEY), 0xFF20212E.toInt()))
+        intent.putExtra(BackgroundSettingActivity.EXTRA_IN_PATH,
+            ThemeStore.resolveSplashBackgroundPath(splash.ref))
+        intent.putExtra(BackgroundSettingActivity.EXTRA_IN_REF, splash.ref)
+        intent.putExtra(BackgroundSettingActivity.EXTRA_IN_ZOOM, splash.zoom)
+        intent.putExtra(BackgroundSettingActivity.EXTRA_IN_ANCHOR_X, splash.anchorX)
+        intent.putExtra(BackgroundSettingActivity.EXTRA_IN_ANCHOR_Y, splash.anchorY)
+        intent.putExtra(BackgroundSettingActivity.EXTRA_IN_ALPHA, 100)
+        intent.putExtra(BackgroundSettingActivity.EXTRA_IN_SCRIM, false)
+        startActivityForResult(intent, REQ_PICK_SPLASH_BG)
+    }
+
+    /** 共用图库引用，摆放值复制到开屏草稿，后续调整互不影响。 */
+    private fun useThemeBackgroundForSplash() {
+        val d = draft ?: return
+        val background = d.background
+        if (!d.hasBackgroundImage()
+            || ThemeStore.resolveSplashBackgroundPath(background.ref).isEmpty()) {
+            AppBubble.toast("请先设置主题背景图")
+            return
+        }
+        val splash = d.splashBackground
+        splash.mode = ThemeDef.SplashBackground.MODE_IMAGE
+        splash.ref = background.ref
+        splash.zoom = background.zoom
+        splash.anchorX = background.anchorX
+        splash.anchorY = background.anchorY
+        refreshSplashBackground()
+    }
+
+    private fun refreshSplashThemeBackgroundChoice() {
+        val d = draft ?: return
+        val available = d.splashBackground.isImage && d.hasBackgroundImage()
+            && ThemeStore.resolveSplashBackgroundPath(d.background.ref).isNotEmpty()
+        mBinding.btnSplashUseTheme.visibility = if (available) View.VISIBLE else View.GONE
+    }
+
+    private fun applySplashBackgroundResult(data: Intent?) {
+        val splash = draft?.splashBackground ?: return
+        if (data?.getBooleanExtra(BackgroundSettingActivity.EXTRA_OUT_IS_IMAGE, false) == true) {
+            val ref = data.getStringExtra(BackgroundSettingActivity.EXTRA_OUT_REF).orEmpty()
+            if (ref.isEmpty()) {
+                AppBubble.toast("开屏图片没拿到，请重试")
+                return
+            }
+            splash.mode = ThemeDef.SplashBackground.MODE_IMAGE
+            splash.ref = ref
+            splash.zoom = data.getFloatExtra(BackgroundSettingActivity.EXTRA_OUT_ZOOM, 0f)
+            splash.anchorX = data.getFloatExtra(BackgroundSettingActivity.EXTRA_OUT_ANCHOR_X, 0.5f)
+            splash.anchorY = data.getFloatExtra(BackgroundSettingActivity.EXTRA_OUT_ANCHOR_Y, 0.5f)
+        } else {
+            // 调整页的「恢复默认」明确撤销图片，退回主背景色。
+            splash.mode = ThemeDef.SplashBackground.MODE_THEME
+            splash.color = ""
+            splash.ref = ""
+        }
+        refreshSplashBackground()
+    }
+
+    private fun refreshSplashBackground() {
+        val d = draft ?: return
+        refreshSplashThemeBackgroundChoice()
+        val splash = d.splashBackground
+        val image = splash.mode == ThemeDef.SplashBackground.MODE_IMAGE
+        mBinding.tvSplashBgMode.text = if (image) "背景图" else "纯色"
+        mBinding.llSplashImage.visibility = if (image) View.VISIBLE else View.GONE
+        mBinding.llSplashSolid.visibility = if (image) View.GONE else View.VISIBLE
+        mBinding.switchSplashAnimation.isChecked = splash.isLottieOnImage
+
+        val mainColor = ThemeColorPalette.parseColor(d.color(BG_BODY_KEY), 0xFF20212E.toInt())
+        val color = if (splash.mode == ThemeDef.SplashBackground.MODE_SOLID)
+            ThemeColorPalette.parseColor(splash.color, mainColor) else mainColor
+        mBinding.splashColorValue.setColor(color)
+        mBinding.splashColorValue.setValueText(if (splash.mode == ThemeDef.SplashBackground.MODE_THEME)
+            "默认" else ThemeColorPalette.toHex(color))
+
+        if (!image) {
+            PicassoLoad.clear(mBinding.ivSplashBg)
+            return
+        }
+        val path = ThemeStore.resolveSplashBackgroundPath(splash.ref)
+        mBinding.flSplashBgPreview.contentDescription = if (path.isEmpty()) "选择开屏背景图" else "调整开屏背景图"
+        if (path.isEmpty()) {
+            PicassoLoad.clear(mBinding.ivSplashBg)
+            PicassoLoad.setLoadingPlaceholder(mBinding.ivSplashBg)
+            return
+        }
+        val ref = splash.ref
+        mBinding.ivSplashBg.post {
+            val current = draft?.splashBackground ?: return@post
+            if (!current.isImage || current.ref != ref) return@post
+            if (path.startsWith("file:///android_asset/")) {
+                PicassoLoad.clear(mBinding.ivSplashBg)
+                PicassoLoad.setLoadingPlaceholder(mBinding.ivSplashBg)
+                Picasso.get().load(Uri.parse(path)).fit().centerCrop().into(mBinding.ivSplashBg)
+            } else {
+                PicassoLoad.intoFile(mBinding.ivSplashBg, File(path))
+            }
         }
     }
 
@@ -572,7 +731,7 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
         mBinding.tvName.text = if (d.name.isEmpty()) "未命名" else d.name
     }
 
-    /** 把全部颜色键的输入框刷成草稿里的值(同一个键可能有两行,一起刷) */
+    /** 把全部颜色展示与数字输入同步为草稿值。 */
     private fun refreshAllValues() {
         val d = draft ?: return
         for (key in ThemeSpec.all()) {
@@ -592,11 +751,19 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
             if (row.input.text.toString() != text) row.input.setText(text)
         }
         refreshBackground()
+        refreshSplashBackground()
     }
 
-    /** 收集输入框 → 草稿,同时校验;返回第一个不合法项的提示文案 */
+    /** 收集颜色展示值与数字输入，同时校验。 */
     private fun collectValues(): String? {
         val d = draft ?: return "主题数据为空"
+        if (d.background.isImage && ThemeStore.resolveBackgroundPath(d.background.ref).isEmpty()) {
+            return "请先选择主题背景图"
+        }
+        if (d.splashBackground.isImage
+            && ThemeStore.resolveSplashBackgroundPath(d.splashBackground.ref).isEmpty()) {
+            return "请先选择开屏背景图"
+        }
         var firstBad: ThemeKey? = null
         var badText = ""
         for (key in ThemeSpec.all()) {
@@ -896,6 +1063,10 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
             applyBackgroundResult(data)
             return
         }
+        if (requestCode == REQ_PICK_SPLASH_BG) {
+            applySplashBackgroundResult(data)
+            return
+        }
         val uri = data?.data ?: return
         when (requestCode) {
             REQ_EXPORT_FILE -> copyExportTo(uri)
@@ -919,5 +1090,7 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
     override fun onDestroy() {
         super.onDestroy()
         rows.clear()
+        // 选图会先收进主题图库；放弃编辑时回收草稿独占的图片。
+        HeavyTaskUtil.getSerialExecutorService().execute { ThemeStore.gc() }
     }
 }

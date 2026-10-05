@@ -188,6 +188,12 @@ public class ThemePickerDialog extends SelectDialog<ThemePickerDialog.Row> {
     }
 
     @Override
+    protected int getMaxHeight() {
+        // 主题弹窗有固定的新增入口：上限必须扣除系统栏，避免短屏设备上页脚被窗口裁掉。
+        return DialogHeightPolicy.maxHeightPxInsideWindow(getContext());
+    }
+
+    @Override
     protected void onCreate() {
         super.onCreate();
         // 基类的 onCreate 是在"还没有数据"时量的高度,这里数据到位了,再按同一套口径夹一次

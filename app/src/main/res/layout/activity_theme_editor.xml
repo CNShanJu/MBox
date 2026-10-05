@@ -150,7 +150,7 @@
                 android:layout_height="wrap_content"
                 android:orientation="vertical" />
 
-            <!-- ===== 背景:一个开关切"纯色 / 背景图",两种形态各自展开 ===== -->
+            <!-- ===== 背景:弹窗选择"纯色 / 背景图",两种形态各自展开 ===== -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -166,6 +166,7 @@
                     android:layout_height="wrap_content"
                     android:foreground="?android:selectableItemBackground"
                     android:gravity="center_vertical"
+                    android:minHeight="44dp"
                     android:orientation="horizontal">
 
                     <TextView
@@ -177,18 +178,21 @@
                         android:textSize="16sp" />
 
                     <TextView
+                        android:id="@+id/tv_bg_mode"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="背景图"
+                        android:text="纯色"
                         android:textColor="@color/text_foreground"
                         android:textSize="14sp" />
 
-                    <com.github.tvbox.osc.ui.kit.AppSwitch
-                        android:id="@+id/switch_bg_image"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="@dimen/dp_10"
-                        android:clickable="false" />
+                    <ImageView
+                        android:layout_width="13dp"
+                        android:layout_height="13dp"
+                        android:layout_marginStart="6dp"
+                        android:alpha="0.75"
+                        android:contentDescription="选择背景类型"
+                        android:src="@drawable/ic_seek_right"
+                        app:tint="@color/text_foreground" />
                 </LinearLayout>
 
                 <!-- 纯色:取色行(与上面颜色项同一个控件)+ 居中的"恢复默认" -->
@@ -209,7 +213,7 @@
                     android:text="恢复默认"
                     android:textSize="13sp" />
 
-                <!-- 背景图:图片(居中,圆角裁切)/ 描述(居左)/ 按钮(居中) -->
+                <!-- 背景图:点击预览选择或调整图片。 -->
                 <LinearLayout
                     android:id="@+id/ll_bg_image"
                     android:layout_width="match_parent"
@@ -219,42 +223,183 @@
 
                     <!-- 圆角容器:clipToOutline 让里面的预览图跟着圆角一起裁,不再是硬邦邦的直角 -->
                     <FrameLayout
+                        android:id="@+id/fl_bg_preview"
                         android:layout_width="96dp"
                         android:layout_height="120dp"
                         android:layout_gravity="center_horizontal"
                         android:layout_marginTop="@dimen/dp_10"
                         android:background="@drawable/bg_theme_field"
-                        android:clipToOutline="true">
+                        android:clipToOutline="true"
+                        android:contentDescription="选择主题背景图"
+                        android:focusable="true"
+                        android:foreground="?android:selectableItemBackground">
 
                         <ImageView
                             android:id="@+id/iv_bg"
                             android:layout_width="match_parent"
                             android:layout_height="match_parent"
+                            android:background="@drawable/placeholder_poster"
                             android:scaleType="centerCrop"
                             tools:ignore="ContentDescription" />
                     </FrameLayout>
 
+                </LinearLayout>
+            </LinearLayout>
+
+            <!-- 开屏背景跟随本主题保存；纯色默认取 bg_body，图片可单独调整摆放。 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:background="@drawable/bg_large_round_float"
+                android:orientation="vertical"
+                android:paddingHorizontal="20dp"
+                android:paddingVertical="16dp">
+
+                <LinearLayout
+                    android:id="@+id/ll_splash_image_row"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:foreground="?android:selectableItemBackground"
+                    android:gravity="center_vertical"
+                    android:minHeight="44dp"
+                    android:orientation="horizontal">
+
                     <TextView
-                        android:id="@+id/tv_bg_desc"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="开屏背景"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="16sp" />
+
+                    <TextView
+                        android:id="@+id/tv_splash_bg_mode"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="纯色"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="14sp" />
+
+                    <ImageView
+                        android:layout_width="13dp"
+                        android:layout_height="13dp"
+                        android:layout_marginStart="6dp"
+                        android:alpha="0.75"
+                        android:contentDescription="选择开屏背景类型"
+                        android:src="@drawable/ic_seek_right"
+                        app:tint="@color/text_foreground" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/ll_splash_solid"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <LinearLayout
+                        android:id="@+id/ll_splash_color"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="@dimen/dp_10"
-                        android:lineSpacingExtra="2dp"
-                        android:text="图片会压缩成 WebP 存进应用私有目录,同一张图只存一份"
-                        android:textColor="@color/text_sub_foreground"
-                        android:textSize="12sp" />
+                        android:layout_marginTop="10dp"
+                        android:foreground="?android:selectableItemBackground"
+                        android:gravity="center_vertical"
+                        android:minHeight="44dp"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="开屏纯色"
+                            android:textColor="@color/text_foreground"
+                            android:textSize="14sp" />
+
+                        <com.github.tvbox.osc.ui.kit.ThemeColorValueView
+                            android:id="@+id/splash_color_value"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="10dp" />
+                    </LinearLayout>
 
                     <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btn_bg_pick"
+                        android:id="@+id/btn_splash_reset"
+                        style="@style/BtnSecondary"
+                        android:layout_width="wrap_content"
+                        android:layout_height="38dp"
+                        android:layout_gravity="center_horizontal"
+                        android:layout_marginTop="@dimen/dp_6"
+                        android:minWidth="120dp"
+                        android:text="恢复默认"
+                        android:textSize="13sp" />
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/ll_splash_image"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:visibility="gone">
+
+                    <FrameLayout
+                        android:id="@+id/fl_splash_bg_preview"
+                        android:layout_width="96dp"
+                        android:layout_height="120dp"
+                        android:layout_gravity="center_horizontal"
+                        android:layout_marginTop="@dimen/dp_10"
+                        android:background="@drawable/bg_theme_field"
+                        android:clipToOutline="true"
+                        android:contentDescription="选择开屏背景图"
+                        android:focusable="true"
+                        android:foreground="?android:selectableItemBackground">
+
+                        <ImageView
+                            android:id="@+id/iv_splash_bg"
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:background="@drawable/placeholder_poster"
+                            android:scaleType="centerCrop"
+                            tools:ignore="ContentDescription" />
+                    </FrameLayout>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btn_splash_use_theme"
                         style="@style/BtnSecondary"
                         android:layout_width="wrap_content"
                         android:layout_height="38dp"
                         android:layout_gravity="center_horizontal"
                         android:layout_marginTop="@dimen/dp_10"
                         android:minWidth="120dp"
-                        android:text="选择图片"
-                        android:textSize="13sp" />
+                        android:text="使用主题背景图"
+                        android:textSize="13sp"
+                        android:visibility="gone" />
+
+                    <LinearLayout
+                        android:id="@+id/ll_splash_animation"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:foreground="?android:selectableItemBackground"
+                        android:gravity="center_vertical"
+                        android:minHeight="44dp"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="图片上播放开屏动画"
+                            android:textColor="@color/text_foreground"
+                            android:textSize="14sp" />
+
+                        <com.github.tvbox.osc.ui.kit.AppSwitch
+                            android:id="@+id/switch_splash_animation"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:clickable="false" />
+                    </LinearLayout>
                 </LinearLayout>
+
             </LinearLayout>
 
             <!-- ===== 底部动作:取消(新建)/删除(已有) + 导入/导出 =====

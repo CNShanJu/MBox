@@ -7,6 +7,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.WindowManager;
 import android.widget.TextView;
 
 import com.blankj.utilcode.util.ScreenUtils;
@@ -67,6 +68,10 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
     // ------------------------------------------------------------------
     /** true = 主题模式 */
     public static final String EXTRA_THEME_MODE = "theme_bg_mode";
+    /** 主题内开屏图片：共用尺寸和位置编辑器，预览用完整开屏视口。 */
+    public static final String EXTRA_SPLASH_MODE = "theme_splash_bg_mode";
+    /** 开屏图没有遮罩时，透明区域露出当前主题草稿的主背景色。 */
+    public static final String EXTRA_SPLASH_COLOR = "theme_splash_bg_color";
     /** 主题类型(亮/暗):纯色预览与"恢复默认"要按它取内置值 */
     public static final String EXTRA_THEME_DARK = "theme_bg_dark";
     /** 进入时的图片绝对路径(空=当前不是图片背景) */
@@ -102,6 +107,7 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
     private boolean draftUserSet = false;
     /** 主题模式:true 时改的是某个主题自己的背景(结果经 Intent 交回编辑页草稿) */
     private boolean themeMode = false;
+    private boolean splashMode = false;
     /** 主题模式下的图片 ref(主题图库里的相对路径);选图后才有 */
     private String draftRef = "";
     /** 草稿是否被用户动过(主题模式下"返回=确认"只对动过的草稿生效,见 onBackPressed) */
@@ -147,6 +153,12 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
     @Override
     protected void init() {
         themeMode = getIntent() != null && getIntent().getBooleanExtra(EXTRA_THEME_MODE, false);
+        splashMode = themeMode && getIntent().getBooleanExtra(EXTRA_SPLASH_MODE, false);
+        if (splashMode) {
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
+            findViewById(android.R.id.content).setBackgroundColor(
+                    getIntent().getIntExtra(EXTRA_SPLASH_COLOR, 0xFF20212E));
+        }
         mBinding.tune.setCallback(tuneCallback);
         loadDraftFromConfig();
         initPanel();
@@ -161,10 +173,14 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
             // 主题模式:同一页面、同一套预览与手势,标题点明改的是主题自己的背景。
             // (两个模式的抽屉都是默认展开的,"确认背景"不会藏在手柄后面丢掉改动 ——
             //  这里只是把标题换掉,不再单独展开面板)
-            mBinding.titleBar.setTitle("主题背景图");
+            mBinding.titleBar.setTitle(splashMode ? "开屏背景图" : "主题背景图");
         }
-        // 抽屉默认展开,进页就能看到预设/透明度/遮罩(不必先去发现手柄)
-        //AppBubble.toast("单指拖动调整位置,双指等比缩放;调好后点\"确认背景\"");
+        if (splashMode) {
+            mBinding.llAlpha.setVisibility(View.GONE);
+            mBinding.llScrim.setVisibility(View.GONE);
+            mBinding.btnReset.setText("恢复默认");
+            mBinding.btnConfirm.setText("确认开屏图");
+        }
     }
 
     /**
@@ -258,38 +274,25 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
 
     /**
      * 有没有背景图:没图时"默认=纯色",缩放/位置/透明度/遮罩都无从谈起 ——
-     * 这排控件压暗(预设/遮罩保持可点,点了给一句"请添加背景图";滑杆保持禁用),
-     * 再配上面那行"点右上角「更换图片」添加背景图",别让用户点了没反应。
+     * 没有图片时禁用调整控件，选择图片后再启用。
      */
     private void syncControlsEnabled() {
         boolean hasImage = draftPath != null && !draftPath.isEmpty();
         float alpha = hasImage ? 1f : 0.4f;
-        mBinding.tvHint.setText(hasImage
-                ? "单指拖动调整位置,双指等比缩放;小图按原始大小显示"
-                : "当前是纯色背景:点右上角「更换图片」添加背景图");
         TextView[] chips = presetChips();
         for (TextView chip : chips) {
-            // **不禁用,只压暗**:禁用态的 View 照样吃掉触摸事件、只是不响应点击,
-            // 表现成"点了没反应"(用户口径);保持可点,由点击回调给一句"请添加背景图"
-            chip.setAlpha(alpha);
+            chip.setEnabled(hasImage);
         }
-        // 滑杆是**连续**控件:没图时保持禁用(按住拖动本来就没有"一下"可提示,
-        // 用触摸监听接管反而会吃掉"从这一行起手滚动面板"的手势);禁用色由 AppSlider 统一处理，避免重复压暗
         mBinding.sliderAlpha.setEnabled(hasImage);
+        mBinding.llScrim.setEnabled(hasImage);
         mBinding.llScrim.setAlpha(alpha);
         mBinding.switchScrim.setEnabled(hasImage);
         mBinding.switchScrim.setAlpha(alpha);
     }
 
-    /**
-     * 没有背景图时,预设/遮罩这些"点一下要立刻生效"的控件都不该改(纯色下没有意义),
-     * 但**必须给一句人话**:禁用态的 View 仍然吃事件、只是不响应点击,直接 setEnabled(false)
-     * 就会变成"点了没反应"(用户口径"没有选择图片点击没有反应")。返回 true 表示有图、可以继续。
-     */
+    /** 没有背景图时不修改图片的调整参数。 */
     private boolean requireBackgroundImage() {
-        if (draftPath != null && !draftPath.isEmpty()) return true;
-        AppBubble.toast("请添加背景图");
-        return false;
+        return draftPath != null && !draftPath.isEmpty();
     }
 
     /**
@@ -314,7 +317,6 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
         SystemConfig.setPageBackgroundTransform(draftZoom, anchorX, anchorY);
         SystemConfig.setPageBackgroundAlpha(draftAlpha);
         SystemConfig.setPageBackgroundScrimEnabled(draftScrim);
-        AppBubble.toast("背景已保存");
         finish();
     }
 
@@ -503,7 +505,7 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
      * @param position 位置预设({@link BgImageTransform#POS_CENTER} 等);-1=不改位置
      */
     private void applyPreset(int size, int position) {
-        if (!requireBackgroundImage()) return;   // 没选图:提示"请添加背景图",不做任何改动
+        if (!requireBackgroundImage()) return;
         PageBackgroundView layer = PageBackgroundView.find(this);
         if (layer == null || layer.getImageWidth() <= 0 || layer.getHeight() <= 0) return;
         int imgW = layer.getImageWidth();
@@ -535,9 +537,7 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
 
     /** 按当前背景状态刷新预设高亮(尺寸项与位置项各自独立,可能同时亮两个) */
     private void syncPresetChips() {
-        // 没有背景图:一律不高亮。以前这排是 setEnabled(false),禁用态会盖过"选中"外观;
-        // 现在保持可点(好给"请添加背景图"的提示),就得自己收住高亮 ——
-        // 否则纯色下默认锚点是居中,"居中"会亮成选中,看着像已经用上了设置
+        // 没有背景图时清除全部高亮，纯色模式不显示图片位置的选中状态。
         if (draftPath == null || draftPath.isEmpty()) {
             for (TextView chip : presetChips()) setChipSelected(chip, false);
             return;
@@ -606,7 +606,7 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
         mBinding.switchScrim.setChecked(draftScrim);
         mBinding.llScrim.setOnClickListener(v -> {
             FastClickCheckUtil.check(v);
-            if (!requireBackgroundImage()) return;   // 没选图:提示"请添加背景图"
+            if (!requireBackgroundImage()) return;
             draftTouched = true;
             draftScrim = !draftScrim;
             mBinding.switchScrim.setChecked(draftScrim);
@@ -635,8 +635,8 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
             draftAnchorX = bg == null ? BgImageTransform.ANCHOR_CENTER : bg.getAnchorX();
             draftAnchorY = bg == null ? BgImageTransform.ANCHOR_CENTER : bg.getAnchorY();
             draftLegacyOffsets = false;
-            draftAlpha = bg == null ? SystemConfig.PAGE_BG_ALPHA_DEFAULT : bg.getAlpha();
-            draftScrim = bg == null || bg.isScrim();
+            draftAlpha = splashMode ? 100 : bg == null ? SystemConfig.PAGE_BG_ALPHA_DEFAULT : bg.getAlpha();
+            draftScrim = !splashMode && (bg == null || bg.isScrim());
             applyDraft();
         });
         mBinding.btnConfirm.setOnClickListener(v -> {
@@ -696,7 +696,6 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
                     draftAnchorY = BgImageTransform.ANCHOR_CENTER;
                     draftLegacyOffsets = false;
                     applyDraft();
-                    AppBubble.toast("图片已更换，调整后点“确认背景”");
                 });
                 return;
             }
@@ -718,7 +717,6 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
                 draftAnchorY = BgImageTransform.ANCHOR_CENTER;
                 draftLegacyOffsets = false;
                 applyDraft();
-                AppBubble.toast("图片已更换，调整后点“确认背景”");
             });
         });
     }

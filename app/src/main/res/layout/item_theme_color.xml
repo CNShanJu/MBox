@@ -1,7 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 一个可配置项:名称 + 一句说明(左) / 色块 + 十六进制输入(右)。
-     说明文字只讲"这颜色用在哪",不要再把名称重复一遍(名称已经在上方一行了)。
-     色块点击开取色板;透明度项没有色板(用 0-100 的输入),由代码隐藏色块。 -->
+<!-- 颜色项：名称 + 共用的圆点和色值，点击取色；透明度/描边粗细仍用数字输入。 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
@@ -37,12 +35,11 @@
         <!--    tools:text="所有页面的底(纯色背景时就是它)" />-->
     </LinearLayout>
 
-    <View
-        android:id="@+id/v_swatch"
-        android:layout_width="40dp"
-        android:layout_height="28dp"
-        android:layout_marginStart="@dimen/dp_10"
-        android:background="@drawable/bg_theme_field" />
+    <com.github.tvbox.osc.ui.kit.ThemeColorValueView
+        android:id="@+id/color_value"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="@dimen/dp_10" />
 
     <EditText
         android:id="@+id/et_value"
@@ -61,5 +58,6 @@
         android:textColor="@color/text_foreground"
         android:textColorHint="@color/text_sub"
         android:textSize="13sp"
+        android:visibility="gone"
         tools:ignore="Autofill,LabelFor" />
 </LinearLayout>
