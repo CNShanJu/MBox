@@ -322,7 +322,7 @@
                         app:tint="@color/text_foreground" />
                 </LinearLayout>
 
-                <!-- 忽略证书错误开关:默认关闭(校验证书/主机名);个别自签名站点打不开时再开启(会降低 TLS 安全性) -->
+                <!-- 忽略证书错误:默认关闭;用户开启后对所有网站生效,无需输入域名 -->
                 <LinearLayout
                     android:id="@+id/llIgnoreSsl"
                     android:layout_width="match_parent"
@@ -338,7 +338,7 @@
                         android:id="@+id/tvIgnoreSslTitle"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="指定网站证书例外"
+                        android:text="忽略证书错误"
                         android:textColor="@color/text_foreground"
                         android:textSize="16sp"
                         />
@@ -600,7 +600,8 @@
                         android:gravity="end"
                         android:maxLines="1"
                         android:ellipsize="end"
-                android:textColor="@color/text_foreground" />
+                        android:textColor="@color/text_foreground"
+                        android:textSize="14sp" />
 
                     <ImageView
                         android:layout_width="13dp"
@@ -614,7 +615,8 @@
                 <LinearLayout
                     android:id="@+id/llVideoPurify"
                     android:layout_width="match_parent"
-                    android:layout_height="60dp"
+                    android:layout_height="@dimen/dp_60"
+                    android:layout_weight="1"
                     android:focusable="true"
                     android:gravity="center_vertical"
                     android:orientation="horizontal"
@@ -628,16 +630,25 @@
                         android:textColor="@color/text_foreground"
                         android:textSize="16sp"/>
 
-                    <Space
+                    <TextView
+                        android:id="@+id/tvVideoPurifyMode"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1" />
+                        android:layout_weight="1"
+                        android:gravity="end"
+                        android:maxLines="1"
+                        android:ellipsize="end"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="14sp"
+                        tools:text="过滤" />
 
-                    <com.github.tvbox.osc.ui.kit.AppSwitch
-                        android:id="@+id/switchVideoPurify"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:clickable="false"/>
+                    <ImageView
+                        android:layout_width="13dp"
+                        android:layout_height="13dp"
+                        android:layout_gravity="center"
+                        android:alpha="0.75"
+                        android:src="@drawable/ic_seek_right"
+                        app:tint="@color/text_foreground" />
                 </LinearLayout>
                 <LinearLayout
                     android:id="@+id/llPressSpeed"

@@ -14,21 +14,12 @@ import com.github.tvbox.osc.util.urlhttp.BrotliInterceptor;
 import java.io.File;
 import java.io.IOException;
 import java.net.Proxy;
-import java.security.KeyStore;
-import java.security.cert.Certificate;
-import java.security.cert.X509Certificate;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
-
-import javax.net.ssl.SSLSocketFactory;
-import javax.net.ssl.HttpsURLConnection;
-import javax.net.ssl.TrustManager;
-import javax.net.ssl.TrustManagerFactory;
-import javax.net.ssl.X509TrustManager;
 
 import okhttp3.Cache;
 import okhttp3.ConnectionPool;
@@ -531,41 +522,10 @@ public class OkGoHelper {
         rebuildDohClients();
     }
 
-    /** 仅对用户指定的精确主机放行异常证书，其他主机继续验证系统信任链与主机名。 */
+    /** 用户开启全站忽略证书错误时统一放行；关闭时保留 OkHttp 的系统校验。 */
     private static synchronized void setOkHttpSsl(OkHttpClient.Builder builder) {
-        try {
-            if (SystemConfig.isIgnoreSslError()) {
-                final X509TrustManager systemTrust = systemTrustManager();
-                final SSLSocketFactory sslSocketFactory = new SSLCompat();
-                builder.sslSocketFactory(sslSocketFactory, SSLCompat.TM);
-                builder.hostnameVerifier((host, session) -> {
-                    if (SystemConfig.isSslExceptionAllowedForHost(host)) return true;
-                    try {
-                        Certificate[] peers = session.getPeerCertificates();
-                        X509Certificate[] chain = new X509Certificate[peers.length];
-                        for (int i = 0; i < peers.length; i++) {
-                            if (!(peers[i] instanceof X509Certificate)) return false;
-                            chain[i] = (X509Certificate) peers[i];
-                        }
-                        if (chain.length == 0) return false;
-                        systemTrust.checkServerTrusted(chain, chain[0].getPublicKey().getAlgorithm());
-                        return HttpsURLConnection.getDefaultHostnameVerifier().verify(host, session);
-                    } catch (Exception error) {
-                        return false;
-                    }
-                });
-            }
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
-    }
-
-    private static X509TrustManager systemTrustManager() throws Exception {
-        TrustManagerFactory factory = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-        factory.init((KeyStore) null);
-        for (TrustManager manager : factory.getTrustManagers()) {
-            if (manager instanceof X509TrustManager) return (X509TrustManager) manager;
-        }
-        throw new IllegalStateException("No system X509 trust manager");
+        if (!SystemConfig.isIgnoreSslError()) return;
+        builder.sslSocketFactory(new SSLCompat(), SSLCompat.TM);
+        builder.hostnameVerifier((host, session) -> true);
     }
 }

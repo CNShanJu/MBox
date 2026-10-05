@@ -360,7 +360,7 @@ public class WebSniffResolver implements DownloadUrlSniffer {
         @SuppressLint("WebViewClientOnReceivedSslError")
         @Override
         public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
-            if (error != null && SystemConfig.isSslExceptionAllowedForUrl(error.getUrl())) {
+            if (SystemConfig.isIgnoreSslError()) {
                 handler.proceed();
             } else {
                 handler.cancel();

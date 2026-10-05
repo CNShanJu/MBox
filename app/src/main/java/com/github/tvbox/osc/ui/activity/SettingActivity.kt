@@ -6,10 +6,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.text.InputType
 import android.view.View
-import android.widget.EditText
-import androidx.appcompat.app.AlertDialog
 import androidx.recyclerview.widget.DiffUtil
 import com.github.tvbox.osc.log.LogConfig
 import com.github.tvbox.osc.player.PlayerTrackHelper
@@ -114,7 +111,7 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
         com.github.tvbox.osc.theme.ThemeSweep.applyImageTint(
             mBinding.ivLanManageArrow, R.color.text_foreground)
 
-        // 证书例外只针对用户输入的精确主机名；旧版全局开关没有主机名时默认拒绝。
+        // 用户自行控制所有网站的证书校验，默认关闭忽略。
         val ignoreSsl = SystemConfig.isIgnoreSslError()
         mBinding.switchIgnoreSsl.setChecked(ignoreSsl)
         mBinding.tvIgnoreSslTitle.setOnLongClickListener {
@@ -123,32 +120,11 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
         }
         mBinding.llIgnoreSsl.setOnClickListener { view: View? ->
             FastClickCheckUtil.check(view)
-            if (SystemConfig.isIgnoreSslError()) {
-                SystemConfig.setIgnoreSslError(false)
-                mBinding.switchIgnoreSsl.setChecked(false)
-                AppBubble.toast("已恢复证书校验")
-            } else {
-                val input = EditText(this@SettingActivity)
-                input.setSingleLine(true)
-                input.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
-                input.hint = "example.com"
-                input.setText(SystemConfig.getSslExceptionHost())
-                AlertDialog.Builder(this@SettingActivity)
-                    .setTitle("指定证书例外网站")
-                    .setMessage("只对填写的精确主机名忽略证书错误；该网站的连接可能被截获。请输入域名，不含协议、端口或路径。")
-                    .setView(input)
-                    .setNegativeButton("取消", null)
-                    .setPositiveButton("启用") { _, _ ->
-                        if (SystemConfig.setSslExceptionHost(input.text.toString())) {
-                            SystemConfig.setIgnoreSslError(true)
-                            mBinding.switchIgnoreSsl.setChecked(true)
-                            AppBubble.toast("仅 ${SystemConfig.getSslExceptionHost()} 已启用证书例外，网络请求重启应用后生效")
-                        } else {
-                            AppBubble.toast("请输入有效的单个域名")
-                        }
-                    }
-                    .show()
-            }
+            val newConfig = !SystemConfig.isIgnoreSslError()
+            SystemConfig.setIgnoreSslError(newConfig)
+            mBinding.switchIgnoreSsl.setChecked(newConfig)
+            AppBubble.toast(if (newConfig) "已忽略所有网站的证书错误，网络请求重启应用后生效"
+                else "已恢复证书校验，网络请求重启应用后生效")
         }
 
         // 直播源已移到「订阅管理 - 直播源」页(订阅自带的跟着订阅走、用户自建的在那儿加),
@@ -173,24 +149,20 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             dialog.show()
         }
 
-        mBinding.tvSpeed.text = PlayConfig.getVideoSpeed().toString()
+        mBinding.tvSpeed.text = "${PlayConfig.getVideoSpeed()}x"
         mBinding.llPressSpeed.setOnClickListener {
-            val types = ArrayList<String>()
-            types.add("2.0")
-            types.add("3.0")
-            types.add("4.0")
-            types.add("5.0")
+            val types = PlayConfig.getVideoSpeedOptions().map { it.toString() }
             val defaultPos = types.indexOf(PlayConfig.getVideoSpeed().toString())
             val dialog = SelectDialog<String>(this@SettingActivity)
             dialog.setTip("请选择")
             dialog.setAdapter(object : SelectDialogInterface<String?> {
                 override fun click(value: String?, pos: Int) {
-                    PlayConfig.setVideoSpeed(value?.toFloat() ?: 2.0f)
-                    mBinding.tvSpeed.text = value
+                    PlayConfig.setVideoSpeed(value?.toFloat() ?: PlayConfig.DEFAULT_VIDEO_SPEED)
+                    mBinding.tvSpeed.text = "${PlayConfig.getVideoSpeed()}x"
                 }
 
                 override fun getDisplay(name: String?): String {
-                    return name ?: ""
+                    return name?.let { "${it}x" } ?: ""
                 }
             }, SelectDialogAdapter.stringDiff, types, defaultPos)
             dialog.show()
@@ -333,7 +305,7 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
                 }
             }
             val dialog = SelectDialog<Int>(this@SettingActivity)
-            dialog.setTip("请选择默认播放器")
+            dialog.setTip("播放器")
             dialog.setAdapter(object : SelectDialogInterface<Int?> {
                 override fun click(value: Int?, pos: Int) {
                     val thisPlayerType = players[pos]
@@ -479,13 +451,22 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             jumpActivity(BackgroundSettingActivity::class.java)
         })
 
-        mBinding.switchVideoPurify.setChecked(PlayConfig.isVideoPurify())
-        // toggle purify video -------------------------------------
+        updateVideoPurifyModeUi()
         mBinding.llVideoPurify.setOnClickListener { v: View? ->
             FastClickCheckUtil.check(v)
-            val newConfig = !PlayConfig.isVideoPurify()
-            mBinding.switchVideoPurify.setChecked(newConfig)
-            PlayConfig.setVideoPurify(newConfig)
+            val modes = resources.getStringArray(R.array.video_purify_modes).toList()
+            val dialog = SelectDialog<String>(this@SettingActivity)
+            dialog.setTip("广告过滤")
+            dialog.setAdapter(object : SelectDialogInterface<String?> {
+                override fun click(value: String?, pos: Int) {
+                    dialog.cancel()
+                    PlayConfig.setVideoPurifyMode(pos)
+                    updateVideoPurifyModeUi()
+                }
+
+                override fun getDisplay(name: String?): String = name ?: ""
+            }, SelectDialogAdapter.stringDiff, modes, PlayConfig.getVideoPurifyMode())
+            dialog.show()
         }
         mBinding.switchIjkCachePlay.setChecked(PlayConfig.isIjkCachePlay())
         mBinding.llIjkCachePlay.setOnClickListener { v: View? ->
@@ -660,8 +641,10 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
         super.onResume()
         refreshCacheSize()
         mBinding.tvBackgroundPlayType.text = BackgroundPlaySettings.currentLabel()
+        updateVideoPurifyModeUi()
         // 背景图设置页返回后刷新取值(默认/自定义)
         if (inited) {
+            mBinding.tvSpeed.text = "${PlayConfig.getVideoSpeed()}x"
             mBinding.switchInternalDownload.setChecked(SystemConfig.isInternalDownloadEnabled())
             refreshInternalDownloadSettingsVisibility()
             updatePageBackgroundValue()
@@ -749,6 +732,12 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
         SystemConfig.markInternalRestart()
         SystemConfig.markThemeRestartUseCache()
         AppUtils.relaunchApp(true)
+    }
+
+    private fun updateVideoPurifyModeUi() {
+        val label = resources.getStringArray(R.array.video_purify_modes)[PlayConfig.getVideoPurifyMode()]
+        mBinding.tvVideoPurifyMode.text = label
+        mBinding.llVideoPurify.contentDescription = "广告过滤，$label"
     }
 
     /**
