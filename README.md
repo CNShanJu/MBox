@@ -26,7 +26,7 @@
 | Gradle | 8.4 | `gradle/wrapper/gradle-wrapper.properties` |
 | Android Gradle Plugin | 8.2.2 | 根目录 `build.gradle` |
 | Kotlin | 1.9.22 | 根目录 `build.gradle` |
-| 应用版本 / versionCode / debug 展示版本 | 3.6.7 / 76 / 3.6.6 | `app/app_config.properties` |
+| 应用版本 / versionCode / debug 展示版本 | 3.6.8 / 77 / 3.6.7 | `app/app_config.properties` |
 | compileSdk / targetSdk / minSdk | 34 / 34 / 24 | 各模块 `build.gradle` |
 | Java source / target、Kotlin JVM target | 1.8 | 各模块 `build.gradle` |
 
@@ -66,7 +66,7 @@ export JAVA_HOME=/path/to/jdk17
 ./gradlew assembleRelease
 ```
 
-产物路径:`app/build/outputs/apk/release/`(当前版本示例:`MBox_v3.6.7_release_YYYYMMDD.apk`)。debug 包显示 `app/app_config.properties` 中明确配置的上一发布版本(`debugVersionName`),不按正式版本号的末段推算。
+产物路径:`app/build/outputs/apk/release/`(当前版本示例:`MBox_v3.6.8_release_YYYYMMDD.apk`)。debug 包显示 `app/app_config.properties` 中明确配置的上一发布版本(`debugVersionName`),不按正式版本号的末段推算。
 应用名/版本号/图标统一在 `app/app_config.properties` 维护,改完重新构建即可。
 
 ## GitHub Actions 打包
