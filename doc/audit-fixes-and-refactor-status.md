@@ -7,6 +7,16 @@
 
 ## 0. 近期进展补充（2026-09-25）
 
+- **透明度滑块数值气泡主题供色（2026-10-05，待真机视觉复测）**：Material 原生水滴气泡的背景取色走内部 `TypedArray`，未经过进度条的运行时主题供色，深紫主题出现浅底白字。共用 `AppSlider` 现将气泡底色、描边设为主题 `bg_float`（含浮层透明度），文字设为主题主色 `text_foreground`；保留原气泡对象、形状、字号、定位与动画。Material 1.9.0 没有公开的标签改色入口，兼容桥仅缓存读取其 `BaseSlider.labels` 池，再调用公开颜色接口；现有 Material 保留规则覆盖该字段，新增 2 项依赖元数据测试用于发现后续升级的不兼容。主题取色弹窗原有隐藏气泡行为保留。Debug/Release 构建、Debug 单测与模块依赖门禁全部通过；手机上的拖动显示与方向切换仍待人工复测。
+
+- **透明度进度条共用组件与主题供色（2026-10-05，待真机视觉复测）**：背景图透明度与主题取色弹窗的不透明度统一使用 `ui/kit/AppSlider`；按用户要求沿用原 Material 滑块/轨道尺寸、刻度及各页面的拖动提示样式。组件经主题包装资源取色，已选轨道与滑块沿用 `brand`，未选轨道从同主色 50% 不透明度起，对比不足时仅提高不透明度，不改变主题 RGB；卡片与弹窗分别传入 `bg_surface`/`bg_float`，按各自面板叠页底计算。深紫主题原半透明轨道对比偏低，新策略可提高至 3:1；五个内置主题的卡片/浮层组合、透明面板及极限颜色等 8 项 JVM 回归通过。阈值基于主题面板叠纯色页底，图片背景下的实际视觉仍待人工复测。禁用态在组件内统一处理，背景页删除额外整控件压暗；数值范围、步长、监听及保存逻辑沿用原实现。Debug/Release 构建、Debug 单测与模块依赖门禁全部通过。
+
+- **用户字幕样本的时间轴与格式识别（2026-10-05，待真机复测）**：`学生会也有洞.ass` 的 `Timer: 0.0000` 被旧解析器用作除数，489 条字幕全部变成 `2147483647ms`，造成提示成功却整片不显示；无效、零值、负值及非有限 Timer 现在按 100% 正常速度处理，合法 Timer 仍按比例换算。`装备我最强.srt` 的 544 条字幕时间正常，首句为 5.48 秒；两份文件均存在重叠区间，旧二分查找会漏掉前方仍有效的长句，现于装载/延迟修改时建立实际时间索引，回查活动字幕。用新 Debug 编译类逐 100ms 对照真实文件：ASS 的 10175 个活动采样、SRT 的 9022 个活动采样均无漏匹配，且与参考算法的最近起始活动句一致。SUP 样本确认为 PGS 图片字幕，当前外挂文本链路不支持；系统文件导入、本地及远程装载在拷贝/字符解码前检查内容头，明确提示不支持 SUP，失败保留原字幕。诊断经 LogStore 与 Logcat 记录装载条数/时间范围、首次播放时间检查、匹配及实际绘制，不记录字幕正文。Debug/Release 构建、Debug 单测与模块依赖门禁通过；手机画面显示待人工复测。
+
+- **本地字幕提示成功却未显示、弹窗滚动贴边（2026-10-05，待真机复测）**：原字幕专用线程读取 Media3 播放状态/位置触发 `verifyApplicationThread`，异常被吞掉后刷新永久停止；进度读取与字幕匹配改在主线程调度，文件读取、解析和缓存仍走共享 IO。刷新每 100ms 跟随当前位置，暂停也显示当前句，未变化的句子不重复渲染；异常可重试且连续错误只记一次，停止后的旧回调按 epoch 作废。删除异步缓存成功后的重复清空；字幕视图临时移出窗口只暂停，重新挂载恢复，实际退出与切集仍由协调器 reset 清理。弹窗面板保留 16dp 固定边距，内层滚动区另带 4dp 内边距及 `clipToPadding=false`，滚动中的文字与按钮不会越过面板边距。新增 6 项刷新调度 JVM 回归全部通过，Debug/Release 与模块依赖门禁全绿；设备显示与全屏/小窗行为待人工验证。
+
+- **字幕选择误入画中画与全屏弹窗挤压（2026-10-05，待真机复测）**：字幕系统文件选择跳转追加 `FLAG_ACTIVITY_NO_USER_ACTION`，避免被详情页 `onUserLeaveHint` 当作用户切后台；原有选取、取消与返回流程不增加持久抑制状态。字幕弹窗取消滚动内容的垂直居中，字号/时间偏移独占一行，调整及样式按钮改为两列；按钮使用自适应高度并允许换行，来源入口沿用主题空心样式。延迟以整数毫秒保存和累加，秒数显示使用浮点除法，修复重开后半秒值被截断。Debug/Release、Debug 单测与模块依赖门禁全部通过；横屏、大字体和画中画行为列入真机回归清单。
+
 - **JS 代理清单被 Media3 报为非 M3U8（2026-10-04，待真机复测）**：用户日志显示本机 `/proxy` 返回体不以 `#EXTM3U` 开头；对日志中的 CDN 目标做限量直连探测，得到 HTTP 206、`application/vnd.apple.mpegurl`，正文以 `#EXTM3U` 开头，因此不能归咎于源地址失效。查出 `JsSpider.proxy2` 忽略 JS 返回的 `code`，把错误正文一律作为 HTTP 200 返回；现透传状态码，重定向只转发 `Location`，不转发重建正文后可能失效的长度/编码头。JS 清单代理异常时，`RemoteServer` 在 Logcat 和已启用的播放器业务日志记录目标地址、代理分支、站点、HTTP 状态、MIME 与正文类别（空/HTML/JSON/BOM 等），采样后复位流，不记录请求头或正文原文。16:57 的新日志仍显示 Media3/IJK 都在代理上失败，且没有 `MBoxProxy` 诊断，不能确认手机已装带诊断的包。为让可直连的清单实际起播，`PlayFragment` 在本机代理失败后对带 `url` 参数的外部 HLS 地址做每集一次直连回退，合并源请求头、跳过净化，并记录脱敏目标摘要；失败后仍走原有重试。`ProxyPlaylistDiagnosticsTest` 与 `ProxyDirectFallbackTest` 覆盖诊断采样和回退地址/请求头解析。**待真机复测**：代理实际响应状态和正文类别、直连回退能否起播。
 
 - **17:20 真机复测（2026-10-04，继续排查）**：直连回退已触发，IJK 对真实地址仍报 `-10000`；自动切到 Media3 后，真实地址在 Conscrypt 的 TLS 握手阶段收到 `SocketException: Connection reset`，尚未发送 HTTP 请求或读取 M3U8。当前不能由此断定是安全 DNS、CDN 路由还是设备 TLS 兼容性。播放专用 OkHttp 客户端现仅在 HTTPS 建连失败时记录脱敏地址摘要、连接 IP/端口、DNS 模式与设备 DNS 环境到 Logcat `MBoxNetwork` 和播放器失败业务日志；IJK 改为复制请求头后再提取 UA，避免原地删掉会话头。待下一轮真机日志判因，不放宽证书验证。
@@ -196,13 +206,10 @@
   `res/raw/{index.html,script.js}`。
 
 ### 1.2 TLS 与证书策略
-- 移除所有“恒真 HostnameVerifier”（OkGoHelper / App / spider OkHttp / SSLCompat.VERIFIER）。
-- WebView `onReceivedSslError` 默认 `cancel()`，仅当 `HawkConfig.IGNORE_SSL_ERROR=true`（默认 false）放行。
-  覆盖点：PlayFragment、PlayParseHelper、WebSniffResolver。
-- 设置页新增“忽略证书错误”开关（默认 OFF；WebView 即时生效，OkHttp 网络请求在下次换 DoH/重启时随客户端重建生效）。
-- 文件：`common/.../util/OkGoHelper.java`、`common/.../net/SSLCompat.java`、
-  `spider/.../net/OkHttp.java`、`app/.../base/App.java`、`util/WebSniffResolver.java`、
-  `util/player/PlayParseHelper.java`、`ui/fragment/PlayFragment.java`。
+- 2026-10-05 按用户要求恢复“忽略证书错误”全站开关，点击直接切换，无需输入域名；沿用本机旧布尔值，旧域名设置不再参与判断。
+- 默认关闭：OkHttp 使用系统证书链与主机名校验，WebView `onReceivedSslError` 默认 `cancel()`；仅当 `SystemConfig.isIgnoreSslError()` 为 true 时，统一客户端忽略证书链与主机名错误，两个 WebView 回调放行所有网站。
+- WebView 即时生效，OkHttp 网络请求重启后随客户端重建生效；`SSLCompat` 不修改 `HttpsURLConnection` 的全局默认工厂。分享/备份继续排除该本机开关及停用的域名键。
+- 文件：`core-network/.../util/OkGoHelper.java`、`core-network/.../net/SSLCompat.java`、`core-storage/.../config/SystemConfig.java`、`PrefsDataStore.java`、`app/.../util/WebSniffResolver.java`、`util/player/PlayParseCoordinator.java`、`ui/activity/SettingActivity.kt`。
 
 ### 1.3 明确崩溃点修复（判空/越界）
 - ApiConfig `getIJKCodec`：离线/空列表不再 `ijkCodes.get(0)` NPE（改从非空列表取，空列表返回 null 由调用方防御）。

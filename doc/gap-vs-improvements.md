@@ -394,6 +394,7 @@ Exo→Media3 1.4.1 已完成代码迁移(2026-10-01，待播放器人工回归)�
    系统证书链+主机名校验;`SSLCompat` 构造函数不再 `setDefaultSSLSocketFactory` 改写
    HttpsURLConnection 全局默认(去除 trust-all 全局副作用)。行为:开"忽略证书错误"后 OkHttp
    请求需重启应用生效(与既有提示一致)。(cae55368)
+   2026-10-05 按用户要求恢复全站“忽略证书错误”开关,不再要求精确域名;开启时证书链与主机名错误统一放行,关闭时仍走系统校验。WebView 立即生效,统一网络请求重启应用后生效,分享/备份不自动启用此本机开关。
 - ✅ Zip Slip 收口:spider `Path.unzip`(爬虫 jar 可调用的解压点)逐条目做 canonical 包含性
    校验,拒绝 NUL/../绝对路径/符号链接逃逸,整体失败不落盘;仓库三处解压点(RemoteServer/
    Path.unzip/crash 读自身 dex)全部防护或只读。(0f5d7d35)
