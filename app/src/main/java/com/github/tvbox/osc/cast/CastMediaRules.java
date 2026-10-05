@@ -17,18 +17,6 @@ final class CastMediaRules {
 
     private CastMediaRules() { }
 
-    static boolean needsRelay(String rawUrl, Map<String, String> headers, int localPort) {
-        if (hasHeaders(headers)) return true;
-        URI uri = parse(rawUrl);
-        if (uri == null) return true;
-        String scheme = lower(uri.getScheme());
-        if (!"http".equals(scheme) && !"https".equals(scheme)) return true;
-        String host = uri.getHost();
-        return isLoopback(host) || (uri.getPort() == localPort
-                && (LanAddressRules.isPrivateIpv4(host)
-                || LanCastRelayRules.isRestrictedIpLiteral(host)));
-    }
-
     static URI parse(String rawUrl) {
         if (rawUrl == null || rawUrl.trim().isEmpty() || rawUrl.length() > 8192) return null;
         try {

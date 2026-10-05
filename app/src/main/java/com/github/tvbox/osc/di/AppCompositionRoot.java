@@ -15,6 +15,28 @@ public final class AppCompositionRoot {
 
     private static volatile com.github.tvbox.osc.net.NetworkProvider networkProvider;
     private static volatile boolean playerAdaptersRegistered = false;
+    private static final com.github.tvbox.osc.cast.api.DlnaCastControl DLNA_CAST_CONTROL =
+            new com.github.tvbox.osc.cast.api.DlnaCastControl() {
+                @Override public Status status() {
+                    com.github.tvbox.osc.cast.CastMediaRelay.ActiveCast active =
+                            com.github.tvbox.osc.cast.CastMediaRelay.activeCast();
+                    return active == null ? null : new Status(active.generation,
+                            active.deviceName, active.stopping);
+                }
+
+                @Override public boolean preparing(long generation) {
+                    if (!com.github.tvbox.osc.cast.CastMediaService.isServingGeneration(generation))
+                        return false;
+                    com.github.tvbox.osc.cast.CastMediaRelay.ActiveCast active =
+                            com.github.tvbox.osc.cast.CastMediaRelay.activeCast();
+                    return active == null || active.generation != generation;
+                }
+
+                @Override public boolean cancel(long generation, Callback callback) {
+                    return com.github.tvbox.osc.cast.CastMediaRelay.cancelActiveCast(generation,
+                            callback == null ? null : callback::onResult);
+                }
+            };
 
     private AppCompositionRoot() {
     }
@@ -287,5 +309,10 @@ public final class AppCompositionRoot {
     public static com.github.tvbox.osc.net.NetworkProvider network() {
         com.github.tvbox.osc.net.NetworkProvider p = networkProvider;
         return p != null ? p : com.github.tvbox.osc.net.NetworkProvider.DEFAULT;
+    }
+
+    /** DLNA controls exposed to the page without sharing relay or renderer implementation types. */
+    public static com.github.tvbox.osc.cast.api.DlnaCastControl dlnaCastControl() {
+        return DLNA_CAST_CONTROL;
     }
 }

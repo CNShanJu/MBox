@@ -3,6 +3,7 @@ package com.github.tvbox.osc.ui.dialog;
 import android.content.Context;
 import android.content.res.ColorStateList;
 import android.view.View;
+import android.widget.LinearLayout;
 import android.widget.RadioButton;
 import android.widget.RadioGroup;
 import android.widget.TextView;
@@ -31,7 +32,12 @@ import java.util.concurrent.atomic.AtomicLong;
 /** 发现同网段 DLNA 电视，或选择已配对的电脑浏览器。 */
 public class CastListDialog extends AppCenterPopupView {
     /** 浏览器返回设备 id，DLNA 电视返回 null。 */
-    public interface OnCastStarted { void onCastStarted(String browserDeviceId); }
+    public interface OnCastStarted {
+        void onCastStarted(String browserDeviceId);
+        default void onDlnaStarted(String deviceName) {
+            onCastStarted(null);
+        }
+    }
 
     private final CastMediaRelay mediaRelay = new CastMediaRelay();
     private final AtomicLong castRequests = new AtomicLong();
@@ -48,6 +54,7 @@ public class CastListDialog extends AppCenterPopupView {
     private TextView confirm;
     private TextView refresh;
     private TextView manualConnect;
+    private TextView stopDlna;
     private BasePopupView manualAddressPopup;
     private String lastManualAddress = "";
     private boolean searching;
@@ -56,6 +63,13 @@ public class CastListDialog extends AppCenterPopupView {
     private boolean commandSubmitted;
     private volatile boolean closed;
     private String searchError;
+    private final Runnable refreshActiveCast = new Runnable() {
+        @Override public void run() {
+            if (closed || stopDlna == null) return;
+            updateStopDlnaButton();
+            stopDlna.postDelayed(this, 1000);
+        }
+    };
 
     private static final class Target {
         final String key;
@@ -107,6 +121,15 @@ public class CastListDialog extends AppCenterPopupView {
         confirm = findViewById(R.id.btn_confirm);
         refresh = findViewById(R.id.cast_refresh);
         manualConnect = findViewById(R.id.cast_manual_connect);
+        stopDlna = new TextView(getContext(), null, 0, R.style.TextButton);
+        stopDlna.setTextColor(ContextCompat.getColor(getContext(), R.color.text_highlight));
+        LinearLayout stopContainer = (LinearLayout) hint.getParent();
+        LinearLayout.LayoutParams stopParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        stopParams.topMargin = (int) (8 * getResources().getDisplayMetrics().density + 0.5f);
+        stopContainer.addView(stopDlna, stopContainer.indexOfChild(hint), stopParams);
+        stopDlna.setOnClickListener(v -> stopActiveDlnaCast());
+        stopDlna.post(refreshActiveCast);
         dlna = new DlnaController(getContext().getApplicationContext());
         targets.setOnCheckedChangeListener((group, checkedId) -> updateButtons());
         refresh.setOnClickListener(v -> search());
@@ -270,6 +293,29 @@ public class CastListDialog extends AppCenterPopupView {
         manualConnect.setEnabled(!casting);
         confirm.setEnabled(!casting && targets.getCheckedRadioButtonId() != -1);
         confirm.setText(casting ? "投屏中…" : "投 屏");
+        updateStopDlnaButton();
+    }
+
+    private void updateStopDlnaButton() {
+        if (stopDlna == null) return;
+        CastMediaRelay.ActiveCast active = CastMediaRelay.activeCast();
+        stopDlna.setVisibility(active == null ? View.GONE : View.VISIBLE);
+        stopDlna.setEnabled(active != null && !active.stopping && !casting);
+        if (active != null) stopDlna.setText(active.stopping ? "正在停止 DLNA 投屏…"
+                : "停止 DLNA 投屏 · " + active.deviceName);
+    }
+
+    private void stopActiveDlnaCast() {
+        CastMediaRelay.ActiveCast active = CastMediaRelay.activeCast();
+        if (active == null || active.stopping || casting) return;
+        if (!CastMediaRelay.cancelActiveCast(active.generation, (success, message) -> {
+            if (closed) return;
+            updateStopDlnaButton();
+            AppBubble.toast(message);
+        })) {
+            updateStopDlnaButton();
+            AppBubble.toast("投屏状态已更新，请重试");
+        } else updateStopDlnaButton();
     }
 
     private void onConfirm() {
@@ -321,23 +367,26 @@ public class CastListDialog extends AppCenterPopupView {
                 mediaRelay.stop();
                 return;
             }
+            final long relayGeneration = mediaRelay.generation();
             post(() -> {
                 if (closed || request != castRequests.get()) return;
                 commandSubmitted = true;
                 dlna.cast(device, castVideo.getName(), televisionUrl,
                         castVideo.getPositionMs(), (success, message) -> {
+                    boolean retained = success && mediaRelay.bindRenderer(relayGeneration, device);
                     if (closed || request != castRequests.get()) {
-                        if (!success) mediaRelay.stop();
+                        if (!success) mediaRelay.stop(relayGeneration);
                         return;
                     }
-                    if (success) {
-                        if (started != null) started.onCastStarted(null);
+                    if (retained) {
+                        if (started != null) started.onDlnaStarted(device.name);
                         AppBubble.toast("已发送到电视，请在电视上查看播放状态");
                         casting = false;
                         dismiss();
                     } else {
-                        mediaRelay.stop();
-                        showCastFailure(message == null || message.isEmpty() ? "电视未接受播放请求" : message);
+                        mediaRelay.stop(relayGeneration);
+                        showCastFailure(success ? "投屏状态已更新，请重新选择设备"
+                                : message == null || message.isEmpty() ? "电视未接受播放请求" : message);
                     }
                 });
             });
@@ -354,6 +403,7 @@ public class CastListDialog extends AppCenterPopupView {
 
     @Override protected void onDismiss() {
         closed = true;
+        if (stopDlna != null) stopDlna.removeCallbacks(refreshActiveCast);
         if (manualAddressPopup != null) {
             manualAddressPopup.dismiss();
             manualAddressPopup = null;

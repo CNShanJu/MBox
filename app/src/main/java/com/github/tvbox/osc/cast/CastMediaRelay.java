@@ -3,6 +3,8 @@ package com.github.tvbox.osc.cast;
 import android.content.Context;
 import android.content.res.AssetFileDescriptor;
 import android.net.Uri;
+import android.os.Handler;
+import android.os.Looper;
 
 import com.github.tvbox.osc.server.LanCastRelayRules;
 import com.github.tvbox.osc.server.RemoteServer;
@@ -74,13 +76,89 @@ public final class CastMediaRelay {
     private volatile MediaServer server;
     private ScheduledFuture<?> expiryTask;
 
-    public static boolean needsRelay(String rawUrl, Map<String, String> headers, int localPort) {
-        return CastMediaRules.needsRelay(rawUrl, headers, localPort);
+    /** Immutable global entry for a successfully submitted DLNA cast; contains no media URL. */
+    public static final class ActiveCast {
+        public final long generation;
+        public final String deviceName;
+        public final boolean stopping;
+
+        private ActiveCast(Session session, RendererBinding renderer) {
+            generation = renderer.generation;
+            deviceName = renderer.device.name;
+            stopping = session.stopping;
+        }
+    }
+
+    private static final class RendererBinding {
+        final long generation;
+        final DlnaController.Device device;
+
+        RendererBinding(long generation, DlnaController.Device device) {
+            this.generation = generation;
+            this.device = device;
+        }
+    }
+
+    public long generation() {
+        Session session = current;
+        return session == null ? -1 : session.generation;
+    }
+
+    /** Called on SOAP success, including when the initiating dialog has already closed. */
+    public synchronized boolean bindRenderer(long expectedGeneration, DlnaController.Device device) {
+        Session session = current;
+        if (device == null || activeRelay != this || session == null || session.closed
+                || session.generation != expectedGeneration) return false;
+        session.renderer = new RendererBinding(expectedGeneration, device);
+        try { CastMediaService.start(session.context, expectedGeneration); }
+        catch (RuntimeException error) {
+            LogStore.fail(Category.PLAYER, "投屏媒体服务: 更新投屏通知失败="
+                    + error.getClass().getSimpleName());
+        }
+        return true;
+    }
+
+    public static ActiveCast activeCast() {
+        CastMediaRelay relay = activeRelay;
+        Session session = relay == null ? null : relay.current;
+        RendererBinding renderer = session == null ? null : session.renderer;
+        return renderer == null || session.closed || renderer.generation != session.generation
+                || relay != activeRelay || session != relay.current ? null : new ActiveCast(session, renderer);
+    }
+
+    /** Stops the captured DLNA cast only; local playback and browser casting are independent. */
+    public static boolean cancelActiveCast(long expectedGeneration, DlnaController.CastCallback callback) {
+        CastMediaRelay relay = activeRelay;
+        Session session = relay == null ? null : relay.current;
+        if (session == null) return false;
+        final RendererBinding renderer;
+        synchronized (session) {
+            renderer = session.renderer;
+            if (renderer == null || renderer.generation != expectedGeneration || session.closed
+                    || session.stopping || relay != activeRelay || relay.current != session) return false;
+            session.stopping = true;
+        }
+        LogStore.log(Category.PLAYER, "DLNA 投屏取消: 用户主动结束投屏");
+        DlnaController.stopIfCurrent(renderer.device,
+                () -> activeRelay == relay && relay.current == session && !session.closed,
+                (success, message) -> {
+                    boolean released = false;
+                    synchronized (relay) {
+                        if (relay.current == session && session.generation == expectedGeneration) {
+                            relay.closeCurrent(true);
+                            released = true;
+                        }
+                    }
+                    if (released) LogStore.log(Category.PLAYER, "DLNA 投屏取消: 本轮媒体代理已关闭");
+                    if (callback != null)
+                        new Handler(Looper.getMainLooper()).post(() -> callback.onResult(success, message));
+                });
+        return true;
     }
 
     /**
-     * Return a TV-reachable URL. A public HTTP(S) URL with no extra headers is passed through.
-     * Otherwise start a separate, capability-scoped listener for this one cast session.
+     * Return a TV-reachable URL through a separate, capability-scoped listener for this cast.
+     * The renderer must not have to fetch the original HTTPS URL or reproduce player headers.
      */
     public synchronized String prepare(Context context, String rawUrl,
                                        Map<String, String> headers) throws IOException {
@@ -108,12 +186,6 @@ public final class CastMediaRelay {
         if (localFile && CastMediaRules.isPlaylist(mediaUrl, null))
             throw new IOException("Local HLS playlists cannot be cast");
         Map<String, String> snapshot = CastMediaRules.snapshotHeaders(headers);
-        if (!needsRelay(mediaUrl, snapshot, RemoteServer.serverPort)) {
-            CastMediaRelay other = activeRelay;
-            if (other != null && other != this) other.stop();
-            stop();
-            return mediaUrl;
-        }
         if (context == null) throw new IOException("Context is required for media relay");
 
         // The player's purified playlist lives in a mutable process-wide slot. Pin its contents
@@ -182,13 +254,15 @@ public final class CastMediaRelay {
                     stop();
                     throw new IOException("Cannot keep media relay active in background", error);
                 }
+                LogStore.log(Category.PLAYER, "投屏媒体服务: 临时监听已启动，端口=" + port
+                        + "，接收端同网卡=" + advertisedAddress.equals(preferredAddress));
                 retainedClient = true;
                 return session.baseUrl + path;
             } catch (IOException | RuntimeException error) {
                 closeCurrent(false);
                 started.stop();
                 if (activeRelay == null) {
-                    try { CastMediaService.stop(context); } catch (RuntimeException ignored) { }
+                    try { CastMediaService.stop(context, -1); } catch (RuntimeException ignored) { }
                 }
                 if (error instanceof IOException) throw (IOException) error;
                 throw new IOException("Media relay failed to start", error);
@@ -203,6 +277,11 @@ public final class CastMediaRelay {
         closeCurrent(true);
     }
 
+    public synchronized void stop(long expectedGeneration) {
+        Session session = current;
+        if (session != null && session.generation == expectedGeneration) closeCurrent(true);
+    }
+
     private synchronized void closeCurrent(boolean stopService) {
         Session old = current;
         MediaServer listening = server;
@@ -213,7 +292,19 @@ public final class CastMediaRelay {
         expiryTask = null;
         if (old != null) old.close();
         if (listening != null) listening.stop();
-        if (stopService && old != null && old.context != null) CastMediaService.stop(old.context);
+        if (stopService && old != null && old.context != null) {
+            try { CastMediaService.stop(old.context, old.generation); }
+            catch (RuntimeException error) {
+                LogStore.fail(Category.PLAYER, "投屏媒体服务: 关闭通知请求失败="
+                        + error.getClass().getSimpleName());
+            }
+        }
+    }
+
+    static boolean hasActiveRelay() {
+        CastMediaRelay relay = activeRelay;
+        Session session = relay == null ? null : relay.current;
+        return session != null && !session.closed;
     }
 
     static boolean hasActiveRelay(long generation) {
@@ -721,6 +812,8 @@ public final class CastMediaRelay {
         final AtomicBoolean firstTargetLimit = new AtomicBoolean();
         volatile long lastUsedAt = createdAt;
         volatile boolean closed;
+        volatile RendererBinding renderer;
+        volatile boolean stopping;
 
         Session(Context context, String baseUrl, String token, int localPort, long generation) {
             this(context, baseUrl, token, localPort, generation, null);

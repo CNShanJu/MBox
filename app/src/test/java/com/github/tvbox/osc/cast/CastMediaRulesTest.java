@@ -16,15 +16,6 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class CastMediaRulesTest {
-    @Test public void onlyLocalOrHeaderBoundMediaNeedsRelay() {
-        assertFalse(CastMediaRules.needsRelay("https://video.example/movie.mp4", null, 9978));
-        assertTrue(CastMediaRules.needsRelay("http://127.0.0.1:9978/proxy?do=video", null, 9978));
-        assertTrue(CastMediaRules.needsRelay("http://192.168.1.5:9978/proxy?do=video", null, 9978));
-        assertTrue(CastMediaRules.needsRelay("content://media/external/video/media/1", null, 9978));
-        assertTrue(CastMediaRules.needsRelay("https://video.example/movie.mp4",
-                Collections.singletonMap("Referer", "https://example.org"), 9978));
-    }
-
     @Test public void playlistCannotReachLocalManagementEndpoints() {
         String local = "http://127.0.0.1:9978/purify.m3u8";
         assertTrue(CastMediaRules.allowedChild(local, "http://127.0.0.1:9978/proxy?do=ts", 9978));
@@ -35,8 +26,6 @@ public class CastMediaRulesTest {
                 "http://127.0.0.1:9978/proxy?do=ts", 9978));
         assertFalse(CastMediaRules.allowedChild("https://video.example/index.m3u8",
                 "http://[::ffff:192.168.1.1]/private", 9978));
-        assertTrue(CastMediaRules.needsRelay(
-                "http://[::ffff:127.0.0.1]:9978/purify.m3u8", null, 9978));
         assertFalse(CastMediaRules.allowedChild(
                 "http://[::ffff:127.0.0.1]:9978/purify.m3u8",
                 "http://[::ffff:127.0.0.1]:9978/api/lan/data", 9978));
@@ -140,7 +129,6 @@ public class CastMediaRulesTest {
         assertEquals("/storage/emulated/0/My Movies/part 1.mp4",
                 new File(CastMediaRules.parse(normalized)).getPath().replace('\\', '/'));
         assertEquals("mp4", CastMediaRules.extension(normalized));
-        assertTrue(CastMediaRules.needsRelay(normalized, null, 9978));
     }
 
     @Test public void extensionlessProxyPlaylistUsesHlsIdentityDespitePlainTextMime() {

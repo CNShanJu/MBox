@@ -57,7 +57,9 @@ import org.json.JSONObject;
 
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Collections;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -79,6 +81,12 @@ public class PlayFragment extends BaseLazyFragment {
         /** 返回 true 表示地址已交给外部设备，本机播放器无需起播。 */
         default boolean onPlaybackResolved(String title, String url) { return false; }
 
+        /** 手机播放器控件在浏览器投屏期间改为向浏览器发送指令。 */
+        default boolean controlBrowserCast(String action, long positionMs) { return false; }
+
+        /** 用户明确切回手机播放时结束当前浏览器投屏。 */
+        default boolean stopBrowserCast() { return false; }
+
         /** 返回 true 表示宿主正在等待同源详情刷新，暂缓默认失败处理。 */
         default boolean onPlaybackFailed(long generation, String episodeUrl, String error,
                                          boolean finish, boolean autoSwitchPlayer) {
@@ -98,6 +106,13 @@ public class PlayFragment extends BaseLazyFragment {
     /** 电池百分比订阅(系统状态经 SystemStateMonitor,替代 EventBus 电量广播) */
     private com.github.tvbox.osc.state.SystemStateMonitor.Listener mBatteryListener;
     private TextView mPlayLoadTip;
+    private boolean browserCastStatusVisible;
+    private boolean dlnaCastStatusVisible;
+    private boolean browserCastActive;
+    private boolean browserCastOnline = true;
+    private boolean browserCastPaused;
+    private boolean browserCastStateKnown;
+    private boolean browserCastEpisodesAvailable = true;
     private ImageView mPlayLoadErr;
     private View mPlayLoading;
     private VodController mController;
@@ -156,6 +171,25 @@ public class PlayFragment extends BaseLazyFragment {
         }
     }
 
+    /** 一次已解析播放请求的投屏快照；读取它不会重新解析或重建手机播放器。 */
+    public static final class CastRequest {
+        public final String url;
+        public final String sourceUrl;
+        public final Map<String, String> headers;
+        public final long positionMs;
+        public final boolean playableNow;
+
+        private CastRequest(String url, String sourceUrl, Map<String, String> headers,
+                            long positionMs, boolean playableNow) {
+            this.url = url;
+            this.sourceUrl = sourceUrl;
+            this.headers = headers == null ? null
+                    : Collections.unmodifiableMap(new HashMap<>(headers));
+            this.positionMs = Math.max(0, positionMs);
+            this.playableNow = playableNow;
+        }
+    }
+
     private boolean isCurrentPlayback(long generation) {
         return generation == mPlaybackGeneration.get();
     }
@@ -167,6 +201,18 @@ public class PlayFragment extends BaseLazyFragment {
     private PlaybackSnapshot currentPlaybackSnapshot() {
         PlaybackSnapshot snapshot = mResolvedPlayback;
         return snapshot != null && isCurrentPlayback(snapshot.generation) ? snapshot : null;
+    }
+
+    /** 从当前解码会话取 URL、请求头与进度；投屏动作不触发手机重播。 */
+    public CastRequest currentCastRequest() {
+        PlaybackSnapshot snapshot = currentPlaybackSnapshot();
+        if (snapshot == null || TextUtils.isEmpty(snapshot.url) || !RegexUtils.isURL(snapshot.url))
+            return null;
+        String source = !TextUtils.isEmpty(snapshot.sourceUrl)
+                && RegexUtils.isURL(snapshot.sourceUrl) ? snapshot.sourceUrl : null;
+        boolean playable = mPlaySession != null && mPlaySession.hasPreparedPlayback();
+        return new CastRequest(snapshot.url, source, snapshot.headers,
+                mPlaySession == null ? 0 : mPlaySession.currentPosition(), playable);
     }
     private boolean mFullWindows;
     /**
@@ -254,6 +300,11 @@ public class PlayFragment extends BaseLazyFragment {
             final DetailActivity activity = (DetailActivity) mActivity;
 
             @Override
+            public void onLocalPlaybackStarted() {
+                if (dlnaCastStatusVisible) hideTip();
+            }
+
+            @Override
             public void chooseSeries() {
                 // activity中已处理
                 activity.showAllSeriesDialog();
@@ -261,6 +312,7 @@ public class PlayFragment extends BaseLazyFragment {
 
             @Override
             public void playNext(boolean rmProgress) {
+                if (!canChangeBrowserEpisode()) return;
                 String preProgressKey = progressKey;
                 PlayFragment.this.playNext(rmProgress);
                 if (rmProgress && preProgressKey != null)
@@ -292,6 +344,12 @@ public class PlayFragment extends BaseLazyFragment {
             public void replay(boolean replay) {
                 autoRetryCount = 0;
                 play(replay);
+            }
+
+            @Override
+            public boolean controlBrowserCast(String action, long positionMs) {
+                return browserCastActive && mSyncHost != null
+                        && mSyncHost.controlBrowserCast(action, positionMs);
             }
 
             @Override
@@ -559,9 +617,109 @@ public class PlayFragment extends BaseLazyFragment {
     }
 
     void hideTip() {
+        browserCastStatusVisible = false;
+        dlnaCastStatusVisible = false;
+        mPlayLoadTip.setOnClickListener(null);
         mPlayLoadTip.setVisibility(View.GONE);
         mPlayLoading.setVisibility(View.GONE);
         mPlayLoadErr.setVisibility(View.GONE);
+    }
+
+    /** 浏览器接管播放后，手机解码器不再起播；在黑色播放器上说明当前状态。 */
+    public void showBrowserCastStatus() {
+        browserCastActive = true;
+        browserCastEpisodesAvailable = true;
+        browserCastOnline = true;
+        browserCastStateKnown = false;
+        if (mController != null) mController.setBrowserRemote(true);
+        if (mPlaySession != null) mPlaySession.release();
+        browserCastStatusVisible = true;
+        dlnaCastStatusVisible = false;
+        setTip(browserCastStatusText(), false, false);
+        if (mPlayLoadTip != null) mPlayLoadTip.setOnClickListener(view -> {
+            if (!browserCastActive || mSyncHost == null || !mSyncHost.stopBrowserCast()) return;
+            clearBrowserCastStatus();
+            play(false);
+        });
+    }
+
+    public void clearBrowserCastStatus() {
+        browserCastActive = false;
+        browserCastEpisodesAvailable = true;
+        if (mController != null) mController.setBrowserRemote(false);
+        if (browserCastStatusVisible && mPlayLoadTip != null) hideTip();
+    }
+
+    /** 投屏在别处结束后保留明确入口，用户点按才恢复手机播放。 */
+    public void showBrowserCastEndedStatus() {
+        if (!browserCastActive) return;
+        browserCastActive = false;
+        if (mController != null) mController.setBrowserRemote(false);
+        browserCastStatusVisible = true;
+        dlnaCastStatusVisible = false;
+        setTip("电脑投屏已结束\n点此在手机播放", false, false);
+        if (mPlayLoadTip != null) mPlayLoadTip.setOnClickListener(view -> {
+            if (!browserCastStatusVisible || browserCastActive) return;
+            hideTip();
+            play(false);
+        });
+    }
+
+    /** DLNA 独立播放，手机继续播放只恢复本机，不撤销电视的媒体代理。 */
+    public void showDlnaCastStatus(String deviceName) {
+        String name = TextUtils.isEmpty(deviceName) ? "电视" : deviceName;
+        browserCastStatusVisible = false;
+        dlnaCastStatusVisible = true;
+        setTip("播放请求已发送到" + name
+                + "\n手机已暂停，电视投屏会继续\n点此继续手机播放", false, false);
+        if (mPlayLoadTip != null) mPlayLoadTip.setOnClickListener(view -> {
+            if (!dlnaCastStatusVisible) return;
+            hideTip();
+            if (mPlaySession != null && mVideoView != null
+                    && mVideoView.getCurrentPlayState() == xyz.doikki.videoplayer.player.VideoView.STATE_PAUSED)
+                mPlaySession.resume();
+            else play(false);
+        });
+    }
+
+    public void updateBrowserCastState(long positionMs, long durationMs, boolean paused) {
+        if (!browserCastActive) return;
+        if (mController != null) mController.updateBrowserRemote(positionMs, durationMs, paused);
+        if (!browserCastStateKnown || browserCastPaused != paused) {
+            browserCastPaused = paused;
+            browserCastStateKnown = true;
+            setTip(browserCastStatusText(), false, false);
+        }
+    }
+
+    public void updateBrowserCastConnection(boolean online) {
+        if (!browserCastActive || browserCastOnline == online) return;
+        browserCastOnline = online;
+        setTip(browserCastStatusText(), false, false);
+    }
+
+    private String browserCastStatusText() {
+        String status = !browserCastOnline ? "电脑暂未连接"
+                : !browserCastStateKnown ? "正在投屏至电脑"
+                : browserCastPaused ? "电脑已暂停" : "正在电脑播放";
+        return status + "\n手机进度条和播放键可控制电脑"
+                + (browserCastEpisodesAvailable ? "" : "\n剧集列表已变化，选集暂不可用")
+                + "\n点此返回手机播放";
+    }
+
+    public void setBrowserCastEpisodeControls(boolean available, String title) {
+        browserCastEpisodesAvailable = available;
+        if (mController != null) {
+            mController.setBrowserEpisodeControls(available);
+            mController.setTitle(title);
+        }
+        if (browserCastActive) setTip(browserCastStatusText(), false, false);
+    }
+
+    private boolean canChangeBrowserEpisode() {
+        if (!browserCastActive || browserCastEpisodesAvailable) return true;
+        AppBubble.toast("剧集列表已变化，当前投屏仅支持播放、暂停和进度控制");
+        return false;
     }
 
     void errorWithRetry(String err, boolean finish) {
@@ -1132,7 +1290,10 @@ public class PlayFragment extends BaseLazyFragment {
                     VodInfo.VodSeries episode = mVodInfo.seriesMap.get(mVodInfo.playFlag).get(mVodInfo.playIndex);
                     castOnly = mSyncHost.onPlaybackResolved(mVodInfo.name + " " + episode.name, finalUrl);
                 }
-                if (castOnly) return;
+                if (castOnly) {
+                    showBrowserCastStatus();
+                    return;
+                }
                 // 起播统一经 PlayerSession(设进度键+URL+start;内核隔离入口)
                 if (mPlaySession != null) {
                     mPlaySession.play(finalUrl, progressKey, playbackHeaders);
@@ -1251,6 +1412,9 @@ public class PlayFragment extends BaseLazyFragment {
     /** 切换详情影片时停止旧播放及解析；播放器 View 保留供新详情使用。 */
     public void clearData() {
         pendingReadyAction = null;
+        browserCastActive = false;
+        if (mController != null) mController.setBrowserRemote(false);
+        if (mPlayLoadTip != null) hideTip();
         mParseLifetimeGeneration.incrementAndGet();
         mPlaybackGeneration.incrementAndGet();
         mVodInfo = null;
@@ -1355,6 +1519,11 @@ public class PlayFragment extends BaseLazyFragment {
     };
 
     public void setData(Bundle bundle) {
+        setData(bundle, true);
+    }
+
+    /** 已有浏览器投屏重连时只装配当前剧集与控件，不重新取流或起播。 */
+    public void setData(Bundle bundle, boolean startPlayback) {
         // mVodInfo = (VodInfo) bundle.getSerializable("VodInfo");
         mVodInfo = App.getInstance().getVodInfo();
         sourceKey = bundle.getString("sourceKey");
@@ -1363,7 +1532,12 @@ public class PlayFragment extends BaseLazyFragment {
         if (mParseEngine != null)
             mParseEngine.setSourceBean(sourceBean);
         initPlayerCfg();
-        play(false);
+        if (startPlayback) play(false);
+        else if (mVodInfo != null && mVodInfo.seriesMap != null) {
+            List<VodInfo.VodSeries> episodes = mVodInfo.seriesMap.get(mVodInfo.playFlag);
+            if (episodes != null && mVodInfo.playIndex >= 0 && mVodInfo.playIndex < episodes.size())
+                mController.setTitle(mVodInfo.name + " " + episodes.get(mVodInfo.playIndex).name);
+        }
     }
 
     private void initData() {
@@ -1422,24 +1596,24 @@ public class PlayFragment extends BaseLazyFragment {
     @Override
     public void onPause() {
         super.onPause();
-        if (mPlaySession != null)
+        if (!browserCastActive && mPlaySession != null)
             mPlaySession.pause();
     }
 
     @Override
     public void onResume() {
         super.onResume();
-        if (mPlaySession != null)
+        if (!browserCastActive && mPlaySession != null)
             mPlaySession.resume();
     }
 
     @Override
     public void onHiddenChanged(boolean hidden) {
         if (hidden) {
-            if (mPlaySession != null)
+            if (!browserCastActive && mPlaySession != null)
                 mPlaySession.pause();
         } else {
-            if (mPlaySession != null)
+            if (!browserCastActive && mPlaySession != null)
                 mPlaySession.resume();
         }
         super.onHiddenChanged(hidden);
@@ -1448,6 +1622,7 @@ public class PlayFragment extends BaseLazyFragment {
     @Override
     public void onDestroyView() {
         playbackReady = false;
+        browserCastActive = false;
         pendingReadyAction = null;
         mPlaybackGeneration.incrementAndGet();
         mParseLifetimeGeneration.incrementAndGet();
@@ -1493,6 +1668,7 @@ public class PlayFragment extends BaseLazyFragment {
     private SourceBean sourceBean;
 
     public void playNext(boolean isProgress) {
+        if (!canChangeBrowserEpisode()) return;
         boolean hasNext;
         if (mVodInfo == null || mVodInfo.seriesMap.get(mVodInfo.playFlag) == null) {
             hasNext = false;
@@ -1509,6 +1685,7 @@ public class PlayFragment extends BaseLazyFragment {
     }
 
     public void playPrevious() {
+        if (!canChangeBrowserEpisode()) return;
         boolean hasPre = true;
         if (mVodInfo == null || mVodInfo.seriesMap.get(mVodInfo.playFlag) == null) {
             hasPre = false;
@@ -1559,8 +1736,12 @@ public class PlayFragment extends BaseLazyFragment {
     }
 
     public void play(boolean reset) {
+        if (!canChangeBrowserEpisode()) return;
         if (mVodInfo == null)
             return;
+        browserCastStatusVisible = false;
+        dlnaCastStatusVisible = false;
+        if (mPlayLoadTip != null) mPlayLoadTip.setOnClickListener(null);
         if (mSubtitleCoordinator != null) mSubtitleCoordinator.invalidateForPlaybackChange();
         long requestGeneration = mPlaybackGeneration.incrementAndGet();
         cancelAddressProbe();

@@ -4,6 +4,8 @@ import com.github.tvbox.osc.player.MyVideoView;
 
 import java.util.Map;
 
+import xyz.doikki.videoplayer.player.VideoView;
+
 /**
  * 播放会话门面（改进.txt §三 PlayerSession / 播放器全驱动第一步）。
  * <p>
@@ -73,6 +75,15 @@ public final class PlayerSession {
 
     public boolean isPlaying() {
         return video != null && video.isPlaying();
+    }
+
+    /** 当前解码会话已经准备好，可从现有播放地址生成投屏请求。 */
+    public boolean hasPreparedPlayback() {
+        if (video == null) return false;
+        int state = video.getCurrentPlayState();
+        return state == VideoView.STATE_PREPARED || state == VideoView.STATE_PLAYING
+                || state == VideoView.STATE_PAUSED || state == VideoView.STATE_BUFFERING
+                || state == VideoView.STATE_BUFFERED;
     }
 
     public void seekTo(long positionMs) {

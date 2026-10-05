@@ -17,12 +17,17 @@ import androidx.core.app.NotificationCompat;
 import androidx.core.content.ContextCompat;
 
 import com.github.tvbox.osc.R;
+import com.github.tvbox.osc.log.Category;
+import com.github.tvbox.osc.log.LogStore;
+import com.github.tvbox.osc.ui.activity.LanServiceActivity;
+import com.github.tvbox.osc.ui.startup.AppLaunchSource;
 
 /** Keeps only the temporary DLNA media listener alive while a cast session is active. */
 public final class CastMediaService extends Service {
     private static final String CHANNEL_ID = "mbox_cast_media";
     private static final String EXTRA_GENERATION = "cast_media_generation";
     private static final String ACTION_STOP = "com.github.tvbox.osc.cast.STOP_MEDIA";
+    private static final String ACTION_RELEASE = "com.github.tvbox.osc.cast.RELEASE_MEDIA";
     private static final int NOTIFICATION_ID = 2108;
     private long generation = -1;
     private PowerManager.WakeLock cpuLock;
@@ -35,9 +40,17 @@ public final class CastMediaService extends Service {
         ContextCompat.startForegroundService(app, start);
     }
 
-    static void stop(Context context) {
+    static void stop(Context context, long generation) {
         Context app = context.getApplicationContext();
-        app.stopService(new Intent(app, CastMediaService.class));
+        Intent release = new Intent(app, CastMediaService.class);
+        release.setAction(ACTION_RELEASE);
+        release.putExtra(EXTRA_GENERATION, generation);
+        app.startService(release);
+    }
+
+    /** Read-only status for a notification page opened before the TV confirms the cast. */
+    public static boolean isServingGeneration(long expectedGeneration) {
+        return CastMediaRelay.hasActiveRelay(expectedGeneration);
     }
 
     @Override public void onCreate() {
@@ -51,22 +64,28 @@ public final class CastMediaService extends Service {
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
         long requested = intent == null ? -1 : intent.getLongExtra(EXTRA_GENERATION, -1);
+        if (intent != null && ACTION_RELEASE.equals(intent.getAction())) {
+            // An old relay's cleanup must not tear down the replacement foreground service.
+            if (!CastMediaRelay.hasActiveRelay()) stopSelf(startId);
+            return START_NOT_STICKY;
+        }
         if (intent != null && ACTION_STOP.equals(intent.getAction())) {
-            if (CastMediaRelay.hasActiveRelay(requested)) {
-                CastMediaRelay.stopActiveFromService(requested);
-                stopSelf();
-            }
+            CastMediaRelay.cancelActiveCast(requested, null);
+            if (!CastMediaRelay.hasActiveRelay()) stopSelf(startId);
             return START_NOT_STICKY;
         }
         if (!CastMediaRelay.hasActiveRelay(requested)) {
-            stopSelf(startId);
+            if (!CastMediaRelay.hasActiveRelay()) stopSelf(startId);
             return START_NOT_STICKY;
         }
         generation = requested;
         try {
             startForeground(NOTIFICATION_ID, notification());
             holdWhileServing();
+            LogStore.log(Category.PLAYER, "投屏媒体服务: 前台保活已启动");
         } catch (RuntimeException error) {
+            LogStore.fail(Category.PLAYER, "投屏媒体服务: 前台保活失败="
+                    + error.getClass().getSimpleName());
             stopSelf(startId);
             return START_NOT_STICKY;
         }
@@ -74,27 +93,37 @@ public final class CastMediaService extends Service {
     }
 
     private Notification notification() {
+        CastMediaRelay.ActiveCast active = CastMediaRelay.activeCast();
+        boolean confirmed = active != null && active.generation == generation;
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
                 .setSmallIcon(R.drawable.app_icon)
-                .setContentTitle("MBox 正在投屏")
-                .setContentText("当前媒体临时共享给电视，结束投屏后自动关闭")
+                .setContentTitle(confirmed ? "DLNA 正在投屏" : "DLNA 准备投屏")
+                .setContentText(confirmed ? "点此查看并停止 DLNA 投屏" : "点此查看投屏状态")
                 .setCategory(NotificationCompat.CATEGORY_SERVICE)
                 .setOngoing(true)
                 .setOnlyAlertOnce(true);
-        Intent launch = getPackageManager().getLaunchIntentForPackage(getPackageName());
-        if (launch != null) {
-            launch.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
-            PendingIntent open = PendingIntent.getActivity(this, NOTIFICATION_ID, launch,
-                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-            builder.setContentIntent(open);
-        }
-        Intent stop = new Intent(this, CastMediaService.class);
-        stop.setAction(ACTION_STOP);
-        stop.putExtra(EXTRA_GENERATION, generation);
-        PendingIntent stopAction = PendingIntent.getService(this,
-                (int) (generation & 0x7fffffffL), stop,
+        Intent launch = new Intent(this, LanServiceActivity.class);
+        launch.putExtra(LanServiceActivity.EXTRA_FROM_NOTIFICATION, true);
+        launch.putExtra(LanServiceActivity.EXTRA_DLNA_GENERATION, generation);
+        launch.putExtra(AppLaunchSource.EXTRA_NON_USER_ENTRY, true);
+        // Keep each notification entry tied to its own cast, including PendingIntents retained by
+        // the system after a newer cast replaces it.
+        launch.setData(android.net.Uri.parse("mbox://dlna-cast/" + generation));
+        launch.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        PendingIntent open = PendingIntent.getActivity(this,
+                (int) (generation & 0x7fffffffL), launch,
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
-        builder.addAction(R.drawable.ic_close_24, "停止投屏", stopAction);
+        builder.setContentIntent(open);
+        if (confirmed) {
+            Intent stop = new Intent(this, CastMediaService.class);
+            stop.setAction(ACTION_STOP);
+            stop.putExtra(EXTRA_GENERATION, generation);
+            stop.setData(android.net.Uri.parse("mbox://dlna-stop/" + generation));
+            PendingIntent stopAction = PendingIntent.getService(this,
+                    (int) (generation & 0x7fffffffL), stop,
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+            builder.addAction(R.drawable.ic_close_24, "停止 DLNA 投屏", stopAction);
+        }
         return builder.build();
     }
 

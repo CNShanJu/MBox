@@ -43,6 +43,7 @@ import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BooleanSupplier;
 
 /**
  * A small DLNA control point. It discovers UPnP MediaRenderers and asks a selected TV to
@@ -64,6 +65,8 @@ public final class DlnaController implements AutoCloseable {
             });
     private static final int MAX_DESCRIPTION_BYTES = 128 * 1024;
     private static final int MAX_SOAP_BYTES = 16 * 1024;
+    // Stop and a replacement SetURI/Play must never overtake each other on one renderer.
+    private static final Object TRANSPORT_COMMANDS = new Object();
     private static final String M_SEARCH_PREFIX = "M-SEARCH * HTTP/1.1\r\n"
             + "HOST: 239.255.255.250:1900\r\n"
             + "MAN: \"ssdp:discover\"\r\n"
@@ -199,12 +202,44 @@ public final class DlnaController implements AutoCloseable {
             // search and UI delivery, but must not cut off a command already sent to the TV.
             String error;
             try {
-                error = sendToRenderer(device, title, media, positionMs);
+                synchronized (TRANSPORT_COMMANDS) {
+                    error = sendToRenderer(device, title, media, positionMs);
+                }
             } catch (Exception failure) {
+                LogStore.fail(Category.PLAYER, "投屏控制: 命令异常="
+                        + failure.getClass().getSimpleName());
                 error = "连接电视失败，请确认设备仍在线";
             }
+            if (error == null) LogStore.success(Category.PLAYER, "投屏控制: 电视已接受地址和播放命令");
+            else LogStore.fail(Category.PLAYER, "投屏控制: " + error);
             postCast(callback, error == null,
                     error == null ? "已向 " + device.name + " 发送播放命令" : error);
+        });
+    }
+
+    /** Explicit cancellation only. The generation check runs inside the same gate as SetURI/Play. */
+    static void stopIfCurrent(Device device, BooleanSupplier isCurrent, CastCallback callback) {
+        HeavyTaskUtil.getBigTaskExecutorService().execute(() -> {
+            boolean success = false;
+            String message;
+            synchronized (TRANSPORT_COMMANDS) {
+                if (device == null || !isCurrent.getAsBoolean()) {
+                    message = "投屏状态已更新，本次停止已忽略";
+                } else {
+                    try {
+                        int status = soapRequest(device, "Stop", "<InstanceID>0</InstanceID>");
+                        success = status >= 200 && status < 300;
+                        message = success ? "DLNA 投屏已停止"
+                                : "电视未确认停止（HTTP " + status + "），手机媒体代理已关闭";
+                    } catch (IOException | RuntimeException error) {
+                        message = "电视未确认停止，手机媒体代理已关闭";
+                    }
+                    if (success) LogStore.success(Category.PLAYER, "DLNA 投屏取消: 电视已接受停止命令");
+                    else LogStore.fail(Category.PLAYER, "DLNA 投屏取消: 电视未确认停止命令");
+                }
+            }
+            // The owner cleans up the captured relay in this background callback.
+            callback.onResult(success, message);
         });
     }
 

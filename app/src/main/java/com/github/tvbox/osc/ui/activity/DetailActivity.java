@@ -32,7 +32,6 @@ import androidx.core.widget.TextViewCompat;
 import androidx.lifecycle.Observer;
 import androidx.lifecycle.ViewModelProvider;
 
-import com.blankj.utilcode.util.NotificationUtils;
 import com.blankj.utilcode.util.ScreenUtils;
 import com.blankj.utilcode.util.ServiceUtils;
 import com.github.tvbox.osc.util.AppBubble;
@@ -46,6 +45,8 @@ import com.github.tvbox.osc.bean.Movie;
 import com.github.tvbox.osc.bean.SourceBean;
 import com.github.tvbox.osc.bean.VodInfo;
 import com.github.tvbox.osc.repo.HistoryRepositories;
+import com.github.tvbox.osc.log.Category;
+import com.github.tvbox.osc.log.LogStore;
 import com.github.tvbox.osc.databinding.ActivityDetailBinding;
 import com.github.tvbox.osc.player.api.PlayConfig;
 import com.github.tvbox.osc.service.PlayService;
@@ -138,6 +139,8 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     private boolean historyDetailCompleted;
     private boolean historyDetailRefreshed;
     private boolean historyRefreshRetryUsed;
+    private boolean historyCastRefreshPending;
+    private int historyCastRequestEpoch;
     private String historySnapshotEpisodeUrl;
     private String failedHistoryEpisodeUrl;
     private String failedHistoryError;
@@ -146,8 +149,34 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     private long failedHistoryGeneration = -1;
     private final Handler historyRefreshHandler = new Handler(Looper.getMainLooper());
     private final Runnable historyRefreshTimeout = this::finishPendingHistoryFailure;
+    private final Runnable historyCastRefreshTimeout = () -> {
+        if (!historyCastRefreshPending) return;
+        historyCastRefreshPending = false;
+        AppBubble.toast("投屏地址刷新超时，请重试");
+    };
+    private final Handler browserCastSyncHandler = new Handler(Looper.getMainLooper());
+    private boolean browserCastAttached;
+    private boolean browserCastVisible;
+    private final Runnable browserCastSync = new Runnable() {
+        @Override public void run() {
+            if (!browserCastVisible || !browserCastAttached || isFinishing() || isDestroyed()) return;
+            RemoteServer.BrowserPlaybackState state = ControlManager.get().browserPlaybackState(lanCastOwner);
+            if (state == null) {
+                browserCastAttached = false;
+                if (playFragment != null) playFragment.showBrowserCastEndedStatus();
+                return;
+            }
+            if (playFragment != null) playFragment.updateBrowserCastConnection(state.online);
+            if (playFragment != null && state.updatedAtMs > 0)
+                playFragment.updateBrowserCastState(state.positionMs, state.durationMs, state.paused);
+            browserCastSyncHandler.postDelayed(this, 1000);
+        }
+    };
     private int detailRequestEpoch;
     private final String lanCastOwner = java.util.UUID.randomUUID().toString();
+    private String browserCastSessionId;
+    private boolean restoringBrowserCast;
+    private boolean browserCastEpisodesAvailable = true;
     public SeriesFlagAdapter seriesFlagAdapter;
     public SeriesAdapter seriesAdapter;
     public String vodId;
@@ -174,6 +203,8 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
 
     @Override
     protected void init() {
+        if (getIntent() != null && !TextUtils.isEmpty(getIntent().getStringExtra("browserCastSessionId")))
+            showPreview = true;
         initReceiver();
         initView();
         initViewModel();
@@ -298,7 +329,7 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
             public void onClose() {
                 playServerSwitch(false);
                 finish();
-                NotificationUtils.cancelAll();
+                PlayService.cancelPlaybackNotification(DetailActivity.this);
             }
         });
     }
@@ -358,12 +389,18 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     @Override
     protected void onResume() {
         super.onResume();
+        browserCastVisible = true;
+        if (browserCastAttached) {
+            browserCastSyncHandler.removeCallbacks(browserCastSync);
+            browserCastSyncHandler.post(browserCastSync);
+        }
         pipHelper.onActivityResumed(); // 点X关闭后带回前台:立即补暂停,消除"先播放一下再暂停"
         openBackgroundPlay = false;
         playServerSwitch(false);
         pipExitByBack = false; // 回到前台,清除返回键退出标记
         navigatingAway = false; // 回到前台,清除应用内跳转标记
-        mBinding.ivPrivateBrowsing.postDelayed(NotificationUtils::cancelAll, 800);
+        mBinding.ivPrivateBrowsing.postDelayed(
+                () -> PlayService.cancelPlaybackNotification(DetailActivity.this), 800);
         if (collectionStateReady && !collectionBusy) refreshCollectionState();
     }
 
@@ -490,6 +527,8 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
 
     @Override
     protected void onPause() {
+        browserCastVisible = false;
+        browserCastSyncHandler.removeCallbacks(browserCastSync);
         super.onPause();
         if (openBackgroundPlay) {
             playServerSwitch(true);
@@ -547,6 +586,7 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
      * @return 反转后的状态:true=已倒序(按钮应显示"正序");false=正序(按钮显示"倒序")
      */
     public boolean sortSeries() {
+        if (!canSelectBrowserEpisode()) return vodInfo != null && vodInfo.reverseSort;
         if (isCurrentDetail(vodInfo)) {
             episodeSelection.reverse(vodInfo);
             if (isCurrentPreview()) {
@@ -555,6 +595,11 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
                 previewVodInfo.reverseSort = vodInfo.reverseSort;
             }
             refreshList();
+            if (browserCastAttached) {
+                registerBrowserCastDetail();
+                ControlManager.get().attachBrowserCastDetail(lanCastOwner, browserCastSessionId,
+                        currentCastEpisodeNames(), browserEpisodeHandler(detailRequestEpoch));
+            }
         }
         // 详情页选集区按钮文字跟随共用状态(弹窗内排序也同步;原调用点手调 updateSortButtonText 保留无害)
         updateSortButtonText();
@@ -579,48 +624,167 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
                 || vodInfo.seriesMap.get(vodInfo.playFlag) == null
                 || vodInfo.playIndex < 0
                 || vodInfo.playIndex >= vodInfo.seriesMap.get(vodInfo.playFlag).size()) return;
-        String playingUrl = playFragment.getCastUrl();
-        if (TextUtils.isEmpty(playingUrl)) {
-            AppBubble.toast("当前播放地址仍在解析，请稍后重试");
+        if (historyQuickPlayback && !historyDetailCompleted) {
+            AppBubble.toast("历史剧集信息仍在刷新，请稍后投屏");
             return;
         }
+        if (historyCastRefreshPending) {
+            AppBubble.toast("投屏地址正在刷新，请稍后");
+            return;
+        }
+        PlayFragment.CastRequest request = playFragment.currentCastRequest();
+        if (request != null && (request.playableNow
+                || !historyQuickPlayback || !historyDetailRefreshed)) {
+            openCastDialog(request.url, request.headers, request.sourceUrl, request.positionMs);
+            return;
+        }
+        if (historyQuickPlayback && historyDetailRefreshed) {
+            resolveHistoryCastWithoutRestart();
+            return;
+        }
+        AppBubble.toast("当前播放地址仍在解析，请稍后重试");
+    }
+
+    /** 历史地址过期且当前还没有可用快照时，独立解析投屏地址，不触碰手机解码器。 */
+    private void resolveHistoryCastWithoutRestart() {
+        List<VodInfo.VodSeries> episodes = vodInfo.seriesMap.get(vodInfo.playFlag);
+        if (episodes == null || vodInfo.playIndex < 0 || vodInfo.playIndex >= episodes.size()) return;
+        VodInfo.VodSeries episode = episodes.get(vodInfo.playIndex);
+        if (episode == null || TextUtils.isEmpty(episode.url)) {
+            AppBubble.toast("该集没有可用的投屏地址");
+            return;
+        }
+        final int detailEpoch = detailRequestEpoch;
+        final int selectionEpoch = playbackSelectionEpoch;
+        final VodInfo requestVod = vodInfo;
+        final String requestFlag = vodInfo.playFlag;
+        final String requestKey = sourceKey;
+        final String rawUrl = episode.url;
+        final long positionMs = playFragment.getPlayer() == null ? 0
+                : playFragment.getPlayer().getCurrentPosition();
+        final int castRequestEpoch = ++historyCastRequestEpoch;
+        historyCastRefreshPending = true;
+        historyRefreshHandler.removeCallbacks(historyCastRefreshTimeout);
+        historyRefreshHandler.postDelayed(historyCastRefreshTimeout, HISTORY_REFRESH_TIMEOUT_MS);
+        LogStore.log(Category.PLAYER, "历史剧集投屏: 后台独立解析地址，不重启手机播放");
+        try {
+            HeavyTaskUtil.getBigTaskExecutorService().execute(() -> {
+                ResolveResult result = null;
+                try {
+                    result = PlayUrlResolverProviders.get()
+                            .resolveCurrentWithPlaybackHeaders(requestKey, requestFlag, rawUrl, null, null);
+                } catch (RuntimeException error) {
+                    LogStore.log(Category.PLAYER, "历史剧集投屏地址解析失败: "
+                            + error.getClass().getSimpleName());
+                }
+                final ResolveResult resolved = result;
+                runOnUiThread(() -> {
+                    if (!historyCastRefreshPending || castRequestEpoch != historyCastRequestEpoch
+                            || detailEpoch != detailRequestEpoch
+                            || selectionEpoch != playbackSelectionEpoch || isFinishing() || isDestroyed()
+                            || vodInfo != requestVod || !TextUtils.equals(vodInfo.playFlag, requestFlag)
+                            || vodInfo.seriesMap == null || vodInfo.seriesMap.get(requestFlag) != episodes
+                            || vodInfo.playIndex < 0 || vodInfo.playIndex >= episodes.size()
+                            || episodes.get(vodInfo.playIndex) != episode) return;
+                    historyCastRefreshPending = false;
+                    historyRefreshHandler.removeCallbacks(historyCastRefreshTimeout);
+                    PlayFragment.CastRequest current = playFragment == null
+                            ? null : playFragment.currentCastRequest();
+                    if (current != null && current.playableNow) {
+                        openCastDialog(current.url, current.headers, current.sourceUrl,
+                                current.positionMs);
+                    } else if (resolved != null && isHttpAddress(resolved.url)) {
+                        openCastDialog(resolved.url, resolved.headers, resolved.url, positionMs);
+                    } else AppBubble.toast("该集未解析出可投屏地址，请稍后重试");
+                });
+            });
+        } catch (RuntimeException error) {
+            historyCastRefreshPending = false;
+            historyRefreshHandler.removeCallbacks(historyCastRefreshTimeout);
+            LogStore.log(Category.PLAYER, "历史剧集投屏任务启动失败: "
+                    + error.getClass().getSimpleName());
+            AppBubble.toast("投屏地址解析暂不可用，请重试");
+        }
+    }
+
+    private void openCastDialog(String playingUrl, Map<String, String> castHeaders,
+                                String headerOrigin, long positionMs) {
+        if (!isCurrentPreview() || playFragment == null || TextUtils.isEmpty(playingUrl)) return;
         VodInfo.VodSeries vodSeries = vodInfo.seriesMap.get(vodInfo.playFlag).get(vodInfo.playIndex);
         List<String> castEpisodes = currentCastEpisodeNames();
         int detailEpoch = detailRequestEpoch;
         CastListDialog castDialog = new CastListDialog(this, new CastVideo(vodSeries.name,
-                playingUrl, playFragment.getPlayer() == null ? 0
-                : playFragment.getPlayer().getCurrentPosition()), deviceId -> {
+                playingUrl, positionMs), new CastListDialog.OnCastStarted() {
+            @Override public void onCastStarted(String deviceId) {
                     if (detailEpoch != detailRequestEpoch || !isCurrentPreview()) return;
                     if (deviceId != null) {
+                        browserCastEpisodesAvailable = true;
                         ControlManager.get().setEpisodeCast(lanCastOwner, deviceId, castEpisodes,
-                                vodInfo.playIndex, new RemoteServer.NextEpisodeHandler() {
-                                    @Override public boolean playNext() {
-                                        if (detailEpoch != detailRequestEpoch || !isCurrentPreview() || playFragment == null || vodInfo.seriesMap == null
-                                                || vodInfo.seriesMap.get(vodInfo.playFlag) == null
-                                                || vodInfo.playIndex + 1 >= vodInfo.seriesMap.get(vodInfo.playFlag).size()) return false;
-                                        playFragment.playNext(false);
-                                        return true;
-                                    }
-
-                                    @Override public boolean selectEpisode(int index) {
-                                        if (detailEpoch != detailRequestEpoch || !isCurrentPreview() || playFragment == null || vodInfo.seriesMap == null
-                                                || vodInfo.seriesMap.get(vodInfo.playFlag) == null
-                                                || index < 0 || index >= vodInfo.seriesMap.get(vodInfo.playFlag).size()) return false;
-                                        if (index == vodInfo.playIndex) playFragment.play(false);
-                                        else {
-                                            episodeSelection.browse(vodInfo, vodInfo.playFlag);
-                                            refreshList();
-                                            chooseSeries(index, false);
-                                        }
-                                        return true;
-                                    }
-                                });
+                                vodInfo.playIndex, browserEpisodeHandler(detailEpoch));
+                        registerBrowserCastDetail();
+                        browserCastAttached = true;
+                        playFragment.showBrowserCastStatus();
+                        if (browserCastVisible) {
+                            browserCastSyncHandler.removeCallbacks(browserCastSync);
+                            browserCastSyncHandler.post(browserCastSync);
+                        }
                     } else {
                         ControlManager.get().clearEpisodeCast(lanCastOwner);
+                        browserCastSessionId = null;
+                        restoringBrowserCast = false;
+                        browserCastAttached = false;
+                        browserCastSyncHandler.removeCallbacks(browserCastSync);
+                        playFragment.clearBrowserCastStatus();
                     }
                     if (playFragment.getPlayer() != null) playFragment.getPlayer().pause();
-                }, playFragment.getPlayHeaders(), playFragment.getFinalUrl());
+            }
+
+            @Override public void onDlnaStarted(String deviceName) {
+                onCastStarted(null);
+                if (detailEpoch != detailRequestEpoch || !isCurrentPreview()) return;
+                playFragment.showDlnaCastStatus(deviceName);
+            }
+        }, castHeaders, headerOrigin);
         DialogCoordinator.centerInHostView(this, castDialog).show();
+    }
+
+    private RemoteServer.NextEpisodeHandler browserEpisodeHandler(int detailEpoch) {
+        return new RemoteServer.NextEpisodeHandler() {
+            @Override public boolean playNext() {
+                if (!browserCastEpisodesAvailable) return false;
+                if (detailEpoch != detailRequestEpoch || !isCurrentPreview() || playFragment == null
+                        || vodInfo.seriesMap == null || vodInfo.seriesMap.get(vodInfo.playFlag) == null
+                        || vodInfo.playIndex + 1 >= vodInfo.seriesMap.get(vodInfo.playFlag).size()) return false;
+                playFragment.playNext(false);
+                return true;
+            }
+
+            @Override public boolean selectEpisode(int index) {
+                if (!browserCastEpisodesAvailable) return false;
+                if (detailEpoch != detailRequestEpoch || !isCurrentPreview() || playFragment == null
+                        || vodInfo.seriesMap == null || vodInfo.seriesMap.get(vodInfo.playFlag) == null
+                        || index < 0 || index >= vodInfo.seriesMap.get(vodInfo.playFlag).size()) return false;
+                if (index == vodInfo.playIndex) playFragment.play(false);
+                else {
+                    episodeSelection.browse(vodInfo, vodInfo.playFlag);
+                    refreshList();
+                    chooseSeries(index, false);
+                }
+                return true;
+            }
+        };
+    }
+
+    private void registerBrowserCastDetail() {
+        if (!isCurrentDetail(vodInfo)) return;
+        List<VodInfo.VodSeries> episodes = vodInfo.seriesMap == null ? null
+                : vodInfo.seriesMap.get(vodInfo.playFlag);
+        if (episodes == null || vodInfo.playIndex < 0 || vodInfo.playIndex >= episodes.size()) return;
+        VodInfo.VodSeries episode = episodes.get(vodInfo.playIndex);
+        RemoteServer.BrowserCastDetail detail = ControlManager.get().setBrowserCastDetail(lanCastOwner,
+                sourceKey, vodId, vodInfo.name, vodInfo.playFlag, vodInfo.playIndex, vodInfo.reverseSort,
+                episode.name, episode.url);
+        if (detail != null) browserCastSessionId = detail.sessionId;
     }
 
     public void showAllSeriesDialog() {
@@ -657,6 +821,7 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     }
 
     private void chooseSeries(int position, boolean reloadWithChangeLine) {
+        if (!canSelectBrowserEpisode()) return;
         if (!isCurrentDetail(vodInfo)) return;
         String previousFlag = vodInfo.playFlag;
         int previousIndex = vodInfo.playIndex;
@@ -668,6 +833,8 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
 
     private void jumpToPlay() {
         if (playFragment == null) return;
+        historyCastRefreshPending = false;
+        historyRefreshHandler.removeCallbacks(historyCastRefreshTimeout);
         int epoch = ++playbackSelectionEpoch;
         int detailEpoch = detailRequestEpoch;
         playFragment.runWhenPlaybackReady(() -> {
@@ -711,7 +878,11 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
             }
             // setData→play 会同步回调 onEpisodeSelected，那里按本次选集异步保存历史。
             startedPlaybackEpoch = playbackSelectionEpoch;
-            playFragment.setData(bundle);
+            if (restoringBrowserCast) {
+                // 回到已有投屏只装配手机控件，保留电脑正在播放的媒体和进度。
+                playFragment.setData(bundle, false);
+                restoreBrowserCastControls();
+            } else playFragment.setData(bundle);
 
             //定位选集
             if (TextUtils.equals(episodeSelection.displayedFlag(vodInfo), vodInfo.playFlag))
@@ -765,6 +936,7 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
         VodInfo fresh = new VodInfo();
         fresh.setVideo(video);
         fresh.sourceKey = video.sourceKey;
+        if (!isCurrentDetail(fresh)) return;
         if (historySnapshotShown && (fresh.seriesMap == null || fresh.seriesMap.isEmpty())) {
             finishPendingHistoryFailure();
             return;
@@ -780,7 +952,7 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
             finishPendingHistoryFailure();
             return;
         }
-        showVodInfo(fresh, historyQuickPlayback);
+        showVodInfo(fresh, historyQuickPlayback || browserCastAttached);
         historyDetailRefreshed = historyQuickPlayback;
         if (historySnapshotShown) insertVod(sourceKey, fresh);
         historyRecord = fresh;
@@ -821,6 +993,15 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     }
 
     private void showVodInfo(VodInfo info, boolean keepPlaying) {
+        if (restoringBrowserCast || browserCastAttached) {
+            RemoteServer.BrowserCastDetail detail = currentBrowserCastDetail();
+            if (detail != null) {
+                if (info.reverseSort != detail.reverseSort && info.seriesMap != null) info.reverse();
+                info.reverseSort = detail.reverseSort;
+                info.playFlag = detail.playFlag;
+                info.playIndex = detail.selectedIndex;
+            }
+        }
         vodInfo = info;
         episodeSelection.bind(info, keepPlaying);
         updateCollectAction(collected);
@@ -870,6 +1051,7 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
                 previewVodInfo.name = info.name;
                 previewVodInfo.playerCfg = info.playerCfg;
                 previewVodInfo.reverseSort = info.reverseSort;
+                if (browserCastAttached) rebindBrowserCastControls(currentBrowserCastDetail());
             } else {
                 jumpToPlay();
             }
@@ -921,6 +1103,24 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
             mPassedName = bundle.getString("vodName", "");
             String id = bundle.getString("id", null);
             String key = bundle.getString("sourceKey", "");
+            String castSession = bundle.getString("browserCastSessionId");
+            if (!TextUtils.isEmpty(castSession)) {
+                RemoteServer.BrowserCastDetail detail = ControlManager.get().activeBrowserCastDetail();
+                if (detail == null || !castSession.equals(detail.sessionId)) {
+                    AppBubble.toast("该投屏已结束");
+                    if (vodInfo == null) finish();
+                    return;
+                }
+                if (playFragment == null) {
+                    showPreview = true;
+                    playFragment = new PlayFragment();
+                    playFragment.setPlaySyncHost(this);
+                    getSupportFragmentManager().beginTransaction()
+                            .add(R.id.previewPlayer, playFragment).commit();
+                }
+                loadDetail(detail.vodId, detail.sourceKey, null, castSession);
+                return;
+            }
             Object saved = bundle.getSerializable("historySnapshot");
             VodInfo snapshot = saved instanceof VodInfo ? (VodInfo) saved : null;
             if (snapshot != null && (!TextUtils.equals(snapshot.id, id)
@@ -931,13 +1131,31 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
         }
     }
 
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        initData();
+    }
+
     private void loadDetail(String vid, String key) {
         loadDetail(vid, key, null);
     }
 
     private void loadDetail(String vid, String key, VodInfo snapshot) {
+        loadDetail(vid, key, snapshot, null);
+    }
+
+    private void loadDetail(String vid, String key, VodInfo snapshot, String castSession) {
         if (vid != null) {
             int epoch = ++detailRequestEpoch;
+            browserCastSessionId = castSession;
+            restoringBrowserCast = !TextUtils.isEmpty(castSession);
+            browserCastEpisodesAvailable = true;
+            if (castSession == null && getIntent() != null)
+                getIntent().removeExtra("browserCastSessionId");
+            browserCastAttached = false;
+            browserCastSyncHandler.removeCallbacks(browserCastSync);
             ++playbackSelectionEpoch;
             if (playFragment != null) playFragment.clearData();
             ++externalDownloadEpoch;
@@ -964,6 +1182,8 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
             historyDetailCompleted = false;
             historyDetailRefreshed = false;
             historyRefreshRetryUsed = false;
+            historyCastRefreshPending = false;
+            historyRefreshHandler.removeCallbacks(historyCastRefreshTimeout);
             historySnapshotEpisodeUrl = HistoryEntryNavigator.hasPlayableSnapshot(snapshot)
                     ? snapshot.seriesMap.get(snapshot.playFlag).get(snapshot.playIndex).url : null;
             historyRefreshHandler.removeCallbacks(historyRefreshTimeout);
@@ -1003,6 +1223,10 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
                     if (snapshot == null) {
                         historyRecord = record;
                         historyRecordReady = true;
+                        if (restoringBrowserCast && HistoryEntryNavigator.hasPlayableSnapshot(record)) {
+                            historySnapshotShown = true;
+                            showVodInfo(record, false);
+                        }
                     }
                     if (collectEpoch == collectionQueryEpoch) {
                         collectionStateReady = true;
@@ -1017,6 +1241,57 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
                 });
             });
         }
+    }
+
+    private RemoteServer.BrowserCastDetail currentBrowserCastDetail() {
+        RemoteServer.BrowserCastDetail detail = ControlManager.get().activeBrowserCastDetail();
+        return detail != null && TextUtils.equals(detail.sessionId, browserCastSessionId)
+                && TextUtils.equals(detail.vodId, vodId) && TextUtils.equals(detail.sourceKey, sourceKey)
+                ? detail : null;
+    }
+
+    private void restoreBrowserCastControls() {
+        RemoteServer.BrowserCastDetail detail = currentBrowserCastDetail();
+        if (detail != null) detail = rebindBrowserCastControls(detail);
+        restoringBrowserCast = false;
+        playFragment.showBrowserCastStatus();
+        if (detail != null) playFragment.setBrowserCastEpisodeControls(browserCastEpisodesAvailable,
+                detail.vodName + " " + detail.episodeName);
+        browserCastAttached = detail != null;
+        if (detail == null) {
+            browserCastSessionId = null;
+            playFragment.showBrowserCastEndedStatus();
+        } else if (browserCastVisible) {
+            browserCastSyncHandler.removeCallbacks(browserCastSync);
+            browserCastSyncHandler.post(browserCastSync);
+        }
+    }
+
+    private RemoteServer.BrowserCastDetail rebindBrowserCastControls(RemoteServer.BrowserCastDetail detail) {
+        if (detail == null) return null;
+        boolean matches = isCurrentDetail(vodInfo) && TextUtils.equals(vodInfo.playFlag, detail.playFlag)
+                && vodInfo.playIndex == detail.selectedIndex && vodInfo.reverseSort == detail.reverseSort;
+        List<VodInfo.VodSeries> episodes = vodInfo == null || vodInfo.seriesMap == null ? null
+                : vodInfo.seriesMap.get(vodInfo.playFlag);
+        if (matches) matches = episodes != null && vodInfo.playIndex >= 0
+                && vodInfo.playIndex < episodes.size()
+                && TextUtils.equals(episodes.get(vodInfo.playIndex).name, detail.episodeName)
+                && TextUtils.equals(episodes.get(vodInfo.playIndex).url, detail.episodeUrl);
+        browserCastEpisodesAvailable = matches;
+        RemoteServer.BrowserCastDetail attached = ControlManager.get().attachBrowserCastDetail(lanCastOwner,
+                detail.sessionId, matches ? currentCastEpisodeNames() : java.util.Collections.emptyList(),
+                matches ? browserEpisodeHandler(detailRequestEpoch) : new RemoteServer.NextEpisodeHandler() {
+                    @Override public boolean playNext() { return false; }
+                });
+        if (playFragment != null) playFragment.setBrowserCastEpisodeControls(matches,
+                detail.vodName + " " + detail.episodeName);
+        return attached;
+    }
+
+    private boolean canSelectBrowserEpisode() {
+        if (!browserCastAttached || browserCastEpisodesAvailable) return true;
+        AppBubble.toast("剧集列表已变化，当前投屏仅支持播放、暂停和进度控制");
+        return false;
     }
 
     /** 收藏是普通动作，取消收藏是移除动作；文字与图标保持同一颜色。 */
@@ -1142,8 +1417,32 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
                 vodInfo.playIndex, currentCastEpisodeNames(),
                 playFragment == null ? null : playFragment.getPlayHeaders(),
                 playFragment == null ? null : playFragment.getFinalUrl())) return false;
+        browserCastAttached = true;
+        registerBrowserCastDetail();
+        if (browserCastVisible) {
+            browserCastSyncHandler.removeCallbacks(browserCastSync);
+            browserCastSyncHandler.post(browserCastSync);
+        }
         if (playFragment != null && playFragment.getPlayer() != null)
             playFragment.getPlayer().pause();
+        return true;
+    }
+
+    @Override
+    public boolean controlBrowserCast(String action, long positionMs) {
+        boolean sent = ControlManager.get().controlBrowserPlayback(lanCastOwner, action, positionMs);
+        if (!sent) AppBubble.toast("电脑暂未连接，请稍后重试");
+        return sent;
+    }
+
+    @Override
+    public boolean stopBrowserCast() {
+        ControlManager.get().stopBrowserPlayback(lanCastOwner);
+        browserCastEpisodesAvailable = true;
+        browserCastSessionId = null;
+        restoringBrowserCast = false;
+        browserCastAttached = false;
+        browserCastSyncHandler.removeCallbacks(browserCastSync);
         return true;
     }
 
@@ -1199,6 +1498,9 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
 
     @Override
     protected void onDestroy() {
+        browserCastVisible = false;
+        browserCastAttached = false;
+        browserCastSyncHandler.removeCallbacks(browserCastSync);
         ++detailRequestEpoch;
         ++playbackSelectionEpoch;
         ++externalDownloadEpoch;
@@ -1206,6 +1508,7 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
         dismissSeriesDialogs();
         downloadDialogCoordinator.invalidate();
         historyRefreshHandler.removeCallbacks(historyRefreshTimeout);
+        historyRefreshHandler.removeCallbacks(historyCastRefreshTimeout);
         ControlManager.get().clearEpisodeCast(lanCastOwner);
         sourceViewModel.setQuickSearchBatchListener(null); // 断开 quick 结果直调,防悬垂
         if (playFragment != null) playFragment.setPlaySyncHost(null); // 断开屏内直调
@@ -1648,7 +1951,8 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
             if (!isCurrentPreview() || playFragment == null || playFragment.getPlayer() == null
                     || !HistoryEntryNavigator.hasPlayableSnapshot(vodInfo)) return;
             VodInfo.VodSeries vod = vodInfo.seriesMap.get(vodInfo.playFlag).get(vodInfo.playIndex);
-            PlayService.start(playFragment.getPlayer(), vodInfo.name + "&&" + vod.name);
+            PlayService.start(playFragment.getPlayer(), vodInfo.name + "&&" + vod.name,
+                    vodInfo.id, sourceKey, vodInfo.name);
             pipHelper.setReceiverEnabled(true);
         } else {
             if (ServiceUtils.isServiceRunning(PlayService.class)) {
