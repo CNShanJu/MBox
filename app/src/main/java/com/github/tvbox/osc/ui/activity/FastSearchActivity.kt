@@ -78,6 +78,7 @@ import com.lxj.xpopup.interfaces.SimpleCallback
 import com.github.tvbox.osc.ui.kit.FlowTagLayout
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.ceil
 
 class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatcher {
 
@@ -213,6 +214,7 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
 
     /** 「最近热搜」固定两列，宽屏只调整榜单宽度。 */
     private val mHotRankAdapter = com.github.tvbox.osc.ui.adapter.HotRankAdapter()
+    private var favoriteWords: List<String> = emptyList()
 
     /** 搜索是否已全部完成(全部来源返回后置真;"到底了"仅完成态显示) */
     private var searchFinished = false
@@ -259,6 +261,7 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
         initData()
         //历史搜索
         initHistorySearch()
+        initFavoriteSearch()
         // 最近热搜(360 影视排行;与 360kan 排行页同源,NewBox 搜索页同款)
         initHotRank()
     }
@@ -341,7 +344,7 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
      */
     private fun setupResultRefreshAndEndTip() {
         // 环境注入:动画/toast/业务日志由 app 组合根组装,页面不直连 LoadingAnim/AppBubble/LogStore
-        val env = RefreshUiEnvFactory.create()
+        val env = RefreshUiEnvFactory.createSearchResults()
         mBinding.llLayout.setEnv(env)
         mBinding.llLayout.setOnRefreshListener {
             pullRefreshSearch()
@@ -493,7 +496,7 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
 
     /**
      * 从结果页回到搜索页:停掉在跑的搜索 + 清空输入框 —— 清空会走 [afterTextChanged] 切回建议态
-     * (露出「最近热搜 + 搜索历史」,相关搜索收起);用户的**搜索历史**不受影响(只有输入框内容被清掉)。
+     * (露出「最近热搜 + 常用收藏 + 搜索历史」,相关搜索收起);用户的搜索词记录不受影响。
      */
     private fun backToSearchPage() {
         cancel()
@@ -584,7 +587,7 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
 
     /**
      * 应用结果布局：0 单列列表(LinearLayoutManager+列表行)，1 宫格/网格(GridLayoutManager+3:4 宫格卡)，
-     * 2 通栏卡片(GridLayoutManager+2:1 横卡,多列并排)。仅作用于结果区中间布局，不动来源抽屉/刷新/到底了。
+     * 2 通栏卡片(GridLayoutManager+3:2 横卡,多列并排)。仅作用于结果区中间布局，不动来源抽屉/刷新/到底了。
      */
     private fun applyResultLayout(mode: Int) {
         when (mode) {
@@ -601,9 +604,8 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
                 mBinding.mGridViewFilter.layoutManager = lm2
             }
             FastSearchAdapter.MODE_BANNER -> {
-                // 2:1 横卡:限高→单卡最大宽=2×限高;屏宽除以单卡最大宽得列数(四舍五入到整数列),
-                // 使多卡并排撑满屏宽,放不下就缩列宽(高度随之为列宽/2)
-                val banSpan = Utils.getAdaptiveGridSpan(bannerCardMaxWidthDp(), 1, 0)
+                // 3:2 横卡按结果区可用宽度排布;大屏收紧单列宽度,避免横图被拉得过宽。
+                val banSpan = bannerSpanCount()
                 mBinding.mGridView.layoutManager = GridLayoutManager(this, banSpan)
                 mBinding.mGridViewFilter.layoutManager = GridLayoutManager(this, banSpan)
             }
@@ -618,11 +620,15 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
         mEndTipController?.refresh()
     }
 
-    /** 通栏 2:1 横卡最大显示高度(dp,变小即更矮) */
-    private fun bannerMaxHeightDp(): Int = 210
-
-    /** 通栏单卡最大宽 = 2×限高(保持 2:1) */
-    private fun bannerCardMaxWidthDp(): Float = 2f * bannerMaxHeightDp()
+    /** 手机沿用原有列数阈值;大屏单列最多 360dp,列数随窗口宽度增加。 */
+    private fun bannerSpanCount(): Int {
+        val density = resources.displayMetrics.density
+        val horizontalPaddingDp = (mBinding.llLayout.paddingLeft + mBinding.llLayout.paddingRight) / density
+        val availableWidthDp = (resources.configuration.screenWidthDp - horizontalPaddingDp).coerceAtLeast(1f)
+        // 外层固定有 20dp 左右内边距:手机用 400dp 可用列宽,等同原先按屏宽 420dp 换列。
+        val maxCardWidthDp = if (availableWidthDp >= 600f) 360f else 400f
+        return ceil(availableWidthDp / maxCardWidthDp).toInt().coerceAtLeast(1)
+    }
 
     /**
      * 绑一个结果列表适配器的点击/长按:统一「点击进详情、长按弹评分」。
@@ -692,7 +698,7 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
 
     private fun initHistorySearch() {
         val mSearchHistory: List<String> = SubscriptionConfig.getSearchHistory()
-        mBinding.llHistory.visibility = if (mSearchHistory.isNotEmpty()) View.VISIBLE else View.GONE
+        mBinding.llHistory.visibility = if (!isTyping() && mSearchHistory.isNotEmpty()) View.VISIBLE else View.GONE
         mBinding.flHistory.adapter = object : FlowTagLayout.TagAdapter<String?>(mSearchHistory) {
             override fun getView(parent: FlowTagLayout, position: Int, s: String?): View {
                 val tv: TextView = LayoutInflater.from(this@FastSearchActivity).inflate(
@@ -701,7 +707,16 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
                 ) as TextView
                 // 点击型小组件按钮:按下整键透明度 80% 再恢复(用户口径)
                 com.github.tvbox.osc.ui.kit.WidgetPressEffect.attach(tv)
-tv.text = s
+                tv.text = s
+                tv.setOnLongClickListener {
+                    val word = s.orEmpty()
+                    if (word.isNotBlank()) {
+                        val added = SubscriptionConfig.addSearchFavorite(word)
+                        if (added) initFavoriteSearch()
+                        AppBubble.toast(if (added) "已加入常用收藏" else "已在常用收藏")
+                    }
+                    true
+                }
                 return tv
             }
         }
@@ -714,6 +729,38 @@ tv.text = s
                 SubscriptionConfig.clearSearchHistory()
                 initHistorySearch()
             }
+        }
+    }
+
+    private fun initFavoriteSearch() {
+        val favorites = SubscriptionConfig.getSearchFavorites()
+        favoriteWords = favorites
+        mBinding.llFavorites.visibility = if (!isTyping() && favorites.isNotEmpty()) View.VISIBLE else View.GONE
+        mBinding.flFavorites.adapter = object : FlowTagLayout.TagAdapter<String?>(favorites) {
+            override fun getView(parent: FlowTagLayout, position: Int, s: String?): View {
+                val tv = LayoutInflater.from(this@FastSearchActivity).inflate(
+                    R.layout.item_search_word_hot, mBinding.flFavorites, false
+                ) as TextView
+                com.github.tvbox.osc.ui.kit.WidgetPressEffect.attach(tv)
+                tv.text = s
+                tv.setOnLongClickListener {
+                    val word = s.orEmpty()
+                    if (word.isNotBlank()) {
+                        ConfirmDialog.showDanger(
+                            this@FastSearchActivity, "删除常用收藏",
+                            "确定从常用收藏中删除“$word”吗？", "删除"
+                        ) {
+                            if (SubscriptionConfig.removeSearchFavorite(word)) initFavoriteSearch()
+                        }
+                    }
+                    true
+                }
+                return tv
+            }
+        }
+        mBinding.flFavorites.setOnTagClickListener { _, position, _ ->
+            favorites.getOrNull(position)?.let { search(it) }
+            true
         }
     }
 
@@ -752,7 +799,7 @@ tv.text = s
         })
     }
 
-    /** 热搜与历史搜索使用相同的最大宽度，标题、卡片和清除键左右对齐。 */
+    /** 热搜、常用收藏与历史搜索使用相同的最大宽度。 */
     private fun updateSearchSectionWidths(viewportWidth: Int) {
         if (viewportWidth <= 0) return
         // AutoSize 会改 Activity 的 displayMetrics.density；用配置宽度反推真实屏宽比例。
@@ -764,7 +811,7 @@ tv.text = s
             mBinding.llSearchSuggest.paddingRight
         if (availableWidth <= 0) return
         val contentWidth = minOf(availableWidth, maxWidth)
-        for (section in arrayOf(mBinding.llHotRank, mBinding.llHistory)) {
+        for (section in arrayOf(mBinding.llHotRank, mBinding.llFavorites, mBinding.llHistory)) {
             val params = section.layoutParams
             if (params.width != contentWidth) {
                 params.width = contentWidth
@@ -796,13 +843,13 @@ tv.text = s
         !TextUtils.isEmpty(mBinding.etSearch.text.toString().trim())
 
     /**
-     * 输入态只留「相关搜索」,清空态露出「最近热搜 + 搜索历史」(与 NewBox 搜索页一致):
-     * 输入时被替换掉的两块不会同时挂在页面上,免得同屏两个热搜/联想列表打架。
+     * 输入态只留「相关搜索」,清空态露出「最近热搜 + 常用收藏 + 搜索历史」。
      */
     private fun applySuggestionSections() {
         val typing = isTyping()
         val hasHot = mHotRankAdapter.data.isNotEmpty()
         updateHotRankVisibility(!typing && hasHot)
+        mBinding.llFavorites.visibility = if (!typing && favoriteWords.isNotEmpty()) View.VISIBLE else View.GONE
         val hasHistory = SubscriptionConfig.getSearchHistory().isNotEmpty()
         mBinding.llHistory.visibility = if (!typing && hasHistory) View.VISIBLE else View.GONE
     }
@@ -893,6 +940,7 @@ tv.text = s
         mBinding.etSearch.addTextChangedListener(this)
         if (!SystemConfig.isPrivateBrowsing()) { //无痕浏览不存搜索历史
             saveSearchHistory(title)
+            initHistorySearch()
         }
         hideHotAndHistorySearch(true)
         clearSuggestChips()
@@ -1035,8 +1083,10 @@ tv.text = s
         // 字号与搜索结果条目里"更新至XX集"(tvNote 12sp)保持一致,高亮来源条观感小巧协调
         textView.textSize = 12f
         val params = DslTabLayout.LayoutParams(-2, -2)
-        params.topMargin = 20
-        params.bottomMargin = 20
+        // 相邻来源之间只留 4dp；原先上下各 20px 在低密度设备上会被撑得很散。
+        val halfGap = resources.getDimensionPixelSize(R.dimen.dp_2)
+        params.topMargin = halfGap
+        params.bottomMargin = halfGap
         // 选中背景按文字视图的实测高度绘制；垂直内边距用 dp，避免高密度屏上缩成一条。
         val verticalPadding = resources.getDimensionPixelSize(R.dimen.dp_6)
         textView.setPadding(20, verticalPadding, 20, verticalPadding)
@@ -1316,7 +1366,7 @@ tv.text = s
     override fun afterTextChanged(editable: Editable) {
         val text = editable.toString()
         // 输入/清空都要回到"建议页"(结果页只在真正发起搜索时显示,见 search() 的 hideHotAndHistorySearch(true)):
-        // 有输入 → 只显示内联「相关搜索」;清空 → 回到「最近热搜 + 搜索历史」。
+        // 有输入 → 只显示内联「相关搜索」;清空 → 回到「最近热搜 + 常用收藏 + 搜索历史」。
         // 原来清空时是靠 hideHotAndHistorySearch(false) 切回来的,这次改造一度漏了这一步(清空后仍停在结果页)。
         hideHotAndHistorySearch(false)
         applySuggestionSections()

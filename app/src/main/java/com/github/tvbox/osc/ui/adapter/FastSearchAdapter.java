@@ -43,8 +43,8 @@ public class FastSearchAdapter extends BaseQuickAdapter<Movie.Video, BaseViewHol
 
     private int mode = MODE_LIST;
 
-    /** 本次会话已成功加载过的海报 URL:刷新/滚动回显时命中缓存不再重闪 shimmer,减轻宫格/通栏图多时的卡顿 */
-    private final java.util.Set<String> loadedUrls = new java.util.HashSet<>();
+    /** 本次会话已成功加载过的图片变体:刷新/滚动回显时不再重闪 shimmer */
+    private final java.util.Set<String> loadedImages = new java.util.HashSet<>();
     /**
      * 加载失败过的海报 URL → 失败时间(ms):窗口内滑回/复用直接显示失败占位、不再重复请求;
      * 窗口过期(瞬时失败如开局无网/CDN 抖动)后允许重试一次,不必关掉页面才能重新加载。
@@ -64,8 +64,8 @@ public class FastSearchAdapter extends BaseQuickAdapter<Movie.Video, BaseViewHol
         return true;
     }
 
-    /** 视图上记录的"当前已展示图片 URL"tag(同图跳过重载,防滑回闪) */
-    private static final int TAG_LAST_URL = 0x3D000001;
+    /** 视图上记录的"当前已展示图片变体"tag(同图同布局跳过重载,防滑回闪) */
+    private static final int TAG_LAST_IMAGE_KEY = 0x3D000001;
     /** "延迟启动扫光"Runnable tag(加载结果到来时取消) */
     private static final int TAG_SHIMMER_RUN = 0x3D000002;
     /** 扫光延迟(ms):加载在此内完成(缓存/较快网络)则不启动骨架屏,只有真正慢(>1s)才扫光 */
@@ -217,44 +217,46 @@ public class FastSearchAdapter extends BaseQuickAdapter<Movie.Video, BaseViewHol
 
     private void loadPoster(ImageView ivThumb, Movie.Video item) {
         if (ivThumb == null) return;
-        // 占位统一走 ImageView 背景层(统一占位组件 PosterPlaceholderDrawable),src 只放实图:
-        // 三布局(列表/宫格/通栏)共用同一目标规格与稳定缓存键(不含 position),
-        // 切换布局/滚动复用均命中同一缓存,不再重复下载或拉原图。
+        // 占位统一走 ImageView 背景层(统一占位组件 PosterPlaceholderDrawable),src 只放实图。
+        // 列表/宫格共用竖图变体;通栏用 3:2 横图变体,避免先裁成竖图后再被横卡裁切。
         String url = item.pic == null ? "" : item.pic.trim();
         if (url.isEmpty()) {
             // 无封面:显示"加载失败"占位(统一占位组件,见 util/PosterPlaceholderDrawable)
+            ivThumb.setTag(TAG_LAST_IMAGE_KEY, null);
             com.github.tvbox.osc.util.PicassoLoad.showFailedPlaceholder(ivThumb);
             return;
         }
         // 已失败过且仍在窗口内的 URL:直接显示失败占位,不再重新发起请求(修复滑回又重载);清 src 露出占位
         if (recentlyFailed(url)) {
-            ivThumb.setTag(TAG_LAST_URL, url);
+            ivThumb.setTag(TAG_LAST_IMAGE_KEY, null);
             com.github.tvbox.osc.util.PicassoLoad.showFailedPlaceholder(ivThumb);
             return;
         }
+        boolean banner = mode == MODE_BANNER;
+        String imageKey = url + (banner ? "_search_banner_300x200" : "_search_poster_200x267");
         // 恢复为正常占位(上一张可能是"加载失败");此处不动 src,下面同图去重命中要保留已显示的图
         com.github.tvbox.osc.util.PicassoLoad.setLoadingPlaceholder(ivThumb);
         // 同一张图已显示(滑回/复用相同项):不重载、不闪
-        if (url.equals(ivThumb.getTag(TAG_LAST_URL))) return;
-        ivThumb.setTag(TAG_LAST_URL, url);
+        if (imageKey.equals(ivThumb.getTag(TAG_LAST_IMAGE_KEY))) return;
+        ivThumb.setTag(TAG_LAST_IMAGE_KEY, imageKey);
         ivThumb.setImageDrawable(null);
-        int w = AutoSizeUtils.dp2px(mContext, 200);
-        int h = AutoSizeUtils.dp2px(mContext, 267);
+        int w = AutoSizeUtils.dp2px(mContext, banner ? 300 : 200);
+        int h = AutoSizeUtils.dp2px(mContext, banner ? 200 : 267);
         int radius = AutoSizeUtils.dp2px(mContext, 12);
-        String cacheKey = MD5.string2MD5(url + "_search_poster_200x267");
+        String cacheKey = MD5.string2MD5(imageKey);
         // 已成功加载过(会话内缓存命中)→ 不再闪骨架屏,直接出图;
         // 其余情况扫光延迟启动:命中(内存/磁盘)缓存的图会在延迟内就绪并取消,避免"闪一下"
-        boolean cached = loadedUrls.contains(url);
+        boolean cached = loadedImages.contains(imageKey);
         if (!cached) {
             // 排新的延迟启动前必须先撤掉上一条(与本方法末尾的 cancelShimmer 成对):
             // 否则"上一张图还在延迟窗口内 → 该 view 被复用到新 URL"时,旧 run 的 tag 会被覆盖成孤儿,
             // 它在图片已经出图之后才触发,给已出图的 view 再叠一层没人会停的扫光
             // (那个动画器是 INFINITE 的,会一直按 60fps tick 并顺着 Drawable→View 引用把视图留住)。
             cancelShimmer(ivThumb);
-            final String tagUrl = url;
+            final String tagImageKey = imageKey;
             Runnable run = () -> {
                 // 双保险:view 已经复用到别的图、或实图已经出图(src 已被 Picasso 填上)就不启动
-                if (!tagUrl.equals(ivThumb.getTag(TAG_LAST_URL))) return;
+                if (!tagImageKey.equals(ivThumb.getTag(TAG_LAST_IMAGE_KEY))) return;
                 if (ivThumb.getDrawable() != null) return;
                 com.github.tvbox.osc.ui.kit.PicassoShimmer.start(ivThumb);
             };
@@ -270,7 +272,7 @@ public class FastSearchAdapter extends BaseQuickAdapter<Movie.Video, BaseViewHol
                 .into(ivThumb, new com.squareup.picasso.Callback() {
                     @Override
                     public void onSuccess() {
-                        loadedUrls.add(url);
+                        loadedImages.add(imageKey);
                         failedUrls.remove(url); // 重试成功:清掉失败记录
                         cancelShimmer(ivThumb);
                         com.github.tvbox.osc.ui.kit.PicassoShimmer.stop(ivThumb);
@@ -280,6 +282,7 @@ public class FastSearchAdapter extends BaseQuickAdapter<Movie.Video, BaseViewHol
                     public void onError(Exception e) {
                         // 加载失败:记入失败窗口(窗口内滑回不再重试)并切到带"图片加载失败"文字的占位
                         failedUrls.put(url, System.currentTimeMillis());
+                        ivThumb.setTag(TAG_LAST_IMAGE_KEY, null);
                         com.github.tvbox.osc.util.PicassoLoad.showFailedPlaceholder(ivThumb);
                     }
                 });

@@ -84,7 +84,7 @@
         />
 
     </LinearLayout>
-    <!-- 横屏时榜单和历史搜索仍可完整滚动；两块内容按同一宽度居中。 -->
+    <!-- 横屏时榜单、常用收藏和历史搜索仍可完整滚动；各块内容按同一宽度居中。 -->
     <ScrollView
         android:id="@+id/scroll_search_suggest"
         android:layout_width="match_parent"
@@ -105,7 +105,7 @@
 
         <!-- 相关搜索:输入即出(爱奇艺联想接口 suggest.video.iqiyi.com/?if=mobile&key=),
              参考 NewBox 的做法 —— **内联 chip 两列**,不再弹浮层(XPopup 那条已下线)。
-             没输入时整块收起,页面回到"最近热搜 + 搜索历史"。
+             没输入时整块收起,页面回到"最近热搜 + 常用收藏 + 历史搜索"。
              小标题统一口径(用户口径):**文字主色、不带透明度、加粗**。 -->
         <TextView
             android:id="@+id/tv_suggest_title"
@@ -157,6 +157,32 @@
                 android:paddingVertical="6dp"
                 app:layoutManager="androidx.recyclerview.widget.GridLayoutManager"
                 app:spanCount="2" />
+        </LinearLayout>
+
+        <!-- 常用收藏:历史词长按加入;只允许长按单条删除,不提供清空图标。 -->
+        <LinearLayout
+            android:id="@+id/ll_favorites"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="16dp"
+            android:orientation="vertical"
+            android:visibility="gone"
+            tools:visibility="visible">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="常用收藏"
+                android:textColor="@color/text_foreground"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+
+            <com.github.tvbox.osc.ui.kit.FlowTagLayout
+                android:id="@+id/fl_favorites"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp" />
         </LinearLayout>
 
         <!-- 历史搜索:与热搜块同宽居中,并与上方热搜卡留出间距(原来贴着卡片,用户口径"距离太近了");

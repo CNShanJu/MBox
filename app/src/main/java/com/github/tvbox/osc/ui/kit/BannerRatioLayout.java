@@ -6,16 +6,16 @@ import android.util.AttributeSet;
 import com.lihang.ShadowLayout;
 
 /**
- * 通栏卡片横图根布局:宽:高 = 2:1(高度 = 宽度 × 1/2)。
- * 宽度填满所在网格单元(match_parent),高度由宽度等比例反推,始终保持 2:1;
- * 最大显示高度由外层 GridLayoutManager 的列数间接限制(列数按"单卡宽≤2×限高"反推,
- * 若单卡放一行高度就超限,则增加列数让每卡变窄,直到能并排且不超限高)。
+ * 通栏卡片横图根布局:宽:高 = 3:2(高度 = 宽度 × 2/3)。
+ * 宽度填满所在网格单元(match_parent),高度由宽度等比例反推,始终保持 3:2;
+ * 外层 GridLayoutManager 按结果区可用宽度和单列宽度上限增加列数,
+ * 避免大屏时横图宽高一起放大。
  * 屏幕旋转/窗口尺寸变化时 onMeasure 自动重算。
  */
 public class BannerRatioLayout extends ShadowLayout {
 
-    /** 高度 = 宽度 × H_W(宽:高 = 2:1) */
-    private static final float H_W = 1f / 2f;
+    /** 高度 = 宽度 × H_W(宽:高 = 3:2) */
+    private static final float H_W = 2f / 3f;
 
     public BannerRatioLayout(Context context) {
         super(context);

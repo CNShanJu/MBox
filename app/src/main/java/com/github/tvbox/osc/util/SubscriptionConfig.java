@@ -10,6 +10,7 @@ import com.google.gson.reflect.TypeToken;
 import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 
 /**
@@ -29,6 +30,7 @@ public final class SubscriptionConfig {
             }.getType();
 
     private static final String KEY_IMPORT_DIR = "before_selected_path";
+    private static final String KEY_SEARCH_FAVORITES = "search_favorites";
 
     /**
      * 本地默认订阅文件**实际注入过**的订阅集(启动同步删除时的唯一依据)。
@@ -127,6 +129,52 @@ public final class SubscriptionConfig {
 
     public static void clearSearchHistory() {
         PrefsDataStore.putJson(HawkConfig.HISTORY_SEARCH, new ArrayList<String>());
+    }
+
+    // ── 常用搜索收藏(独立于搜索历史,清空历史不影响收藏)──
+
+    /** 常用收藏词;过滤空词与重复词,保留首次收藏顺序 */
+    public static List<String> getSearchFavorites() {
+        List<String> stored = PrefsDataStore.getJson(KEY_SEARCH_FAVORITES, STRING_LIST_TYPE,
+                new ArrayList<String>());
+        return normalizeSearchFavorites(stored);
+    }
+
+    /** 批量替换常用收藏(用于备份导入),自动去重并忽略空词 */
+    public static void setSearchFavorites(List<String> favorites) {
+        PrefsDataStore.putJson(KEY_SEARCH_FAVORITES, normalizeSearchFavorites(favorites));
+    }
+
+    /** 收藏搜索词;已存在或词为空时返回 false */
+    public static boolean addSearchFavorite(String word) {
+        if (word == null || word.trim().isEmpty()) return false;
+        String normalized = word.trim();
+        List<String> favorites = getSearchFavorites();
+        if (favorites.contains(normalized)) return false;
+        favorites.add(normalized);
+        PrefsDataStore.putJson(KEY_SEARCH_FAVORITES, favorites);
+        return true;
+    }
+
+    /** 删除单条常用收藏;不存在或词为空时返回 false */
+    public static boolean removeSearchFavorite(String word) {
+        if (word == null || word.trim().isEmpty()) return false;
+        List<String> favorites = getSearchFavorites();
+        if (!favorites.remove(word.trim())) return false;
+        PrefsDataStore.putJson(KEY_SEARCH_FAVORITES, favorites);
+        return true;
+    }
+
+    private static List<String> normalizeSearchFavorites(List<String> favorites) {
+        LinkedHashSet<String> unique = new LinkedHashSet<>();
+        if (favorites != null) {
+            for (String word : favorites) {
+                if (word == null) continue;
+                String normalized = word.trim();
+                if (!normalized.isEmpty()) unique.add(normalized);
+            }
+        }
+        return new ArrayList<>(unique);
     }
 
     // ── 搜索源勾选记忆(按订阅接口地址分组)──
