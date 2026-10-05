@@ -9,6 +9,7 @@ import org.junit.Test;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 
 public class SubtitleFilePolicyTest {
     @Test
@@ -54,5 +55,22 @@ public class SubtitleFilePolicyTest {
             throw new AssertionError("Expected declared size to reject the response");
         } catch (IOException expected) {
         }
+    }
+
+    @Test
+    public void bitmapBodyIsRecognizedBeforeDeclaredSizeLimit() throws Exception {
+        byte[] header = {'P', 'G', 0, 0x2b, 0x70, 0x31, 0, 0, 0, 0, 0x16, 0, 0x13};
+        try {
+            SubtitleLoader.readLimited(new ByteArrayInputStream(header), 25984428, 8 * 1024 * 1024);
+            throw new AssertionError("Expected SUP to be rejected as an unsupported format");
+        } catch (SubtitleInputPolicy.UnsupportedSubtitleFormatException expected) {
+            assertEquals("当前不支持 SUP 图片字幕，请选择 SRT 或 ASS 字幕", expected.getMessage());
+        }
+    }
+
+    @Test
+    public void headerInspectionKeepsTheFullTextBody() throws Exception {
+        byte[] data = "\uFEFF1\n00:00:05,480 --> 00:00:06,570\n测试字幕\n".getBytes(StandardCharsets.UTF_8);
+        assertArrayEquals(data, SubtitleLoader.readLimited(new ByteArrayInputStream(data), data.length, data.length));
     }
 }

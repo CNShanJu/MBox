@@ -96,13 +96,7 @@ public class FormatASS implements TimedTextFileFormat {
 								}
 							} else if (line.startsWith("Timer:")) {
 								//We have found the timer
-								String v = valueOf(line);
-								if (v != null) {
-									try {
-										timer = Float.parseFloat(v.replace(',','.'));
-									} catch (NumberFormatException ignored) {
-									}
-								}
+								timer = parseTimer(valueOf(line));
 							}
 							//we go to the next line
 							lineCounter++;
@@ -236,6 +230,20 @@ public class FormatASS implements TimedTextFileFormat {
 	private static String valueOf(String line) {
 		int i = line.indexOf(':');
 		return i < 0 ? null : line.substring(i + 1).trim();
+	}
+
+	/** 无效 Timer 按正常播放速度处理，避免除零把整条时间轴推到 Int.MAX_VALUE。 */
+	private static float parseTimer(String value) {
+		if (value != null) {
+			try {
+				float parsed = Float.parseFloat(value.replace(',', '.'));
+				if (parsed > 0 && !Float.isNaN(parsed) && !Float.isInfinite(parsed)) {
+					return parsed;
+				}
+			} catch (NumberFormatException ignored) {
+			}
+		}
+		return 100;
 	}
 
 

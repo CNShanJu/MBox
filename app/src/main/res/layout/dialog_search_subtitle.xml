@@ -1,11 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:minHeight="100dp"
-    xmlns:tools="http://schemas.android.com/tools"
-    >
+    android:minHeight="100dp">
 
     <!-- 面板底由这份布局自己给(ShadowLayout 壳):圆角必须走**弹窗/抽屉面板档** radius_dialog,
          与同屏的选择框/提示框、以及所有抽屉完全同档(2026-09-27:原来挂在 radius_card 上,
@@ -23,29 +22,56 @@
             android:layout_gravity="center"
             android:orientation="vertical"
             android:paddingHorizontal="20dp"
-            >
+            android:paddingTop="8dp"
+            android:paddingBottom="16dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="40dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="在线搜索字幕"
+                    android:textColor="@color/text_foreground"
+                    android:textSize="18sp"
+                    android:textStyle="bold" />
+
+                <ImageView
+                    android:id="@+id/iv_close_search_subtitle"
+                    style="@style/DialogCloseButton"
+                    android:contentDescription="关闭"
+                    app:tint="@color/text_foreground" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="输入片名，点击搜索结果即可载入字幕"
+                android:textColor="@color/text_sub_foreground"
+                android:textSize="12sp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="44dp"
                 android:layout_gravity="center_vertical"
                 android:orientation="horizontal"
-                android:layout_marginVertical="10dp"
+                android:layout_marginTop="12dp"
                 android:gravity="center_vertical">
 
                 <EditText
                     android:id="@+id/input"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
+                    android:layout_width="0dp"
+                    android:layout_height="match_parent"
                     android:layout_weight="1"
                     android:background="@drawable/bg_small_round_gray"
-                    android:hint="请输入字幕名称"
+                    android:hint="输入片名或字幕名称"
                     android:inputType="text"
                     android:maxLines="1"
-                    android:paddingLeft="@dimen/dp_20"
-                    android:paddingTop="8dp"
-                    android:paddingRight="@dimen/dp_2"
-                    android:paddingBottom="@dimen/dp_10"
+                    android:paddingHorizontal="12dp"
                     android:textColor="@color/text_foreground"
                     android:textColorHint="@color/text_sub_foreground"
                     android:textSize="14sp"
@@ -55,48 +81,47 @@
                     android:id="@+id/inputSubmit"
                     style="@style/BtnPrimary"
                     android:layout_width="wrap_content"
-                    android:layout_height="33dp"
-                    android:layout_marginLeft="8dp"
-                    android:textSize="15dp"
+                    android:layout_height="match_parent"
+                    android:layout_marginStart="8dp"
+                    android:minWidth="72dp"
                     android:text="搜索" />
             </LinearLayout>
 
-            <ScrollView
+            <!-- RecyclerView 自己滚动，避免嵌在 ScrollView 中导致结果区测量和翻页失效。 -->
+            <FrameLayout
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_gravity="top|center_horizontal"
-                android:scrollbars="none"
-                android:paddingBottom="10dp"
-                android:clipToPadding="false"
-                >
+                android:layout_height="240dp"
+                android:layout_marginTop="8dp">
 
-                <LinearLayout
+                <com.owen.tvrecyclerview.widget.TvRecyclerView
+                    android:id="@+id/mGridView"
                     android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="top|center_horizontal"
+                    android:layout_height="match_parent"
                     android:clipChildren="false"
                     android:clipToPadding="false"
-                    android:orientation="vertical">
+                    android:paddingTop="8dp"
+                    android:paddingBottom="12dp"
+                    app:tv_horizontalSpacingWithMargins="@dimen/dp_5"
+                    app:tv_selectedItemIsCentered="true"
+                    app:tv_verticalSpacingWithMargins="@dimen/dp_5"
+                    tools:listitem="@layout/item_search_subtitle_result" />
 
-                    <com.owen.tvrecyclerview.widget.TvRecyclerView
-                        android:id="@+id/mGridView"
-                        android:layout_width="match_parent"
-                        android:layout_height="match_parent"
-                        android:clipChildren="false"
-                        android:clipToPadding="false"
-                        app:tv_horizontalSpacingWithMargins="@dimen/dp_5"
-                        app:tv_selectedItemIsCentered="true"
-                        app:tv_verticalSpacingWithMargins="@dimen/dp_5"
-                        tools:listitem="@layout/item_search_subtitle_result"/>
-
-                </LinearLayout>
-            </ScrollView>
+                <TextView
+                    android:id="@+id/emptyState"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:gravity="center"
+                    android:padding="16dp"
+                    android:text="输入片名后搜索字幕"
+                    android:textColor="@color/text_sub_foreground"
+                    android:textSize="14sp" />
+            </FrameLayout>
         </LinearLayout>
     </com.lihang.ShadowLayout>
     <ProgressBar
         android:id="@+id/loadingBar"
-        android:layout_width="20dp"
-        android:layout_height="20dp"
+        android:layout_width="32dp"
+        android:layout_height="32dp"
         android:layout_gravity="center"
         android:indeterminateBehavior="repeat"
         android:indeterminateDrawable="@drawable/anim_loading"

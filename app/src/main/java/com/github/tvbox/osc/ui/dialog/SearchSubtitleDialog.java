@@ -3,9 +3,11 @@ package com.github.tvbox.osc.ui.dialog;
 import android.content.Context;
 import android.text.TextUtils;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.inputmethod.EditorInfo;
 import android.widget.EditText;
 import android.widget.ProgressBar;
+import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.lifecycle.LifecycleOwner;
@@ -48,7 +50,12 @@ public class SearchSubtitleDialog extends AppCenterPopupView {
     private EditText subtitleSearchEt;
     private SubtitleLoader mSubtitleLoader;
     private ProgressBar loadingBar;
+    private TextView emptyState;
     private SubtitleViewModel subtitleViewModel;
+    private Observer<SubtitleData> searchObserver;
+    private boolean requestedResults;
+    private boolean dismissed;
+    private int subtitleRequestEpoch;
     private int page = 1;
     private int maxPage = 5;
     private String searchWord = "";
@@ -69,6 +76,11 @@ public class SearchSubtitleDialog extends AppCenterPopupView {
     }
 
     @Override
+    protected boolean contentSelfScrollable() {
+        return true;
+    }
+
+    @Override
     protected void onCreate() {
         super.onCreate();
         initView();
@@ -77,6 +89,7 @@ public class SearchSubtitleDialog extends AppCenterPopupView {
             applySearchWord(pendingSearchWord);
             pendingSearchWord = null;
         }
+        fitResultsToDialogHeight();
     }
 
     /** 兼容旧调用点：popupInfo 未绑定时经 Builder 绑定 */
@@ -92,7 +105,10 @@ public class SearchSubtitleDialog extends AppCenterPopupView {
 
     private void initView() {
         loadingBar = findViewById(R.id.loadingBar);
+        emptyState = findViewById(R.id.emptyState);
         mGridView = findViewById(R.id.mGridView);
+        mGridView.setVisibility(View.GONE);
+        findViewById(R.id.iv_close_search_subtitle).setOnClickListener(v -> dismiss());
         subtitleSearchEt = findViewById(R.id.input);
         findViewById(R.id.inputSubmit).setOnClickListener(v -> {
             FastClickCheckUtil.check(v);
@@ -113,14 +129,21 @@ public class SearchSubtitleDialog extends AppCenterPopupView {
                         isSearchPag = false;
                         loadingBar.setVisibility(View.VISIBLE);
                         mGridView.setVisibility(View.GONE);
-                        subtitleViewModel.getSearchResultSubtitleUrls(subtitle);
+                        emptyState.setVisibility(View.GONE);
+                        requestedResults = true;
+                        if (subtitleViewModel != null) {
+                            subtitleViewModel.getSearchResultSubtitleUrls(subtitle);
+                        } else {
+                            loadingBar.setVisibility(View.GONE);
+                            showList();
+                            AppBubble.toast("字幕搜索暂不可用");
+                        }
                     } else {
                         if (TextUtils.isEmpty(subtitle.getUrl())) {
                             AppBubble.toast("url加载失败,请重新搜索");
                             return;
                         }
                         loadSubtitle(subtitle);
-                        dismiss();
                     }
                 }
             }
@@ -146,31 +169,34 @@ public class SearchSubtitleDialog extends AppCenterPopupView {
     }
 
     private void initViewModel() {
-        if (!(mContext instanceof ViewModelStoreOwner)) {
+        if (!(mContext instanceof ViewModelStoreOwner) || !(mContext instanceof LifecycleOwner)) {
             return; // context 不是 Activity/LifecycleOwner 时降级(正常调用方都是 Activity)
         }
         subtitleViewModel = new ViewModelProvider((ViewModelStoreOwner) mContext).get(SubtitleViewModel.class);
-        subtitleViewModel.searchResult.observe((LifecycleOwner) mContext, new Observer<SubtitleData>() {
+        searchObserver = new Observer<SubtitleData>() {
             @Override
             public void onChanged(SubtitleData subtitleData) {
+                if (dismissed || !isShow() || !requestedResults) return;
+                if (subtitleData == null) {
+                    loadingBar.setVisibility(View.GONE);
+                    showEmpty("字幕搜索失败，请重试");
+                    AppBubble.toast("字幕搜索失败，请重试");
+                    return;
+                }
                 List<Subtitle> data = subtitleData.getSubtitleList();
                 loadingBar.setVisibility(View.GONE);
-                mGridView.setVisibility(View.VISIBLE);
                 if (data == null) {
-                    mGridView.post(new Runnable() {
-                        @Override
-                        public void run() {
-                            AppBubble.toast("未查询到匹配字幕");
-                        }
-                    });
+                    showEmpty("字幕搜索失败，请重试");
+                    AppBubble.toast("字幕搜索失败，请重试");
                     return;
                 }
 
                 if (data.size() > 0) {
+                    showList();
                     if (subtitleData.getIsZip()) {
                         if (subtitleData.getIsNew()) {
                             searchAdapter.setNewData(data);
-                            zipSubtitles = data;
+                            zipSubtitles = new ArrayList<>(data);
                         } else {
                             searchAdapter.addData(data);
                             zipSubtitles.addAll(data);
@@ -189,6 +215,11 @@ public class SearchSubtitleDialog extends AppCenterPopupView {
                         searchAdapter.setEnableLoadMore(false);
                     }
                 } else {
+                    if (subtitleData.getIsNew()) {
+                        showEmpty("没有找到匹配的字幕，试试更短的片名");
+                    } else {
+                        showList();
+                    }
                     if (page > maxPage) {
                         searchAdapter.loadMoreEnd();
                     } else {
@@ -197,13 +228,53 @@ public class SearchSubtitleDialog extends AppCenterPopupView {
                     searchAdapter.setEnableLoadMore(false);
                 }
             }
-        });
+        };
+        subtitleViewModel.searchResult.observe((LifecycleOwner) mContext, searchObserver);
     }
 
     private void loadSubtitle(Subtitle subtitle) {
-        if (subtitleViewModel != null) {
-            subtitleViewModel.getSubtitleUrl(subtitle, mSubtitleLoader);
+        if (subtitleViewModel == null) {
+            AppBubble.toast("字幕加载暂不可用");
+            return;
         }
+        final int requestEpoch = ++subtitleRequestEpoch;
+        loadingBar.setVisibility(View.VISIBLE);
+        mGridView.setVisibility(View.GONE);
+        emptyState.setVisibility(View.GONE);
+        subtitleViewModel.getSubtitleUrl(subtitle, new SubtitleViewModel.SubtitleUrlCallback() {
+            @Override
+            public void onSuccess(String url) {
+                if (dismissed || !isShow() || requestEpoch != subtitleRequestEpoch) return;
+                Subtitle resolved = new Subtitle();
+                resolved.setName(subtitle.getName());
+                resolved.setUrl(url);
+                resolved.setIsZip(false);
+                mSubtitleLoader.loadSubtitle(resolved, new LoadResult() {
+                    @Override
+                    public void onLoaded() {
+                        if (dismissed || !isShow() || requestEpoch != subtitleRequestEpoch) return;
+                        AppBubble.toast("字幕已加载");
+                        dismiss();
+                    }
+
+                    @Override
+                    public void onFailed(String message) {
+                        if (dismissed || !isShow() || requestEpoch != subtitleRequestEpoch) return;
+                        loadingBar.setVisibility(View.GONE);
+                        showList();
+                        AppBubble.toast(message);
+                    }
+                });
+            }
+
+            @Override
+            public void onError() {
+                if (dismissed || !isShow() || requestEpoch != subtitleRequestEpoch) return;
+                loadingBar.setVisibility(View.GONE);
+                showList();
+                AppBubble.toast("字幕地址获取失败，请重试或换一个字幕");
+            }
+        });
     }
 
     public void setSubtitleLoader(SubtitleLoader subtitleLoader) {
@@ -211,7 +282,51 @@ public class SearchSubtitleDialog extends AppCenterPopupView {
     }
 
     public interface SubtitleLoader {
-        void loadSubtitle(Subtitle subtitle);
+        void loadSubtitle(Subtitle subtitle, LoadResult result);
+    }
+
+    public interface LoadResult {
+        void onLoaded();
+
+        void onFailed(String message);
+    }
+
+    private void showEmpty(String message) {
+        emptyState.setText(message);
+        emptyState.setVisibility(View.VISIBLE);
+        mGridView.setVisibility(View.GONE);
+    }
+
+    private void showList() {
+        emptyState.setVisibility(View.GONE);
+        mGridView.setVisibility(View.VISIBLE);
+    }
+
+    /** 横屏短窗口优先保留标题和搜索框，让结果区在剩余高度内自己滚动。 */
+    private void fitResultsToDialogHeight() {
+        View results = (View) mGridView.getParent();
+        results.post(() -> {
+            if (dismissed || !(results.getParent() instanceof ViewGroup)) return;
+            ViewGroup panel = (ViewGroup) results.getParent();
+            int occupied = panel.getPaddingTop() + panel.getPaddingBottom();
+            for (int i = 0; i < panel.getChildCount(); i++) {
+                View child = panel.getChildAt(i);
+                if (child == results || child.getVisibility() == View.GONE) continue;
+                occupied += child.getMeasuredHeight();
+                ViewGroup.LayoutParams params = child.getLayoutParams();
+                if (params instanceof ViewGroup.MarginLayoutParams) {
+                    ViewGroup.MarginLayoutParams margins = (ViewGroup.MarginLayoutParams) params;
+                    occupied += margins.topMargin + margins.bottomMargin;
+                }
+            }
+            int minResultsHeight = (int) (80 * getResources().getDisplayMetrics().density);
+            int maxResultsHeight = Math.max(minResultsHeight, getMaxHeight() - occupied);
+            ViewGroup.LayoutParams params = results.getLayoutParams();
+            if (params.height > maxResultsHeight) {
+                params.height = maxResultsHeight;
+                results.setLayoutParams(params);
+            }
+        });
     }
 
     /** 兼容旧 API：show 前调用先暂存,onCreate 后再应用（含聚焦输入框） */
@@ -238,32 +353,52 @@ public class SearchSubtitleDialog extends AppCenterPopupView {
 
     public void search(String wd) {
         KeyboardUtils.hideSoftInput(subtitleSearchEt);
+        if (TextUtils.isEmpty(wd)) {
+            AppBubble.toast("输入内容不能为空");
+            return;
+        }
+        subtitleRequestEpoch++;
         isSearchPag = true;
         searchAdapter.setNewData(new ArrayList<>());
-        if (!TextUtils.isEmpty(wd)) {
-            loadingBar.setVisibility(View.VISIBLE);
-            mGridView.setVisibility(View.GONE);
-            searchWord = wd;
-            if (subtitleViewModel != null) {
-                subtitleViewModel.searchResult(wd, page = 1);
-            }
+        loadingBar.setVisibility(View.VISIBLE);
+        mGridView.setVisibility(View.GONE);
+        emptyState.setVisibility(View.GONE);
+        searchWord = wd;
+        if (subtitleViewModel != null) {
+            requestedResults = true;
+            subtitleViewModel.searchResult(wd, page = 1);
         } else {
-            AppBubble.toast("输入内容不能为空");
+            loadingBar.setVisibility(View.GONE);
+            showEmpty("字幕搜索暂不可用");
+            AppBubble.toast("字幕搜索暂不可用");
         }
     }
 
     /** zip 预览分页回退语义:返回键先回列表再关闭 */
     @Override
     protected boolean onBackPressed() {
+        subtitleRequestEpoch++;
         if (!isSearchPag) {
+            if (subtitleViewModel != null) subtitleViewModel.cancelPendingSearch();
             isSearchPag = true;
             loadingBar.setVisibility(View.GONE);
-            mGridView.setVisibility(View.VISIBLE);
+            showList();
             searchAdapter.setNewData(zipSubtitles);
             searchAdapter.setEnableLoadMore(page < maxPage);
             return true;
         }
         dismiss();
         return true;
+    }
+
+    @Override
+    protected void onDismiss() {
+        dismissed = true;
+        subtitleRequestEpoch++;
+        if (subtitleViewModel != null && searchObserver != null) {
+            subtitleViewModel.searchResult.removeObserver(searchObserver);
+            searchObserver = null;
+        }
+        super.onDismiss();
     }
 }

@@ -2,13 +2,21 @@ package com.github.tvbox.osc.util.player;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.content.ActivityNotFoundException;
+import android.content.Context;
+import android.content.Intent;
 import android.os.Build;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.TextUtils;
+import android.net.Uri;
+import android.util.AtomicFile;
 import android.view.View;
 
+import androidx.activity.ComponentActivity;
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.recyclerview.widget.DiffUtil;
@@ -28,16 +36,19 @@ import com.github.tvbox.osc.ui.dialog.SearchSubtitleDialog;
 import com.github.tvbox.osc.ui.dialog.SelectDialog;
 import com.github.tvbox.osc.ui.dialog.SubtitleDialog;
 import com.github.tvbox.osc.ui.dialog.SubtitleFileChooserDialog;
+import com.github.tvbox.osc.subtitle.SubtitleEngine;
+import com.github.tvbox.osc.subtitle.SubtitleInputPolicy;
+import com.github.tvbox.osc.subtitle.runtime.AppTaskExecutor;
 import com.github.tvbox.osc.util.AppBubble;
 import com.github.tvbox.osc.util.LOG;
 import com.github.tvbox.osc.util.MD5;
-import com.hjq.permissions.OnPermissionCallback;
-import com.hjq.permissions.Permission;
-import com.hjq.permissions.XXPermissions;
-
-import org.jetbrains.annotations.NotNull;
-
+import java.io.File;
+import java.io.BufferedInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.List;
+import java.util.UUID;
 
 import xyz.doikki.videoplayer.player.AbstractPlayer;
 
@@ -54,10 +65,16 @@ public final class SubtitleCoordinator {
 
     /** 切换音轨/内置字幕后的进度恢复延迟:内核切轨道会自己快进几秒,等它落定再 seek 回原进度 */
     private static final long TRACK_RESTORE_DELAY_MS = 800L;
+    private static final int MAX_IMPORTED_SUBTITLE_BYTES = 8 * 1024 * 1024;
 
     private final Activity mActivity;
     private final SubtitleController mController;
     private final PlayerSession mPlaySession;
+    @Nullable
+    private final ActivityResultLauncher<String[]> mOpenSubtitleDocument;
+    private int mDocumentPickerEpoch;
+    @Nullable
+    private String mPendingImportedPath;
 
     /** 主线程延迟任务(轨道切换后的进度恢复);用它才能被 release() 取消 */
     private final Handler mMainHandler = new Handler(Looper.getMainLooper());
@@ -70,7 +87,7 @@ public final class SubtitleCoordinator {
      * 播放上下文版本:宿主每次切集/换源调 {@link #updateSubtitleContext} 时递增。
      * 延迟任务执行前比对它,避免 800ms 内已经换了一集、却拿旧进度去 seek(会把新集拉到旧位置)。
      */
-    private int mContextEpoch;
+    private volatile int mContextEpoch;
 
     /** 当前播放字幕上下文（每次播放结果变化由宿主 set 一次） */
     @Nullable
@@ -83,6 +100,19 @@ public final class SubtitleCoordinator {
         mActivity = activity;
         mController = controller;
         mPlaySession = playSession;
+        mOpenSubtitleDocument = activity instanceof ComponentActivity
+                ? ((ComponentActivity) activity).getActivityResultRegistry().register(
+                        "subtitle-open-document", new ActivityResultContracts.OpenDocument() {
+                            @NonNull
+                            @Override
+                            public Intent createIntent(@NonNull Context context, @NonNull String[] input) {
+                                // 选择字幕属于播放页操作，避免被 onUserLeaveHint 当成切后台进入画中画。
+                                return super.createIntent(context, input)
+                                        .addFlags(Intent.FLAG_ACTIVITY_NO_USER_ACTION);
+                            }
+                        },
+                        this::onSubtitleDocumentPicked)
+                : null;
     }
 
     /**
@@ -95,6 +125,20 @@ public final class SubtitleCoordinator {
     public void release() {
         mReleased = true;
         cancelPendingTrackRestore();
+        mController.getSubtitleView().reset();
+        discardPendingImportedSubtitle();
+        if (mOpenSubtitleDocument != null) mOpenSubtitleDocument.unregister();
+    }
+
+    /** 新播放开始时立即作废旧字幕请求；无需等到新内核 prepared。 */
+    public void invalidateForPlaybackChange() {
+        mContextEpoch++;
+        cancelPendingTrackRestore();
+        mController.getSubtitleView().reset();
+        discardPendingImportedSubtitle();
+        mController.getSubtitleView().isInternal = false;
+        mController.getSubtitleView().hasInternal = false;
+        mController.getSubtitleView().onSubtitleChanged(null);
     }
 
     /** 更新当前剧集字幕上下文（playResult.subt / subtKey）；每次切集调用 */
@@ -143,13 +187,18 @@ public final class SubtitleCoordinator {
     public void initSubtitleView() {
         AbstractPlayer mediaPlayer = mPlaySession.kernel();
         TrackInfo trackInfo = PlayerTrackHelper.getTrackInfo(mediaPlayer);
-        if (trackInfo != null && trackInfo.getSubtitle().size() > 0) {
-            mController.getSubtitleView().hasInternal = true;
-        }
+        mController.getSubtitleView().reset();
+        mController.getSubtitleView().hasInternal = trackInfo != null && !trackInfo.getSubtitle().isEmpty();
+        mController.getSubtitleView().isInternal = false;
+        mController.getSubtitleView().onSubtitleChanged(null);
+        final int subtitleContextEpoch = mContextEpoch;
         PlayerTrackHelper.setOnSubtitleListener(mediaPlayer, new PlayerTrackHelper.SubtitleListener() {
             @Override
             public void onSubtitle(@Nullable String text) {
-                if (mController.getSubtitleView().isInternal) {
+                mMainHandler.post(() -> {
+                    if (mReleased || subtitleContextEpoch != mContextEpoch
+                            || mPlaySession.kernel() != mediaPlayer
+                            || !mController.getSubtitleView().isInternal) return;
                     if (text == null) {
                         mController.getSubtitleView().onSubtitleChanged(null);
                     } else {
@@ -157,7 +206,7 @@ public final class SubtitleCoordinator {
                         subtitle.content = text;
                         mController.getSubtitleView().onSubtitleChanged(subtitle);
                     }
-                }
+                });
             }
         });
 
@@ -167,7 +216,28 @@ public final class SubtitleCoordinator {
             mController.getSubtitleView().setPlaySubtitleCacheKey(cacheKey);
             String subtitlePathCache = (String) com.github.tvbox.osc.repo.HistoryRepositories.cache().get(MD5.string2MD5(cacheKey));
             if (subtitlePathCache != null && !subtitlePathCache.isEmpty()) {
-                mController.getSubtitleView().setSubtitlePath(subtitlePathCache);
+                mController.getSubtitleView().setSubtitlePath(subtitlePathCache,
+                        new SubtitleEngine.OnSubtitleLoadListener() {
+                            @Override
+                            public void onLoaded() {
+                                // The cached subtitle remains selected.
+                            }
+
+                            @Override
+                            public void onFailed(String message) {
+                                if (mReleased || subtitleContextEpoch != mContextEpoch
+                                        || mPlaySession.kernel() != mediaPlayer) return;
+                                AppTaskExecutor.deskIO().execute(() -> {
+                                    String key = MD5.string2MD5(cacheKey);
+                                    Object current = com.github.tvbox.osc.repo.HistoryRepositories.cache().get(key);
+                                    if (subtitlePathCache.equals(current)) {
+                                        com.github.tvbox.osc.repo.HistoryRepositories.cache()
+                                                .delete(key, subtitlePathCache);
+                                    }
+                                });
+                                applyFallbackOrInternalSubtitle(trackInfo);
+                            }
+                        });
             } else {
                 applyFallbackOrInternalSubtitle(trackInfo);
             }
@@ -213,15 +283,45 @@ public final class SubtitleCoordinator {
      * player 实例可能已被重建/替换,拉到真实播放位置才能按时间轴显示),②强制字幕可见并置为开启。
      */
     public void setSubtitlePath(String path) {
-        if (path != null && path.length() > 0) {
-            AbstractPlayer mediaPlayer = mPlaySession.kernel();
-            if (mediaPlayer != null) {
-                mController.getSubtitleView().bindToMediaPlayer(mediaPlayer);
+        setSubtitlePath(path, new SubtitleEngine.OnSubtitleLoadListener() {
+            @Override
+            public void onLoaded() {
+                AppBubble.toast("字幕已加载");
             }
-            mController.getSubtitleView().setSubtitlePath(path);
-            PlayConfig.setSubtitleOpen(true);
-            mController.getSubtitleView().setVisibility(View.VISIBLE);
+
+            @Override
+            public void onFailed(String message) {
+                AppBubble.toast(message);
+            }
+        });
+    }
+
+    private void setSubtitlePath(String path, @Nullable SubtitleEngine.OnSubtitleLoadListener listener) {
+        if (TextUtils.isEmpty(path) || mReleased) {
+            if (listener != null && !mReleased) listener.onFailed("字幕地址为空");
+            return;
         }
+        final int contextEpoch = mContextEpoch;
+        AbstractPlayer mediaPlayer = mPlaySession.kernel();
+        if (mediaPlayer == null) {
+            if (listener != null) listener.onFailed("视频尚未准备好，请稍后重试");
+            return;
+        }
+        mController.getSubtitleView().bindToMediaPlayer(mediaPlayer);
+        mController.getSubtitleView().setSubtitlePath(path, new SubtitleEngine.OnSubtitleLoadListener() {
+            @Override
+            public void onLoaded() {
+                if (mReleased || contextEpoch != mContextEpoch) return;
+                PlayConfig.setSubtitleOpen(true);
+                mController.getSubtitleView().setVisibility(View.VISIBLE);
+                if (listener != null) listener.onLoaded();
+            }
+
+            @Override
+            public void onFailed(String message) {
+                if (listener != null && !mReleased && contextEpoch == mContextEpoch) listener.onFailed(message);
+            }
+        });
     }
 
     /** 打开"字幕"设置弹窗（含在线搜索 / 本地选择 / 字号延迟样式 / 内置切换入口） */
@@ -256,17 +356,31 @@ public final class SubtitleCoordinator {
         subtitleDialog.setSearchSubtitleListener(new SubtitleDialog.SearchSubtitleListener() {
             @Override
             public void openSearchSubtitleDialog() {
+                final int subtitleContextEpoch = mContextEpoch;
                 SearchSubtitleDialog searchSubtitleDialog = new SearchSubtitleDialog(mActivity);
                 searchSubtitleDialog.setSubtitleLoader(new SearchSubtitleDialog.SubtitleLoader() {
                     @Override
-                    public void loadSubtitle(Subtitle subtitle) {
+                    public void loadSubtitle(Subtitle subtitle, SearchSubtitleDialog.LoadResult result) {
                         mActivity.runOnUiThread(new Runnable() {
                             @Override
                             public void run() {
+                                if (mReleased || subtitleContextEpoch != mContextEpoch) {
+                                    result.onFailed("播放已切换，请重新选择字幕");
+                                    return;
+                                }
                                 String zimuUrl = subtitle.getUrl();
                                 LOG.i("Remote Subtitle Url: " + zimuUrl);
-                                setSubtitlePath(zimuUrl);//设置字幕
-                                searchSubtitleDialog.dismiss();
+                                setSubtitlePath(zimuUrl, new SubtitleEngine.OnSubtitleLoadListener() {
+                                    @Override
+                                    public void onLoaded() {
+                                        result.onLoaded();
+                                    }
+
+                                    @Override
+                                    public void onFailed(String message) {
+                                        result.onFailed(message);
+                                    }
+                                });
                             }
                         });
                     }
@@ -288,20 +402,139 @@ public final class SubtitleCoordinator {
         DialogCoordinator.centerInHostView(mActivity, subtitleDialog).show();
     }
 
-    /**
-     * 打开本地字幕文件选择器(自研文件浏览器)。
-     * <p>替代已不可用的 ChooserDialog(com.github.hedzr:android-file-chooser):
-     * 该库经反射读隐藏 API StorageVolume.getPath(),在 Android 11+/targetSdk 34 被拒,
-     * 导致本地字幕选择失效。Android 11+ 读公共目录字幕文件需 MANAGE_EXTERNAL_STORAGE,
-     * 未授权时先请求,授权后再打开浏览器。
-     */
+    /** 系统文件选择器可直接读取用户指定的字幕，无需全文件访问权限。 */
     private void openLocalSubtitleChooser() {
+        mDocumentPickerEpoch = mContextEpoch;
+        if (mOpenSubtitleDocument != null) {
+            try {
+                mOpenSubtitleDocument.launch(new String[]{"*/*"});
+                return;
+            } catch (ActivityNotFoundException ignored) {
+                // 极少数设备没有系统文档提供器；已有文件权限时回退到应用内浏览器。
+            }
+        }
         if (Build.VERSION.SDK_INT >= 30 && !Environment.isExternalStorageManager()) {
-            AppBubble.toast("选择本地字幕需要存储访问权限");
-            requestAllFilesAccess();
+            AppBubble.toast("系统文件选择器不可用，无法选择字幕文件");
             return;
         }
         showSubtitleFileChooser();
+    }
+
+    private void onSubtitleDocumentPicked(@Nullable Uri uri) {
+        if (uri == null || mReleased || mDocumentPickerEpoch != mContextEpoch) return;
+        final int contextEpoch = mContextEpoch;
+        final String cacheKey = mSubtitleCacheKey;
+        if (TextUtils.isEmpty(cacheKey)) {
+            AppBubble.toast("请等待视频加载完成后再选择字幕");
+            return;
+        }
+        AppBubble.toast("正在导入字幕…");
+        AppTaskExecutor.deskIO().execute(() -> {
+            try {
+                if (mReleased || contextEpoch != mContextEpoch) return;
+                String path = copySubtitleDocument(uri, cacheKey, contextEpoch);
+                mMainHandler.post(() -> {
+                    if (mReleased || contextEpoch != mContextEpoch) {
+                        deleteImportedSubtitle(path);
+                        return;
+                    }
+                    discardPendingImportedSubtitle();
+                    mPendingImportedPath = path;
+                    LOG.i("Local Subtitle Path: " + path);
+                    setSubtitlePath(path, new SubtitleEngine.OnSubtitleLoadListener() {
+                        @Override
+                        public void onLoaded() {
+                            if (path.equals(mPendingImportedPath)) mPendingImportedPath = null;
+                            AppBubble.toast("字幕已加载");
+                            cleanupOlderImportedSubtitles(cacheKey, path);
+                        }
+
+                        @Override
+                        public void onFailed(String message) {
+                            if (path.equals(mPendingImportedPath)) mPendingImportedPath = null;
+                            deleteImportedSubtitle(path);
+                            AppBubble.toast(message);
+                        }
+                    });
+                });
+            } catch (SubtitleInputPolicy.UnsupportedSubtitleFormatException e) {
+                mMainHandler.post(() -> {
+                    if (mReleased || contextEpoch != mContextEpoch) return;
+                    AppBubble.toast(e.getMessage());
+                });
+            } catch (IOException | SecurityException e) {
+                mMainHandler.post(() -> {
+                    if (mReleased || contextEpoch != mContextEpoch) return;
+                    AppBubble.toast("字幕文件读取失败，请重新选择");
+                });
+            }
+        });
+    }
+
+    private String copySubtitleDocument(Uri uri, String cacheKey, int contextEpoch) throws IOException {
+        File directory = new File(mActivity.getFilesDir(), "subtitles");
+        if (!directory.isDirectory() && !directory.mkdirs()) {
+            throw new IOException("Unable to create subtitle directory");
+        }
+        File target = new File(directory, MD5.string2MD5(cacheKey) + "-"
+                + UUID.randomUUID() + ".subtitle");
+        if (!directory.getCanonicalFile().equals(target.getCanonicalFile().getParentFile())) {
+            throw new IOException("Subtitle path escaped its directory");
+        }
+        AtomicFile atomicFile = new AtomicFile(target);
+        FileOutputStream output = null;
+        try (InputStream input = mActivity.getContentResolver().openInputStream(uri)) {
+            if (input == null) throw new IOException("Subtitle document is empty");
+            BufferedInputStream bufferedInput = new BufferedInputStream(input);
+            SubtitleInputPolicy.requireSupportedContent(bufferedInput);
+            output = atomicFile.startWrite();
+            byte[] buffer = new byte[8192];
+            int total = 0;
+            int count;
+            while ((count = bufferedInput.read(buffer)) != -1) {
+                if (mReleased || contextEpoch != mContextEpoch) throw new IOException("Subtitle selection expired");
+                if (count > MAX_IMPORTED_SUBTITLE_BYTES - total) throw new IOException("Subtitle is too large");
+                output.write(buffer, 0, count);
+                total += count;
+            }
+            if (total == 0) throw new IOException("Subtitle document is empty");
+            atomicFile.finishWrite(output);
+            return target.getAbsolutePath();
+        } catch (IOException | SecurityException e) {
+            if (output != null) atomicFile.failWrite(output);
+            throw e;
+        }
+    }
+
+    private void discardPendingImportedSubtitle() {
+        String path = mPendingImportedPath;
+        mPendingImportedPath = null;
+        if (path != null) deleteImportedSubtitle(path);
+    }
+
+    private void deleteImportedSubtitle(String path) {
+        AppTaskExecutor.deskIO().execute(() -> new File(path).delete());
+    }
+
+    private void cleanupOlderImportedSubtitles(String cacheKey, String keepPath) {
+        AppTaskExecutor.deskIO().execute(() -> {
+            try {
+                Object savedPath = com.github.tvbox.osc.repo.HistoryRepositories.cache()
+                        .get(MD5.string2MD5(cacheKey));
+                if (!keepPath.equals(savedPath)) return;
+            } catch (RuntimeException e) {
+                return;
+            }
+            File directory = new File(mActivity.getFilesDir(), "subtitles");
+            File[] files = directory.listFiles();
+            if (files == null) return;
+            String prefix = MD5.string2MD5(cacheKey) + "-";
+            for (File file : files) {
+                if (file.getName().startsWith(prefix) && !file.getAbsolutePath().equals(keepPath)) {
+                    file.delete();
+                }
+            }
+        });
     }
 
     private void showSubtitleFileChooser() {
@@ -313,32 +546,6 @@ public final class SubtitleCoordinator {
             }
         });
         DialogCoordinator.centerInHostView(mActivity, dialog).show();
-    }
-
-    /** 全文件访问(MANAGE_EXTERNAL_STORAGE)授权;授权成功后再打开字幕文件浏览器 */
-    private void requestAllFilesAccess() {
-        XXPermissions.with(mActivity)
-                .permission(Permission.MANAGE_EXTERNAL_STORAGE)
-                .request(new OnPermissionCallback() {
-                    @Override
-                    public void onGranted(List<String> permissions, boolean all) {
-                        if (all) {
-                            showSubtitleFileChooser();
-                        } else {
-                            AppBubble.toast("请授予所需权限");
-                        }
-                    }
-
-                    @Override
-                    public void onDenied(List<String> permissions, boolean never) {
-                        if (never) {
-                            AppBubble.toast("请在系统设置中授予存储权限");
-                            XXPermissions.startPermissionActivity(mActivity, permissions);
-                        } else {
-                            AppBubble.toast("获取存储权限失败");
-                        }
-                    }
-                });
     }
 
     /** 字幕文字颜色样式（0=白 / 1=粉） */
@@ -418,13 +625,15 @@ public final class SubtitleCoordinator {
             return;
         }
         final List<TrackInfoBean> bean = trackInfo.getSubtitle();
-        if (bean.size() < 1) return;
+        if (bean.isEmpty()) {
+            AppBubble.toast("当前视频没有内置字幕");
+            return;
+        }
         SelectDialog<TrackInfoBean> dialog = new SelectDialog<>(mActivity);
         dialog.setTip("切换内置字幕");
         dialog.setAdapter(new SelectDialogAdapter.SelectDialogInterface<TrackInfoBean>() {
             @Override
             public void click(TrackInfoBean value, int pos) {
-                mController.getSubtitleView().setVisibility(View.VISIBLE);
                 try {
                     for (TrackInfoBean subtitle : bean) {
                         subtitle.selected = subtitle.trackGroupId == value.trackGroupId && subtitle.trackId == value.trackId;
@@ -433,10 +642,13 @@ public final class SubtitleCoordinator {
                     long progress = mediaPlayer.getCurrentPosition();//保存当前进度，ijk 切换轨道 会有快进几秒
                     mController.getSubtitleView().destroy();
                     mController.getSubtitleView().clearSubtitleCache();
+                    mController.getSubtitleView().onSubtitleChanged(null);
                     mController.getSubtitleView().isInternal = true;
 
                     // 轨道切换/进度恢复差异收敛到 PlayerTrackHelper,不感知内核
                     PlayerTrackHelper.selectTrack(mediaPlayer, value);
+                    PlayConfig.setSubtitleOpen(true);
+                    mController.getSubtitleView().setVisibility(View.VISIBLE);
                     postTrackRestore(mediaPlayer, new Runnable() {
                         @Override
                         public void run() {

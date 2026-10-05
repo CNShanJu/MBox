@@ -36,6 +36,7 @@ import android.text.Html;
 import android.text.TextPaint;
 import android.text.TextUtils;
 import android.util.AttributeSet;
+import android.util.Log;
 import android.view.ViewGroup;
 import android.widget.TextView;
 
@@ -59,6 +60,7 @@ public class SimpleSubtitleView extends TextView
         SubtitleEngine.OnSubtitlePreparedListener {
 
     private static final String EMPTY_TEXT = "";
+    private boolean mLoggedFirstDraw;
 
     private SubtitleEngine mSubtitleEngine;
 
@@ -96,7 +98,10 @@ public class SimpleSubtitleView extends TextView
 
     @Override
     public void onSubtitlePrepared(@Nullable final List<Subtitle> subtitles) {
-        start();
+        isInternal = false;
+        mLoggedFirstDraw = false;
+        onSubtitleChanged(null);
+        if (isAttachedToWindow()) start();
     }
 
     @Override
@@ -121,8 +126,23 @@ public class SimpleSubtitleView extends TextView
 
     @Override
     public void setSubtitlePath(final String path) {
-        isInternal = false;
-        mSubtitleEngine.setSubtitlePath(path);
+        setSubtitlePath(path, null);
+    }
+
+    @Override
+    public void setSubtitlePath(final String path, @Nullable final OnSubtitleLoadListener listener) {
+        mSubtitleEngine.setSubtitlePath(path, new OnSubtitleLoadListener() {
+            @Override
+            public void onLoaded() {
+                isInternal = false;
+                if (listener != null) listener.onLoaded();
+            }
+
+            @Override
+            public void onFailed(String message) {
+                if (listener != null) listener.onFailed(message);
+            }
+        });
     }
 
     @Override
@@ -147,6 +167,7 @@ public class SimpleSubtitleView extends TextView
 
     @Override
     public void reset() {
+        mLoggedFirstDraw = false;
         mSubtitleEngine.reset();
     }
 
@@ -192,8 +213,15 @@ public class SimpleSubtitleView extends TextView
 
     @Override
     protected void onDetachedFromWindow() {
-        destroy();
+        // 全屏/小窗切换会临时移除播放器容器，保留已解析的字幕与在途加载。
+        pause();
         super.onDetachedFromWindow();
+    }
+
+    @Override
+    protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        if (!isInternal) resume();
     }
 
     @Override
@@ -247,6 +275,15 @@ public class SimpleSubtitleView extends TextView
         drawBackGroundText();
         backGroundText.draw(canvas);
         super.onDraw(canvas);
+        if (!isInternal && !mLoggedFirstDraw && !TextUtils.isEmpty(getText())) {
+            String detail = "字幕首次绘制: attached=" + isAttachedToWindow()
+                    + ", shown=" + isShown() + ", size=" + getWidth() + "x" + getHeight()
+                    + ", alpha=" + getAlpha() + ", textColor=" + getCurrentTextColor()
+                    + ", chars=" + getText().length();
+            com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.PLAYER, detail);
+            Log.i("MBoxSubtitle", detail);
+            mLoggedFirstDraw = true;
+        }
     }
 
     private void drawBackGroundText() {

@@ -26,8 +26,7 @@
 package com.github.tvbox.osc.subtitle;
 
 import android.os.Handler;
-import android.os.HandlerThread;
-import android.os.Message;
+import android.os.Looper;
 import androidx.annotation.Nullable;
 import android.text.TextUtils;
 import android.util.AtomicFile;
@@ -57,21 +56,24 @@ import xyz.doikki.videoplayer.player.AbstractPlayer;
 
 public class DefaultSubtitleEngine implements SubtitleEngine {
     private static final String TAG = DefaultSubtitleEngine.class.getSimpleName();
-    private static final int MSG_REFRESH = 0x888;
-    private static final int REFRESH_INTERVAL = 100;
     private static final Object REMOTE_CACHE_WRITE_LOCK = new Object();
 
     @Nullable
-    private HandlerThread mHandlerThread;
+    private SubtitleRefreshLoop mRefreshLoop;
     @Nullable
-    private Handler mWorkHandler;
+    private volatile List<Subtitle> mSubtitles;
     @Nullable
-    private List<Subtitle> mSubtitles;
+    private SubtitleFinder.Index mSubtitleIndex;
     private UIRenderTask mUIRenderTask;
+    private Subtitle mLastRenderedSubtitle;
+    private boolean mHasRenderedSubtitle;
+    private boolean mLoggedFirstPosition;
+    private boolean mLoggedFirstMatch;
     private AbstractPlayer mMediaPlayer;
     private OnSubtitlePreparedListener mOnSubtitlePreparedListener;
     private OnSubtitleChangeListener mOnSubtitleChangeListener;
     private final AtomicLong mLoadEpoch = new AtomicLong();
+    private final AtomicLong mRenderEpoch = new AtomicLong();
     private String playSubtitleCacheKey;
 
     public DefaultSubtitleEngine() {
@@ -85,52 +87,99 @@ public class DefaultSubtitleEngine implements SubtitleEngine {
 
     @Override
     public void setSubtitlePath(final String path) {
-        initWorkThread();
-        reset();
-        final long loadEpoch = mLoadEpoch.get();
-        final String cacheKey = playSubtitleCacheKey;
+        setSubtitlePath(path, null);
+    }
+
+    @Override
+    public void setSubtitlePath(final String path, @Nullable final OnSubtitleLoadListener listener) {
         if (TextUtils.isEmpty(path)) {
             Log.w(TAG, "loadSubtitleFromRemote: path is null.");
+            if (listener != null) listener.onFailed("字幕地址为空");
             return;
         }
+        // Keep the current subtitle visible while validating a replacement. A failed candidate
+        // must not leave the player marked as enabled with no captions.
+        final long loadEpoch = mLoadEpoch.incrementAndGet();
+        final String cacheKey = playSubtitleCacheKey;
 
         SubtitleLoader.loadSubtitle(path, new SubtitleLoader.Callback() {
             @Override
             public void onSuccess(final SubtitleLoadSuccessResult subtitleLoadSuccessResult) {
                 if (loadEpoch != mLoadEpoch.get()) return;
                 if (subtitleLoadSuccessResult == null) {
-                    Log.d(TAG, "onSuccess: subtitleLoadSuccessResult is null.");
+                    reportLoadFailure(loadEpoch, "字幕文件不存在或无法读取", null, listener);
                     return;
                 }
                 if (subtitleLoadSuccessResult.timedTextObject == null) {
-                    Log.d(TAG, "onSuccess: timedTextObject is null.");
+                    reportLoadFailure(loadEpoch, "字幕文件无法解析，请更换字幕", null, listener);
                     return;
                 }
                 final TreeMap<Integer, Subtitle> captions = subtitleLoadSuccessResult.timedTextObject.captions;
-                if (captions == null) {
-                    Log.d(TAG, "onSuccess: captions is null.");
+                if (captions == null || captions.isEmpty()) {
+                    reportLoadFailure(loadEpoch, "字幕文件没有可显示的内容", null, listener);
                     return;
                 }
+                final long committedEpoch = mLoadEpoch.incrementAndGet();
+                initRefreshLoop();
+                // Drop queued frames from the old track only after the candidate is usable.
+                mRenderEpoch.incrementAndGet();
+                mUIRenderTask = null;
+                mLastRenderedSubtitle = null;
+                mHasRenderedSubtitle = false;
+                mLoggedFirstPosition = false;
+                mLoggedFirstMatch = false;
                 mSubtitles = new ArrayList<>(captions.values());
-                setSubtitleDelay(SubtitleHelper.getTimeDelay());
+                mSubtitleIndex = new SubtitleFinder.Index(mSubtitles);
+                int delay = SubtitleHelper.getTimeDelay();
+                setSubtitleDelay(delay);
+                logTrackLoaded(delay);
                 notifyPrepared();
-                if (loadEpoch != mLoadEpoch.get() || TextUtils.isEmpty(cacheKey)) return;
-
-                String subtitlePath = subtitleLoadSuccessResult.subtitlePath;
-                if (subtitlePath.startsWith("http://") || subtitlePath.startsWith("https://")) {
-                    AppTaskExecutor.deskIO().execute(() -> cacheRemoteSubtitle(
-                            subtitlePath, subtitleLoadSuccessResult.fileName,
-                            subtitleLoadSuccessResult.content, cacheKey, loadEpoch));
-                } else {
-                    com.github.tvbox.osc.repo.HistoryRepositories.cache().save(MD5.string2MD5(cacheKey), path);
+                if (committedEpoch == mLoadEpoch.get() && !TextUtils.isEmpty(cacheKey)) {
+                    String subtitlePath = subtitleLoadSuccessResult.subtitlePath;
+                    if (subtitlePath.startsWith("http://") || subtitlePath.startsWith("https://")) {
+                        AppTaskExecutor.deskIO().execute(() -> cacheRemoteSubtitle(
+                                subtitlePath, subtitleLoadSuccessResult.fileName,
+                                subtitleLoadSuccessResult.content, cacheKey, committedEpoch));
+                    } else {
+                        AppTaskExecutor.deskIO().execute(() -> {
+                            try {
+                                if (committedEpoch == mLoadEpoch.get()) {
+                                    com.github.tvbox.osc.repo.HistoryRepositories.cache().save(
+                                            MD5.string2MD5(cacheKey), path);
+                                }
+                            } catch (RuntimeException e) {
+                                Log.e(TAG, "Unable to save subtitle selection", e);
+                            }
+                            if (listener != null) {
+                                AppTaskExecutor.mainThread().execute(() -> {
+                                    if (committedEpoch == mLoadEpoch.get()) listener.onLoaded();
+                                });
+                            }
+                        });
+                        return;
+                    }
                 }
+                if (listener != null && committedEpoch == mLoadEpoch.get()) listener.onLoaded();
             }
 
             @Override
             public void onError(final Exception exception) {
-                if (loadEpoch == mLoadEpoch.get()) Log.e(TAG, "Subtitle load failed", exception);
+                String message = exception instanceof SubtitleInputPolicy.UnsupportedSubtitleFormatException
+                        ? exception.getMessage() : "字幕加载失败，请检查网络或更换字幕";
+                reportLoadFailure(loadEpoch, message, exception, listener);
             }
         });
+    }
+
+    private void reportLoadFailure(long loadEpoch, String message, @Nullable Exception cause,
+                                   @Nullable OnSubtitleLoadListener listener) {
+        if (loadEpoch != mLoadEpoch.get()) return;
+        if (cause == null) {
+            Log.w(TAG, message);
+        } else {
+            Log.e(TAG, message, cause);
+        }
+        if (listener != null) listener.onFailed(message);
     }
 
     private void cacheRemoteSubtitle(String url, String suggestedName, String content,
@@ -195,6 +244,8 @@ public class DefaultSubtitleEngine implements SubtitleEngine {
             subtitle.end = end;
         }
         mSubtitles = thisSubtitles;
+        mSubtitleIndex = new SubtitleFinder.Index(thisSubtitles);
+        mHasRenderedSubtitle = false;
     }
 
     public void setPlaySubtitleCacheKey(String cacheKey) {
@@ -209,13 +260,20 @@ public class DefaultSubtitleEngine implements SubtitleEngine {
     @Override
     public void reset() {
         mLoadEpoch.incrementAndGet();
-        stop();
+        stopRefreshLoop();
+        mRenderEpoch.incrementAndGet();
         mSubtitles = null;
+        mSubtitleIndex = null;
         mUIRenderTask = null;
+        mLastRenderedSubtitle = null;
+        mHasRenderedSubtitle = false;
+        mLoggedFirstPosition = false;
+        mLoggedFirstMatch = false;
     }
 
     @Override
     public void start() {
+        if (mRefreshLoop == null) return;
         Log.d(TAG, "start: ");
         if (mMediaPlayer == null) {
             Log.w(TAG, "MediaPlayer is not bind, You must bind MediaPlayer to "
@@ -226,9 +284,7 @@ public class DefaultSubtitleEngine implements SubtitleEngine {
             return;
         }
         stop();
-        if (mWorkHandler != null) {
-            mWorkHandler.sendEmptyMessageDelayed(MSG_REFRESH, REFRESH_INTERVAL);
-        }
+        mRefreshLoop.start();
 
     }
 
@@ -244,64 +300,71 @@ public class DefaultSubtitleEngine implements SubtitleEngine {
 
     @Override
     public void stop() {
-        if (mWorkHandler != null) {
-            mWorkHandler.removeMessages(MSG_REFRESH);
-        }
+        mRenderEpoch.incrementAndGet();
+        mLastRenderedSubtitle = null;
+        mHasRenderedSubtitle = false;
+        if (mRefreshLoop != null) mRefreshLoop.stop();
     }
 
     @Override
     public void destroy() {
         Log.d(TAG, "destroy: ");
-        stopWorkThread();
         reset();
 
     }
 
-    private void initWorkThread() {
-        stopWorkThread();
-        mHandlerThread = new HandlerThread("SubtitleFindThread");
-        mHandlerThread.start();
-        mWorkHandler = new Handler(mHandlerThread.getLooper(), new Handler.Callback() {
+    private void initRefreshLoop() {
+        stopRefreshLoop();
+        // Media3 的进度查询也必须在播放器所属主线程执行；文件读取与解析仍由共享 IO 执行器处理。
+        final Handler handler = new Handler(Looper.getMainLooper());
+        mRefreshLoop = new SubtitleRefreshLoop(new SubtitleRefreshLoop.Scheduler() {
             @Override
-            public boolean handleMessage(final Message msg) {
-                try {
-                    long delay = REFRESH_INTERVAL;
-                    if (mMediaPlayer != null && mMediaPlayer.isPlaying()) {
-                        long position = mMediaPlayer.getCurrentPosition();
-                        Subtitle subtitle = SubtitleFinder.find(position, mSubtitles);
-                        notifyRefreshUI(subtitle);
-                        if (subtitle != null) {
-                            delay = subtitle.end.mseconds - position;
-                        }
-
-                    }
-                    if (mWorkHandler != null) {
-                        mWorkHandler.sendEmptyMessageDelayed(MSG_REFRESH, delay);
-                    }
-                } catch (Exception e) {
-                    // ignored
-                }
-                return true;
+            public void post(Runnable task, long delayMillis) {
+                handler.postDelayed(task, delayMillis);
             }
-        });
+
+            @Override
+            public void cancel(Runnable task) {
+                handler.removeCallbacks(task);
+            }
+        }, () -> {
+            if (mMediaPlayer == null) return;
+            long renderEpoch = mRenderEpoch.get();
+            // 暂停时也按当前位置显示，固定间隔可及时跟随拖动进度和字幕延迟调整。
+            long position = mMediaPlayer.getCurrentPosition();
+            SubtitleFinder.Index index = mSubtitleIndex;
+            Subtitle subtitle = index == null ? null : index.find(position);
+            if (!mLoggedFirstPosition) {
+                logSubtitleDiagnostic("字幕首次检查: positionMs=" + position
+                        + ", matched=" + (subtitle != null)
+                        + ", kernel=" + mMediaPlayer.getClass().getSimpleName());
+                mLoggedFirstPosition = true;
+            }
+            if (subtitle != null && !mLoggedFirstMatch) {
+                logSubtitleDiagnostic("字幕首次匹配: positionMs=" + position
+                        + ", startMs=" + subtitle.start.mseconds
+                        + ", endMs=" + subtitle.end.mseconds
+                        + ", chars=" + (subtitle.content == null ? 0 : subtitle.content.length()));
+                mLoggedFirstMatch = true;
+            }
+            if (!mHasRenderedSubtitle || subtitle != mLastRenderedSubtitle) {
+                notifyRefreshUI(subtitle, renderEpoch);
+                mLastRenderedSubtitle = subtitle;
+                mHasRenderedSubtitle = true;
+            }
+        }, error -> Log.w(TAG, "Subtitle refresh failed; will retry", error));
     }
 
-    private void stopWorkThread() {
-        if (mHandlerThread != null) {
-            mHandlerThread.quit();
-            mHandlerThread = null;
-        }
-        if (mWorkHandler != null) {
-            mWorkHandler.removeCallbacksAndMessages(null);
-            mWorkHandler = null;
-        }
+    private void stopRefreshLoop() {
+        if (mRefreshLoop != null) mRefreshLoop.stop();
+        mRefreshLoop = null;
     }
 
-    private void notifyRefreshUI(final Subtitle subtitle) {
+    private void notifyRefreshUI(final Subtitle subtitle, long renderEpoch) {
         if (mUIRenderTask == null) {
-            mUIRenderTask = new UIRenderTask(mOnSubtitleChangeListener, mLoadEpoch::get);
+            mUIRenderTask = new UIRenderTask(mOnSubtitleChangeListener, mRenderEpoch::get);
         }
-        mUIRenderTask.execute(subtitle);
+        mUIRenderTask.execute(subtitle, renderEpoch);
     }
 
     private void notifyPrepared() {
@@ -319,6 +382,23 @@ public class DefaultSubtitleEngine implements SubtitleEngine {
     public void setOnSubtitleChangeListener(final OnSubtitleChangeListener listener) {
         mOnSubtitleChangeListener = listener;
         mUIRenderTask = null;
+    }
+
+    private void logTrackLoaded(int delay) {
+        long firstStart = Long.MAX_VALUE;
+        long lastEnd = Long.MIN_VALUE;
+        for (Subtitle subtitle : mSubtitles) {
+            firstStart = Math.min(firstStart, subtitle.start.mseconds);
+            lastEnd = Math.max(lastEnd, subtitle.end.mseconds);
+        }
+        logSubtitleDiagnostic("字幕装载: count=" + mSubtitles.size()
+                + ", firstStartMs=" + firstStart + ", lastEndMs=" + lastEnd
+                + ", delayMs=" + delay);
+    }
+
+    private static void logSubtitleDiagnostic(String detail) {
+        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.PLAYER, detail);
+        Log.i("MBoxSubtitle", detail);
     }
 
 }

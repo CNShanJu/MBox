@@ -38,7 +38,6 @@ import com.github.tvbox.osc.subtitle.format.TimedTextFileFormat;
 import com.github.tvbox.osc.subtitle.model.TimedTextObject;
 import com.github.tvbox.osc.subtitle.runtime.AppTaskExecutor;
 import com.github.tvbox.osc.util.CharsetUtils;
-import com.github.tvbox.osc.util.FileUtils;
 import com.github.tvbox.osc.util.HttpClient;
 import com.github.tvbox.osc.util.UnicodeReader;
 
@@ -46,7 +45,9 @@ import org.apache.commons.io.input.ReaderInputStream;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.BufferedInputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.Reader;
@@ -63,7 +64,7 @@ import okhttp3.ResponseBody;
 
 public class SubtitleLoader {
     private static final String TAG = SubtitleLoader.class.getSimpleName();
-    private static final int MAX_REMOTE_SUBTITLE_BYTES = 8 * 1024 * 1024;
+    private static final int MAX_SUBTITLE_BYTES = 8 * 1024 * 1024;
 
     private SubtitleLoader() {
         throw new AssertionError("No instance for you.");
@@ -182,7 +183,7 @@ public class SubtitleLoader {
             if (!response.isSuccessful() || body == null) {
                 throw new IOException("Subtitle request failed: HTTP " + response.code());
             }
-            byte[] bytes = readLimited(body.byteStream(), body.contentLength(), MAX_REMOTE_SUBTITLE_BYTES);
+            byte[] bytes = readLimited(body.byteStream(), body.contentLength(), MAX_SUBTITLE_BYTES);
             // 字符集探测统一走 CharsetUtils(UniversalDetector + 中文常用字回退;探测失败不再 NPE)
             String content = new String(bytes, CharsetUtils.detect(bytes));
             InputStream is = new ByteArrayInputStream(content.getBytes());
@@ -207,7 +208,10 @@ public class SubtitleLoader {
             Log.d(TAG, "parseLocal: localSubtitlePath = " + localSubtitlePath + " file not exsits");
             return null;
         }
-        byte[] bytes = FileUtils.readSimple(file);
+        byte[] bytes;
+        try (InputStream input = new FileInputStream(file)) {
+            bytes = readLimited(input, file.length(), MAX_SUBTITLE_BYTES);
+        }
         // 字符集探测统一走 CharsetUtils(UniversalDetector + 中文常用字回退;探测失败不再 NPE)
         String content = new String(bytes, CharsetUtils.detect(bytes));
         InputStream is = new ByteArrayInputStream(content.getBytes());
@@ -294,12 +298,16 @@ public class SubtitleLoader {
     }
 
     static byte[] readLimited(InputStream in, long declaredLength, int maxBytes) throws IOException {
-        if (declaredLength > maxBytes) throw new IOException("Remote subtitle exceeds size limit");
+        BufferedInputStream input = in instanceof BufferedInputStream
+                ? (BufferedInputStream) in : new BufferedInputStream(in);
+        // Identify bitmap subtitles before the size check or any character decoding.
+        SubtitleInputPolicy.requireSupportedContent(input);
+        if (declaredLength > maxBytes) throw new IOException("Subtitle exceeds size limit");
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         byte[] buffer = new byte[8192];
         int count;
-        while ((count = in.read(buffer)) != -1) {
-            if (count > maxBytes - out.size()) throw new IOException("Remote subtitle exceeds size limit");
+        while ((count = input.read(buffer)) != -1) {
+            if (count > maxBytes - out.size()) throw new IOException("Subtitle exceeds size limit");
             out.write(buffer, 0, count);
         }
         return out.toByteArray();

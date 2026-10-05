@@ -46,6 +46,9 @@ public interface SubtitleEngine {
      */
     void setSubtitlePath(String path);
 
+    /** 本次显式加载的结果；自动恢复字幕时可不传。 */
+    void setSubtitlePath(String path, @Nullable OnSubtitleLoadListener listener);
+
     /**
      *  字幕延时
      * @param milliseconds
@@ -119,6 +122,12 @@ public interface SubtitleEngine {
      */
     interface OnSubtitleChangeListener {
         void onSubtitleChanged(@Nullable Subtitle subtitle);
+    }
+
+    interface OnSubtitleLoadListener {
+        void onLoaded();
+
+        void onFailed(String message);
     }
 
 }

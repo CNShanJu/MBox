@@ -658,6 +658,7 @@ public class LocalVideoController extends BaseController implements PlaybackSett
         mZimuBtn.setOnLongClickListener(new OnLongClickListener() {
             @Override
             public boolean onLongClick(View view) {
+                PlayConfig.setSubtitleOpen(false);
                 mSubtitleView.setVisibility(View.GONE);
                 mSubtitleView.destroy();
                 mSubtitleView.clearSubtitleCache();

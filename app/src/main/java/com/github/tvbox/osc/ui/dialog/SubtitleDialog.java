@@ -37,11 +37,16 @@ public class SubtitleDialog extends AppCenterPopupView {
     private TextView subtitleStyleTwo;
     private TextView subtitleOpen;
     private TextView subtitleClose;
+    private int subtitleTextSize;
+    private int subtitleDelayMillis;
 
     private SearchSubtitleListener mSearchSubtitleListener;
     private LocalFileChooserListener mLocalFileChooserListener;
     private SubtitleViewListener mSubtitleViewListener;
     private final android.app.Activity ownerActivity;
+    private final PlayConfig.Listener subtitleStateListener = () -> post(() -> {
+        if (isShow() && subtitleOpen != null) updateSubtitleState(PlayConfig.isSubtitleOpen());
+    });
 
     public SubtitleDialog(@NonNull @NotNull Context context) {
         super(context);
@@ -54,9 +59,21 @@ public class SubtitleDialog extends AppCenterPopupView {
     }
 
     @Override
+    protected boolean contentSelfScrollable() {
+        return true;
+    }
+
+    @Override
     protected void onCreate() {
         super.onCreate();
         initView();
+        PlayConfig.subscribe(subtitleStateListener);
+    }
+
+    @Override
+    protected void onDismiss() {
+        PlayConfig.unsubscribe(subtitleStateListener);
+        super.onDismiss();
     }
 
     /** 兼容旧调用点：popupInfo 未绑定时经 Builder 绑定 */
@@ -89,7 +106,6 @@ public class SubtitleDialog extends AppCenterPopupView {
             @Override
             public void onClick(View view) {
                 FastClickCheckUtil.check(view);
-                dismiss();
                 if (mLocalFileChooserListener != null) mLocalFileChooserListener.openLocalFileChooserDialog();
             }
         });
@@ -103,89 +119,25 @@ public class SubtitleDialog extends AppCenterPopupView {
             }
         });
 
-        int size = SubtitleHelper.getTextSize(ownerActivity != null ? ownerActivity : (android.app.Activity) getContext());
-        subtitleSizeText.setText(Integer.toString(size));
+        subtitleTextSize = SubtitleHelper.getTextSize(ownerActivity != null ? ownerActivity : (android.app.Activity) getContext());
+        updateSubtitleSizeText();
+        subtitleSizeMinus.setOnClickListener(view -> adjustSubtitleSize(-2));
+        subtitleSizePlus.setOnClickListener(view -> adjustSubtitleSize(2));
 
-        subtitleSizeMinus.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                String sizeStr = subtitleSizeText.getText().toString();
-                int curSize = Integer.parseInt(sizeStr);
-                curSize -= 2;
-                if (curSize <= 12) {
-                    curSize = 12;
-                }
-                subtitleSizeText.setText(Integer.toString(curSize));
-                SubtitleHelper.setTextSize(curSize);
-                if (mSubtitleViewListener != null) mSubtitleViewListener.setTextSize(curSize);
-            }
+        subtitleDelayMillis = SubtitleHelper.getTimeDelay();
+        updateSubtitleDelayText();
+        subtitleTimeMinus.setOnClickListener(view -> {
+            FastClickCheckUtil.check(view);
+            adjustSubtitleDelay(-500);
         });
-        subtitleSizePlus.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                String sizeStr = subtitleSizeText.getText().toString();
-                int curSize = Integer.parseInt(sizeStr);
-                curSize += 2;
-                if (curSize >= 60) {
-                    curSize = 60;
-                }
-                subtitleSizeText.setText(Integer.toString(curSize));
-                SubtitleHelper.setTextSize(curSize);
-                if (mSubtitleViewListener != null) mSubtitleViewListener.setTextSize(curSize);
-            }
-        });
-
-        int timeDelay = SubtitleHelper.getTimeDelay();
-        String timeStr = "0";
-        if (timeDelay != 0) {
-            double dbTimeDelay = timeDelay / 1000;
-            timeStr = Double.toString(dbTimeDelay);
-        }
-        subtitleTimeText.setText(timeStr);
-
-        subtitleTimeMinus.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                FastClickCheckUtil.check(view);
-                String timeStr = subtitleTimeText.getText().toString();
-                double time = Float.parseFloat(timeStr);
-                double oneceDelay = -0.5;
-                time += oneceDelay;
-                if (time == 0.0) {
-                    timeStr = "0";
-                } else {
-                    timeStr = Double.toString(time);
-                }
-                subtitleTimeText.setText(timeStr);
-                int mseconds = (int) (oneceDelay * 1000);
-                SubtitleHelper.setTimeDelay((int) (time * 1000));
-                if (mSubtitleViewListener != null) mSubtitleViewListener.setSubtitleDelay(mseconds);
-            }
-        });
-        subtitleTimePlus.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                FastClickCheckUtil.check(view);
-                String timeStr = subtitleTimeText.getText().toString();
-                double time = Float.parseFloat(timeStr);
-                double oneceDelay = 0.5;
-                time += oneceDelay;
-                if (time == 0.0) {
-                    timeStr = "0";
-                } else {
-                    timeStr = Double.toString(time);
-                }
-                subtitleTimeText.setText(timeStr);
-                int mseconds = (int) (oneceDelay * 1000);
-                SubtitleHelper.setTimeDelay((int) (time * 1000));
-                if (mSubtitleViewListener != null) mSubtitleViewListener.setSubtitleDelay(mseconds);
-            }
+        subtitleTimePlus.setOnClickListener(view -> {
+            FastClickCheckUtil.check(view);
+            adjustSubtitleDelay(500);
         });
         selectInternal.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 FastClickCheckUtil.check(view);
-                dismiss();
                 if (mSubtitleViewListener != null) mSubtitleViewListener.selectInternalSubtitle();
             }
         });
@@ -224,6 +176,29 @@ public class SubtitleDialog extends AppCenterPopupView {
         updateSubtitleState(PlayConfig.isSubtitleOpen());
     }
 
+    private void adjustSubtitleSize(int delta) {
+        subtitleTextSize = Math.max(12, Math.min(60, subtitleTextSize + delta));
+        updateSubtitleSizeText();
+        SubtitleHelper.setTextSize(subtitleTextSize);
+        if (mSubtitleViewListener != null) mSubtitleViewListener.setTextSize(subtitleTextSize);
+    }
+
+    private void updateSubtitleSizeText() {
+        subtitleSizeText.setText(getContext().getString(R.string.subtitle_size_value, subtitleTextSize));
+    }
+
+    private void adjustSubtitleDelay(int deltaMillis) {
+        subtitleDelayMillis += deltaMillis;
+        updateSubtitleDelayText();
+        SubtitleHelper.setTimeDelay(subtitleDelayMillis);
+        if (mSubtitleViewListener != null) mSubtitleViewListener.setSubtitleDelay(deltaMillis);
+    }
+
+    private void updateSubtitleDelayText() {
+        String seconds = subtitleDelayMillis == 0 ? "0" : Double.toString(subtitleDelayMillis / 1000.0);
+        subtitleTimeText.setText(getContext().getString(R.string.subtitle_delay_value, seconds));
+    }
+
     /** 高亮当前字幕状态:开启->"✓ 打开字幕",关闭->"关闭字幕"(无勾);选项区仅开启时展示 */
     private void updateSubtitleState(boolean open) {
         int activeColor = getContext().getResources().getColor(R.color.colorPrimary);
@@ -239,7 +214,7 @@ public class SubtitleDialog extends AppCenterPopupView {
             subtitleOpen.setText("打开字幕");
             subtitleOpen.setTextColor(normalColor);
         }
-        // 字幕选项(字号/样式/时间/本地/内置/搜索)仅"打开字幕"时展示
+        // 来源入口始终可选；这里只收起字号、延迟与样式设置。
         findViewById(R.id.ll_subtitle_options).setVisibility(open ? View.VISIBLE : View.GONE);
     }
 

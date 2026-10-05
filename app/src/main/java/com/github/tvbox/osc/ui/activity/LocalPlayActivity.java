@@ -114,6 +114,7 @@ public class LocalPlayActivity extends BaseVbActivity<ActivityLocalPlayBinding> 
      * 跳转到上/下一集,需重新播放
      */
     private void play(boolean fromSkip) {
+        if (mSubtitleCoordinator != null) mSubtitleCoordinator.invalidateForPlaybackChange();
         if (!retryingAfterError) automaticErrorRetries = 0;
         retryingAfterError = false;
         VideoInfo videoInfo = mVideoList.get(mPosition);
@@ -526,6 +527,10 @@ public class LocalPlayActivity extends BaseVbActivity<ActivityLocalPlayBinding> 
 
     @Override
     protected void onDestroy() {
+        if (mSubtitleCoordinator != null) {
+            mSubtitleCoordinator.release();
+            mSubtitleCoordinator = null;
+        }
         super.onDestroy();
         if (mBatteryListener != null) {
             com.github.tvbox.osc.state.SystemStateMonitor monitor = com.github.tvbox.osc.state.SystemStateMonitor.get();

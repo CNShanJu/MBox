@@ -44,8 +44,7 @@ public class UIRenderTask {
         mCurrentEpoch = currentEpoch;
     }
 
-    public void execute(final Subtitle subtitle) {
-        final long epoch = mCurrentEpoch.getAsLong();
+    public void execute(final Subtitle subtitle, final long epoch) {
         AppTaskExecutor.mainThread().execute(() -> {
             if (epoch == mCurrentEpoch.getAsLong() && mOnSubtitleChangeListener != null) {
                 mOnSubtitleChangeListener.onSubtitleChanged(subtitle);

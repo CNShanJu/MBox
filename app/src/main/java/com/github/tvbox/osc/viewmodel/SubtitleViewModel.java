@@ -1,12 +1,13 @@
 package com.github.tvbox.osc.viewmodel;
 
 import android.text.TextUtils;
+import android.os.Handler;
+import android.os.Looper;
 import androidx.lifecycle.MutableLiveData;
 import androidx.lifecycle.ViewModel;
 
 import com.github.tvbox.osc.bean.Subtitle;
 import com.github.tvbox.osc.bean.SubtitleData;
-import com.github.tvbox.osc.ui.dialog.SearchSubtitleDialog;
 import com.github.tvbox.osc.util.HCallBack;
 import com.github.tvbox.osc.util.HttpClient;
 
@@ -22,6 +23,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -34,42 +36,53 @@ import okhttp3.Response;
 public class SubtitleViewModel extends ViewModel {
 
     public MutableLiveData<SubtitleData> searchResult;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final AtomicLong searchEpoch = new AtomicLong();
+
+    public interface SubtitleUrlCallback {
+        void onSuccess(String url);
+
+        void onError();
+    }
 
     public SubtitleViewModel() {
         searchResult = new MutableLiveData<>();
     }
 
     public void searchResult(String title, int page) {
-        searchResultFromAssrt(title, page);
+        long epoch = page == 1 ? searchEpoch.incrementAndGet() : searchEpoch.get();
+        searchResultFromAssrt(title, page, epoch);
     }
 
     public void getSearchResultSubtitleUrls(Subtitle subtitle) {
-        getSearchResultSubtitleUrlsFromAssrt(subtitle);
+        getSearchResultSubtitleUrlsFromAssrt(subtitle, searchEpoch.incrementAndGet());
     }
 
-    public void getSubtitleUrl(Subtitle subtitle, SearchSubtitleDialog.SubtitleLoader subtitleLoader) {
-        getSubtitleUrlFromAssrt(subtitle, subtitleLoader);
+    public void cancelPendingSearch() {
+        searchEpoch.incrementAndGet();
     }
 
-    private void setSearchListData(List<Subtitle> data, boolean isNew, boolean isZip) {
-        try {
-            SubtitleData subtitleData = new SubtitleData();
-            subtitleData.setSubtitleList(data);
-            subtitleData.setIsNew(isNew);
-            subtitleData.setIsZip(isZip);
-            searchResult.postValue(subtitleData);
-        } catch (Throwable e) {
-            e.printStackTrace();
-            searchResult.postValue(null);
-        }
+    public void getSubtitleUrl(Subtitle subtitle, SubtitleUrlCallback callback) {
+        getSubtitleUrlFromAssrt(subtitle, callback);
+    }
+
+    private void setSearchListData(List<Subtitle> data, boolean isNew, boolean isZip, long epoch) {
+        if (epoch != searchEpoch.get()) return;
+        SubtitleData subtitleData = new SubtitleData();
+        subtitleData.setSubtitleList(data);
+        subtitleData.setIsNew(isNew);
+        subtitleData.setIsZip(isZip);
+        mainHandler.post(() -> {
+            if (epoch == searchEpoch.get()) searchResult.setValue(subtitleData);
+        });
     }
 
     private int pagesTotal = -1;
 
-    private void searchResultFromAssrt(String title, int page) {
+    private void searchResultFromAssrt(String title, int page, long epoch) {
         try {
             if (pagesTotal > 0 && page > pagesTotal) {
-                setSearchListData(new ArrayList<>(), page <= 1, true);
+                setSearchListData(new ArrayList<>(), page <= 1, true, epoch);
                 return;
             }
             if (page == 1) pagesTotal = -1;//第一页时 重置页大小
@@ -82,6 +95,7 @@ public class SubtitleViewModel extends ViewModel {
             HttpClient.get(searchApiUrl, params, null, null, new HCallBack() {
                 @Override
                 public void onSuccess(String content) {
+                    if (epoch != searchEpoch.get()) return;
                     try {
                         Document doc = Jsoup.parse(content);
                         Elements items = doc.select(".resultcard .sublist_box_title a.introtitle");
@@ -96,37 +110,44 @@ public class SubtitleViewModel extends ViewModel {
                             one.setIsZip(true);
                             data.add(one);
                         }
-                        setSearchListData(data, page <= 1, true);
                         Elements pages = doc.select(".pagelinkcard a");
                         if (pages.size() > 0) {
                             String[] ps = pages.last().text().split("/", 2);
                             if (ps.length == 2 && !TextUtils.isEmpty(ps[1])) {
-                                pagesTotal = Integer.valueOf(ps[1].trim());
+                                try {
+                                    pagesTotal = Integer.parseInt(ps[1].trim());
+                                } catch (NumberFormatException ignored) {
+                                    pagesTotal = -1;
+                                }
                             }
                         }
+                        setSearchListData(data, page <= 1, true, epoch);
                     } catch (Throwable th) {
                         th.printStackTrace();
+                        setSearchListData(null, page <= 1, true, epoch);
                     }
                 }
 
                 @Override
                 public void onError(Throwable e) {
-                    setSearchListData(null, page <= 1, true);
+                    setSearchListData(null, page <= 1, true, epoch);
                 }
             });
         } catch (Exception e) {
             e.printStackTrace();
+            setSearchListData(null, page <= 1, true, epoch);
         }
     }
 
     Pattern regexShooterFileOnclick = Pattern.compile("onthefly\\(\"(\\d+)\",\"(\\d+)\",\"([\\s\\S]*)\"\\)");
 
-    private void getSearchResultSubtitleUrlsFromAssrt(Subtitle subtitle) {
+    private void getSearchResultSubtitleUrlsFromAssrt(Subtitle subtitle, long epoch) {
         try {
             String url = subtitle.getUrl();
             HttpClient.get(url, null, new HCallBack() {
                 @Override
                 public void onSuccess(String content) {
+                    if (epoch != searchEpoch.get()) return;
                     try {
                         List<Subtitle> data = new ArrayList<>();
                         Document doc = Jsoup.parse(content);
@@ -146,11 +167,18 @@ public class SubtitleViewModel extends ViewModel {
                                     data.add(one);
                                 }
                             }
-                            setSearchListData(data, true, false);
+                            setSearchListData(data, true, false, epoch);
                         } else {//有的字幕 不一定是压缩包
                             Element item = doc.selectFirst(".download a#btn_download");
+                            if (item == null) {
+                                setSearchListData(null, true, false, epoch);
+                                return;
+                            }
                             String href = item.attr("href");
-                            if (TextUtils.isEmpty(href)) setSearchListData(null, true, false);
+                            if (TextUtils.isEmpty(href)) {
+                                setSearchListData(null, true, false, epoch);
+                                return;
+                            }
                             String h2 = href.toLowerCase();
                             if (h2.endsWith("srt") || h2.endsWith("ass") || h2.endsWith("scc") || h2.endsWith("ttml")) {
                                 String url = "https://assrt.net" + href;
@@ -160,55 +188,68 @@ public class SubtitleViewModel extends ViewModel {
                                 one.setUrl(url);
                                 one.setIsZip(false);
                                 data.add(one);
-                                setSearchListData(data, true, false);
+                                setSearchListData(data, true, false, epoch);
                             } else {
-                                setSearchListData(null, true, false);
+                                setSearchListData(null, true, false, epoch);
                             }
                         }
                     } catch (Throwable th) {
                         th.printStackTrace();
+                        setSearchListData(null, true, false, epoch);
                     }
                 }
 
                 @Override
                 public void onError(Throwable e) {
-                    setSearchListData(null, true, true);
+                    setSearchListData(null, true, false, epoch);
                 }
             });
         } catch (Exception e) {
             e.printStackTrace();
+            setSearchListData(null, true, false, epoch);
         }
     }
 
-    private void getSubtitleUrlFromAssrt(Subtitle subtitle, SearchSubtitleDialog.SubtitleLoader subtitleLoader) {
+    private void getSubtitleUrlFromAssrt(Subtitle subtitle, SubtitleUrlCallback callback) {
+        if (subtitle == null || TextUtils.isEmpty(subtitle.getUrl())) {
+            mainHandler.post(callback::onError);
+            return;
+        }
         String ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/94.0.4606.54 Safari/537.36";
-        Request request = new Request.Builder()
-                .url(subtitle.getUrl())
-                .get()
-                .addHeader("Referer", "https://secure.assrt.net")
-                .addHeader("User-Agent", ua)
-                .build();
-        // 走 :core-network 公共根(共享 TLS/UA/连接策略),仅覆盖超时与重定向行为
-        OkHttpClient.Builder builder = com.github.tvbox.osc.util.OkGoHelper.newBaseBuilder()
-                .readTimeout(15, TimeUnit.SECONDS)
-                .writeTimeout(15, TimeUnit.SECONDS)
-                .connectTimeout(15, TimeUnit.SECONDS)
-                .followRedirects(false)
-                .followSslRedirects(false)
-                .retryOnConnectionFailure(true);
-        OkHttpClient client = builder.build();
-        client.newCall(request).enqueue(new Callback() {
-            @Override
-            public void onFailure(Call call, IOException e) {
-                e.printStackTrace();
-            }
+        try {
+            Request request = new Request.Builder()
+                    .url(subtitle.getUrl())
+                    .get()
+                    .addHeader("Referer", "https://secure.assrt.net")
+                    .addHeader("User-Agent", ua)
+                    .build();
+            // 走 :core-network 公共根(共享 TLS/UA/连接策略),仅覆盖超时与重定向行为
+            OkHttpClient.Builder builder = com.github.tvbox.osc.util.OkGoHelper.newBaseBuilder()
+                    .readTimeout(15, TimeUnit.SECONDS)
+                    .writeTimeout(15, TimeUnit.SECONDS)
+                    .connectTimeout(15, TimeUnit.SECONDS)
+                    .followRedirects(false)
+                    .followSslRedirects(false)
+                    .retryOnConnectionFailure(true);
+            builder.build().newCall(request).enqueue(new Callback() {
+                @Override
+                public void onFailure(Call call, IOException e) {
+                    mainHandler.post(callback::onError);
+                }
 
-            @Override
-            public void onResponse(Call call, Response response) throws IOException {
-                subtitle.setUrl(response.header("location"));
-                subtitleLoader.loadSubtitle(subtitle);
-            }
-        });
+                @Override
+                public void onResponse(Call call, Response response) {
+                    try (Response ignored = response) {
+                        String url = AssrtSubtitleUrlResolver.resolve(response);
+                        mainHandler.post(() -> callback.onSuccess(url));
+                    } catch (IOException e) {
+                        mainHandler.post(callback::onError);
+                    }
+                }
+            });
+        } catch (RuntimeException e) {
+            mainHandler.post(callback::onError);
+        }
     }
 
 }

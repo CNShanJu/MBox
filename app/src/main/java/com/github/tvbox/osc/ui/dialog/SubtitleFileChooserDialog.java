@@ -38,9 +38,9 @@ import java.util.Locale;
  */
 public class SubtitleFileChooserDialog extends AppCenterPopupView {
 
-    /** 支持的本地字幕后缀(与原 ChooserDialog 的 withFilter(...,"srt","ass","scc","stl","ttml") 一致) */
+    /** 与 SubtitleLoader 的文本字幕解析器支持的后缀保持一致。 */
     public static final List<String> SUBTITLE_EXTS =
-            Arrays.asList("srt", "ass", "scc", "stl", "ttml");
+            Arrays.asList("srt", "ass", "ssa", "scc", "stl", "ttml", "xml");
 
     private final String mStartPath;
     private final OnFileChosenListener mListener;
@@ -50,6 +50,7 @@ public class SubtitleFileChooserDialog extends AppCenterPopupView {
     private final List<File> mEntries = new ArrayList<>();
     private EmitterAdapter mAdapter;
     private TextView mPathView;
+    private TextView mEmptyView;
     private View mUpView;
 
     /** 选中字幕文件回调(携绝对路径) */
@@ -80,6 +81,7 @@ public class SubtitleFileChooserDialog extends AppCenterPopupView {
     protected void onCreate() {
         super.onCreate();
         mPathView = findViewById(R.id.path);
+        mEmptyView = findViewById(R.id.emptySubtitleFiles);
         mUpView = findViewById(R.id.tv_up);
 
         findViewById(R.id.iv_close).setOnClickListener(v -> dismiss());
@@ -163,10 +165,10 @@ public class SubtitleFileChooserDialog extends AppCenterPopupView {
         if (mAdapter != null) {
             mAdapter.notifyDataSetChanged();
         }
-        if (mEntries.isEmpty()) {
-            // 空目录给个提示(不影响继续返回上级)
-            AppBubble.toast("无字幕文件");
-        }
+        mEmptyView.setVisibility(mEntries.isEmpty() ? View.VISIBLE : View.GONE);
+        mEmptyView.setText(children == null
+                ? "无法读取此文件夹，请返回上级目录"
+                : "此文件夹没有可用字幕文件");
         TvRecyclerView list = findViewById(R.id.list);
         if (list != null) {
             list.post(() -> list.smoothScrollToPosition(0));

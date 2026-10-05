@@ -1,231 +1,255 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
-    xmlns:tools="http://schemas.android.com/tools"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:background="@drawable/bg_dialog"
-    android:orientation="vertical"
-    android:padding="20dp">
+    android:clipToPadding="true"
+    android:padding="16dp">
 
-    <LinearLayout
+    <ScrollView
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_gravity="center"
-        android:orientation="vertical">
+        android:clipToPadding="false"
+        android:fillViewport="false"
+        android:padding="4dp">
 
         <LinearLayout
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:layout_gravity="center"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content">
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/subtitleOpen"
-                style="@style/SubtitleTextButton"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_height="wrap_content"
-                android:focusable="true"
-                android:text="打开字幕" />
-            <Space
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_height="wrap_content"
-                android:layout_marginHorizontal="10dp"
-                android:textStyle="bold"
-                android:textColor="@color/text_foreground" />
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/subtitleClose"
-                style="@style/SubtitleTextButton"
-                android:layout_width="0dp"
-                android:layout_weight="1"
-                android:layout_height="wrap_content"
-                android:focusable="true"
-                android:text="关闭字幕" />
-
-        </LinearLayout>
-
-        <!-- 字幕选项区:仅"打开字幕"时展示 -->
-        <LinearLayout
-            android:id="@+id/ll_subtitle_options"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical">
 
-            <LinearLayout
-                android:gravity="center_vertical"
-                android:orientation="horizontal"
-                android:layout_gravity="center"
+            <TextView
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content">
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/subtitleSizeMinus"
-                    style="@style/SubtitleTextButton"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:layout_height="wrap_content"
-                    android:focusable="true"
-                    android:text="字号减小" />
+                android:layout_height="wrap_content"
+                android:text="字幕"
+                android:textColor="@color/text_foreground"
+                android:textSize="18sp"
+                android:textStyle="bold" />
 
-                <TextView
-                    android:id="@+id/subtitleSizeText"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:layout_height="60dp"
-                    android:layout_gravity="center"
-                    android:gravity="center"
-                    android:layout_marginHorizontal="10dp"
-                    android:text="16"
-                    android:textStyle="bold"
-                    android:textColor="@color/text_foreground" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/subtitleSizePlus"
-                    style="@style/SubtitleTextButton"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:layout_height="wrap_content"
-                    android:focusable="true"
-                    android:text="字号增大" />
-
-            </LinearLayout>
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="选择字幕来源并调整显示效果"
+                android:textColor="@color/text_sub_foreground"
+                android:textSize="12sp" />
 
             <LinearLayout
                 android:gravity="center_vertical"
                 android:orientation="horizontal"
                 android:layout_gravity="center"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content">
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp">
                 <com.google.android.material.button.MaterialButton
-                    android:id="@+id/subtitleStyleOne"
+                    android:id="@+id/subtitleOpen"
                     style="@style/SubtitleTextButton"
                     android:layout_width="0dp"
                     android:layout_weight="1"
                     android:layout_height="wrap_content"
                     android:focusable="true"
-                    android:text="样式一"
-                    android:shadowColor="@color/text_foreground"
-                    android:shadowRadius="2"
-                    android:shadowDx="1"
-                    android:shadowDy="1"/>
-
-                <TextView
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:layout_height="60dp"
-                    android:layout_gravity="center"
-                    android:gravity="center"
-                    android:layout_marginHorizontal="10dp"
-                    tools:text="在这"
-                    android:textSize="16sp" />
-
+                    android:text="打开字幕" />
                 <com.google.android.material.button.MaterialButton
-                    android:id="@+id/subtitleStyleTwo"
+                    android:id="@+id/subtitleClose"
                     style="@style/SubtitleTextButton"
                     android:layout_width="0dp"
                     android:layout_weight="1"
                     android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
                     android:focusable="true"
-                    android:text="样式二"
-                    android:textStyle="bold"
-                    android:textColor="@color/color_FFB6C1"
-                    android:shadowColor="@color/color_FFFFFF"
-                    android:shadowRadius="2"
-                    android:shadowDx="1"
-                    android:shadowDy="1" />
+                    android:text="关闭字幕" />
 
             </LinearLayout>
 
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:text="字幕来源"
+                android:textColor="@color/text_foreground"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <!-- 来源选择始终可见，选好字幕后由页面打开字幕显示。 -->
             <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
                 android:gravity="center_vertical"
-                android:orientation="horizontal"
-                android:layout_gravity="center"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content">
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/subtitleTimeMinus"
-                    style="@style/SubtitleTextButton"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:layout_height="wrap_content"
-                    android:focusable="true"
-                    android:text="字幕提前" />
-
-                <LinearLayout
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:layout_height="wrap_content"
-                    android:gravity="center">
-
-                    <TextView
-                        android:id="@+id/subtitleTimeText"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_gravity="center"
-                        android:gravity="center"
-                        android:text="0"
-                        android:textStyle="bold"
-                        android:textColor="@color/text_foreground"/>
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_gravity="center"
-                        android:gravity="center"
-                        android:text="(仅外挂)"
-                        android:layout_marginLeft="10dp"
-                        android:textSize="10sp"
-                        android:textColor="@color/text_foreground"/>
-                </LinearLayout>
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/subtitleTimePlus"
-                    style="@style/SubtitleTextButton"
-                    android:layout_width="0dp"
-                    android:layout_weight="1"
-                    android:layout_height="wrap_content"
-                    android:focusable="true"
-                    android:text="字幕推迟" />
-
-            </LinearLayout>
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="33dp"
-                android:orientation="horizontal"
-                android:layout_marginTop="10dp">
+                android:orientation="horizontal">
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/selectLocal"
-                    style="@style/BtnSecondary"
+                    style="@style/SubtitleSourceButton"
                     android:layout_width="0dp"
+                    android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:layout_height="match_parent"
-                    android:focusable="true"
-                    android:text="本地" />
+                    android:text="本地文件" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/selectInternal"
-                    style="@style/BtnSecondary"
+                    style="@style/SubtitleSourceButton"
                     android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
                     android:layout_weight="1"
-                    android:layout_height="match_parent"
-                    android:text="内置"
-                    android:layout_marginLeft="10dp"/>
+                    android:text="内置字幕" />
 
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/selectRemote"
-                    style="@style/BtnSecondary"
+                    style="@style/SubtitleSourceButton"
                     android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
                     android:layout_weight="1"
-                    android:layout_height="match_parent"
-                    android:text="搜索"
-                    android:layout_marginLeft="10dp"/>
+                    android:text="在线搜索" />
             </LinearLayout>
 
-        </LinearLayout><!-- /ll_subtitle_options -->
+            <!-- 字幕选项区:仅"打开字幕"时展示 -->
+            <LinearLayout
+                android:id="@+id/ll_subtitle_options"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:orientation="vertical">
 
-    </LinearLayout>
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="显示与同步"
+                    android:textColor="@color/text_foreground"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
 
-</LinearLayout>
+                <TextView
+                    android:id="@+id/subtitleSizeText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="字号：16"
+                    android:textColor="@color/text_foreground"
+                    android:textSize="14sp" />
+
+                <LinearLayout
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:layout_gravity="center"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content">
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/subtitleSizeMinus"
+                        style="@style/SubtitleTextButton"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:layout_height="wrap_content"
+                        android:focusable="true"
+                        android:text="减小字号" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/subtitleSizePlus"
+                        style="@style/SubtitleTextButton"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:focusable="true"
+                        android:text="增大字号" />
+
+                </LinearLayout>
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="字幕样式"
+                    android:textColor="@color/text_foreground"
+                    android:textSize="14sp" />
+
+                <LinearLayout
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:layout_gravity="center"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content">
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/subtitleStyleOne"
+                        style="@style/SubtitleTextButton"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:layout_height="wrap_content"
+                        android:focusable="true"
+                        android:text="样式一"
+                        android:shadowColor="@color/text_foreground"
+                        android:shadowRadius="2"
+                        android:shadowDx="1"
+                        android:shadowDy="1"/>
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/subtitleStyleTwo"
+                        style="@style/SubtitleTextButton"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:focusable="true"
+                        android:text="样式二"
+                        android:textStyle="bold"
+                        android:textColor="@color/color_FFB6C1"
+                        android:shadowColor="@color/color_FFFFFF"
+                        android:shadowRadius="2"
+                        android:shadowDx="1"
+                        android:shadowDy="1" />
+
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/subtitleTimeText"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="时间偏移：0 秒"
+                    android:textColor="@color/text_foreground"
+                    android:textSize="14sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="仅对外挂字幕生效"
+                    android:textColor="@color/text_sub_foreground"
+                    android:textSize="12sp" />
+
+                <LinearLayout
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:layout_gravity="center"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content">
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/subtitleTimeMinus"
+                        style="@style/SubtitleTextButton"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:layout_height="wrap_content"
+                        android:focusable="true"
+                        android:text="提前 0.5 秒" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/subtitleTimePlus"
+                        style="@style/SubtitleTextButton"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:focusable="true"
+                        android:text="推迟 0.5 秒" />
+
+                </LinearLayout>
+
+            </LinearLayout><!-- /ll_subtitle_options -->
+
+        </LinearLayout>
+
+    </ScrollView>
+
+</FrameLayout>
