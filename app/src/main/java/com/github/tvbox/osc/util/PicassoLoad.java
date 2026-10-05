@@ -31,6 +31,8 @@ public class PicassoLoad {
     private static final int TAG_LAST_URL = 0x3D000001;
     /** 视图上记录的"延迟启动扫光"Runnable tag,加载结果到来时取消 */
     private static final int TAG_SHIMMER_RUN = 0x3D000002;
+    /** 本地图片正在加载的路径，同图重绑时保留尚未完成的请求。 */
+    private static final int TAG_FILE_LOADING = 0x3D000003;
     /** 扫光延迟(ms):加载在此内完成(缓存/较快网络)则不启动骨架屏,只有真正慢(>1s)才扫光 */
     private static final long SHIMMER_DELAY_MS = 1000L;
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
@@ -86,6 +88,20 @@ public class PicassoLoad {
     public static void setLoadingPlaceholder(ImageView iv) {
         if (iv == null) return;
         iv.setBackground(PosterPlaceholderDrawable.loading(iv.getContext(), slotRadiusPx(iv)));
+    }
+
+    /**
+     * 清除图片及加载状态，保留槽位背景。隐藏预览/切回纯色时使用，之后重选同一文件也能加载。
+     * 普通 View.setTag(null) 无法清掉图片入口使用的 keyed tag。
+     */
+    public static void clear(ImageView iv) {
+        if (iv == null) return;
+        Picasso.get().cancelRequest(iv);
+        cancelShimmer(iv);
+        PicassoShimmer.stop(iv);
+        iv.setTag(TAG_LAST_URL, null);
+        iv.setTag(TAG_FILE_LOADING, null);
+        iv.setImageDrawable(null);
     }
 
     /** 从槽位背景读取圆角。首次绑定通常早于测量，不能只依赖尚无 bounds 的 outline。 */
@@ -211,14 +227,17 @@ public class PicassoLoad {
     public static void intoFile(final ImageView iv, final File file) {
         if (iv == null) return;
         if (file == null || !file.exists() || file.length() <= 0) {
+            clear(iv);
             showFailedPlaceholder(iv);
-            iv.setTag(TAG_LAST_URL, null); // 清去重记录:文件补齐后重绑能再次加载
             return;
         }
         String key = file.getAbsolutePath();
-        // 同一张本地海报已绑定(状态刷新/多选切换整行重绑):不重载、不闪
-        if (key.equals(iv.getTag(TAG_LAST_URL))) return;
+        // 同图仍在显示或请求未完成时不重载。src 已被清除而只留下路径 tag 时必须重新加载。
+        if (key.equals(iv.getTag(TAG_LAST_URL))
+                && (iv.getDrawable() != null || key.equals(iv.getTag(TAG_FILE_LOADING)))) return;
+        clear(iv);
         iv.setTag(TAG_LAST_URL, key);
+        iv.setTag(TAG_FILE_LOADING, key);
         showLoadingPlaceholder(iv);
         Picasso.get()
                 .load(file)
@@ -227,10 +246,13 @@ public class PicassoLoad {
                 .into(iv, new Callback() {
                     @Override
                     public void onSuccess() {
+                        if (key.equals(iv.getTag(TAG_LAST_URL))) iv.setTag(TAG_FILE_LOADING, null);
                     }
 
                     @Override
                     public void onError(Exception e) {
+                        if (!key.equals(iv.getTag(TAG_LAST_URL))) return;
+                        iv.setTag(TAG_FILE_LOADING, null);
                         iv.setTag(TAG_LAST_URL, null); // 失败:下次重绑允许再试
                         showFailedPlaceholder(iv);
                     }

@@ -15,6 +15,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.UUID;
 
 /**
  * 背景图导入(用户选图 → 应用私有目录里一张可用的 WebP)。<b>全应用唯一实现</b>:
@@ -75,7 +76,9 @@ public final class BgImageImporter {
             return new Result(null, "不支持 GIF,请用静态图片");
         }
 
-        File temp = new File(dir, "bg_import_src.tmp");
+        // 多个背景入口可能同时导入，临时文件必须按请求隔离。
+        String requestId = UUID.randomUUID().toString();
+        File temp = new File(dir, "bg_import_src_" + requestId + ".tmp");
         long bytes = 0L;
         // 1) 先复制到临时文件:顺便卡体积上限,后面解码/读 EXIF 都基于这个文件
         try (InputStream in = context.getContentResolver().openInputStream(uri)) {
@@ -136,7 +139,7 @@ public final class BgImageImporter {
                 return new Result(null, "图片解码失败,换一张试试");
             }
             bitmap = applyExifOrientation(temp, bitmap);
-            out = new File(dir, "bg_import_" + System.currentTimeMillis() + ".webp");
+            out = new File(dir, "bg_import_" + requestId + ".webp");
             boolean encoded;
             try (OutputStream os = new FileOutputStream(out)) {
                 encoded = compressToWebp(bitmap, os);
