@@ -2,6 +2,8 @@ package com.github.tvbox.osc.ui.dialog;
 
 import android.content.Context;
 import android.view.View;
+import android.view.ViewGroup;
+import android.widget.FrameLayout;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
@@ -34,9 +36,14 @@ public final class LoadingAnimPreviewDialog extends AppCenterPopupView {
     }
 
     @Override
+    protected int getMaxHeight() {
+        return DialogHeightPolicy.maxHeightPxInsideWindow(getContext());
+    }
+
+    @Override
     protected void onCreate() {
         super.onCreate();
-        ((TextView) findViewById(R.id.tv_preview_title)).setText(displayName + " · 放大预览");
+        ((TextView) findViewById(R.id.tv_preview_title)).setText(displayName);
         findViewById(R.id.iv_preview_close).setOnClickListener(v -> dismiss());
 
         TextView failureView = findViewById(R.id.tv_preview_unavailable);
@@ -53,7 +60,45 @@ public final class LoadingAnimPreviewDialog extends AppCenterPopupView {
         animationView.setSpeed(LoadingAnim.getPlaybackSpeed(animName));
         animationView.setClipToCompositionBounds(false);
         LoadingAnim.applyAppearance(animationView, animName, false);
+        LoadingAnim.applySize(animationView, animName);
+        fitPreviewToWindow();
         animationView.playAnimation();
+    }
+
+    private void fitPreviewToWindow() {
+        View panel = getPopupImplView();
+        FrameLayout stage = findViewById(R.id.preview_animation_stage);
+        if (panel == null || stage == null) return;
+
+        float density = getResources().getDisplayMetrics().density;
+        int requestedSize = animationView.getLayoutParams().width;
+        int preferredWidth = (int) Math.min(Integer.MAX_VALUE, (long) requestedSize
+                + panel.getPaddingLeft() + panel.getPaddingRight());
+        int panelWidth = Math.min(getMaxWidth(),
+                Math.max(Math.round(300 * density), preferredWidth));
+        ViewGroup.LayoutParams panelParams = panel.getLayoutParams();
+        if (panelParams != null && panelParams.width != panelWidth) {
+            panelParams.width = panelWidth;
+            panel.setLayoutParams(panelParams);
+        }
+
+        int stageHeight = Integer.MAX_VALUE;
+        int maxHeight = getMaxHeight();
+        if (maxHeight > 0) {
+            View titleBar = findViewById(R.id.preview_title_bar);
+            int titleHeight = titleBar.getLayoutParams().height;
+            stageHeight = Math.max(1, maxHeight - panel.getPaddingTop()
+                    - panel.getPaddingBottom() - titleHeight);
+        }
+        stage.setMinimumHeight(Math.min(Math.round(128 * density), stageHeight));
+        int size = Math.max(1, Math.min(requestedSize,
+                Math.min(panelWidth - panel.getPaddingLeft() - panel.getPaddingRight(), stageHeight)));
+        ViewGroup.LayoutParams animationParams = animationView.getLayoutParams();
+        if (animationParams.width != size || animationParams.height != size) {
+            animationParams.width = size;
+            animationParams.height = size;
+            animationView.setLayoutParams(animationParams);
+        }
     }
 
     @Override

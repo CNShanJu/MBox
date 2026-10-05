@@ -10,6 +10,7 @@
     android:paddingBottom="20dp">
 
     <FrameLayout
+        android:id="@+id/preview_title_bar"
         android:layout_width="match_parent"
         android:layout_height="48dp">
 
@@ -34,15 +35,17 @@
     </FrameLayout>
 
     <FrameLayout
+        android:id="@+id/preview_animation_stage"
         android:layout_width="match_parent"
-        android:layout_height="210dp"
+        android:layout_height="wrap_content"
+        android:minHeight="128dp"
         android:clipChildren="false"
         android:clipToPadding="false">
 
         <com.airbnb.lottie.LottieAnimationView
             android:id="@+id/lottie_preview"
-            android:layout_width="210dp"
-            android:layout_height="210dp"
+            android:layout_width="72dp"
+            android:layout_height="72dp"
             android:layout_gravity="center"
             android:contentDescription="加载动画预览"
             android:scaleType="fitCenter" />

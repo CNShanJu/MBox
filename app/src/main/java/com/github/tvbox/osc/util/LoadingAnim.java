@@ -5,6 +5,8 @@ import android.content.Context;
 import android.graphics.Color;
 import android.graphics.ColorFilter;
 import android.view.View;
+import android.view.ViewGroup;
+import android.widget.ImageView;
 
 import androidx.core.content.ContextCompat;
 
@@ -37,12 +39,12 @@ import java.util.Map;
  * assets/loading/
  *   anim_loading/           旧默认动画
  *     anim_loading.json     Lottie 动画文件
- *     config.json           { "mbox_tipsname": "默认", "size_other": 30, "size_refresh": 36, "speed": 1.0 }
+ *     config.json           { "mbox_tipsname": "默认", "size": 32, "speed": 1.0 }
  *   glowing_fish_loader/    Glowing Fish(当前默认)
  *     glowing_fish_loader.json
- *     config.json           { "mbox_tipsname": "鱼", "size_other": 100, "msg_gap": -12, "speed": 1.0 }
+ *     config.json           { "mbox_tipsname": "鱼", "size": 125, "msg_gap": -12, "speed": 1.0 }
  * </pre>
- * 展示名(mbox_tipsname)、页面显示尺寸(size_*,dp)、状态文字间距(msg_gap,dp)、播放速度(speed 倍率)、
+ * 展示名(mbox_tipsname)、统一显示尺寸(size,dp)、状态文字间距(msg_gap,dp)、播放速度(speed 倍率)、
  * 旋转角度(rotation)、左右镜像(flip_horizontal)和着色模式(color_mode: original/theme_text)
  * 统一从 config.json 读取,
  * 不再读 lottie 文件。选择值(HawkConfig.LOADING_ANIM)存动画文件夹名;旧版存的文件名/数字自动兼容。
@@ -55,12 +57,12 @@ public class LoadingAnim {
     public static final String CONFIG_FILE = "config.json";
     /** 默认动画文件夹名(loading 下):鱼 */
     public static final String DEFAULT_NAME = "glowing_fish_loader";
-    /** 配置键:视频播放里的尺寸(dp) */
-    private static final String KEY_PLAYER = "size_player";
-    /** 配置键:其他地方的尺寸(dp) */
-    private static final String KEY_OTHER = "size_other";
-    /** 配置键:下拉刷新指示的尺寸(dp)(单独可调,避免默认偏大/鱼偏小) */
-    private static final String KEY_REFRESH = "size_refresh";
+    /** 配置键:各处加载动画统一使用的方形视图边长(dp) */
+    private static final String KEY_SIZE = "size";
+    /** 可见动画轨迹占 Lottie 方形视图高度的比例;透明画布较大的素材用于刷新和列表留白估算 */
+    private static final String KEY_VISIBLE_HEIGHT_RATIO = "visible_height_ratio";
+    /** 配置键:搜索结果页底部加载动画的垂直偏移(dp,正数向下) */
+    private static final String KEY_SEARCH_END_LOADING_OFFSET_Y = "search_end_loading_offset_y";
     /** 配置键:加载动画与其下方状态文字的间距(dp),可为负值(负值=把文字提进动画盒子底部的固有留白) */
     private static final String KEY_MSG_GAP = "msg_gap";
     /** 配置键:动画播放速度倍率(1=原速,0.5=半速,2=双倍速) */
@@ -78,8 +80,6 @@ public class LoadingAnim {
 
     /** 默认动画显示尺寸(dp),配置文件缺失/异常时兜底 */
     private static final int DEFAULT_SIZE_DP = 72;
-    /** 下拉刷新指示的兜底尺寸(dp) */
-    private static final int DEFAULT_REFRESH_SIZE_DP = 40;
     /** 状态文字间距的兜底值(dp);不配 msg_gap 的动画用这个安全值(正数=动画下方自然留一点缝) */
     private static final int DEFAULT_MSG_GAP_DP = 2;
     /** 旧 config.json 没有 speed 时保持原速 */
@@ -125,19 +125,23 @@ public class LoadingAnim {
         return DIR_NAME + "/" + name + "/" + name + ".json";
     }
 
-    /** 当前配置动画在视频播放里的显示尺寸(dp),来自 config.json 的 size_player */
-    public static int getPlayerSizeDp() {
-        return getSizeDp(getAnimName(), KEY_PLAYER);
+    /** 当前动画在播放器、页面、弹窗、刷新及列表底部共用的视图边长(dp) */
+    public static int getSizeDp() {
+        return getSizeDp(getAnimName());
     }
 
-    /** 当前配置动画在其他地方的显示尺寸(dp),来自 config.json 的 size_other */
-    public static int getOtherSizeDp() {
-        return getSizeDp(getAnimName(), KEY_OTHER);
+    /** 刷新/列表留白所需的可见轨迹高度比例;未配置的素材保守按整个视图占位。 */
+    public static float getVisibleHeightRatio() {
+        JSONObject cfg = readConfig(getAnimName());
+        double ratio = cfg != null ? cfg.optDouble(KEY_VISIBLE_HEIGHT_RATIO, 1d) : 1d;
+        return ratio > 0d && ratio <= 1d && !Double.isNaN(ratio)
+                ? (float) ratio : 1f;
     }
 
-    /** 当前配置动画在"下拉刷新指示"里的显示尺寸(dp),来自 config.json 的 size_refresh;缺失回退 40 */
-    public static int getRefreshSizeDp() {
-        return getSizeDp(getAnimName(), KEY_REFRESH, DEFAULT_REFRESH_SIZE_DP);
+    /** 搜索结果页底部加载动画的垂直偏移(dp);未配置时保持原有位置 */
+    public static int getSearchEndLoadingOffsetYDp() {
+        JSONObject cfg = readConfig(getAnimName());
+        return cfg != null ? cfg.optInt(KEY_SEARCH_END_LOADING_OFFSET_Y, 0) : 0;
     }
 
     /**
@@ -176,6 +180,8 @@ public class LoadingAnim {
      * 页面、刷新指示与设置预览共用此入口,应在 setAnimation 后调用。
      */
     public static void applyAppearance(LottieAnimationView view, String animName, boolean playerOverlay) {
+        // 非正方形素材必须统一完整显示;混用 centerCrop/FIT_CENTER 会让同一 size 看起来大小不同。
+        view.setScaleType(ImageView.ScaleType.FIT_CENTER);
         JSONObject cfg = readConfig(animName);
         double rotation = cfg != null ? cfg.optDouble(KEY_ROTATION, 0) : 0;
         view.setRotation(Double.isNaN(rotation) || Double.isInfinite(rotation)
@@ -239,16 +245,22 @@ public class LoadingAnim {
         return bare;
     }
 
-    /** 动画显示尺寸(dp):config.json 的对应键,缺失/异常返回默认 72 */
-    private static int getSizeDp(String animName, String key) {
-        return getSizeDp(animName, key, DEFAULT_SIZE_DP);
+    /** 动画显示尺寸(dp):config.json 的 size,缺失/异常返回默认 72 */
+    private static int getSizeDp(String animName) {
+        JSONObject cfg = readConfig(animName);
+        int size = cfg != null ? cfg.optInt(KEY_SIZE, DEFAULT_SIZE_DP) : DEFAULT_SIZE_DP;
+        return size > 0 ? size : DEFAULT_SIZE_DP;
     }
 
-    /** 动画显示尺寸(dp):config.json 的对应键,缺失/异常返回传入的兜底值 */
-    private static int getSizeDp(String animName, String key, int fallback) {
-        JSONObject cfg = readConfig(animName);
-        int size = cfg != null ? cfg.optInt(key, fallback) : fallback;
-        return size > 0 ? size : fallback;
+    /** 按指定动画的配置设置视图边长;预览与实际加载态共用。 */
+    public static void applySize(LottieAnimationView view, String animName) {
+        ViewGroup.LayoutParams lp = view.getLayoutParams();
+        if (lp == null) return;
+        int px = Math.round(getSizeDp(animName) * view.getResources().getDisplayMetrics().density);
+        if (lp.width == px && lp.height == px) return;
+        lp.width = px;
+        lp.height = px;
+        view.setLayoutParams(lp);
     }
 
     /** 读取动画文件夹的 config.json(带缓存) */
@@ -292,10 +304,9 @@ public class LoadingAnim {
             LottieAnimationView lav = (LottieAnimationView) view;
             try {
                 String animName = getAnimName();
-                // 尺寸按配置区分:视频播放里(tag=vod_control_loading)用 size_player,其他地方用 size_other;
+                // 所有独立加载态共用 size;播放器 tag 仅决定视频画面上 theme_text 要用固定白色。
                 // 先设动画再改尺寸,且尺寸未变化不触发重排,避免初始化/加载期间被干扰
                 boolean player = "vod_control_loading".equals(view.getTag());
-                int size = getSizeDp(animName, player ? KEY_PLAYER : KEY_OTHER);
                 lav.setAnimation(DIR_NAME + "/" + animName + "/" + animName + ".json");
                 lav.setRepeatMode(LottieDrawable.RESTART); // 从头循环,不是往返播放(reverse)
                 lav.setRepeatCount(LottieDrawable.INFINITE);
@@ -303,15 +314,7 @@ public class LoadingAnim {
                 // 动画含高斯模糊等超出画布内容时关闭按画布裁剪,避免光晕被边界切掉
                 lav.setClipToCompositionBounds(false);
                 applyAppearance(lav, animName, player);
-                android.view.ViewGroup.LayoutParams lp = lav.getLayoutParams();
-                if (lp != null) {
-                    int px = Math.round(size * view.getResources().getDisplayMetrics().density);
-                    if (lp.width != px || lp.height != px) {
-                        lp.width = px;
-                        lp.height = px;
-                        lav.setLayoutParams(lp);
-                    }
-                }
+                applySize(lav, animName);
                 lav.playAnimation();
             } catch (Throwable th) {
                 // 动画文件异常时静默回退,不阻塞加载页展示

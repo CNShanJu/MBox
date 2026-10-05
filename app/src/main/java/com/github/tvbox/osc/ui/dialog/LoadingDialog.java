@@ -10,6 +10,7 @@ import android.widget.TextView;
 import androidx.annotation.NonNull;
 import androidx.core.content.ContextCompat;
 
+import com.airbnb.lottie.LottieAnimationView;
 import com.github.tvbox.osc.R;
 import com.github.tvbox.osc.theme.ThemeDrawables;
 import com.github.tvbox.osc.util.LoadingAnim;
@@ -33,6 +34,7 @@ public class LoadingDialog extends CenterPopupView {
     private View loadingPanel;
     private Drawable panelBackground;
     private View statusPanel;
+    private LottieAnimationView animationView;
     private com.google.android.material.button.MaterialButton cancelView;
     private CharSequence pendingHint;
     private Runnable onCancel;
@@ -43,8 +45,7 @@ public class LoadingDialog extends CenterPopupView {
 
     @Override
     protected int getMaxWidth() {
-        int compactWidth = Math.round(280 * getResources().getDisplayMetrics().density);
-        return Math.min(compactWidth, DialogStyle.centerWidthPx(getContext()));
+        return DialogStyle.centerWidthPx(getContext());
     }
 
     /**
@@ -77,6 +78,7 @@ public class LoadingDialog extends CenterPopupView {
     @Override
     protected void beforeShow() {
         super.beforeShow();
+        if (animationView != null) LoadingAnim.apply(animationView);
         fitPanelToWindow();
         refreshPanelBackground();
         ViewGroup.LayoutParams lp = getLayoutParams();
@@ -99,7 +101,8 @@ public class LoadingDialog extends CenterPopupView {
     protected void onCreate() {
         PopupKeyboardPolicy.onCreate(this);
         super.onCreate();
-        LoadingAnim.apply(findViewById(R.id.lottie_loading));
+        animationView = findViewById(R.id.lottie_loading);
+        LoadingAnim.apply(animationView);
         loadingPanel = findViewById(R.id.loading_panel);
         statusPanel = findViewById(R.id.loading_status_panel);
         msgView = findViewById(R.id.tv_loading_msg);
@@ -112,13 +115,47 @@ public class LoadingDialog extends CenterPopupView {
     }
 
     private void fitPanelToWindow() {
-        if (loadingPanel == null) return;
-        ViewGroup.LayoutParams lp = loadingPanel.getLayoutParams();
-        int width = getMaxWidth();
-        // XPopup 的上限只收缩外层容器,固定宽度的内容还需同步收缩。
-        if (lp != null && lp.width != width) {
-            lp.width = width;
-            loadingPanel.setLayoutParams(lp);
+        if (loadingPanel == null || animationView == null) return;
+        float density = getResources().getDisplayMetrics().density;
+        boolean hasStatus = statusPanel != null && statusPanel.getVisibility() == View.VISIBLE;
+        int horizontalPadding = Math.round((hasStatus ? 20 : 12) * density);
+        int verticalPadding = hasStatus ? Math.round(20 * density) : 0;
+        int requestedSize = Math.round(LoadingAnim.getSizeDp() * density);
+        int preferredWidth = (int) Math.min(Integer.MAX_VALUE,
+                (long) requestedSize + 2L * horizontalPadding);
+        int panelWidth = Math.min(getMaxWidth(),
+                Math.max(Math.round(280 * density), preferredWidth));
+        ViewGroup.LayoutParams panelParams = loadingPanel.getLayoutParams();
+        // XPopup 的上限只收缩外层容器,内容宽度也要随动画尺寸变化。
+        if (panelParams != null && panelParams.width != panelWidth) {
+            panelParams.width = panelWidth;
+            loadingPanel.setLayoutParams(panelParams);
+        }
+
+        int maxAnimationSize = Math.max(1, panelWidth - 2 * horizontalPadding);
+        int maxHeight = getMaxHeight();
+        if (maxHeight > 0) {
+            int statusHeight = 0;
+            if (hasStatus) {
+                int widthSpec = View.MeasureSpec.makeMeasureSpec(maxAnimationSize, View.MeasureSpec.EXACTLY);
+                statusPanel.measure(widthSpec,
+                        View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+                statusHeight = statusPanel.getMeasuredHeight();
+                ViewGroup.LayoutParams statusParams = statusPanel.getLayoutParams();
+                if (statusParams instanceof ViewGroup.MarginLayoutParams) {
+                    statusHeight += ((ViewGroup.MarginLayoutParams) statusParams).topMargin;
+                }
+            }
+            maxAnimationSize = Math.min(maxAnimationSize,
+                    Math.max(1, maxHeight - 2 * verticalPadding - Math.max(0, statusHeight)));
+        }
+        int animationSize = Math.max(1, Math.min(requestedSize, maxAnimationSize));
+        ViewGroup.LayoutParams animationParams = animationView.getLayoutParams();
+        if (animationParams != null && (animationParams.width != animationSize
+                || animationParams.height != animationSize)) {
+            animationParams.width = animationSize;
+            animationParams.height = animationSize;
+            animationView.setLayoutParams(animationParams);
         }
     }
 
@@ -200,6 +237,7 @@ public class LoadingDialog extends CenterPopupView {
         int horizontal = Math.round((hasStatus ? 20 : 12) * density);
         int vertical = hasStatus ? Math.round(20 * density) : 0;
         loadingPanel.setPadding(horizontal, vertical, horizontal, vertical);
+        fitPanelToWindow();
     }
 
     /** 阻塞态:BACK 不关闭加载框,避免导入/请求中途被误关 */

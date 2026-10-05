@@ -18,6 +18,7 @@ import com.github.tvbox.osc.ui.kit.GridSpacingItemDecoration;
 import com.github.tvbox.osc.ui.widget.RoundChip;
 import com.github.tvbox.osc.util.AppBubble;
 import com.github.tvbox.osc.util.LoadingAnim;
+import com.github.tvbox.osc.util.LoadingAnimFit;
 import com.github.tvbox.osc.util.Utils;
 
 import org.jetbrains.annotations.NotNull;
@@ -69,6 +70,7 @@ public class DownloadSeriesRightDialog extends AppDrawerPopupView {
         // 加载动画跟随设置页"加载动画"配置(默认/Glowing Fish 等),与播放器/其他页一致
         LottieAnimationView lav = findViewById(R.id.lottie_loading);
         LoadingAnim.apply(lav);
+        LoadingAnimFit.bindToSlot(lav, (android.view.ViewGroup) mFlLoading, 8);
 
         // 集数网格:最多3列,基于文字长度自适应(1列/2列/3列);数据未就绪前先用默认3列,setData 时按实际文字重算
         mGridManager = new GridLayoutManager(getContext(), 3);

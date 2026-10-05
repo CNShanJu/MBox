@@ -71,7 +71,7 @@
         android:layout_height="72dp"
         android:layout_gravity="center"
         app:lottie_autoPlay="true"
-        android:scaleType="centerCrop"
+        android:scaleType="fitCenter"
         app:lottie_fileName="loading/glowing_fish_loader/glowing_fish_loader.json"
         app:lottie_speed="1"
         app:lottie_loop="true"

@@ -18,6 +18,7 @@ import android.widget.ProgressBar;
 import android.widget.ImageView;
 import android.widget.TextView;
 
+import com.airbnb.lottie.LottieAnimationView;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.core.graphics.Insets;
@@ -27,6 +28,7 @@ import androidx.core.view.WindowInsetsCompat;
 
 import com.github.tvbox.osc.R;
 import com.github.tvbox.osc.util.LoadingAnim;
+import com.github.tvbox.osc.util.LoadingAnimFit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -162,6 +164,15 @@ public abstract class BaseController extends BaseVideoController implements Gest
         }
         // 播放器加载动画跟随设置页"加载动画"选项(默认/Glowing Fish)
         LoadingAnim.apply(mLoading);
+        if (mLoading instanceof LottieAnimationView && mLoading.getParent() instanceof ViewGroup) {
+            // 内嵌播放器与全屏播放器共用布局，按真实画面大小收起动画。
+            ((ViewGroup) mLoading.getParent()).addOnLayoutChangeListener(
+                    (v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> fitPlayerLoading());
+            if (mNetSpeed != null) {
+                mNetSpeed.addOnLayoutChangeListener(
+                        (v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> fitPlayerLoading());
+            }
+        }
         if (getLayoutId() == R.layout.player_vod_control_view) {
             // 点播和本地共用布局：只移动边缘控件，保持双击反馈层铺满画面、触点坐标不变。
             addSideMargin(R.id.tv_top_l_container, true, false);
@@ -284,6 +295,36 @@ public abstract class BaseController extends BaseVideoController implements Gest
         if (mNetSpeed != null) mNetSpeed.setVisibility(visible ? VISIBLE : GONE);
     }
 
+    /** Keep the animation and buffering speed together inside the central part of the picture. */
+    private void fitPlayerLoading() {
+        if (!(mLoading instanceof LottieAnimationView) || !(mLoading.getParent() instanceof ViewGroup)) return;
+        ViewGroup slot = (ViewGroup) mLoading.getParent();
+        int width = slot.getWidth();
+        int height = slot.getHeight();
+        if (width <= 0 || height <= 0) return;
+        float density = getResources().getDisplayMetrics().density;
+        int sideReserve = Math.round(48f * density);
+        int topReserve = Math.min(Math.round(48f * density), height / 3);
+        int bottomReserve = Math.min(Math.round(64f * density), height / 3);
+        boolean speedVisible = mNetSpeed != null && mNetSpeed.getVisibility() == VISIBLE;
+        int speedHeight = speedVisible ? Math.max(mNetSpeed.getHeight(), Math.round(24f * density)) : 0;
+        int gap = speedVisible ? Math.round(4f * density) : 0;
+        int availableWidth = Math.max(1, width - slot.getPaddingLeft() - slot.getPaddingRight()
+                - 2 * sideReserve);
+        int availableHeight = Math.max(1, height - slot.getPaddingTop() - slot.getPaddingBottom()
+                - topReserve - bottomReserve - speedHeight - gap);
+        int size = LoadingAnimFit.fitWithinPixels((LottieAnimationView) mLoading,
+                availableWidth, availableHeight);
+        if (size <= 0) return;
+        float offset = (slot.getPaddingTop() + topReserve
+                - slot.getPaddingBottom() - bottomReserve) / 2f;
+        mLoading.setTranslationY(offset - (speedHeight + gap) / 2f);
+        if (mNetSpeed != null) {
+            // Both views use FrameLayout's center gravity; place speed beneath the fitted canvas.
+            mNetSpeed.setTranslationY(speedVisible ? offset + (size + gap) / 2f : 0f);
+        }
+    }
+
     /**
      * 按播放状态刷新 loading/网速显隐。
      * 快进/快退浮层显示期间一律隐藏,保证 loading 与拖动指示不同时出现;浮层隐藏后按状态还原。
@@ -308,6 +349,7 @@ public abstract class BaseController extends BaseVideoController implements Gest
         }
         setLoadingVisible(showLoading);
         setNetSpeedVisible(showNetSpeed);
+        fitPlayerLoading();
     }
 
     /**

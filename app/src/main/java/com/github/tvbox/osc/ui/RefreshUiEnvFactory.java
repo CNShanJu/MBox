@@ -22,6 +22,17 @@ public final class RefreshUiEnvFactory {
     /** 组装默认下拉刷新环境(全局加载动画 + 系统 toast) */
     @NonNull
     public static PullRefreshEnv create() {
+        return create(0);
+    }
+
+    /** 搜索结果页底部加载动画使用当前动画 JSON 中的专属位置配置 */
+    @NonNull
+    public static PullRefreshEnv createSearchResults() {
+        return create(LoadingAnim.getSearchEndLoadingOffsetYDp());
+    }
+
+    @NonNull
+    private static PullRefreshEnv create(int endLoadingOffsetYDp) {
         return new PullRefreshEnv() {
             @Override
             public String loadingAnimFilePath() {
@@ -29,8 +40,18 @@ public final class RefreshUiEnvFactory {
             }
 
             @Override
-            public int refreshIndicatorSizeDp() {
-                return LoadingAnim.getRefreshSizeDp(); // config.json size_refresh
+            public int loadingAnimSizeDp() {
+                return LoadingAnim.getSizeDp(); // config.json size
+            }
+
+            @Override
+            public float loadingAnimVisibleHeightRatio() {
+                return LoadingAnim.getVisibleHeightRatio();
+            }
+
+            @Override
+            public int endLoadingOffsetYDp() {
+                return endLoadingOffsetYDp;
             }
 
             @Override

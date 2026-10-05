@@ -21,7 +21,7 @@ import java.util.List;
 /**
  * 底部悬浮提示控制器(统一"到底了"逻辑):
  *
- * - 列表正在请求(busy)且停在底部时,底部显示"全局加载态 Lottie"(尺寸=下拉刷新 size_refresh),
+ * - 列表正在请求(busy)且停在底部时,底部显示"全局加载态 Lottie"(尺寸=config.json 的 size),
  *   替代"到底了"文字;
  * - 空闲且满足「数据非空 + 已到底标志 + 确实滚到底 + 曾超一屏」时显示"到底了";
  * - 其余情况全部隐藏。
@@ -30,6 +30,8 @@ import java.util.List;
  * refreshEndTip/updateEndTip 实现;各页面只需按自身语义实现 {@link State}。
  */
 public final class ListEndTipController {
+
+    private static final int LOADING_EDGE_GAP_DP = 8;
 
     /** 页面状态供给:由各列表页按自身语义实现 */
     public interface State {
@@ -73,12 +75,35 @@ public final class ListEndTipController {
     public void attach(@Nullable RecyclerView recyclerView) {
         if (recyclerView == null || mAttached.contains(recyclerView)) return;
         mAttached.add(recyclerView);
+        // 底部 Lottie 是盖在列表上的兄弟视图:把末项可滚动留白扩到动画上沿以上。
+        int requiredBottomPadding = loadingBottomClearancePx();
+        if (recyclerView.getPaddingBottom() < requiredBottomPadding) {
+            recyclerView.setPadding(recyclerView.getPaddingLeft(), recyclerView.getPaddingTop(),
+                    recyclerView.getPaddingRight(), requiredBottomPadding);
+        }
         recyclerView.addOnScrollListener(new RecyclerView.OnScrollListener() {
             @Override
             public void onScrolled(@NonNull RecyclerView rv, int dx, int dy) {
                 refresh();
             }
         });
+    }
+
+    private int loadingBottomClearancePx() {
+        if (mEnv.loadingAnimFilePath() == null) return 0;
+        float density = mTip.getResources().getDisplayMetrics().density;
+        int sizePx = Math.round(Math.max(1, mEnv.loadingAnimSizeDp()) * density);
+        float ratio = mEnv.loadingAnimVisibleHeightRatio();
+        if (!(ratio > 0f && ratio <= 1f)) ratio = 1f;
+        int edgePx = Math.round(LOADING_EDGE_GAP_DP * density);
+        int offsetPx = Math.round(mEnv.endLoadingOffsetYDp() * density);
+        ViewGroup.LayoutParams tipParams = mTip.getLayoutParams();
+        int bottomMargin = tipParams instanceof ViewGroup.MarginLayoutParams
+                ? ((ViewGroup.MarginLayoutParams) tipParams).bottomMargin : 0;
+        int bottomInset = Math.max(edgePx, bottomMargin - offsetPx);
+        // Lottie 盒子可能有透明边;末项只需避开中心的可见运动轨迹。
+        int visibleTopFromBoxBottom = Math.round(sizePx * (1f + ratio) / 2f);
+        return visibleTopFromBoxBottom + bottomInset + edgePx;
     }
 
     /** 懒创建底部 Lottie:作为 "到底了"TextView 的兄弟加进同一容器(同锚点,盖在内容上方) */
@@ -90,7 +115,8 @@ public final class ListEndTipController {
         Context ctx = mTip.getContext();
         if (parent == null || ctx == null) return;
         LottieAnimationView lav = new LottieAnimationView(ctx);
-        int sizePx = Math.round(mEnv.refreshIndicatorSizeDp() * ctx.getResources().getDisplayMetrics().density);
+        float density = ctx.getResources().getDisplayMetrics().density;
+        int sizePx = Math.round(Math.max(1, mEnv.loadingAnimSizeDp()) * density);
         // 布局参数以 tip 自身为模板按实际类型复制(父容器相关:RelativeLayout 对齐规则 /
         // FrameLayout gravity / 边距均原样继承),避免硬编码 FrameLayout.LayoutParams
         // 在 RelativeLayout 父容器下丢失底部居中规则。
@@ -109,7 +135,14 @@ public final class ListEndTipController {
         }
         lp.width = sizePx;
         lp.height = sizePx;
+        int offsetPx = Math.round(mEnv.endLoadingOffsetYDp() * density);
+        if (lp instanceof ViewGroup.MarginLayoutParams) {
+            ViewGroup.MarginLayoutParams margins = (ViewGroup.MarginLayoutParams) lp;
+            margins.bottomMargin = Math.max(margins.bottomMargin,
+                    offsetPx + Math.round(LOADING_EDGE_GAP_DP * density));
+        }
         lav.setLayoutParams(lp);
+        lav.setTranslationY(offsetPx);
         try {
             lav.setAnimation(animFile); // 与全局加载态同一动画文件
             lav.setRepeatMode(LottieDrawable.RESTART);

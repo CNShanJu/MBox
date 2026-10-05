@@ -4,6 +4,7 @@ import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.animation.ValueAnimator;
 import android.content.Context;
+import android.graphics.Canvas;
 import android.os.SystemClock;
 import android.util.AttributeSet;
 import android.view.Gravity;
@@ -55,6 +56,7 @@ public class RubberBandSwipeRefreshLayout extends FrameLayout {
 
     private static final int DEFAULT_TRIGGER_DP = 64;
     private static final float MAX_STRETCH_DP = 160f;
+    private static final float INDICATOR_EDGE_GAP_DP = 8f;
     private static final float STRETCH_SATURATION = 1.0f; // 拉伸比:>=1,1=接近 1:1 跟手(避免边界放大抖动)
     /** 出现起点/收回终点的缩放(0.35 → 1.0) */
     private static final float INDICATOR_MIN_SCALE = 0.35f;
@@ -74,7 +76,11 @@ public class RubberBandSwipeRefreshLayout extends FrameLayout {
     // ---- 配置 ----
     private OnRefreshListener mRefreshListener;
     private OnRefreshCancelListener mRefreshCancelListener;
+    private float mMinimumTriggerPx;
     private float mTriggerPx;
+    private float mMaxStretchPx;
+    private float mIndicatorGapPx;
+    private float mVisibleHeightRatio = 1f;
     /** 刷新中"上拉打断"需要的上拉距离(px) */
     private float mCancelTriggerPx;
 
@@ -115,6 +121,7 @@ public class RubberBandSwipeRefreshLayout extends FrameLayout {
     /** 注入页面环境(动画文件/尺寸 + toast);不注入则动画/提示无副作用 */
     public void setEnv(@Nullable PullRefreshEnv env) {
         mEnv = env != null ? env : PullRefreshEnv.NONE;
+        updatePullGeometry();
     }
 
     private void toast(String msg) {
@@ -133,7 +140,8 @@ public class RubberBandSwipeRefreshLayout extends FrameLayout {
         super(context, attrs, defStyleAttr);
         mDensity = getResources().getDisplayMetrics().density;
         mTouchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
-        mTriggerPx = DEFAULT_TRIGGER_DP * mDensity;
+        mMinimumTriggerPx = DEFAULT_TRIGGER_DP * mDensity;
+        updatePullGeometry();
         mCancelTriggerPx = CANCEL_TRIGGER_DP * mDensity;
     }
 
@@ -156,7 +164,8 @@ public class RubberBandSwipeRefreshLayout extends FrameLayout {
 
     /** 触发后的"刷新保持位"位移(下拉到底停留展示转圈处) */
     private float refreshHoldOffset() {
-        return RubberBandEngine.dampOffset(mTriggerPx, MAX_STRETCH_DP * mDensity, STRETCH_SATURATION);
+        return Math.max(mIndicatorGapPx,
+                RubberBandEngine.dampOffset(mTriggerPx, mMaxStretchPx, STRETCH_SATURATION));
     }
 
     /**
@@ -189,9 +198,30 @@ public class RubberBandSwipeRefreshLayout extends FrameLayout {
     public void setProgressBackgroundColorSchemeResource(int colorResId) {
     }
 
-    /** 触发刷新的下拉距离(dp),默认 64dp */
+    /** 触发刷新的下拉距离(dp);动画放大时保持原有手势距离,松手后展开足够的展示区域 */
     public void setDistanceToTriggerSync(int distanceDp) {
-        mTriggerPx = Math.max(1, distanceDp) * mDensity;
+        mMinimumTriggerPx = Math.max(1, distanceDp) * mDensity;
+        updatePullGeometry();
+    }
+
+    /** 保持位至少容纳动画及上下边距,拉伸上限也随动画放大。 */
+    private void updatePullGeometry() {
+        mTriggerPx = mMinimumTriggerPx;
+        if (mEnv.loadingAnimFilePath() == null) {
+            mMaxStretchPx = MAX_STRETCH_DP * mDensity;
+            mIndicatorGapPx = 0f;
+            mVisibleHeightRatio = 1f;
+            return;
+        }
+        float ratio = mEnv.loadingAnimVisibleHeightRatio();
+        mVisibleHeightRatio = ratio > 0f && ratio <= 1f ? ratio : 1f;
+        float indicatorPx = Math.max(1, mEnv.loadingAnimSizeDp()) * mDensity;
+        // 素材可能自带透明画布,留白按可见运动轨迹而非整个 Lottie 盒子计算。
+        mIndicatorGapPx = indicatorPx * mVisibleHeightRatio
+                + 2f * INDICATOR_EDGE_GAP_DP * mDensity;
+        // 可见轨迹较小的素材也相应收小手势可拉出的最大空白。
+        mMaxStretchPx = Math.max(MAX_STRETCH_DP * mDensity * mVisibleHeightRatio,
+                mIndicatorGapPx * 1.25f);
     }
 
     // ================= 手势 =================
@@ -241,6 +271,17 @@ public class RubberBandSwipeRefreshLayout extends FrameLayout {
             }
         }
         return null;
+    }
+
+    @Override
+    protected boolean drawChild(Canvas canvas, View child, long drawingTime) {
+        if (child != mIndicatorView) return super.drawChild(canvas, child, drawingTime);
+        // 指示层只属于内容拉开后的空白区;即使 Lottie 光晕超出视图边界也不能盖住列表。
+        int save = canvas.save();
+        canvas.clipRect(0f, 0f, getWidth(), Math.min(getHeight(), Math.max(0f, mOffset)));
+        boolean drawn = super.drawChild(canvas, child, drawingTime);
+        canvas.restoreToCount(save);
+        return drawn;
     }
 
     @Override
@@ -426,7 +467,7 @@ public class RubberBandSwipeRefreshLayout extends FrameLayout {
     /** 按(上次停留 + 本次下拉)更新内容位移与刷新指示 */
     private void applyPull(float raw) {
         float offset = mPullBase
-                + RubberBandEngine.dampOffset(raw, MAX_STRETCH_DP * mDensity, STRETCH_SATURATION);
+                + RubberBandEngine.dampOffset(raw, mMaxStretchPx, STRETCH_SATURATION);
         mOffset = offset;
         if (mTarget != null) {
             mTarget.setTranslationY(offset);
@@ -490,8 +531,8 @@ public class RubberBandSwipeRefreshLayout extends FrameLayout {
         String animFile = mEnv.loadingAnimFilePath();
         if (animFile == null) return; // 未注入动画:仅保持拉伸回弹,不显示指示
         LottieAnimationView lav = new LottieAnimationView(getContext());
-        // 下拉刷新专用尺寸:由页面注入(来源 config.json 的 size_refresh)
-        int sizeDp = mEnv.refreshIndicatorSizeDp();
+        // 与其他加载态共用的尺寸:由页面注入(来源 config.json 的 size)
+        int sizeDp = Math.max(1, mEnv.loadingAnimSizeDp());
         int px = Math.round(sizeDp * mDensity);
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(px, px);
         lp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL;
@@ -526,7 +567,8 @@ public class RubberBandSwipeRefreshLayout extends FrameLayout {
         ensureIndicator();
         if (mIndicatorView == null) return;
 
-        float fullOffset = RubberBandEngine.dampOffset(mTriggerPx, MAX_STRETCH_DP * mDensity, STRETCH_SATURATION);
+        // 揭示和逐帧拖动仍按手势触发距离计算;松手后才平滑展开到完整动画尺寸。
+        float fullOffset = RubberBandEngine.dampOffset(mTriggerPx, mMaxStretchPx, STRETCH_SATURATION);
         float reveal = mRefreshing ? 1f : 0f;
         if (!mRefreshing && fullOffset > 0f) {
             float start = APPEAR_START_FRACTION * fullOffset;
@@ -550,6 +592,10 @@ public class RubberBandSwipeRefreshLayout extends FrameLayout {
         float cy = mOffset / 2f; // 空白区中心(容器坐标系)
         mIndicatorView.setTranslationY(cy - px / 2f);
         float scale = mRefreshing ? 1f : (INDICATOR_MIN_SCALE + (1f - INDICATOR_MIN_SCALE) * reveal);
+        // 拉开过程中的实际尺寸也限制在空白区内,避免大动画先压到列表再被裁剪。
+        scale = Math.min(scale, Math.max(0f,
+                (mOffset - 2f * INDICATOR_EDGE_GAP_DP * mDensity)
+                        / (px * mVisibleHeightRatio)));
         // 保留配置的左右镜像方向,下拉揭示动画只改变缩放幅度。
         mIndicatorView.setScaleX(Math.copySign(scale, mIndicatorView.getScaleX()));
         mIndicatorView.setScaleY(scale);

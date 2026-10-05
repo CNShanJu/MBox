@@ -20,8 +20,18 @@ public interface PullRefreshEnv {
     @Nullable
     String loadingAnimFilePath();
 
-    /** 下拉刷新指示器的显示尺寸(dp) */
-    int refreshIndicatorSizeDp();
+    /** 下拉刷新及列表底部与其他加载态共用的视图边长(dp) */
+    int loadingAnimSizeDp();
+
+    /** 动画可见轨迹占视图高度的比例;透明画布大的素材可据此留出紧凑展示区 */
+    default float loadingAnimVisibleHeightRatio() {
+        return 1f;
+    }
+
+    /** 列表底部加载动画的垂直偏移(dp,正数向下);默认保持原有位置 */
+    default int endLoadingOffsetYDp() {
+        return 0;
+    }
 
     /** 加载动画播放速度倍率;手指下拉时的逐帧拖动仍跟随手势 */
     float loadingAnimSpeed();
@@ -42,8 +52,8 @@ public interface PullRefreshEnv {
         }
 
         @Override
-        public int refreshIndicatorSizeDp() {
-            return 40;
+        public int loadingAnimSizeDp() {
+            return 72;
         }
 
         @Override
