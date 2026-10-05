@@ -212,8 +212,17 @@ public class SelectDialog<T> extends AppCenterPopupView {
             if (root == null || list == null) return;
             int maxH = getMaxHeight();
             if (maxH <= 0) return;
+            int width = root.getWidth() > 0 ? root.getWidth() : root.getMeasuredWidth();
+            if (width <= 0) return;
+            // 列表曾因内容过多被压成固定高度时，先恢复 wrap 再量自然高；否则删除条目后
+            // 仍会留下空白，新增条目时也无法根据当前内容重新给固定页脚留空间。
+            android.view.ViewGroup.LayoutParams lp = list.getLayoutParams();
+            if (lp.height != android.view.ViewGroup.LayoutParams.WRAP_CONTENT) {
+                lp.height = android.view.ViewGroup.LayoutParams.WRAP_CONTENT;
+                list.setLayoutParams(lp);
+            }
             // 用 UNSPECIFIED 重新测量整卡"自然高"(不受 XPopup 容器钳高影响),判断是否真的超高
-            int wSpec = android.view.View.MeasureSpec.makeMeasureSpec(root.getWidth(), android.view.View.MeasureSpec.EXACTLY);
+            int wSpec = android.view.View.MeasureSpec.makeMeasureSpec(width, android.view.View.MeasureSpec.EXACTLY);
             int hSpec = android.view.View.MeasureSpec.makeMeasureSpec(0, android.view.View.MeasureSpec.UNSPECIFIED);
             root.measure(wSpec, hSpec);
             int naturalH = root.getMeasuredHeight();
@@ -221,8 +230,8 @@ public class SelectDialog<T> extends AppCenterPopupView {
             int naturalListH = list.getMeasuredHeight();
             int fixedH = naturalH - naturalListH;
             int available = maxH - fixedH;
-            if (available <= 0) available = maxH / 2;
-            android.view.ViewGroup.LayoutParams lp = list.getLayoutParams();
+            // 固定的标题/页脚优先可见；极短窗口也不能再让列表占半屏把页脚挤出去。
+            if (available <= 0) available = 1;
             lp.height = available;
             list.setLayoutParams(lp);
             list.requestLayout();
@@ -404,6 +413,7 @@ public class SelectDialog<T> extends AppCenterPopupView {
         SelectDialogAdapter<T> adapter = currentAdapter();
         if (adapter == null) {
             setAdapter(selectInterface, itemCallback, newData, newSelect);
+            clampListHeightToFit();
             return;
         }
         this.data = newData;
@@ -413,6 +423,9 @@ public class SelectDialog<T> extends AppCenterPopupView {
         if (newSelect >= 0 && list instanceof TvRecyclerView) { // 同 setAdapter:负值 = 无默认选中项
             ((TvRecyclerView) list).setSelectedPosition(newSelect);
         }
+        // 数据条数会在弹窗仍显示时改变(例如新增/删除主题)。同步重算列表高度，
+        // 让新增的行留在可滚动区内，固定页脚始终在弹窗范围内。
+        clampListHeightToFit();
     }
 
     private void applyExtras(SelectDialogAdapter<T> adapter) {
