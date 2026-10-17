@@ -18,14 +18,16 @@
 -keepattributes LineNumberTable
 -renamesourcefileattribute SourceFile
 
-# 重新包装所有重命名的包并放在给定的单一包中
--flattenpackagehierarchy androidx.base
+# @Keep 注解:显式保留被标注的类/成员(不依赖 androidx 库的 consumer rules 合并行为)
+-keep @androidx.annotation.Keep class * { *; }
+-keepclassmembers class * {
+    @androidx.annotation.Keep <methods>;
+    @androidx.annotation.Keep <fields>;
+}
 
-# 将包里的类混淆成n个再重新打包到一个统一的package中  会覆盖flattenpackagehierarchy选项
+# 混淆后的类统一打包到单一包(-repackageclasses 已含 -flattenpackagehierarchy 效果,后者冗余;
+# -useuniqueclassmembernames 为 R8 不支持项,已移除)
 -repackageclasses androidx.base
-
-# 把混淆类中的方法名也混淆了
--useuniqueclassmembernames
 #############################################
 #
 # Android开发中一些需要保留的公共部分
@@ -159,15 +161,16 @@
 -keep class com.thoughtworks.xstream.converters.extended.RegexPatternConverter { *; }
 -keep class com.thoughtworks.xstream.converters.extended.CharsetConverter { *; }
 -keep class com.thoughtworks.xstream.** { *; }
+# XStream 引用的可选依赖(cglib/dom4j/jdom/joda/java.awt/javax.xml.stream 等)在 Android 上不存在,
+# 只被"未实际使用的驱动/转换器"引用,运行时不会触发;不忽略会被 R8 升级成致命 missing class 错误。
+-dontwarn com.thoughtworks.xstream.**
 #eventbus 已全仓移除(AGENTS §五,禁止再引入):相关 keep 规则随之删除
 
 #dkplayer(现用坐标 xyz.doikki.android.dkplayer,旧包名 com.dueeeke 已废弃)
 -keep class xyz.doikki.videoplayer.** { *; }
 -dontwarn xyz.doikki.videoplayer.**
 
-# IjkPlayer
--keep class tv.danmaku.ijk.** { *; }
--dontwarn tv.danmaku.ijk.**
+# IjkPlayer 已移除(2026-10-17),相关 keep 规则随之删除
 
 # Media3 ExoPlayer（渲染器/协议扩展另带 consumer rules）
 -keep class androidx.media3.** { *; }
@@ -178,8 +181,17 @@
 -keep class com.github.catvod.crawler.*{*;}
 # 迅雷下载模块
 -keep class com.xunlei.downloadlib.** {*;}
+# 迅雷 P2P 原生库 JNI 绑定(app 层 com.p2p.P2PClass,libp2p.so)
+-keep class com.p2p.** { *; }
 # quickjs引擎(:thirdparty)
 -keep class com.whl.quickjs.** {*;}
+# QuickJS 桥接:JS 侧按方法名调用,必须保留 @Function/@ContextSetter 标注的方法名
+-keepclassmembers class * {
+    @com.whl.quickjs.wrapper.Function <methods>;
+}
+-keepclassmembers class * {
+    @com.whl.quickjs.wrapper.ContextSetter <methods>;
+}
 
 # 支持影视的ali相关的jar
 -keep class com.google.gson.**{*;}

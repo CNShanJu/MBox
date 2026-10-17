@@ -145,7 +145,11 @@ android {
 
         release {
             signingConfig canSign ? signingConfigs.config : signingConfigs.debug
-            minifyEnabled false
+            // R8 混淆 + 资源收缩(2026-10-17):dex 是体积最大头,开启后预计砍 8~13MB。
+            // keep 规则见 proguard-rules.pro(已补 P2P JNI / QuickJS 桥接 / @Keep)。
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
 
