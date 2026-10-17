@@ -16,6 +16,14 @@ public final class ShareArchives {
     @NonNull public static File zip(@NonNull Map<String, File> entries, @NonNull File output)
             throws IOException { return ShareArchive.zip(entries, output); }
 
+    /** 把目录树打成嵌套条目归档({@code key/相对路径});单文件/总量/文件数超限抛 IOException */
+    @NonNull public static File zipDirectories(@NonNull Map<String, File> directories,
+                                               @NonNull File output,
+                                               long maxFileBytes, long maxTotalBytes, int maxFiles)
+            throws IOException {
+        return ShareArchive.zipDirectories(directories, output, maxFileBytes, maxTotalBytes, maxFiles);
+    }
+
     public static void extract(@NonNull File archive, @NonNull File directory) throws IOException {
         ShareArchive.extractTo(archive, directory);
     }

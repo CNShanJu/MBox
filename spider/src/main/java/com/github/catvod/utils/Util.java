@@ -10,10 +10,6 @@ import com.github.catvod.Init;
 
 
 import java.io.File;
-import java.io.FileInputStream;
-import java.math.BigInteger;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.text.DecimalFormat;
 import java.text.SimpleDateFormat;
 import java.util.Formatter;
@@ -77,33 +73,13 @@ public class Util {
     }
 
     public static String md5(String src) {
-        try {
-            if (TextUtils.isEmpty(src)) return "";
-            MessageDigest digest = MessageDigest.getInstance("MD5");
-            byte[] bytes = digest.digest(src.getBytes());
-            BigInteger no = new BigInteger(1, bytes);
-            StringBuilder sb = new StringBuilder(no.toString(16));
-            while (sb.length() < 32) sb.insert(0, "0");
-            return sb.toString().toLowerCase();
-        } catch (NoSuchAlgorithmException e) {
-            return "";
-        }
+        if (TextUtils.isEmpty(src)) return "";
+        return com.github.tvbox.osc.util.MD5.encode(src);
     }
 
     public static String md5(File file) {
-        try {
-            MessageDigest digest = MessageDigest.getInstance("MD5");
-            FileInputStream fis = new FileInputStream(file);
-            byte[] byteArray = new byte[1024];
-            int count;
-            while ((count = fis.read(byteArray)) != -1) digest.update(byteArray, 0, count);
-            fis.close();
-            StringBuilder sb = new StringBuilder();
-            for (byte b : digest.digest()) sb.append(Integer.toString((b & 0xff) + 0x100, 16).substring(1));
-            return sb.toString();
-        } catch (Exception e) {
-            return "";
-        }
+        if (file == null) return "";
+        return com.github.tvbox.osc.util.MD5.getFileMd5(file);
     }
 
     public static boolean equals(String name, String md5) {

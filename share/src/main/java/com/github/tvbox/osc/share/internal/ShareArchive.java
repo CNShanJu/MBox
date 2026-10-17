@@ -202,6 +202,73 @@ public final class ShareArchive {
     }
 
     /**
+     * 把若干目录树打进 zip(归档内条目名 = {@code <key>/<相对路径>})。
+     * 与 {@link #zip} 一样防路径逃逸;另带单文件/总量/文件数上限,超限抛 IOException
+     * (带原因,调用方把整次打包作废)。
+     */
+    @NonNull
+    public static File zipDirectories(@NonNull Map<String, File> directories, @NonNull File out,
+                                      long maxFileBytes, long maxTotalBytes, int maxFiles)
+            throws IOException {
+        if (maxFileBytes <= 0 || maxTotalBytes <= 0 || maxFiles <= 0) {
+            throw new IOException("归档目录上限无效");
+        }
+        File parent = out.getParentFile();
+        if (parent != null && !parent.exists() && !parent.mkdirs()) {
+            throw new IOException("无法创建归档目录: " + parent);
+        }
+        long total = 0L;
+        int count = 0;
+        try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(out))) {
+            for (Map.Entry<String, File> e : directories.entrySet()) {
+                String root = e.getKey();
+                File dir = e.getValue();
+                if (root == null || root.isEmpty() || root.indexOf('/') >= 0
+                        || root.indexOf('\\') >= 0 || root.contains("..")) {
+                    throw new IOException("非法归档目录名: " + root);
+                }
+                if (dir == null || !dir.isDirectory()) continue;
+                java.util.ArrayDeque<File> pending = new java.util.ArrayDeque<>();
+                pending.add(dir);
+                while (!pending.isEmpty()) {
+                    File current = pending.removeFirst();
+                    File[] children = current.listFiles();
+                    if (children == null) throw new IOException("无法读取目录: " + current.getName());
+                    java.util.Arrays.sort(children,
+                            java.util.Comparator.comparing(File::getName, String.CASE_INSENSITIVE_ORDER));
+                    for (File child : children) {
+                        if (child.isDirectory()) {
+                            pending.add(child);
+                            continue;
+                        }
+                        if (!child.isFile()) continue;
+                        count++;
+                        if (count > maxFiles) throw new IOException("归档文件数量超过 " + maxFiles);
+                        if (child.length() > maxFileBytes) {
+                            throw new IOException("归档文件过大: " + child.getName());
+                        }
+                        total += child.length();
+                        if (total > maxTotalBytes) throw new IOException("归档总量超过限制");
+                        String rel = dir.toURI().relativize(child.toURI()).getPath()
+                                .replace('\\', '/');
+                        if (rel.isEmpty() || rel.startsWith("/") || rel.contains("..")) {
+                            throw new IOException("非法归档条目名: " + rel);
+                        }
+                        zos.putNextEntry(new ZipEntry(root + "/" + rel));
+                        try (InputStream in = new BufferedInputStream(new FileInputStream(child))) {
+                            byte[] buf = new byte[BUF];
+                            int n;
+                            while ((n = in.read(buf)) > 0) zos.write(buf, 0, n);
+                        }
+                        zos.closeEntry();
+                    }
+                }
+            }
+        }
+        return out;
+    }
+
+    /**
      * 解压到目标目录(Zip Slip 防护,见类注释)。
      * 任一条目不合法即抛 {@link SecurityException} 且<b>不继续</b>(调用方应先解到临时目录再落地,
      * 保证失败不留半套数据)。

@@ -15,6 +15,8 @@ public interface PlayUrlResolverApi {
      */
     ResolveResult resolvePlayUrl(String sourceKey, String playFlag, String episodeRawUrl);
 
+    ResolveResult resolveDirectPlayUrl(String sourceKey, String playFlag, String episodeRawUrl);
+
     /** 直链解析失败时，取得播放器实际使用的 WebView 解析页；内部集标识不能直接当网页加载。 */
     ResolveResult resolveSniffPage(String sourceKey, String playFlag, String episodeRawUrl);
 
@@ -33,6 +35,11 @@ public interface PlayUrlResolverApi {
     PlayUrlResolverApi NONE = new PlayUrlResolverApi() {
         @Override
         public ResolveResult resolvePlayUrl(String sourceKey, String playFlag, String episodeRawUrl) {
+            return null;
+        }
+
+        @Override
+        public ResolveResult resolveDirectPlayUrl(String sourceKey, String playFlag, String episodeRawUrl) {
             return null;
         }
 

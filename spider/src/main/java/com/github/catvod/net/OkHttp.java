@@ -11,7 +11,6 @@ import com.github.tvbox.osc.util.LOG;
 import com.github.tvbox.osc.util.OkGoHelper;
 
 import java.util.Map;
-import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
 import okhttp3.Cache;
@@ -238,11 +237,9 @@ public class OkHttp {
         return body.build();
     }
 
-    private static HttpUrl buildUrl(String url, HashMap<String, String> params) {
-        HttpUrl.Builder builder = Objects.requireNonNull(HttpUrl.parse(url)).newBuilder();
-        // 同 HttpUrls.buildUrl:重复键要覆盖而不是追加(api 自带 ac/t 的 CMS 源否则会拼出两组参数)
-        for (Map.Entry<String, String> entry : params.entrySet()) builder.setQueryParameter(entry.getKey(), entry.getValue());
-        return builder.build();
+    private static String buildUrl(String url, HashMap<String, String> params) {
+        // 委托 core-network HttpUrls.buildUrl(重复键覆盖 + 宽松降级),避免双实现漂移
+        return com.github.tvbox.osc.util.HttpUrls.buildUrl(url, params);
     }
 
     private static OkHttpClient.Builder getBuilder() {

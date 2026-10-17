@@ -189,6 +189,7 @@ public final class CustomActivityOnCrash {
                                             Log.e(TAG, "An unknown error occurred while invoking the event listener's onLaunchErrorActivity. Please check your implementation.", t);
                                         }
                                     }
+                                    CrashPageTheme.attachToIntent(intent);
                                     application.startActivity(intent);
                                 } else if (config.getBackgroundMode() == CaocConfig.BACKGROUND_MODE_CRASH) {
                                     if (oldHandler != null) {

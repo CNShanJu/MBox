@@ -159,27 +159,12 @@ public class OkGoHelper {
     /**
      * 按给定 DoH 地址构建解析器(关闭时返回 null)。
      * <p>
-     * 这里的 dohClient 只用于解析 DoH 域名本身,与业务客户端<b>独立</b>:它存在的意义是
-     * 解析时先走系统 DNS,避免"用 DoH 解析 DoH 域名"的自锁。
+     * 复用 {@link #newDohClientBuilder()} 的公共装配(日志/SSL/Brotli/连接规格一处维护),它固定走
+     * 系统 DNS,避免"用 DoH 解析 DoH 域名"的自锁;额外只挂一块 DoH 域名缓存。
      */
     private static DnsOverHttps buildDohResolver(String dohUrl) {
         if (dohUrl == null || dohUrl.isEmpty()) return null;
-        OkHttpClient.Builder builder = new OkHttpClient.Builder();
-        HttpLoggingInterceptor loggingInterceptor = new HttpLoggingInterceptor();
-        if (SystemConfig.isDebugOpen()) {
-            loggingInterceptor.setLevel(HttpLoggingInterceptor.Level.BODY);
-        } else {
-            loggingInterceptor.setLevel(HttpLoggingInterceptor.Level.NONE);
-        }
-        builder.addInterceptor(loggingInterceptor);
-        addLocalFileTokenInterceptor(builder);
-        builder.addInterceptor(new BrotliInterceptor());
-        try {
-            setOkHttpSsl(builder);
-        } catch (Throwable th) {
-            th.printStackTrace();
-        }
-        builder.connectionSpecs(getConnectionSpec());
+        OkHttpClient.Builder builder = newDohClientBuilder();
         if (appContext != null) {
             builder.cache(new Cache(new File(appContext.getCacheDir().getAbsolutePath(), "dohcache"), 10 * 1024 * 1024));
         }
@@ -512,6 +497,18 @@ public class OkGoHelper {
         OkHttpClient.Builder builder = newBaseBuilder();
         builder.dns(Dns.SYSTEM);
         return builder;
+    }
+
+    /**
+     * 播放内核客户端根 Builder:在常规根之上统一"长连接重试 + 跟随重定向"策略。
+     * 供 {@link com.github.tvbox.osc.net.NetworkProvider} 缺省实现与 app 侧 {@code App.buildPlaybackClient}
+     * 复用同一份基础配置,避免两处各自拼装漂移。
+     */
+    public static OkHttpClient.Builder newPlaybackBuilder() {
+        return newBaseBuilder()
+                .retryOnConnectionFailure(true)
+                .followRedirects(true)
+                .followSslRedirects(true);
     }
 
     /** App 启动时调用一次（context 注入；Exo/Picasso 初始化由 app 侧在 init 后自行完成） */

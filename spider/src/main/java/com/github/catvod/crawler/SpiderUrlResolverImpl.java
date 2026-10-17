@@ -40,6 +40,14 @@ public final class SpiderUrlResolverImpl implements PlayUrlResolverApi {
     }
 
     @Override
+    public ResolveResult resolveDirectPlayUrl(String sourceKey, String playFlag, String episodeRawUrl) {
+        if (sourceKey == null || playFlag == null || episodeRawUrl == null) return null;
+        PlayUrlResolver.ResolveResult result = SpiderApi.submitSerial(sourceKey,
+                () -> PlayUrlResolver.resolveDirectWithHeader(sourceKey, playFlag, episodeRawUrl), 20_000L);
+        return result == null ? null : new ResolveResult(result.url, result.headers);
+    }
+
+    @Override
     public ResolveResult resolveSniffPage(String sourceKey, String playFlag, String episodeRawUrl) {
         if (sourceKey == null || playFlag == null || episodeRawUrl == null) return null;
         try {

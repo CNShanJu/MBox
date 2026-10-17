@@ -33,6 +33,7 @@ import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.res.ResourcesCompat;
 
+import cat.ereza.customactivityoncrash.CrashPageTheme;
 import cat.ereza.customactivityoncrash.CustomActivityOnCrash;
 import com.angcyo.tablayout.R;   // 第三方归堆后资源在本模块(:thirdparty),R 用本模块的
 import cat.ereza.customactivityoncrash.config.CaocConfig;
@@ -87,6 +88,8 @@ public final class DefaultErrorActivity extends AppCompatActivity {
                         .setNeutralButton(R.string.customactivityoncrash_error_activity_error_details_copy,
                                 (dialog1, which) -> copyErrorToClipboard())
                         .show();
+                // 让弹窗跟随当前生效主题(与崩溃页主体同源投影值);没有投影时保持系统默认外观
+                CrashPageTheme.applyToDialog(DefaultErrorActivity.this, getIntent(), dialog);
                 TextView textView = dialog.findViewById(android.R.id.message);
                 if (textView != null) {
                     textView.setTextSize(TypedValue.COMPLEX_UNIT_PX, getResources().getDimension(R.dimen.customactivityoncrash_error_activity_error_details_text_size));
@@ -102,6 +105,13 @@ public final class DefaultErrorActivity extends AppCompatActivity {
         if (defaultErrorActivityDrawableId != null) {
             errorImageView.setImageDrawable(ResourcesCompat.getDrawable(getResources(), defaultErrorActivityDrawableId, getTheme()));
         }
+
+        // 跟随用户当前生效的主题:主进程在主题生效时把语义色投影到约定的独立 SharedPreferences
+        // (见 CrashPageTheme),本进程(:error_activity)只做一次极轻量读取 —— 不装 ThemeRuntime/Room,
+        // 保持"错误页进程最小化启动"的设计。没有投影值时什么都不做,外观与不接这能力时一致。
+        View themeRoot = findViewById(R.id.customactivityoncrash_error_activity_root);
+        TextView themeMessage = findViewById(R.id.customactivityoncrash_error_activity_explanation);
+        CrashPageTheme.apply(this, getIntent(), themeRoot, themeMessage, restartButton, moreInfoButton);
     }
 
     private void copyErrorToClipboard() {

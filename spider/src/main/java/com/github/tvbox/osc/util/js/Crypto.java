@@ -2,6 +2,8 @@ package com.github.tvbox.osc.util.js;
 
 import android.util.Base64;
 
+import com.github.tvbox.osc.util.rsa.RSAEncrypt;
+
 import java.security.Key;
 import java.security.KeyFactory;
 import java.security.PublicKey;
@@ -39,20 +41,10 @@ public class Crypto {
         try {
             Key rsaKey = generateKey(pub, key);
             int len = getModulusLength(rsaKey);
-            byte[] outBytes = new byte[0];
             byte[] inBytes = inBase64 ? Base64.decode(input.replaceAll("_", "/").replaceAll("-", "+"), Base64.DEFAULT) : input.getBytes("UTF-8");
-            Cipher cipher = Cipher.getInstance("RSA/ECB/PKCS1Padding");
-            cipher.init(encrypt ? Cipher.ENCRYPT_MODE : Cipher.DECRYPT_MODE, rsaKey);
             int blockLen = encrypt ? len / 8 - 11 : len / 8;
-            int bufIdx = 0;
-            while (bufIdx < inBytes.length) {
-                int bufEndIdx = Math.min(bufIdx + blockLen, inBytes.length);
-                byte[] tmpInBytes = new byte[bufEndIdx - bufIdx];
-                System.arraycopy(inBytes, bufIdx, tmpInBytes, 0, tmpInBytes.length);
-                byte[] tmpBytes = cipher.doFinal(tmpInBytes);
-                bufIdx = bufEndIdx;
-                outBytes = concatArrays(outBytes, tmpBytes);
-            }
+            // 分段加解密复用 RSAEncrypt 的公共核心(块长/分段逻辑同源)
+            byte[] outBytes = RSAEncrypt.processRsaBlock(rsaKey, encrypt, RSAEncrypt.ECB_PKCS1_PADDING, inBytes, blockLen);
             return outBase64 ? Base64.encodeToString(outBytes, Base64.NO_WRAP) : new String(outBytes, "UTF-8");
         } catch (Exception e) {
             e.printStackTrace();
@@ -69,14 +61,5 @@ public class Crypto {
     private static int getModulusLength(Key key) {
         if (key instanceof PublicKey) return ((RSAPublicKey) key).getModulus().bitLength();
         else return ((RSAPrivateKey) key).getModulus().bitLength();
-    }
-
-    private static byte[] concatArrays(byte[] a, byte[] b) {
-        int aLen = a.length;
-        int bLen = b.length;
-        byte[] result = new byte[aLen + bLen];
-        System.arraycopy(a, 0, result, 0, aLen);
-        System.arraycopy(b, 0, result, aLen, bLen);
-        return result;
     }
 }

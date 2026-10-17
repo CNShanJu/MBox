@@ -59,25 +59,35 @@ public class PlayUrlResolver {
 
     /** 同 {@link #resolve(String, String, String)}，同时返回请求头（下载防盗链源必须使用） */
     public static ResolveResult resolveWithHeader(String sourceKey, String playFlag, String url) {
+        return resolveWithHeader(sourceKey, playFlag, url, false);
+    }
+
+    public static ResolveResult resolveDirectWithHeader(String sourceKey, String playFlag, String url) {
+        return resolveWithHeader(sourceKey, playFlag, url, true);
+    }
+
+    private static ResolveResult resolveWithHeader(String sourceKey, String playFlag, String url, boolean directOnly) {
         if (TextUtils.isEmpty(url)) return null;
         try {
             SourceBean sb = ApiConfig.get().getSource(sourceKey);
-            if (sb == null) return DefaultConfig.isVideoFormat(url) ? new ResolveResult(url, null) : null;
+            if (sb == null) return !directOnly && DefaultConfig.isVideoFormat(url) ? new ResolveResult(url, null) : null;
             int type = sb.getType();
             if (type == 3) {
                 // 爬虫源：playerContent 返回播放信息
                 Spider sp = ApiConfig.get().getCSP(sb);
                 String json = sp.playerContent(playFlag, url, ApiConfig.get().getVipParseFlags());
                 JSONObject result = new JSONObject(json);
+                if (directOnly && (!"0".equals(result.optString("parse", "1"))
+                        || "1".equals(result.optString("jx", "0")))) return null;
                 return handleResult(result, playFlag, url);
             }
             if (type == 0 || type == 1) {
-                // XML/JSON 接口源：本身是视频格式则直下，否则走源站的解析接口
-                if (DefaultConfig.isVideoFormat(url)) return new ResolveResult(url, null);
                 String playerUrl = sb.getPlayerUrl() == null ? "" : sb.getPlayerUrl().trim();
-                return parseJson(playerUrl, url);
+                if (directOnly && !playerUrl.isEmpty()) return null;
+                if (DefaultConfig.isVideoFormat(url)) return new ResolveResult(url, null);
+                return directOnly ? null : parseJson(playerUrl, url);
             }
-            if (type == 4) {
+            if (type == 4 && !directOnly) {
                 // HTTP 接口源：play 参数拿播放信息
                 String api = sb.getApi();
                 if (TextUtils.isEmpty(api)) return null;

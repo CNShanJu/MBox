@@ -3,6 +3,7 @@ package com.github.tvbox.osc.util.rsa;
 import android.util.Log;
 
 import java.io.ByteArrayOutputStream;
+import java.security.Key;
 import java.security.KeyFactory;
 import java.security.KeyPair;
 import java.security.KeyPairGenerator;
@@ -43,6 +44,28 @@ public class RSAEncrypt {
      * RSA最大解密密文大小
      */
     private static final int MAX_DECRYPT_BLOCK = 128;
+
+    /**
+     * RSA 分段加解密公共核心(与 {@code Crypto.rsa} 共用同一套块长/分段逻辑)。
+     *
+     * @param key      公钥或私钥
+     * @param encrypt  true=加密, false=解密
+     * @param config   Cipher 算法串(如 {@link #ECB_PKCS1_PADDING})
+     * @param input    待处理字节
+     * @param blockLen 每段长度(加密=模长/8-11, 解密=模长/8)
+     */
+    public static byte[] processRsaBlock(Key key, boolean encrypt, String config, byte[] input, int blockLen) throws Exception {
+        Cipher cipher = Cipher.getInstance(config);
+        cipher.init(encrypt ? Cipher.ENCRYPT_MODE : Cipher.DECRYPT_MODE, key);
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        int offSet = 0;
+        while (offSet < input.length) {
+            int len = Math.min(blockLen, input.length - offSet);
+            out.write(cipher.doFinal(input, offSet, len));
+            offSet += len;
+        }
+        return out.toByteArray();
+    }
 
     /**
      * 随机生成 RSA 密钥对
@@ -140,31 +163,9 @@ public class RSAEncrypt {
             if(mlong == 1){
                 return DataUtils.base64Encode(cipher.doFinal(bytes));
             }
-            int bitLength = MAX_ENCRYPT_BLOCK;
-            if(block){
-                bitLength = rSAPublicKey.getModulus().bitLength() / 8 - 11;
-            }
-            int inputLen = bytes.length;
-            // 保存加密的数据
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
-            int offSet = 0, i = 0;
-            byte[] cache;
-            // 使用 RSA 对数据分段加密
-            while (inputLen - offSet > 0) {
-                if (inputLen - offSet > bitLength) {
-                    cache = cipher.doFinal(bytes, offSet, bitLength);
-                } else {
-                    cache = cipher.doFinal(bytes, offSet, inputLen - offSet);
-                }
-                // 将加密以后的数据保存到内存
-                out.write(cache, 0, cache.length);
-                i++;
-                offSet = i * bitLength;
-            }
-            byte[] encryptedData = out.toByteArray();
-            out.close();
+            int bitLength = block ? rSAPublicKey.getModulus().bitLength() / 8 - 11 : MAX_ENCRYPT_BLOCK;
             // 将加密后的数据转换成 Base64 字符串
-            return DataUtils.base64Encode(encryptedData);
+            return DataUtils.base64Encode(processRsaBlock(rSAPublicKey, true, config, bytes, bitLength));
         } catch (Exception e) {
             handleException(e);
         }
@@ -195,29 +196,8 @@ public class RSAEncrypt {
             if(mlong == 1){
                 return new String(cipher.doFinal(encryptedData));
             }
-            int bitLength = MAX_DECRYPT_BLOCK;
-            if(block){
-                bitLength = rSAPrivateKey.getModulus().bitLength() / 8;
-            }
-            int inputLen = encryptedData.length;
-            // 保存解密的数据
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
-            int offSet = 0, i = 0;
-            byte[] cache;
-            // 对数据分段解密
-            while (inputLen - offSet > 0) {
-                if (inputLen - offSet > bitLength) {
-                    cache = cipher.doFinal(encryptedData, offSet, bitLength);
-                } else {
-                    cache = cipher.doFinal(encryptedData, offSet, inputLen - offSet);
-                }
-                // 将解密后的数据保存到内存
-                out.write(cache, 0, cache.length);
-                i++;
-                offSet = i * bitLength;
-            }
-            out.close();
-            return out.toString("UTF-8");
+            int bitLength = block ? rSAPrivateKey.getModulus().bitLength() / 8 : MAX_DECRYPT_BLOCK;
+            return new String(processRsaBlock(rSAPrivateKey, false, config, encryptedData, bitLength), "UTF-8");
         } catch (Exception e) {
             handleException(e);
         }
@@ -248,31 +228,9 @@ public class RSAEncrypt {
             if(mlong == 1){
                 return DataUtils.base64Encode(cipher.doFinal(bytes));
             }
-            int bitLength = MAX_ENCRYPT_BLOCK;
-            if(block){
-                bitLength = rSAPrivateKey.getModulus().bitLength() / 8 - 11;
-            }
-            int inputLen = bytes.length;
-            // 保存加密的数据
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
-            int offSet = 0, i = 0;
-            byte[] cache;
-            // 使用 RSA 对数据分段加密
-            while (inputLen - offSet > 0) {
-                if (inputLen - offSet > bitLength) {
-                    cache = cipher.doFinal(bytes, offSet, bitLength);
-                } else {
-                    cache = cipher.doFinal(bytes, offSet, inputLen - offSet);
-                }
-                // 将加密以后的数据保存到内存
-                out.write(cache, 0, cache.length);
-                i++;
-                offSet = i * bitLength;
-            }
-            byte[] encryptedData = out.toByteArray();
-            out.close();
+            int bitLength = block ? rSAPrivateKey.getModulus().bitLength() / 8 - 11 : MAX_ENCRYPT_BLOCK;
             // 将加密后的数据转换成 Base64 字符串
-            return DataUtils.base64Encode(encryptedData);
+            return DataUtils.base64Encode(processRsaBlock(rSAPrivateKey, true, config, bytes, bitLength));
         } catch (Exception e) {
             handleException(e);
         }
@@ -302,29 +260,8 @@ public class RSAEncrypt {
             if(mlong == 1){
                 return new String(cipher.doFinal(encryptedData));
             }
-            int bitLength = MAX_DECRYPT_BLOCK;
-            if(block){
-                bitLength = rSAPublicKey.getModulus().bitLength() / 8;
-            }
-            int inputLen = encryptedData.length;
-            // 保存解密的数据
-            ByteArrayOutputStream out = new ByteArrayOutputStream();
-            int offSet = 0, i = 0;
-            byte[] cache;
-            // 对数据分段解密
-            while (inputLen - offSet > 0) {
-                if (inputLen - offSet > bitLength) {
-                    cache = cipher.doFinal(encryptedData, offSet, bitLength);
-                } else {
-                    cache = cipher.doFinal(encryptedData, offSet, inputLen - offSet);
-                }
-                // 将解密后的数据保存到内存
-                out.write(cache, 0, cache.length);
-                i++;
-                offSet = i * bitLength;
-            }
-            out.close();
-            return out.toString("UTF-8");
+            int bitLength = block ? rSAPublicKey.getModulus().bitLength() / 8 : MAX_DECRYPT_BLOCK;
+            return new String(processRsaBlock(rSAPublicKey, false, config, encryptedData, bitLength), "UTF-8");
         } catch (Exception e) {
             handleException(e);
         }

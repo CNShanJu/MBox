@@ -15,7 +15,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * 数据维护在播放模块内部（Hawk 键沿用旧应用 key，与历史设置兼容，独立模块不依赖 app 的 HawkConfig）；
  * 对外只暴露 查询 / 操作 / 订阅 / 备份：
  * <ul>
- *   <li>查询：getPlayType / getRenderType / getScaleType / getTimeStep / getIjkCodec / isIjkCachePlay /
+ *   <li>查询：getPlayType / getRenderType / getScaleType / getTimeStep / getIjkCodec / isPlayCacheEnabled /
  *       getBackgroundPlayType / getVideoPurifyMode / getVideoSpeed / 字幕三件套</li>
  *   <li>操作：对应 setXxx（内部校验 + 持久化 + 广播变更）</li>
  *   <li>订阅：{@link #subscribe(Listener)}——设置页等关注方刷新 UI</li>
@@ -31,7 +31,13 @@ public final class PlayConfig {
     private static final String KEY_PLAY_SCALE = "play_scale";
     private static final String KEY_PLAY_TIME_STEP = "play_time_step";
     private static final String KEY_IJK_CODEC = "ijk_codec";
-    private static final String KEY_IJK_CACHE_PLAY = "ijk_cache_play";
+    private static final String KEY_IJK_CACHE_PLAY = PlayCacheMigration.LEGACY_KEY;
+    // 播放缓存/预载(二级设置页)。master 关时播放器走各自默认缓冲,不放大。
+    private static final String KEY_PLAY_CACHE_ENABLED = PlayCacheMigration.ENABLED_KEY;
+    private static final String KEY_PRELOAD_NEXT = "preload_next_episode";
+    private static final String KEY_PRELOAD_DURATION = "preload_duration_s";
+    private static final String KEY_CACHE_WHILE_PLAY = PlayCacheMigration.WHILE_PLAY_KEY;
+    private static final String KEY_PLAY_CACHE_CAPACITY = "play_cache_capacity_mb";
     private static final String KEY_BACKGROUND_PLAY_TYPE = "background_play_type";
     private static final String KEY_VIDEO_PURIFY = "video_purify";
     private static final String KEY_VIDEO_PURIFY_MODE = "video_purify_mode";
@@ -85,9 +91,91 @@ public final class PlayConfig {
         return PrefsDataStore.getString(KEY_IJK_CODEC, "软解码");
     }
 
-    /** IJK 缓存播放，默认关 */
-    public static boolean isIjkCachePlay() {
-        return PrefsDataStore.getBoolean(KEY_IJK_CACHE_PLAY, false);
+    // ── 播放缓存/预载 ──
+
+    public static final int PRELOAD_DURATION_MIN_S = 10;
+    public static final int PRELOAD_DURATION_MAX_S = 300;
+    public static final int PRELOAD_DURATION_DEFAULT_S = 60;
+    public static final int CACHE_CAPACITY_MIN_MB = 256;
+    public static final int CACHE_CAPACITY_MAX_MB = 8192;
+    public static final int CACHE_CAPACITY_DEFAULT_MB = 1024;
+
+    /** 播放缓存总开关，新装默认关；旧值只补缺失新键，getter 不执行迁移落盘。 */
+    public static boolean isPlayCacheEnabled() {
+        return readCacheSnapshot().getEnabled();
+    }
+
+    /** 下一集预载（仅 Exo 内核 + 直链源），默认关 */
+    public static boolean isPreloadNextEnabled() {
+        return PrefsDataStore.getBoolean(KEY_PRELOAD_NEXT, false);
+    }
+
+    /** 下一集预载时长（秒）：预载下一集从片头后起这么多秒，默认 60 */
+    public static int getPreloadDurationS() {
+        int v = PrefsDataStore.getInt(KEY_PRELOAD_DURATION, PRELOAD_DURATION_DEFAULT_S);
+        return clamp(v, PRELOAD_DURATION_MIN_S, PRELOAD_DURATION_MAX_S);
+    }
+
+    /** 边播边缓存(磁盘缓存,Exo 与 IJK 通用)，新装默认开；与总开关共用归一策略。 */
+    public static boolean isCacheWhilePlay() {
+        return readCacheSnapshot().getWhilePlay();
+    }
+
+    private static Boolean readOptionalBoolean(String key, boolean fallback) {
+        return PrefsDataStore.contains(key) ? PrefsDataStore.getBoolean(key, fallback) : null;
+    }
+
+    /** PrefsDataStore 的 get/contains 均为内存读取；新键齐备后不再读取旧值。 */
+    private static PlayCacheMigration.Snapshot readCacheSnapshot() {
+        Boolean enabled = readOptionalBoolean(KEY_PLAY_CACHE_ENABLED, false);
+        Boolean whilePlay = readOptionalBoolean(KEY_CACHE_WHILE_PLAY, true);
+        Boolean legacy = enabled == null || whilePlay == null
+                ? readOptionalBoolean(KEY_IJK_CACHE_PLAY, false) : null;
+        return PlayCacheMigration.resolve(enabled, whilePlay, legacy);
+    }
+
+    /**
+     * 在 PrefsDataStore.init 完成后的共享后台初始化边界调用；getter 不调用此方法。
+     * 幂等：先确认两个新键落盘，再清理旧键。返回 false 表示写入/清理未完成，可重试。
+     * 已处于存储回滚作用域时，持久化异常继续向外传播，不创建嵌套作用域。
+     */
+    public static boolean migrateLegacyCacheConfig() {
+        return persistCacheSnapshot(readCacheSnapshot()) && !PrefsDataStore.contains(KEY_IJK_CACHE_PLAY);
+    }
+
+    private static boolean persistCacheSnapshot(PlayCacheMigration.Snapshot snapshot) {
+        if (!PrefsDataStore.contains(KEY_PLAY_CACHE_ENABLED)
+                || !PrefsDataStore.contains(KEY_CACHE_WHILE_PLAY)
+                || PrefsDataStore.getBoolean(KEY_PLAY_CACHE_ENABLED, false) != snapshot.getEnabled()
+                || PrefsDataStore.getBoolean(KEY_CACHE_WHILE_PLAY, true) != snapshot.getWhilePlay()) {
+            Map<String, Object> values = new LinkedHashMap<>();
+            values.put(KEY_PLAY_CACHE_ENABLED, snapshot.getEnabled());
+            values.put(KEY_CACHE_WHILE_PLAY, snapshot.getWhilePlay());
+            // put 吞 I/O 异常，不能作为迁移完成凭据；importAll 原子落盘并明确返回结果。
+            if (PrefsDataStore.importAll(values) != values.size()) return false;
+        }
+        // 即使删除失败，已落盘的新键仍是权威；保留旧键供下次边界重试清理。
+        if (PrefsDataStore.contains(KEY_IJK_CACHE_PLAY)) PrefsDataStore.delete(KEY_IJK_CACHE_PLAY);
+        return true;
+    }
+
+    private static void writeCacheConfig(Boolean enabled, Boolean whilePlay) {
+        PlayCacheMigration.Snapshot before = readCacheSnapshot();
+        PlayCacheMigration.Snapshot after = PlayCacheMigration.resolve(
+                enabled != null ? enabled : before.getEnabled(),
+                whilePlay != null ? whilePlay : before.getWhilePlay(), null);
+        // 即使有效值相同也要补齐缺失键，不能因 setter 的等值短路跳过迁移。
+        if (persistCacheSnapshot(after) && !after.equals(before)) fireChanged();
+    }
+
+    /** 播放磁盘缓存容量（MB），默认 1024(=1GB) */
+    public static int getCacheCapacityMb() {
+        int v = PrefsDataStore.getInt(KEY_PLAY_CACHE_CAPACITY, CACHE_CAPACITY_DEFAULT_MB);
+        return clamp(v, CACHE_CAPACITY_MIN_MB, CACHE_CAPACITY_MAX_MB);
+    }
+
+    private static int clamp(int v, int min, int max) {
+        return v < min ? min : (v > max ? max : v);
     }
 
     /** 后台播放：0 关闭 1 开启 2 画中画，默认 0 */
@@ -168,9 +256,31 @@ public final class PlayConfig {
         fireChanged();
     }
 
-    public static void setIjkCachePlay(boolean on) {
-        if (isIjkCachePlay() == on) return;
-        PrefsDataStore.put(KEY_IJK_CACHE_PLAY, on);
+    public static void setPlayCacheEnabled(boolean on) {
+        writeCacheConfig(on, null);
+    }
+
+    public static void setPreloadNextEnabled(boolean on) {
+        if (isPreloadNextEnabled() == on) return;
+        PrefsDataStore.put(KEY_PRELOAD_NEXT, on);
+        fireChanged();
+    }
+
+    public static void setPreloadDurationS(int s) {
+        int val = clamp(s, PRELOAD_DURATION_MIN_S, PRELOAD_DURATION_MAX_S);
+        if (getPreloadDurationS() == val) return;
+        PrefsDataStore.put(KEY_PRELOAD_DURATION, val);
+        fireChanged();
+    }
+
+    public static void setCacheWhilePlay(boolean on) {
+        writeCacheConfig(null, on);
+    }
+
+    public static void setCacheCapacityMb(int mb) {
+        int val = clamp(mb, CACHE_CAPACITY_MIN_MB, CACHE_CAPACITY_MAX_MB);
+        if (getCacheCapacityMb() == val) return;
+        PrefsDataStore.put(KEY_PLAY_CACHE_CAPACITY, val);
         fireChanged();
     }
 
@@ -246,7 +356,12 @@ public final class PlayConfig {
         cfg.put(KEY_PLAY_SCALE, getScaleType());
         cfg.put(KEY_PLAY_TIME_STEP, getTimeStep());
         cfg.put(KEY_IJK_CODEC, getIjkCodec());
-        cfg.put(KEY_IJK_CACHE_PLAY, isIjkCachePlay());
+        PlayCacheMigration.Snapshot cache = readCacheSnapshot();
+        cfg.put(KEY_PLAY_CACHE_ENABLED, cache.getEnabled());
+        cfg.put(KEY_PRELOAD_NEXT, isPreloadNextEnabled());
+        cfg.put(KEY_PRELOAD_DURATION, getPreloadDurationS());
+        cfg.put(KEY_CACHE_WHILE_PLAY, cache.getWhilePlay());
+        cfg.put(KEY_PLAY_CACHE_CAPACITY, getCacheCapacityMb());
         cfg.put(KEY_BACKGROUND_PLAY_TYPE, getBackgroundPlayType());
         cfg.put(KEY_VIDEO_PURIFY, isVideoPurify());
         cfg.put(KEY_VIDEO_PURIFY_MODE, getVideoPurifyMode());
@@ -265,7 +380,14 @@ public final class PlayConfig {
         if ((v = cfg.get(KEY_PLAY_SCALE)) instanceof Integer) setScaleType((Integer) v);
         if ((v = cfg.get(KEY_PLAY_TIME_STEP)) instanceof Integer) setTimeStep((Integer) v);
         if ((v = cfg.get(KEY_IJK_CODEC)) instanceof String) setIjkCodec((String) v);
-        if ((v = cfg.get(KEY_IJK_CACHE_PLAY)) instanceof Boolean) setIjkCachePlay((Boolean) v);
+        // 先在备份边界归一，再覆盖本机；旧备份不能被本机已经存在的新键遮挡。
+        Map<String, Boolean> cache = PlayCacheMigration.normalizeImport(cfg);
+        if (!cache.isEmpty()) writeCacheConfig(cache.get(KEY_PLAY_CACHE_ENABLED), cache.get(KEY_CACHE_WHILE_PLAY));
+        if ((v = cfg.get(KEY_PRELOAD_NEXT)) instanceof Boolean) setPreloadNextEnabled((Boolean) v);
+        if ((v = cfg.get(KEY_PRELOAD_DURATION)) instanceof Number)
+            setPreloadDurationS(((Number) v).intValue());
+        if ((v = cfg.get(KEY_PLAY_CACHE_CAPACITY)) instanceof Number)
+            setCacheCapacityMb(((Number) v).intValue());
         if ((v = cfg.get(KEY_BACKGROUND_PLAY_TYPE)) instanceof Integer) setBackgroundPlayType((Integer) v);
         boolean importedPurifyMode = false;
         if ((v = cfg.get(KEY_VIDEO_PURIFY_MODE)) instanceof Number) {

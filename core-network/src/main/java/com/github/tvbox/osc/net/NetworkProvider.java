@@ -31,11 +31,7 @@ public interface NetworkProvider {
 
         @Override
         public OkHttpClient playback() {
-            return com.github.tvbox.osc.util.OkGoHelper.newBaseBuilder()
-                    .retryOnConnectionFailure(true)
-                    .followRedirects(true)
-                    .followSslRedirects(true)
-                    .build();
+            return com.github.tvbox.osc.util.OkGoHelper.newPlaybackBuilder().build();
         }
     };
 }

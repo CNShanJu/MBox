@@ -7,6 +7,8 @@ public class Subscription {
     public static final String ORIGIN_DIRECT = "direct";
     public static final String ORIGIN_LOCAL = "local";
     public static final String ORIGIN_JSON = "json";
+    /** 本地包导入(TVBox 生态 ZIP 包,或已解压后选包内清单):列表上显示「本地包」徽标 */
+    public static final String ORIGIN_PACKAGE = "package";
 
     public Subscription() {
     }
@@ -23,7 +25,7 @@ public class Subscription {
 
     String name;
     String url;
-    /** 当初怎么加进来的({@link #ORIGIN_DIRECT}/{@link #ORIGIN_LOCAL}/{@link #ORIGIN_JSON};旧数据为 null) */
+    /** 当初怎么加进来的({@link #ORIGIN_DIRECT}/{@link #ORIGIN_LOCAL}/{@link #ORIGIN_JSON}/{@link #ORIGIN_PACKAGE};旧数据为 null) */
     String origin;
     //选择状态
     boolean isChecked;

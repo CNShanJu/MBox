@@ -415,8 +415,9 @@ public final class CmsApiRules {
     /**
      * 剥掉开头的 BOM 与 {@code //} 注释行后取正文:部分订阅配置带注释,Gson 不认,
      * 加载阶段(FindResult)会先剥一层,这里的形态判定必须同样先剥,否则带注释的真配置会被误判成"不是订阅"。
+     * <p>公开给导入侧(本地包清单 txt 同样常带注释行),保证"导入时能认"与"加载时能认"是同一套容忍度。
      */
-    private static String stripJsonNoise(String text) {
+    public static String stripJsonNoise(String text) {
         if (text == null) return "";
         String t = text;
         if (!t.isEmpty() && t.charAt(0) == '\ufeff') t = t.substring(1);

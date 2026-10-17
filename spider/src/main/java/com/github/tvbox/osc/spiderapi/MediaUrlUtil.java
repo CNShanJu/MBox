@@ -8,7 +8,7 @@ import java.util.regex.Pattern;
 /**
  * 视频地址嗅探工具(无状态):download 等模块经本类判断 URL 是否像可下载的视频地址,
  * 避免它们依赖 :spider 实现内的 DefaultConfig。
- * 说明:判定规则与 spider 的 DefaultConfig.isVideoFormat 保持同一份(两处实现,迁移时同步)。
+ * 说明:嗅探正则<b>唯一事实源</b>在本类;spider 内 DefaultConfig.isVideoFormat 已委托本类。
  */
 public final class MediaUrlUtil {
 

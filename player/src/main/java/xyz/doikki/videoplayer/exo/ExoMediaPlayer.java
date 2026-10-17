@@ -34,6 +34,7 @@ import java.util.Map;
 
 import com.github.tvbox.osc.log.Category;
 import com.github.tvbox.osc.log.LogStore;
+import com.github.tvbox.osc.player.api.PlayConfig;
 
 import xyz.doikki.videoplayer.player.AbstractPlayer;
 import xyz.doikki.videoplayer.player.PlaybackErrorReporter;
@@ -111,7 +112,7 @@ public class ExoMediaPlayer extends AbstractPlayer implements Player.Listener {
             mTrackSelector = new DefaultTrackSelector(mAppContext);
         }
         if (mLoadControl == null) {
-            mLoadControl = new DefaultLoadControl();
+            mLoadControl = buildLoadControl();
         }
         // 隧道播放依赖设备的音视频硬件同步实现，部分设备在 seek 后可能停在旧画面。
         // 默认走普通渲染路径，避免在线点播的历史续播和拖动进度触发此类兼容问题。
@@ -136,6 +137,24 @@ public class ExoMediaPlayer extends AbstractPlayer implements Player.Listener {
         mMediaPlayer.addAnalyticsListener(playbackProbe);
     }
 
+    /**
+     * 播放缓存开关开启时放大当前播放的读-ahead 缓冲(min/max buffer),弱网下减少反复 rebuffer;
+     * 起播阈值保持 Media3 默认,避免为了多缓冲而拖慢首帧。关闭时回落到 DefaultLoadControl 默认值。
+     * 注意:这里的放大是"当前播放"的固定加档;"预载时长"只服务于下一集预载,不参与当前缓冲。
+     */
+    private static LoadControl buildLoadControl() {
+        if (!PlayConfig.isPlayCacheEnabled()) {
+            return new DefaultLoadControl();
+        }
+        int minMs = Math.max(DefaultLoadControl.DEFAULT_MIN_BUFFER_MS, 60_000);
+        int maxMs = Math.max(minMs, 120_000);
+        return new DefaultLoadControl.Builder()
+                .setBufferDurationsMs(minMs, maxMs,
+                        DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_MS,
+                        DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS)
+                .build();
+    }
+
     public DefaultTrackSelector getTrackSelector() {
         return mTrackSelector;
     }
@@ -151,7 +170,13 @@ public class ExoMediaPlayer extends AbstractPlayer implements Player.Listener {
         lastAvailableTracksProbe = null;
         failedLoadUrl = null;
         mMediaSource = null;
-        mMediaSource = mMediaSourceHelper.getMediaSource(path, headers, false, errorCode);
+        // 走 SimpleCache 数据源的条件:master 开启且(边播边缓存 或 下一集预载)。
+        // 下一集预载的字节落在同一份 SimpleCache,切集时必须同样走缓存数据源才能命中。
+        boolean useDiskCache = PlayConfig.isPlayCacheEnabled()
+                && (PlayConfig.isCacheWhilePlay() || PlayConfig.isPreloadNextEnabled());
+        // 只开预载时允许命中已有缓存,不能因此继续把当前视频写入磁盘。
+        mMediaSource = mMediaSourceHelper.getMediaSource(path, headers, useDiskCache, errorCode,
+                PlayConfig.isCacheWhilePlay());
         LogStore.log(Category.PLAYER, "Media3 播放输入: 类型=" + mMediaSource.getClass().getSimpleName()
                 + "，净化代理=" + (path != null && path.startsWith("http://127.0.0.1:")
                 && path.contains("/purify.m3u8")) + "，自定义 UA=" + hasUserAgent(headers));

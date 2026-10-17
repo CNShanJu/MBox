@@ -144,6 +144,12 @@ public final class ExoMediaSourceHelper {
     }
 
     public MediaSource getMediaSource(String uri, Map<String, String> headers, boolean isCache, int errorCode) {
+        return getMediaSource(uri, headers, isCache, errorCode, true);
+    }
+
+    /** writeCache=false 时只读取已有缓存,未命中的内容仍走网络但不写入缓存。 */
+    public MediaSource getMediaSource(String uri, Map<String, String> headers, boolean isCache,
+                                      int errorCode, boolean writeCache) {
         Uri contentUri = Uri.parse(uri);
         if ("rtmp".equals(contentUri.getScheme())) {
             return new ProgressiveMediaSource.Factory(new RtmpDataSource.Factory())
@@ -154,7 +160,7 @@ public final class ExoMediaSourceHelper {
         int contentType = inferContentType(uri);
         DataSource.Factory factory;
         if (isCache) {
-            factory = getCacheDataSourceFactory(headers);
+            factory = getCacheDataSourceFactory(headers, writeCache);
         } else {
             factory = getDataSourceFactory(headers);
         }
@@ -224,20 +230,32 @@ public final class ExoMediaSourceHelper {
         return C.TYPE_OTHER;
     }
 
-    private DataSource.Factory getCacheDataSourceFactory(Map<String, String> headers) {
+    // 与 setCache 共用实例锁:播放线程与预载线程不得为同一目录重复创建 SimpleCache。
+    private synchronized DataSource.Factory getCacheDataSourceFactory(Map<String, String> headers,
+                                                                      boolean writeCache) {
         if (mCache == null) {
             mCache = newCache();
         }
-        return new CacheDataSource.Factory()
+        CacheDataSource.Factory factory = new CacheDataSource.Factory()
                 .setCache(mCache)
                 .setUpstreamDataSourceFactory(getDataSourceFactory(headers))
                 .setFlags(CacheDataSource.FLAG_IGNORE_CACHE_ON_ERROR);
+        if (!writeCache) {
+            factory.setCacheWriteDataSinkFactory(null);
+        }
+        return factory;
     }
 
     private Cache newCache() {
+        // 容量取自播放缓存设置;SimpleCache 的 LRU 上限在创建时固定,运行中改容量不重建
+        // (重建需 close 正在被播放持有的缓存,风险大),故新容量自下一次建缓存(通常为重启)生效。
+        long capacityBytes = (long) com.github.tvbox.osc.player.api.PlayConfig.getCacheCapacityMb()
+                * 1024L * 1024L;
+        File cacheRoot = mAppContext.getExternalCacheDir();
+        if (cacheRoot == null) cacheRoot = mAppContext.getCacheDir();
         return new SimpleCache(
-                new File(mAppContext.getExternalCacheDir(), "exo-video-cache"),//缓存目录
-                new LeastRecentlyUsedCacheEvictor(512 * 1024 * 1024),//缓存大小，默认512M，使用LRU算法实现
+                new File(cacheRoot, "exo-video-cache"),//缓存目录
+                new LeastRecentlyUsedCacheEvictor(capacityBytes),//缓存大小,LRU 淘汰
                 new StandaloneDatabaseProvider(mAppContext));
     }
 
@@ -280,7 +298,7 @@ public final class ExoMediaSourceHelper {
         return copy;
     }
 
-    public void setCache(Cache cache) {
+    public synchronized void setCache(Cache cache) {
         this.mCache = cache;
     }
 
