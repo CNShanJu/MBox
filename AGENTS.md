@@ -91,6 +91,10 @@ app / feature
    `clipToPadding=false` 让首/末内容不贴到屏幕或容器边缘滚动;禁止内容贴边滚动影响视觉效果。
 8. 用户主动触发的删除、清除、清空操作必须先弹确认框;取消后不得改动数据。批量操作应说明影响范围,
    删除正在使用的直播源等会改变当前选择的操作应说明后续行为;输入框清字和页面临时状态重置不属于此类。
+9. **新增源码一律用 Kotlin(`.kt`),禁止新建 `.java` 文件**(类/接口/数据类/对象/扩展等全部 .kt)。
+   修改既有 `.java` 文件时,优先就地转为 `.kt`(可用 IDE 转换,转换后须保持公共契约与行为不变,
+   不得借转换顺带改逻辑);确需保留 Java 的场景(如必须保持 Java 签名的既有代码、第三方 Jar 反编译产物)
+   属例外,须在提交说明中写明原因。转换遵循现有包结构与依赖方向,不改变对外接口与调用方代码。
 
 ## 七、安全与工程红线(持续约束)
 
@@ -216,12 +220,24 @@ app / feature
 - **纯文字按钮点击时不显示背景**(强制;2026-10-05 用户口径):`TextButton`、`BtnGhost`、`SubtitleTextButton`、
   多选操作栏与独立文字动作入口的默认/按下背景均保持透明;不得添加圆形无边界波纹或按下填色。
   保留可点击、可聚焦及原有触摸尺寸;文字色继续按各页面的主题/固定配色规则处理。
+- **崩溃页必须跟随当前生效主题**(2026-10-16 用户口径;强制):崩溃兜底页(第三方 CustomActivityOnCrash,
+  `DefaultErrorActivity`)跑在独立进程 `:error_activity`,而 `App.onCreate` 对它是**刻意最小化启动**的
+  (不装 ThemeRuntime/Room/爬虫)——所以它的配色不能靠该进程自己解析主题,也**禁止**为配色把业务初始化
+  搬进错误页进程。口径:由**主进程**在主题生效时(启动装配、系统翻明暗、切主题后重启)把当前生效调色板的
+  语义色投影到独立 SharedPreferences(`mbox_crash_page_theme`:背景 `bg_body`、文案 `text_main`、
+  主按钮 `btn_confirm_bg`/`btn_confirm_text`、次要按钮文字 `text_accent`);
+  契约与着色在 `thirdparty/.../cat/ereza/customactivityoncrash/CrashPageTheme`,写方为 app 的
+  `theme/CrashPageThemeSync`(幂等,值没变不落盘),调用点是 `App.initParams` 与
+  `BaseActivity.attachBaseContext` 的主题刷新处。没有投影值时保持静态 `AppTheme` 外观,不得报错或崩溃
+  (着色全程吞异常:这页是崩溃后的最后一道界面)。崩溃页的 Activity 在 app 的 manifest 里显式声明
+  `theme="@style/AppTheme"`(不依赖继承)。该 SP 是派生数据,不写入应用配置键体系、不参与备份/还原,
+  也不得借此把日志或其他重初始化接进错误页进程。
 
 ## 八、推荐推进顺序(供排期参考)
 
 1. **播放器与大页收口**:在具备真机回归条件时,逐步拆 PlayFragment/DetailActivity;播放器控制、字幕和换源流程经 PlayerSession/Coordinator 协作,再评估 playback shell。
 2. **按需模块化**:现有依赖边界稳定后才考虑 feature-*;不要为搬目录先拆模块。
-3. **渐进现代化**:按收益推进 Java→Kotlin、LiveData→StateFlow 与 Hilt(按需)。维持 Media3 版本一致、DataStore 配置门面、EventBus 禁令及现有构建门禁。
+3. **渐进现代化**:按收益推进 Java→Kotlin(新增源码一律 .kt,见 §六.9)、LiveData→StateFlow 与 Hilt(按需)。维持 Media3 版本一致、DataStore 配置门面、EventBus 禁令及现有构建门禁。
 
 ## 九、开发与提交纪律
 

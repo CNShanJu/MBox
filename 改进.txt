@@ -40,9 +40,11 @@ DetailActivity 逐步拆为 DetailViewModel、DetailRepository、EpisodeSelectio
 六、验收与安全红线
 
 app/UI 不得新增 getCSP()、DownloadManager.get()、Hawk 裸读、具体爬虫实现直连、具体播放器内核 import 或自建线程池。业务后台任务由模块级共享执行器管理，并带取消或过期自检。Room 查询不得在主线程执行；网络客户端由 core-network 统一装配，HTTPS/TLS 默认校验证书与主机名，WebView 默认拒绝证书错误。
+新增源码文件一律使用 Kotlin（.kt），不得再新建 .java；修改既有 .java 文件时优先就地转为 .kt，转换后须保持公共契约与行为不变，不改变对外接口与调用方代码；确需保留 Java 的场景须在提交说明写明原因（与 AGENTS.md §六.9 同步）。
 忽略证书错误由用户自行控制（2026-10-05 用户口径，与 AGENTS.md §七 同步）：设置页保留“忽略证书错误”开关，默认关闭；开启后对所有网站统一生效，无需逐个输入域名。WebView 立即生效，统一网络客户端重启应用后生效。不得绕过开关无条件放行，分享/备份还原不得自动启用该本机设置。
 用户主动删除、清除、清空数据先弹确认框；取消后不得更改数据。可滚动组件保留内边距并设置 clipToPadding=false。图片加载统一使用 PicassoLoad 和 PosterPlaceholderDrawable，运行时占位置于 ImageView 背景层。
 局域网服务按需启动；用户确认关闭后须立即停止对外监听、清除已配对设备并恢复仅本机回环。异常残留对外监听时须如实提示。路径拼接和解压均须防目录穿越，敏感网络操作须鉴权。其余主题、播放器样式、性能、构建与发布红线以 AGENTS.md 为准。
+崩溃页必须跟随当前生效主题（2026-10-16 用户口径，与 AGENTS.md §七 同步）：崩溃兜底页（第三方 CustomActivityOnCrash）跑在独立 :error_activity 进程，App 对该进程刻意最小化启动（不装 ThemeRuntime/Room/爬虫），禁止为配色把业务初始化搬进去。由主进程在主题生效时（启动装配、系统翻明暗、切主题后重启）把当前生效调色板的 bg_body / text_main / btn_confirm_bg / btn_confirm_text / text_accent 投影到独立 SharedPreferences（mbox_crash_page_theme；契约与着色在 thirdparty 的 CrashPageTheme，写方为 app 的 theme/CrashPageThemeSync，幂等写入），崩溃页只做一次轻量读取上色；无投影值时保持静态 AppTheme 外观，着色全程吞异常，不得让错误页再崩。该 SP 为派生数据，不进配置键体系、不参与备份还原。
 局域网配置扫码与导入（2026-10-05 用户口径，与 AGENTS.md §七 同步）：扫描有效连接二维码后直接使用链接与配对码连接，不回填输入框要求再点“连接”；取消或无效二维码不得自动连接。配置导入成功并完成落盘后自动重启 App，发起前显式标记内部重启，不得触发烟花、自动检查更新与首页“上次看到”等用户启动动作；导入失败须恢复本轮写入前的记录和配置（含主题、背景图与本地订阅文件），不自动重启。只有完整恢复才可提示已恢复；恢复异常须明确提示并保留文件快照。发起重启失败时撤销来源标记并提示。
 
 本地备份还原前的系统保护（2026-10-05 用户口径，与 AGENTS.md §七 同步）：使用本地 ZIP 或旧版目录备份前，先为当前设置/订阅与播放历史/收藏创建系统临时备份；保护备份失败则停止还原。系统备份存于应用私有目录，名称使用真实本地时间 yyyy-MM-dd-HH-mm-临时备份数据，按数据内容 SHA-256 去重（不把 ZIP 时间、条目顺序与清单元数据计入），同数据复用并更新保护时间，另以归档 SHA-256 校验完整性。列表删除入口改为由 D:\Code\Video\LiteIcon\说明2.svg 转换的说明图标，点击说明自动备份及回滚用途；系统备份禁止手动删除。用户主动使用系统备份还原成功后删除该项，失败保留；其余系统备份在距最近保护时间满一小时后的下一次 App 启动清理，清理在首页首帧后交共享后台执行器，不得删除正在使用的备份或普通手动备份。还原失败自动尝试回滚，只有完整恢复才能提示已恢复；系统回滚须恢复原设置键集合与原数据库缺失状态，本机私有/鉴权与证书开关不跨备份迁移。成功还原显式标记内部重启后重启 App。
@@ -62,7 +64,7 @@ app/UI 不得新增 getCSP()、DownloadManager.get()、Hawk 裸读、具体爬�
 
 1. 在真机回归条件具备时收口播放器内核能力，拆 PlayFragment 与 DetailActivity。
 2. 依赖边界稳定后再评估 playback shell 和 feature-* 模块，不为搬目录而拆模块。
-3. 按需推进 Java→Kotlin、StateFlow 和 Hilt；Media3、EventBus 移除、Hawk→DataStore 及模块门禁已落地，勿重复列为待办。
+3. 按需推进 Java→Kotlin（新增源码一律 .kt，见 AGENTS.md §六.9）、StateFlow 和 Hilt；Media3、EventBus 移除、Hawk→DataStore 及模块门禁已落地，勿重复列为待办。
 
 八、现状模块清单
 
