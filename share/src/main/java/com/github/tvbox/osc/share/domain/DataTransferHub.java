@@ -40,9 +40,12 @@ public final class DataTransferHub {
 
     private final Context context;
     private final Map<String, DataDomain> domains = new LinkedHashMap<>();
+    private ImportProtection protection;
 
     public DataTransferHub(Context context) {
         this.context = context.getApplicationContext();
+        // 默认保护：快照 + 锁 + 事务 + 回滚（原配置导入 applyWithRollback 语义），下游可重写。
+        this.protection = new DefaultImportProtection(this.context);
     }
 
     /** 注册数据域；重复 id 且非同一实例时报错（避免覆盖他人实现）。 */
@@ -65,6 +68,11 @@ public final class DataTransferHub {
 
     public boolean contains(String id) {
         return domains.containsKey(id);
+    }
+
+    /** 替换导入保护实现（备份还原等链路换成自己的快照/回滚）；传 null 表示不做保护。 */
+    public void setProtection(ImportProtection protection) {
+        this.protection = protection;
     }
 
     /**
@@ -143,25 +151,12 @@ public final class DataTransferHub {
             validateEntries(work, manifest.domains());
 
             TransferSession session = new TransferSession(selected, mode, false);
+            ImportProtection guard = protection;
             if (hook != null) hook.before(session);
             boolean success = false;
             try {
-                List<String> imported = new ArrayList<>();
-                for (String id : selected) {
-                    DataDomain domain = domains.get(id);
-                    boolean present = manifest.domains().contains(id);
-                    if (mode == ImportMode.OVERWRITE) {
-                        // 覆盖：备份里有的域覆盖，没有的域清空（"备份里没有=还原后也没有"）。
-                        if (present) {
-                            domain.overwriteFrom(new File(work, domain.entryName()));
-                        } else {
-                            domain.clearData();
-                        }
-                    } else if (present) {
-                        domain.mergeFrom(new File(work, domain.entryName()));
-                    }
-                    imported.add(id);
-                }
+                ImportProtection.ImportAction action = () -> distribute(work, selected, mode, manifest);
+                List<String> imported = guard != null ? guard.runProtected(session, action) : action.run();
                 success = true;
                 return imported;
             } finally {
@@ -170,6 +165,27 @@ public final class DataTransferHub {
         } finally {
             clean(work);
         }
+    }
+
+    /** 逐域分发：合并模式对清单内域 merge；覆盖模式对清单内域 overwrite、清单外域 clear。 */
+    private List<String> distribute(File work, Set<String> selected, ImportMode mode,
+                                    ShareManifest manifest) throws IOException {
+        List<String> imported = new ArrayList<>();
+        for (String id : selected) {
+            DataDomain domain = domains.get(id);
+            boolean present = manifest.domains().contains(id);
+            if (mode == ImportMode.OVERWRITE) {
+                if (present) {
+                    domain.overwriteFrom(new File(work, domain.entryName()));
+                } else {
+                    domain.clearData();
+                }
+            } else if (present) {
+                domain.mergeFrom(new File(work, domain.entryName()));
+            }
+            imported.add(id);
+        }
+        return imported;
     }
 
     private Set<String> requireDomains(Set<String> ids) throws IOException {
