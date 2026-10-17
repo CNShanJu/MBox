@@ -247,6 +247,9 @@ public final class AppCompositionRoot {
             }
         };
         registerPlayerAdapters();
+        // 数据域统一导入导出：注册配置域到 share 调度器（备份域由 BackupModules 注册）。
+        com.github.tvbox.osc.transfer.ConfigDomains.init(
+                com.github.tvbox.osc.base.App.getInstance());
     }
 
     /**
