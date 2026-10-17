@@ -128,9 +128,11 @@
         <item name="backgroundTint">@null</item>
     </style>
 
-    <!-- 弹窗右上角关闭键(**全站统一**):40dp 方框 + 8dp 内边距 ⇒ 图标实际画 24dp,
-         与「检查更新」那个弹窗一致(用户口径"大小刚刚好")。以前每个弹窗各写一套
-         (50dp+10dp / 40dp+8dp / 32dp+7dp),同一个关闭键在不同弹窗里差一倍;
+    <!-- 弹窗右上角关闭键（**全站统一**）:28dp 方框 + 2dp 内边距 ⇒ 图标实际画 24dp。
+         原 40dp+8dp 的 8dp 内边距把 24dp 图标往盒子里缩了一圈,再叠上父容器 padding,
+         图标离弹窗角有双重空隙、看着往里缩;改成 28dp+2dp 后图标几乎贴盒、留白只剩 2dp,
+         视觉上贴右上角(用户口径"对所有弹窗影响没事")。图标仍 24dp 不变。
+         以前每个弹窗各写一套 (50dp+10dp / 40dp+8dp / 32dp+7dp),同一个关闭键在不同弹窗里差一倍;
          头部那一行再配 android:gravity="center_vertical"(ConstraintLayout 里用
          constraintTop/Bottom_toXOf="@id/title"),才不会跟标题一高一低。
          tint 故意**不放进这里**:换肤层 ThemeInflaterFactory 只遍历布局里**内联**写的属性,

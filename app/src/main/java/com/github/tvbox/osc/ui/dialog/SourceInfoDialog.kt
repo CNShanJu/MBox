@@ -29,34 +29,34 @@ class SourceInfoDialog(
     override fun onCreate() {
         super.onCreate()
         binding = DialogSourceInfoBinding.bind(popupImplView)
-        binding.tvVod.text = if (vodName.isNullOrEmpty()) "（未知影片）" else vodName
+        binding.tvVod.text = "剧名：" + if (vodName.isNullOrEmpty()) "（未知影片）" else vodName
 
         when (origin.status) {
             OriginStatus.CURRENT -> {
-                binding.tvSubscription.text = "来源订阅：" + (origin.subscriptionName ?: "当前订阅")
+                binding.tvSubscription.text = "订阅源：" + (origin.subscriptionName ?: "当前订阅")
                 binding.tvSource.text = "站点：" + (origin.sourceName ?: "源未启用")
                 setStatus("当前正在使用该订阅", false)
                 binding.btnUse.visibility = View.GONE
             }
 
             OriginStatus.SWITCHABLE -> {
-                binding.tvSubscription.text = "来源订阅：" + (origin.subscriptionName ?: "其他订阅")
+                binding.tvSubscription.text = "订阅源：" + (origin.subscriptionName ?: "其他订阅")
                 binding.tvSource.text = "站点：" + (origin.sourceName ?: "源未启用")
-                setStatus("当前订阅未包含此源，可切回来源订阅后播放", false)
+                setStatus("当前订阅未包含此源，需切回原来的订阅源方可播放", false)
                 binding.btnUse.visibility = View.VISIBLE
             }
 
             OriginStatus.DELETED -> {
-                binding.tvSubscription.text = "来源订阅：已删除"
+                binding.tvSubscription.text = "订阅源：已删除"
                 binding.tvSource.text = "站点：源未启用"
                 setStatus("对应的订阅源已删除，无法切回", true)
                 binding.btnUse.visibility = View.GONE
             }
 
             OriginStatus.UNKNOWN -> {
-                binding.tvSubscription.text = "来源订阅：未知"
+                binding.tvSubscription.text = "订阅源：未知"
                 binding.tvSource.text = "站点：源未启用"
-                setStatus("无法确定来源订阅（升级前的旧记录）", false)
+                setStatus("无法确定订阅源（升级前的旧记录）", false)
                 binding.btnUse.visibility = View.GONE
             }
         }
@@ -72,7 +72,7 @@ class SourceInfoDialog(
                 ) { SubscriptionSwitcher.switchTo(context, target) }
             }
         }
-        binding.btnClose.setOnClickListener { dismiss() }
+        binding.ivClose.setOnClickListener { dismiss() }
     }
 
     private fun setStatus(text: String, danger: Boolean) {

@@ -29,7 +29,7 @@ object SubscriptionSwitcher {
         for (s in subs) s.setChecked(s.url == targetUrl)
         SubscriptionConfig.setSubscriptions(subs)
         SubscriptionConfig.setApiUrl(targetUrl)
-        LogStore.log(Category.SUBSCRIPTION, "订阅: 从收藏/历史切换到来源订阅")
+        LogStore.log(Category.SUBSCRIPTION, "订阅: 从收藏/历史切换订阅源")
         if (context.packageManager.getLaunchIntentForPackage(context.packageName) == null) {
             AppBubble.toast("订阅已保存，自动重启失败，请手动重开应用")
             return false
