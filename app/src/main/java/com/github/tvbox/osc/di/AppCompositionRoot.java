@@ -186,6 +186,16 @@ public final class AppCompositionRoot {
             public void resetSources() {
                 com.github.catvod.crawler.JsRuntimeBridge.resetSources();
             }
+
+            @Override
+            public void setDeferInitForSearch(final boolean defer) {
+                com.github.catvod.crawler.JsRuntimeBridge.setDeferInitForSearch(defer);
+            }
+
+            @Override
+            public void releaseIdleSpiders() {
+                com.github.catvod.crawler.JsRuntimeBridge.releaseIdleSpiders();
+            }
         });
         // 源配置元信息(ApiConfig 即契约实现:源注册表/首页源/vip 解析旗标)
         com.github.tvbox.osc.spiderapi.SourceConfigProviders.set(

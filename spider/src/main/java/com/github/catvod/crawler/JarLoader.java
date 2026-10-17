@@ -2,6 +2,8 @@ package com.github.catvod.crawler;
 
 import android.content.Context;
 
+import com.github.tvbox.osc.log.Category;
+import com.github.tvbox.osc.log.LogStore;
 import com.github.tvbox.osc.util.HttpClient;
 import com.github.tvbox.osc.util.LOG;
 import com.github.tvbox.osc.util.MD5;
@@ -18,6 +20,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import dalvik.system.DexClassLoader;
 import okhttp3.Response;
@@ -75,6 +78,18 @@ public class JarLoader {
     private volatile boolean crashMarkChecked = false;
     /** 主 jar 因"会让 App 闪退"被停用(load() 判定):源取用它时据此给出说法,而不是只显示"暂无数据" */
     private volatile boolean mainJarBlocked = false;
+
+    /**
+     * 聚合搜索进行中标志（由搜索页设置）。
+     * <p>
+     * Csp 主 jar 的 Init 会拉起 WebView(chromium,~80MB)，与搜索期的多个 QuickJS 运行时叠加即 OOM。
+     * 搜索期间把 Init 压住（见 {@code loadClassLoader} 里的等待），搜索结束再放行 —— WebView 就
+     * 不会在内存最紧的时候加载，从根上消除「一搜索就闪退」。
+     */
+    public static final AtomicBoolean deferInitForSearch = new AtomicBoolean(false);
+
+    /** 搜索期间 deferInit 的最长等待；超时就照常 Init，避免极端情况下永久阻塞 jar 加载 */
+    private static final long DEFER_INIT_TIMEOUT_MS = 20_000L;
 
     /**
      * 插件身份:路径 + 大小 + mtime。
@@ -299,6 +314,25 @@ public class JarLoader {
                     Class classInit = classLoader.loadClass("com.github.catvod.spider.Init");
                     if (classInit != null) {
                         Method method = classInit.getMethod("init", Context.class);
+                        // 搜索进行中：Init 会拉起 WebView，与搜索期的 QuickJS 运行时叠加会 OOM。
+                        // 此处等待搜索结束（或超时），把 WebView 的加载错到内存空闲时。
+                        long deferStart = System.currentTimeMillis();
+                        while (deferInitForSearch.get()
+                                && System.currentTimeMillis() - deferStart < DEFER_INIT_TIMEOUT_MS) {
+                            try {
+                                Thread.sleep(100L);
+                            } catch (InterruptedException ie) {
+                                Thread.currentThread().interrupt();
+                                break;
+                            }
+                        }
+                        // 内存保护：Csp 主 jar 的 Init 会拉起 WebView(chromium 含相机/GPU/codec 完整初始化,~250MB)，
+                        // 内存已偏高时跳过，避免叠加 OOM（Csp 源多为采集源，跳过影响小）。
+                        long vmRss = MemProbe.vmRssMb();
+                        if (vmRss > 320) {
+                            LogStore.log(Category.SYSTEM, "搜索: 内存偏高(VmRSS=" + vmRss + "MB)，跳过 Csp 主 jar 加载，避免 WebView 初始化 OOM");
+                            return false;
+                        }
                         method.invoke(null, context);
                         LOG.i("Csp", "自定义爬虫代码加载成功!");
                         success = true;

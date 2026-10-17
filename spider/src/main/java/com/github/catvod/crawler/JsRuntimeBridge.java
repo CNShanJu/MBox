@@ -21,4 +21,14 @@ public final class JsRuntimeBridge {
     public static void resetSources() {
         JsLoader.load();
     }
+
+    /** 搜索期间是否压住 Csp 主 jar 的 Init（原 JarLoader.deferInitForSearch） */
+    public static void setDeferInitForSearch(boolean defer) {
+        JarLoader.deferInitForSearch.set(defer);
+    }
+
+    /** 回收空闲的 QuickJS 运行时（原 JsLoader.releaseIdleSpiders） */
+    public static void releaseIdleSpiders() {
+        JsLoader.releaseIdleSpiders();
+    }
 }

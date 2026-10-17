@@ -32,6 +32,15 @@ public interface SourceLoaderApi {
      */
     void resetSources();
 
+    /**
+     * 搜索期间是否压住 Csp 主 jar 的 Init（它会拉起 WebView，与搜索期的 QuickJS 运行时叠加会 OOM）。
+     * 搜索开始置 true、结束置 false，把 WebView 的加载错峰到内存空闲时。
+     */
+    void setDeferInitForSearch(boolean defer);
+
+    /** 回收空闲的 QuickJS 运行时（搜索结束后降低常驻内存基数） */
+    void releaseIdleSpiders();
+
     /** 加载结果回调（与原 ApiConfig.LoadConfigCallback 三方法对齐） */
     interface Callback {
         void success();

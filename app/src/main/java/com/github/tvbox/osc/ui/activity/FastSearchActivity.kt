@@ -1076,7 +1076,6 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
 
     /** 整轮搜索看门狗(见 SEARCH_WATCHDOG_MS):本轮没人收尾时强制收尾 */
     private val searchWatchdog = Runnable {
-        android.util.Log.w("FastSearch", "搜索看门狗触发:本轮无收尾,强制收尾")
         finishSearchRound()
     }
 
@@ -1096,6 +1095,10 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
     private fun finishSearchRound() {
         if (searchCompletion.closed) return
         searchCompletion.finish()
+        // 搜索结束：放行 Csp 主 jar 的 Init(WebView 此时加载,内存已空闲)
+        com.github.tvbox.osc.spiderapi.SourceLoaderProviders.get().setDeferInitForSearch(false)
+        // 回收空闲的 QuickJS 运行时,把内存基数压回去(WebView 常驻后基数已高,留给下次搜索/刷新的图片)
+        com.github.tvbox.osc.spiderapi.SourceLoaderProviders.get().releaseIdleSpiders()
         mBinding.root.removeCallbacks(searchWatchdog)
         mBinding.root.removeCallbacks(deferredWaveFallback)
         mBinding.root.removeCallbacks(settleRound)
@@ -1128,6 +1131,8 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
 
     private fun searchResult() {
         searchCompletion.begin()
+        // 搜索期间压住 Csp 主 jar 的 Init(它会拉起 WebView,与搜索期 QuickJS 叠加会 OOM)
+        com.github.tvbox.osc.spiderapi.SourceLoaderProviders.get().setDeferInitForSearch(true)
         mBinding.root.removeCallbacks(searchWatchdog)
         mBinding.root.removeCallbacks(deferredWaveFallback)
         mBinding.root.removeCallbacks(settleRound)
@@ -1219,7 +1224,6 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
         try {
             sourceViewModel.getSearch(key, word, epoch)
         } catch (th: Throwable) {
-            android.util.Log.w("FastSearch", "来源搜索异常: $key", th)
             // 若回调已经送达，耗时记录已被取走；这里不能再记第二个空批次。
             if (sourceStart.remove(epoch to key) != null && epoch == searchEpoch) {
                 runOnUiThread { if (epoch == searchEpoch) searchData(null) }

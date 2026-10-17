@@ -177,7 +177,7 @@ tasks.register('checkModuleDependencies') {
         // 拦住 app 直连实现单例/具体爬虫类(AGENTS §二/§十):一律经 spider 契约
         // (SourceConfigProviders/ParseConfigProviders/LiveChannelConfigApi/IjkCodecConfigProviders)。
         // 下面是仅存的装配/注入点,新增直连一律门禁失败。
-        def spiderImplPattern = ~/(com\.github\.tvbox\.osc\.api\.ApiConfig|com\.github\.catvod\.crawler\.(JsLoader|PlayUrlResolver))/
+        def spiderImplPattern = ~/(com\.github\.tvbox\.osc\.api\.ApiConfig|com\.github\.catvod\.crawler\.(JsLoader|JarLoader|PlayUrlResolver))/
         def spiderImplAllow = [
                 'di\\AppCompositionRoot.java',          // 组合根:契约适配 ApiConfig(唯一装配点)
                 'base\\App.java',                        // 启动:context/局域网地址注入(ApiConfig)

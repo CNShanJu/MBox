@@ -19,9 +19,16 @@ public class HeavyTaskUtil {
     private static ExecutorService executorService = new ThreadPoolExecutor(CORE_POOL_SIZE, 6,
             10L, TimeUnit.SECONDS, taskQueue);
 
-    /** 搜索会同步等待各资源站网络响应，独立的模块级有界并发池避免慢源占满通用任务池。 */
+    /**
+     * 搜索会同步等待各资源站网络响应，独立的模块级有界并发池避免慢源占满通用任务池。
+     * <p>
+     * 并发从 12 一路降到 4：JS/JAR 源每个都要建 QuickJS 运行时/加载 dex，Csp 主 jar 还会拉起
+     * WebView(chromium)，几十个源并发提交会让内存瞬时尖峰触发 lmkd 杀进程
+     * (现象：一搜索 App 就重启，日志 `Sending signal SIG: 9`)。
+     * 4 是内存安全优先的折中：搜索整体稍慢，但能扛住 WebView + 多个 QuickJS 运行时的叠加。
+     */
     private static final ExecutorService searchExecutorService = new ThreadPoolExecutor(
-            12, 12, 30L, TimeUnit.SECONDS, new LinkedBlockingDeque<>(8192));
+            4, 4, 30L, TimeUnit.SECONDS, new LinkedBlockingDeque<>(8192));
 
     /** 应用级共享串行执行器:适合"必须按提交顺序逐个执行"的后台小任务(如 SP 增量写) */
     private static final ExecutorService serialExecutorService = Executors.newSingleThreadExecutor();

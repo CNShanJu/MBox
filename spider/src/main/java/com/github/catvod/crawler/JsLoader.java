@@ -2,6 +2,8 @@ package com.github.catvod.crawler;
 
 
 import android.content.Context;
+import com.github.tvbox.osc.log.Category;
+import com.github.tvbox.osc.log.LogStore;
 import com.github.tvbox.osc.util.HttpClient;
 import com.github.tvbox.osc.util.LOG;
 import com.github.tvbox.osc.util.MD5;
@@ -12,6 +14,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 
 import dalvik.system.DexClassLoader;
 
@@ -48,10 +52,24 @@ public class JsLoader {
      * 正常浏览几十个源就攒下几十套运行时与近百条线程,机器上表现为内存一路走高、
      * 低配盒子上最终 Too many open files / OOM。
      * <p>
-     * 取 16 而不是更小:聚合搜索/首页推荐会同时用到多个源,回收正在用的源会立刻触发重建
-     * (重建要重编译 JS 模块,是秒级卡顿);16 能覆盖一次会话里的活跃集,真正冷下来的才回收。
+     * 从 16 降到 8:搜索时 Csp 主 jar 会额外拉起 WebView(chromium,~200MB),与多个 QuickJS 运行时
+     * 叠加即 OOM。8 仍够覆盖一次搜索的活跃集(搜索并发已被压到 4),却把常驻运行时内存减半,
+     * 给 WebView 腾出空间。
      */
-    private static final int MAX_LIVE_SPIDERS = 16;
+    private static final int MAX_LIVE_SPIDERS = 8;
+
+    /**
+     * 并发创建 QuickJS 运行时的全局配额。
+     * <p>
+     * 内存尖峰不是"运行",而是"编译":每个 {@link JsSpider} 首次创建都要在 native 里编译
+     * drpy 等大模块,瞬时峰值远超 64MB 堆上限。聚合搜索并发提交十几个源同时编译 →
+     * 内存瞬时尖峰 → lmkd 发 SIGKILL(现象就是"一搜索 App 就重启")。
+     * 串行(1)最大程度压平编译峰值;创建完立即释放,不挡已缓存实例的并行调用。
+     */
+    private static final Semaphore CREATE_SEMAPHORE = new Semaphore(1);
+
+    /** 拿不到创建配额时的等待上限;超时按"本次创建失败"处理,避免搜索线程被永久挂起 */
+    private static final long CREATE_ACQUIRE_TIMEOUT_MS = 15_000L;
 
     /** 源的最近使用时间(毫秒),LRU 依据;随源创建/命中更新，回收时同步清理 */
     private static final ConcurrentHashMap<String, Long> LAST_USED = new ConcurrentHashMap<>();
@@ -186,6 +204,7 @@ public class JsLoader {
                 return cached;
             }
             Class<?> classLoader = null;
+            boolean createPermitted = false;
             try {
                 if (!jar.isEmpty()) {
                     String[] urls = jar.split(";md5;");
@@ -195,6 +214,17 @@ public class JsLoader {
                     classLoader = loadJarInternal(jarUrl, jarMd5, jarKey);
                 }
                 recentJarKey = key;
+                // 创建配额:并发编译 QuickJS 运行时是内存尖峰源头,超限排队;拿不到就本轮跳过
+                // (不登记冷却,下次调用仍可重试,避免内存压力被误判成"源损坏")
+                try {
+                    createPermitted = CREATE_SEMAPHORE.tryAcquire(CREATE_ACQUIRE_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                }
+                if (!createPermitted) {
+                    LOG.e("QuJs", "创建配额等待超时,本轮跳过源: " + key);
+                    return new SpiderNull();
+                }
                 JsSpider sp = new JsSpider(key, api, classLoader);
                 try {
                     sp.init(context, ext);
@@ -219,6 +249,8 @@ public class JsLoader {
                         ? SpiderFaults.jsMissingClassReason(api)
                         : SpiderFaults.jsLoadFailedReason();
                 markCreateFailed(key, reason, th);
+            } finally {
+                if (createPermitted) CREATE_SEMAPHORE.release();
             }
             return new SpiderNull();
         }
@@ -278,6 +310,45 @@ public class JsLoader {
             }
         } catch (Throwable th) {
             LOG.e("QuJs", "源实例缓存回收异常：" + th);
+        }
+    }
+
+    /**
+     * 搜索结束时主动回收<b>所有空闲</b>的 JS 源实例，释放其 native 内存(QuickJS 运行时)。
+     * <p>
+     * 背景：Csp 主 jar 会拉起常驻的 WebView(~80MB)，把进程内存基数抬到接近 lmkd 水位线；
+     * 此时若仍保留 5 个 drpy 源的 QuickJS 运行时(合计 ~120MB native)，下一次搜索/下拉刷新
+     * 一加载图片就再次 OOM。搜索轮次收尾时把空闲实例销毁(下次用到再重建)，把基数压回去。
+     * <p>
+     * 只回收 {@link JsSpider#isIdle()} 为真的实例(无在跑调用、未卡死、未退役)，正在被
+     * 详情/播放页使用的实例不受影响；下次搜索命不中缓存会走创建路径重建。
+     */
+    public static void releaseIdleSpiders() {
+        try {
+            List<String> idleKeys = new ArrayList<>();
+            for (Map.Entry<String, Long> e : LAST_USED.entrySet()) {
+                Spider s = spiders.get(e.getKey());
+                if (s instanceof JsSpider && ((JsSpider) s).isIdle()) {
+                    idleKeys.add(e.getKey());
+                }
+            }
+            int removed = 0;
+            for (String key : idleKeys) {
+                Spider s = spiders.remove(key);
+                if (s == null) continue;
+                LAST_USED.remove(key);
+                removed++;
+                try {
+                    s.destroy();
+                } catch (Throwable th) {
+                    LOG.e("QuJs", "回收空闲源实例失败(已从缓存移除)：" + key + " " + th);
+                }
+            }
+            if (removed > 0) {
+                LogStore.log(Category.SYSTEM, "搜索: 结束回收空闲源实例 " + removed + " 个(剩余 " + spiders.size() + ")");
+            }
+        } catch (Throwable th) {
+            LOG.e("QuJs", "搜索结束回收空闲源实例异常：" + th);
         }
     }
 

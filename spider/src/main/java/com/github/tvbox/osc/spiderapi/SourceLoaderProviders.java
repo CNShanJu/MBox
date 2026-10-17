@@ -36,6 +36,16 @@ public final class SourceLoaderProviders {
         public void resetSources() {
             // 注入前无 :spider 实现：无源实例可清空，空转即可
         }
+
+        @Override
+        public void setDeferInitForSearch(boolean defer) {
+            // 注入前无 :spider 实现：无 jar 可压，空转即可
+        }
+
+        @Override
+        public void releaseIdleSpiders() {
+            // 注入前无 :spider 实现：无运行时可回收，空转即可
+        }
     };
 
     private SourceLoaderProviders() {
