@@ -464,19 +464,10 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             }, SelectDialogAdapter.stringDiff, modes, PlayConfig.getVideoPurifyMode())
             dialog.show()
         }
-        mBinding.switchPlayCache.setChecked(PlayConfig.isPlayCacheEnabled())
-        mBinding.llPlayCache.setOnClickListener { v: View? ->
-            FastClickCheckUtil.check(v)
-            val newConfig = !PlayConfig.isPlayCacheEnabled()
-            mBinding.switchPlayCache.setChecked(newConfig)
-            PlayConfig.setPlayCacheEnabled(newConfig)
-            updatePlayCacheEntryUi()
-        }
         mBinding.llPlaybackCacheSetting.setOnClickListener { v: View? ->
             FastClickCheckUtil.check(v)
             jumpActivity(PlaybackCacheActivity::class.java)
         }
-        updatePlayCacheEntryUi()
         // 业务日志开关(默认关闭):走 LogConfig 配置门面(查询+发通知+订阅)。
         // 只控 Room 结构化业务日志;错误日志(logcat)常驻记录,不随此开关。
         mBinding.switchSubscriptionLog.setChecked(LogConfig.isEnabled())
@@ -646,15 +637,7 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             updatePageBackgroundValue()
             updatePageBackgroundVisibility()
             updateThemeValue()
-            updatePlayCacheEntryUi()
         }
-    }
-
-    /** "播放缓存设置"入口仅在主开关打开时显示 */
-    private fun updatePlayCacheEntryUi() {
-        val on = PlayConfig.isPlayCacheEnabled()
-        mBinding.switchPlayCache.setChecked(on)
-        mBinding.llPlaybackCacheSetting.visibility = if (on) View.VISIBLE else View.GONE
     }
 
     // ------------------------------------------------------------------

@@ -50,7 +50,7 @@ class PlayCacheMigrationTest {
             master?.let { initial[enabled] = it }
             whileValue?.let { initial[whilePlay] = it }
             seed(initial)
-            val expectedMaster = master ?: old ?: false
+            val expectedMaster = master ?: old ?: true
             val expectedWhile = whileValue ?: old ?: true
 
             assertEquals(PlayCacheMigration.Snapshot(expectedMaster, expectedWhile),
@@ -165,7 +165,7 @@ class PlayCacheMigrationTest {
             seed(if (old == null) emptyMap() else mapOf(legacy to old))
             val exported = PlayConfig.exportConfig()
             assertFalse(exported.containsKey(legacy))
-            assertEquals(old ?: false, exported[enabled])
+            assertEquals(old ?: true, exported[enabled])
             assertEquals(old ?: true, exported[whilePlay])
             assertEquals(0, disk.attempts)
         }
@@ -253,7 +253,8 @@ class PlayCacheMigrationTest {
     }
 
     private fun assertSelection(master: Boolean, whileValue: Boolean) {
-        assertEquals(master, PlayConfig.isPlayCacheEnabled())
+        // 总闸恒开：isPlayCacheEnabled 恒 true，不再随 master 变化断言（master 仅用于 resolve 键映射断言）。
+        assertTrue(PlayConfig.isPlayCacheEnabled())
         assertEquals(whileValue, PlayConfig.isCacheWhilePlay())
     }
 

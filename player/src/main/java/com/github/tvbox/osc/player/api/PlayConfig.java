@@ -100,9 +100,9 @@ public final class PlayConfig {
     public static final int CACHE_CAPACITY_MAX_MB = 8192;
     public static final int CACHE_CAPACITY_DEFAULT_MB = 1024;
 
-    /** 播放缓存总开关，新装默认关；旧值只补缺失新键，getter 不执行迁移落盘。 */
+    /** 播放缓存总闸恒开(设置页已移除独立总开关)：缓存功能始终可用，各子项(边播边缓存/预载)独立控制。 */
     public static boolean isPlayCacheEnabled() {
-        return readCacheSnapshot().getEnabled();
+        return true;
     }
 
     /** 下一集预载（仅 Exo 内核 + 直链源），默认关 */
@@ -127,7 +127,7 @@ public final class PlayConfig {
 
     /** PrefsDataStore 的 get/contains 均为内存读取；新键齐备后不再读取旧值。 */
     private static PlayCacheMigration.Snapshot readCacheSnapshot() {
-        Boolean enabled = readOptionalBoolean(KEY_PLAY_CACHE_ENABLED, false);
+        Boolean enabled = readOptionalBoolean(KEY_PLAY_CACHE_ENABLED, true);
         Boolean whilePlay = readOptionalBoolean(KEY_CACHE_WHILE_PLAY, true);
         Boolean legacy = enabled == null || whilePlay == null
                 ? readOptionalBoolean(KEY_IJK_CACHE_PLAY, false) : null;

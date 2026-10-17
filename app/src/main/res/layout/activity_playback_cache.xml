@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 播放缓存设置(二级页):仅在"开启播放缓存"打开时由设置页进入。
+<!-- 播放缓存设置(二级页):设置页直接进入(播放缓存总闸恒开)。
      缓冲/磁盘缓存的实际生效点在播放器起播时,页脚有提示。 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"

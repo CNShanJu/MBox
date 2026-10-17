@@ -11,7 +11,7 @@ object PlayCacheMigration {
     /** null 表示缺失；显式新值优先，旧值只补缺，最后使用新装默认值。 */
     @JvmStatic
     fun resolve(enabled: Boolean?, whilePlay: Boolean?, legacy: Boolean?): Snapshot =
-        Snapshot(enabled ?: legacy ?: false, whilePlay ?: legacy ?: true)
+        Snapshot(enabled ?: legacy ?: true, whilePlay ?: legacy ?: true)
 
     /**
      * 只按传入备份归一，不混入本机值；缺失字段仍保持缺失，避免局部导入重置无关设置。
