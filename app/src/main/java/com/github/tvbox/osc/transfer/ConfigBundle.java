@@ -2,15 +2,10 @@ package com.github.tvbox.osc.transfer;
 
 import android.content.Context;
 
-import com.github.tvbox.osc.config.PrefsDataStore;
-import com.github.tvbox.osc.config.SystemConfig;
-import com.github.tvbox.osc.data.AppDataManager;
-import com.github.tvbox.osc.log.Category;
-import com.github.tvbox.osc.log.LogStore;
 import com.github.tvbox.osc.share.ShareArchives;
 import com.github.tvbox.osc.share.ShareManifest;
-import com.github.tvbox.osc.storage.theme.ThemeBackgroundLibrary;
-import com.github.tvbox.osc.storage.theme.ThemeStore;
+import com.github.tvbox.osc.share.domain.DataTransferHub;
+import com.github.tvbox.osc.share.domain.ImportMode;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -32,7 +27,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/** Versioned bulk configuration package shared by LAN now and online transports later. */
+/**
+ * 版本化批量配置包（局域网/在线传输共用）。
+ *
+ * <p>归档打包/解压/逐域分发统一由 share 的 {@link DataTransferHub} 调度，导入时的快照/锁/事务/回滚
+ * 也由 hub 的默认保护承担。本类只保留订阅管理界面的「勾选子集导出/读取」——那是订阅模块自己的
+ * 导入导出，不经过 share 调度。
+ */
 public final class ConfigBundle {
     public static final long MAX_ARCHIVE_BYTES = 64L * 1024L * 1024L;
     private static final long MAX_UNPACKED_BYTES = 128L * 1024L * 1024L;
@@ -41,20 +42,31 @@ public final class ConfigBundle {
             "subscriptions", "live", "themes", "settings", "history"));
     private static final List<String> ORDER = Arrays.asList(
             "subscriptions", "live", "themes", "settings", "history");
+
     private final Context context;
-    private final ConfigDataExchange exchange;
+    private final DataTransferHub hub;
 
     public ConfigBundle(Context context) {
         this.context = context.getApplicationContext();
-        this.exchange = new ConfigDataExchange(this.context);
+        this.hub = ConfigDomains.hub();
     }
 
-    /** Caller owns the returned ZIP and must delete it after transport finishes. */
+    /** 导出选定的配置域为归档 ZIP（局域网/在线传输用）；调用方用完自行删除。 */
     public File exportSelected(Set<String> selected) throws Exception {
-        return exportSelected(selected, java.util.Collections.emptyMap());
+        return hub.exportArchive(selected, "mbox-config.zip", false);
     }
 
-    /** Subscription management exports only the selected items, not every saved subscription. */
+    /** 导入归档：按类别合并到本机（局域网/在线传输用）。 */
+    public String importSelected(File archive, Set<String> selected) throws Exception {
+        List<String> imported = hub.importArchive(archive, selected, ImportMode.MERGE, null);
+        return "已导入：" + android.text.TextUtils.join("、", imported) + "。重启应用后全部生效。";
+    }
+
+    // ------------------------------------------------------------------
+    // 订阅管理界面：勾选子集导出/读取（订阅模块自己，不经过 share 调度）
+    // ------------------------------------------------------------------
+
+    /** 订阅管理导出勾选的条目，只含 subscriptions 域。 */
     public File exportSubscriptionSelection(JsonArray items) throws Exception {
         if (items == null || items.size() < 2) throw new IOException("请至少选择两条订阅");
         JsonObject data = new JsonObject();
@@ -64,6 +76,34 @@ public final class ConfigBundle {
         data.add("items", items);
         return exportSelected(java.util.Collections.singleton("subscriptions"),
                 java.util.Collections.singletonMap("subscriptions", data));
+    }
+
+    /** 读取仅含 subscriptions 域的 ZIP，返回订阅条目（供订阅管理界面逐条校验）。 */
+    public JsonArray readSubscriptionSelection(File archive) throws Exception {
+        if (archive == null || !archive.isFile() || archive.length() > MAX_ARCHIVE_BYTES)
+            throw new IOException("订阅包无效或超过 64 MB");
+        ShareManifest manifest = ShareArchives.manifest(archive);
+        if (manifest == null || !manifest.isReadableByCurrentVersion()
+                || !"mbox-config.zip".equals(manifest.fileName())
+                || manifest.domains().size() != 1
+                || !"subscriptions".equals(manifest.domains().get(0)))
+            throw new IOException("这不是订阅清单 ZIP");
+        ShareArchives.check(archive, manifest);
+        File work = createWorkDirectory();
+        try {
+            ShareArchives.extract(archive, work, MAX_ARCHIVE_BYTES, MAX_UNPACKED_BYTES);
+            validateEntries(work, manifest.domains());
+            JsonElement parsed = JsonParser.parseString(read(new File(work, "subscriptions.json"), MAX_JSON_BYTES));
+            if (!parsed.isJsonObject()) throw new IOException("订阅数据格式无效");
+            JsonObject data = parsed.getAsJsonObject();
+            if (!data.has("schema") || data.get("schema").getAsInt() != 1
+                    || !data.has("category") || !"subscriptions".equals(data.get("category").getAsString())
+                    || !data.has("items") || !data.get("items").isJsonArray())
+                throw new IOException("订阅数据格式无效");
+            return data.getAsJsonArray("items");
+        } finally {
+            clean(work);
+        }
     }
 
     private File exportSelected(Set<String> selected, Map<String, JsonObject> overrides) throws Exception {
@@ -112,170 +152,14 @@ public final class ConfigBundle {
         }
     }
 
-    /** Read a subscriptions-only ZIP for the standalone subscription import flow. */
-    public JsonArray readSubscriptionSelection(File archive) throws Exception {
-        if (archive == null || !archive.isFile() || archive.length() > MAX_ARCHIVE_BYTES)
-            throw new IOException("订阅包无效或超过 64 MB");
-        ShareManifest manifest = ShareArchives.manifest(archive);
-        if (manifest == null || !manifest.isReadableByCurrentVersion()
-                || !"mbox-config.zip".equals(manifest.fileName())
-                || manifest.domains().size() != 1
-                || !"subscriptions".equals(manifest.domains().get(0)))
-            throw new IOException("这不是订阅清单 ZIP");
-        ShareArchives.check(archive, manifest);
-        File work = createWorkDirectory();
-        try {
-            ShareArchives.extract(archive, work, MAX_ARCHIVE_BYTES, MAX_UNPACKED_BYTES);
-            validateEntries(work, manifest.domains());
-            JsonElement parsed = JsonParser.parseString(read(new File(work, "subscriptions.json"), MAX_JSON_BYTES));
-            if (!parsed.isJsonObject()) throw new IOException("订阅数据格式无效");
-            JsonObject data = parsed.getAsJsonObject();
-            if (!data.has("schema") || data.get("schema").getAsInt() != 1
-                    || !data.has("category") || !"subscriptions".equals(data.get("category").getAsString())
-                    || !data.has("items") || !data.get("items").isJsonArray())
-                throw new IOException("订阅数据格式无效");
-            return data.getAsJsonArray("items");
-        } finally {
-            clean(work);
-        }
-    }
-
-    /** Validate and unpack everything before touching local configuration. */
-    public String importSelected(File archive, Set<String> selected) throws Exception {
-        Set<String> requested = requireCategories(selected);
-        if (archive == null || !archive.isFile() || archive.length() > MAX_ARCHIVE_BYTES)
-            throw new IOException("配置包无效或超过 64 MB");
-        ShareManifest manifest = ShareArchives.manifest(archive);
-        if (manifest == null || !manifest.isReadableByCurrentVersion()
-                || !"mbox-config.zip".equals(manifest.fileName())
-                || manifest.domains().isEmpty() || manifest.domains().size() > CATEGORIES.size()
-                || !CATEGORIES.containsAll(manifest.domains())
-                || new LinkedHashSet<>(manifest.domains()).size() != manifest.domains().size()
-                || !manifest.domains().containsAll(requested)) throw new IOException("配置包清单无效或缺少所选类别");
-        ShareArchives.check(archive, manifest);
-        File work = createWorkDirectory();
-        try {
-            ShareArchives.extract(archive, work, MAX_ARCHIVE_BYTES, MAX_UNPACKED_BYTES);
-            validateEntries(work, manifest.domains());
-            Map<String, JsonObject> staged = new LinkedHashMap<>();
-            for (String category : ORDER) {
-                if (!requested.contains(category)) continue;
-                JsonElement parsed = JsonParser.parseString(read(new File(work, category + ".json"), MAX_JSON_BYTES));
-                if (!parsed.isJsonObject()) throw new IOException("配置数据格式无效：" + category);
-                JsonObject data = parsed.getAsJsonObject();
-                if (!data.has("schema") || data.get("schema").getAsInt() != 1
-                        || !data.has("category") || !category.equals(data.get("category").getAsString()))
-                    throw new IOException("配置类别不匹配：" + category);
-                staged.put(category, data);
-            }
-            return applyWithRollback(work, requested, staged);
-        } finally {
-            clean(work);
-        }
-    }
-
-    /** Room 串行线程、主题锁、订阅文件锁、偏好锁按固定顺序包住导入和失败恢复。 */
-    private String applyWithRollback(File unpacked, Set<String> requested,
-                                     Map<String, JsonObject> staged) {
-        return AppDataManager.runOnDb(() -> ThemeStore.runWithStorageLock(() -> SubscriptionImportFiles.runLocked(() -> {
-            List<File> directories = new ArrayList<>();
-            if (requested.contains("themes")) {
-                directories.add(new File(context.getFilesDir(), ThemeStore.DIR_THEMES));
-                directories.add(new File(context.getFilesDir(), ThemeBackgroundLibrary.DIR));
-            }
-            if (requested.contains("subscriptions")) {
-                File external = context.getExternalFilesDir(null);
-                if (external == null) throw new IOException("应用存储目录不可用");
-                directories.add(new File(external, "subscription_import"));
-            }
-            // 与解包目录分开：恢复失败时保留快照，不能被 importSelected 的 finally 删除。
-            File rollbackDirectory = new File(context.getFilesDir(), "config_rollback_" + java.util.UUID.randomUUID());
-            if (!rollbackDirectory.mkdir()) throw new IOException("无法准备导入回滚目录");
-            ImportFileCheckpoint checkpoint;
-            try { checkpoint = ImportFileCheckpoint.prepare(rollbackDirectory, directories); }
-            catch (IOException | RuntimeException preparationFailure) {
-                if (!rollbackDirectory.delete())
-                    LogStore.fail(Category.SYSTEM, "配置导入: 未完成的快照目录清理失败，目录=" + rollbackDirectory.getName());
-                throw preparationFailure;
-            }
-            String result;
-            try {
-                // 偏好作用域包住 Room 的提交/结束：任一步失败都恢复原键值，Room 回滚历史。
-                result = PrefsDataStore.runWithRollback(() -> AppDataManager.runInTransaction(() ->
-                        applyStaged(unpacked, requested, staged)));
-            } catch (Throwable failure) {
-                try { checkpoint.rollback(); }
-                catch (Throwable restoreFailure) { failure.addSuppressed(restoreFailure); }
-                try {
-                    ThemeStore.reload();
-                    SystemConfig.notifyRestored();
-                } catch (Throwable restoreFailure) { failure.addSuppressed(restoreFailure); }
-                boolean restored = !hasRecoveryFailure(failure);
-                if (restored) {
-                    try { checkpoint.cleanup(); }
-                    catch (IOException cleanupFailure) {
-                        LogStore.fail(Category.SYSTEM, "配置导入: 回滚完成后的快照清理失败，目录=" + rollbackDirectory.getName());
-                    }
-                }
-                LogStore.fail(Category.SYSTEM, restored ? "配置导入: 失败，已恢复导入前的数据"
-                        : "配置导入: 失败，恢复未完成，文件快照=" + rollbackDirectory.getName());
-                throw new IOException(restored ? "导入失败，已恢复导入前的记录和配置：" + failure.getMessage()
-                        : "导入失败，恢复未完成，请勿继续导入；保留的恢复快照为 "
-                        + rollbackDirectory.getName() + "：" + failure.getMessage(), failure);
-            }
-            // 数据已成功提交；临时快照清理失败只留日志，不改报导入失败。
-            try { checkpoint.cleanup(); }
-            catch (IOException cleanupFailure) {
-                LogStore.fail(Category.SYSTEM, "配置导入: 成功后的回滚快照清理失败，目录=" + rollbackDirectory.getName());
-            }
-            LogStore.log(Category.SYSTEM, "配置导入: 所选类别全部完成并落盘");
-            return result;
-        })));
-    }
-
-    private String applyStaged(File unpacked, Set<String> requested,
-                               Map<String, JsonObject> staged) throws Exception {
-        List<String> results = new ArrayList<>();
-        for (String category : ORDER) {
-            if (!requested.contains(category)) continue;
-            try {
-                int count;
-                if ("themes".equals(category)) {
-                    int expected = staged.get("themes").getAsJsonArray("themes").size();
-                    count = 0;
-                    for (int i = 0; i < expected; i++) count += exchange.importTheme(new File(unpacked, themeName(i)));
-                } else {
-                    count = exchange.importCategory(category, staged.get(category));
-                }
-                results.add(label(category) + " " + count + " 项");
-            } catch (Exception failure) {
-                throw new IOException(label(category) + " 导入失败：" + failure.getMessage(), failure);
-            }
-        }
-        return "已导入：" + android.text.TextUtils.join("、", results) + "。重启应用后全部生效。";
-    }
-
-    private static boolean hasRecoveryFailure(Throwable failure) {
-        if (failure.getSuppressed().length > 0 || failure instanceof AppDataManager.TransactionCompletionException)
-            return true;
-        Throwable cause = failure.getCause();
-        return cause != null && cause != failure && hasRecoveryFailure(cause);
-    }
+    // ------------------------------------------------------------------
+    // 工具
+    // ------------------------------------------------------------------
 
     private static Set<String> requireCategories(Set<String> selected) throws IOException {
         if (selected == null || selected.isEmpty() || !CATEGORIES.containsAll(selected))
             throw new IOException("请选择有效的配置类别");
         return new LinkedHashSet<>(selected);
-    }
-
-    private static String label(String category) {
-        switch (category) {
-            case "subscriptions": return "订阅源";
-            case "live": return "直播源";
-            case "themes": return "主题";
-            case "settings": return "设置";
-            default: return "历史记录";
-        }
     }
 
     private static String themeName(int index) { return String.format(java.util.Locale.ROOT, "theme-%03d.bin", index); }

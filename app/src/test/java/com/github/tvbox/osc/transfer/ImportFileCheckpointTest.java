@@ -20,6 +20,8 @@ import java.nio.file.Files;
 import java.util.Arrays;
 import java.util.Collections;
 
+import com.github.tvbox.osc.share.domain.ImportFileCheckpoint;
+
 public class ImportFileCheckpointTest {
     @Rule public TemporaryFolder temporary = new TemporaryFolder();
 
