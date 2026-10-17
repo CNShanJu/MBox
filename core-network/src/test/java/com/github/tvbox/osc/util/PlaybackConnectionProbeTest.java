@@ -94,7 +94,7 @@ public class PlaybackConnectionProbeTest {
     }
 
     @Test
-    public void nativeIjkUsesSystemDnsWhenPlaybackDnsIsUnavailable() throws Exception {
+    public void nativeSystemUsesSystemDnsWhenPlaybackDnsIsUnavailable() throws Exception {
         try (ServerSocket server = new ServerSocket(0, 1, LOOPBACK)) {
             Thread receiver = new Thread(() -> {
                 try (Socket socket = server.accept()) {
@@ -102,7 +102,7 @@ public class PlaybackConnectionProbeTest {
                     socket.getInputStream().read();
                 } catch (IOException ignored) {
                 }
-            }, "native-ijk-system-dns-test");
+            }, "native-system-system-dns-test");
             receiver.start();
 
             OkHttpClient client = new OkHttpClient.Builder()
@@ -112,7 +112,7 @@ public class PlaybackConnectionProbeTest {
             CountDownLatch done = new CountDownLatch(1);
             PlaybackConnectionProbe.probe(client,
                     "http://localhost:" + server.getLocalPort() + "/manifest.m3u8",
-                    PlaybackConnectionProbe.Mode.IJK_NATIVE, (kind, error) -> {
+                    PlaybackConnectionProbe.Mode.NATIVE, (kind, error) -> {
                         result.set(kind);
                         done.countDown();
                     });
@@ -124,7 +124,7 @@ public class PlaybackConnectionProbeTest {
     }
 
     @Test
-    public void nativeIjkTcpRefusalIsConnectionFailure() throws Exception {
+    public void nativeSystemTcpRefusalIsConnectionFailure() throws Exception {
         int closedPort;
         try (ServerSocket server = new ServerSocket(0, 1, LOOPBACK)) {
             closedPort = server.getLocalPort();
@@ -134,7 +134,7 @@ public class PlaybackConnectionProbeTest {
         PlaybackConnectionProbe.probe(new OkHttpClient.Builder()
                         .retryOnConnectionFailure(false).build(),
                 "http://127.0.0.1:" + closedPort + "/manifest.m3u8",
-                PlaybackConnectionProbe.Mode.IJK_NATIVE, (kind, error) -> {
+                PlaybackConnectionProbe.Mode.NATIVE, (kind, error) -> {
                     result.set(kind);
                     done.countDown();
                 });
@@ -143,7 +143,7 @@ public class PlaybackConnectionProbeTest {
     }
 
     @Test
-    public void nativeIjkDoesNotTreatJavaTlsFailureAsUnreachable() throws Exception {
+    public void nativeSystemDoesNotTreatJavaTlsFailureAsUnreachable() throws Exception {
         try (ServerSocket server = new ServerSocket(0, 1, LOOPBACK)) {
             Thread receiver = new Thread(() -> {
                 try (Socket socket = server.accept()) {
@@ -154,7 +154,7 @@ public class PlaybackConnectionProbeTest {
                     socket.getOutputStream().flush();
                 } catch (IOException ignored) {
                 }
-            }, "native-ijk-tls-test");
+            }, "native-system-tls-test");
             receiver.start();
 
             AtomicReference<PlaybackConnectionProbe.Result> result = new AtomicReference<>();
@@ -162,7 +162,7 @@ public class PlaybackConnectionProbeTest {
             PlaybackConnectionProbe.probe(new OkHttpClient.Builder()
                             .retryOnConnectionFailure(false).build(),
                     "https://127.0.0.1:" + server.getLocalPort() + "/manifest.m3u8",
-                    PlaybackConnectionProbe.Mode.IJK_NATIVE, (kind, error) -> {
+                    PlaybackConnectionProbe.Mode.NATIVE, (kind, error) -> {
                         result.set(kind);
                         done.countDown();
                     });

@@ -20,7 +20,6 @@ public class LivePlayerManager {
     public void init(VideoView videoView) {
         try {
             defaultPlayerConfig.put("pl", PlayConfig.getPlayType());
-            defaultPlayerConfig.put("ijk", PlayConfig.getIjkCodec());
             defaultPlayerConfig.put("pr", PlayConfig.getRenderType());
             defaultPlayerConfig.put("sc", PlayConfig.getScaleType());
         } catch (JSONException e) {
@@ -50,8 +49,7 @@ public class LivePlayerManager {
 
         try {
             if (playerConfig.getInt("pl") == currentPlayerConfig.getInt("pl")
-                    && playerConfig.getInt("pr") == currentPlayerConfig.getInt("pr")
-                    && playerConfig.getString("ijk").equals(currentPlayerConfig.getString("ijk"))) {
+                    && playerConfig.getInt("pr") == currentPlayerConfig.getInt("pr")) {
                 videoView.setScreenScaleType(playerConfig.getInt("sc"));
             } else {
                 PlayerHelper.updateCfg(videoView, playerConfig);
@@ -67,7 +65,7 @@ public class LivePlayerManager {
         int playerTypeIndex = 0;
         try {
             playerTypeIndex = LivePlayerTypes.typeIndex(
-                    currentPlayerConfig.getInt("pl"), currentPlayerConfig.getString("ijk"));
+                    currentPlayerConfig.getInt("pl"));
         } catch (JSONException e) {
             e.printStackTrace();
         }
@@ -87,7 +85,6 @@ public class LivePlayerManager {
         JSONObject playerConfig = currentPlayerConfig;
         try {
             playerConfig.put("pl", LivePlayerTypes.playerTypeOf(playerType));
-            playerConfig.put("ijk", LivePlayerTypes.ijkCodecOf(playerType));
         } catch (JSONException e) {
             e.printStackTrace();
         }

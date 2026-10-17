@@ -9,13 +9,11 @@ import android.view.View
 import androidx.recyclerview.widget.DiffUtil
 import com.github.tvbox.osc.log.LogConfig
 import com.github.tvbox.osc.player.PlayerTrackHelper
-import com.github.tvbox.osc.player.api.IjkCodecConfigProviders
 import com.github.tvbox.osc.player.api.PlayConfig
 import com.github.tvbox.osc.util.AppBubble
 import com.github.tvbox.osc.util.BackgroundPlaySettings
 import com.github.tvbox.osc.R
 import com.github.tvbox.osc.base.BaseVbActivity
-import com.github.tvbox.osc.bean.IJKCode
 import com.github.tvbox.osc.ui.startup.AppStartupCoordinator
 import com.github.tvbox.osc.databinding.ActivitySettingBinding
 import com.github.tvbox.osc.download.DownloadFacade
@@ -77,7 +75,6 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
 
         // 返回键与系统返回同一口径(统一头部的返回行为在这里接管)
         mBinding.titleBar.setOnBackClickListener { onBackPressed() }
-        mBinding.tvMediaCodec.text = PlayConfig.getIjkCodec()
 
         // 下载设置:下载方式 / 仅WiFi / 并发数 / 限速
         initDownloadSettings()
@@ -207,51 +204,12 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
                     // 幂等:门面变更订阅里已复核并重建过一次,这里再调一次只为"设置页自身也直接触发"
                     // (值未变时 OkGoHelper 内部早退,不会重建连接池)
                     OkGoHelper.refreshDnsOverHttps()
-                    PlayerTrackHelper.toggleDotPort(pos > 0)
                 }
 
                 override fun getDisplay(name: String?): String {
                     return name ?: ""
                 }
             },SelectDialogAdapter.stringDiff, OkGoHelper.dnsHttpsList, dohUrl)
-            dialog.show()
-        }
-
-        mBinding.llMediaCodec.setOnClickListener { v: View? ->
-            val ijkCodes = IjkCodecConfigProviders.get().ijkCodes
-            if (ijkCodes == null || ijkCodes.size == 0) return@setOnClickListener
-            FastClickCheckUtil.check(v)
-            var defaultPos = 0
-            val ijkSel = PlayConfig.getIjkCodec()
-            for (j in ijkCodes.indices) {
-                if (ijkSel == ijkCodes[j].name) {
-                    defaultPos = j
-                    break
-                }
-            }
-            val dialog = SelectDialog<IJKCode>(this@SettingActivity)
-            dialog.setTip("请选择IJK解码")
-            dialog.setAdapter(object : SelectDialogInterface<IJKCode?> {
-                override fun click(value: IJKCode?, pos: Int) {
-                    value?.selected(true)
-                    // 真正落库:内核取值走 PlayConfig.getIjkCodec()(IJKCode.selected() 只改内存字段),
-                    // 原来只 selected() 不写配置 → 弹窗选了、标题变了,起播仍用旧解码,重进设置页又回旧值
-                    value?.name?.let { PlayConfig.setIjkCodec(it) }
-                    mBinding.tvMediaCodec.text = value?.name
-                }
-
-                override fun getDisplay(code: IJKCode?): String {
-                    return code?.name ?: ""
-                }
-            }, object : DiffUtil.ItemCallback<IJKCode>() {
-                override fun areItemsTheSame(oldItem: IJKCode, newItem: IJKCode): Boolean {
-                    return oldItem === newItem
-                }
-
-                override fun areContentsTheSame(oldItem: IJKCode, newItem: IJKCode): Boolean {
-                    return oldItem.name.contentEquals(newItem.name)
-                }
-            }, ijkCodes, defaultPos)
             dialog.show()
         }
 

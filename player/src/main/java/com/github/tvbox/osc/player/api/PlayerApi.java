@@ -6,7 +6,7 @@ import android.content.Context;
  * 播放统一门面（引擎无关契约）。
  * <p>
  * 铁律：本接口只暴露项目自有类型（PlayState / PlayOptions / PlayListener），
- * **任何内核类型（ExoPlayer2 / IJK / 未来 Media3 的 Player/ExoPlayer）不得跨出适配层**。
+ * **任何内核类型（系统 / Media3 的 Player/ExoPlayer）不得跨出适配层**。
  * 调用方（PlayFragment / 小窗 / 后台播放 / 预览）只依赖本接口，感知不到内核是谁。
  * 内核特有能力（track 选择、自定义渲染）需要时经本接口显式暴露，禁止调用方强转内核类型。
  */

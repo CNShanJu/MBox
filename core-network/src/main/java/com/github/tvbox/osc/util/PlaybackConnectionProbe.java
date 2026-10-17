@@ -37,8 +37,8 @@ public final class PlaybackConnectionProbe {
     public enum Mode {
         /** 与 Media3 一样使用播放客户端的 DNS/TLS；明确握手失败也算连接失败。 */
         MEDIA3,
-        /** IJK 使用原生取流；系统 DNS 的明确解析/建连失败才可拦截。 */
-        IJK_NATIVE
+        /** 系统内核(AndroidMediaPlayer)使用原生取流；系统 DNS 的明确解析/建连失败才可拦截。 */
+        NATIVE
     }
 
     /** 回调在 OkHttp 后台线程执行；调用方自行切回 UI 线程。 */
@@ -54,7 +54,7 @@ public final class PlaybackConnectionProbe {
         return probe(playbackClient, realUrl, Mode.MEDIA3, callback, DEFAULT_TIMEOUT_MS);
     }
 
-    /** IJK 使用系统 DNS；Java TLS 与 IJK 原生 TLS 不一致时不据此拦截播放。 */
+    /** 系统内核使用系统 DNS；Java TLS 与原生 TLS 不一致时不据此拦截播放。 */
     public static Call probe(OkHttpClient playbackClient, String realUrl, Mode mode,
                              Callback callback) {
         return probe(playbackClient, realUrl, mode, callback, DEFAULT_TIMEOUT_MS);
@@ -89,8 +89,8 @@ public final class PlaybackConnectionProbe {
                 .connectionPool(new ConnectionPool(0, 1, TimeUnit.SECONDS))
                 .eventListener(events)
                 .cache(null);
-        if (mode == Mode.IJK_NATIVE) {
-            // IJK 原生取流不走 Java ProxySelector/DoH；沿用系统路由与系统 DNS。
+        if (mode == Mode.NATIVE) {
+            // 系统内核原生取流不走 Java ProxySelector/DoH；沿用系统路由与系统 DNS。
             probeBuilder.proxy(Proxy.NO_PROXY);
             probeBuilder.dns(Dns.SYSTEM);
         }
@@ -121,7 +121,7 @@ public final class PlaybackConnectionProbe {
         @Override
         public void secureConnectStart(Call call) {
             // 一次 Call 可尝试多个 IP；只要有一次进入 TLS，就不能把最后的错误
-            // 当作所有原生 IJK 连接都不可达的证据。
+            // 当作所有原生连接都不可达的证据。
             tlsStarted = true;
         }
     }
@@ -171,10 +171,10 @@ public final class PlaybackConnectionProbe {
                     && NetworkGuardInterceptor.NO_NETWORK_MESSAGE.equals(cause.getMessage())) return true;
             if (cause instanceof InterruptedIOException) return false; // 总时限/取消可能发生在任意阶段。
         }
-        // OkHttp 的 DoH 已换成系统 DNS，但它的代理和 TLS 栈仍可能与 IJK 不同。
-        if (mode == Mode.IJK_NATIVE && (events.tlsStarted || events.proxied)) return false;
+        // OkHttp 的 DoH 已换成系统 DNS，但它的代理和 TLS 栈仍可能与系统内核不同。
+        if (mode == Mode.NATIVE && (events.tlsStarted || events.proxied)) return false;
         for (Throwable cause = error; cause != null; cause = cause.getCause()) {
-            if (mode == Mode.IJK_NATIVE) {
+            if (mode == Mode.NATIVE) {
                 if (cause instanceof UnknownHostException || cause instanceof ConnectException
                         || cause instanceof NoRouteToHostException) return true;
                 if (events.tcpStarted && cause instanceof SocketException) return true;

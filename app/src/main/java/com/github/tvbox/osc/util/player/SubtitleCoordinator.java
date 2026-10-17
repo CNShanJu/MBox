@@ -580,7 +580,7 @@ public final class SubtitleCoordinator {
                         audio.selected = audio.trackId == value.trackId;
                     }
                     mediaPlayer.pause();
-                    long progress = mediaPlayer.getCurrentPosition();//保存当前进度，ijk 切换轨道 会有快进几秒
+                    long progress = mediaPlayer.getCurrentPosition();//保存当前进度，切换轨道 会有快进几秒
                     PlayerTrackHelper.selectTrack(mediaPlayer, value);
                     postTrackRestore(mediaPlayer, new Runnable() {
                         @Override
@@ -639,7 +639,7 @@ public final class SubtitleCoordinator {
                         subtitle.selected = subtitle.trackGroupId == value.trackGroupId && subtitle.trackId == value.trackId;
                     }
                     mediaPlayer.pause();
-                    long progress = mediaPlayer.getCurrentPosition();//保存当前进度，ijk 切换轨道 会有快进几秒
+                    long progress = mediaPlayer.getCurrentPosition();//保存当前进度，切换轨道 会有快进几秒
                     mController.getSubtitleView().destroy();
                     mController.getSubtitleView().clearSubtitleCache();
                     mController.getSubtitleView().onSubtitleChanged(null);

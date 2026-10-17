@@ -71,7 +71,6 @@ final class PlayingControlPanel {
         mBinding.playTimeStart.setText(mController.settingsTimeStartBtn().getText());
         mBinding.playTimeEnd.setText(mController.settingsTimeSkipBtn().getText());
         mBinding.player.setText(mController.settingsPlayerBtn().getText());
-        mBinding.decode.setText(mController.settingsIjkBtn().getText());
         mBinding.renderMode.setText(PlayerHelper.getRenderName(mController.getRenderType()));
         mBinding.videoPurifySection.setVisibility(mController.supportsVideoPurify()
                 ? View.VISIBLE : View.GONE);
@@ -80,11 +79,10 @@ final class PlayingControlPanel {
         mBinding.lanPush.setVisibility(mController.supportsLanPush()
                 && ControlManager.get().lanState() == ControlManager.LAN_ACTIVE
                 ? View.VISIBLE : View.GONE);
-        updateAboutIjkVisible();
         updateSpeedUi();
         // 「点击型」小组件按钮的点击特效(按下整键透明度 80% 再恢复):倍速那几个是"选择型",
         // 靠选中态换色反馈,不套这个特效(用户口径:"一种是选择按钮一种是点击按钮")
-        for (int id : new int[]{R.id.long_press_speed, R.id.scale, R.id.player, R.id.decode,
+        for (int id : new int[]{R.id.long_press_speed, R.id.scale, R.id.player,
                 R.id.render_mode, R.id.video_purify_row, R.id.background_play,
                 R.id.subtitle, R.id.voice, R.id.replay, R.id.refresh, R.id.start_end_reset, R.id.lan_push}) {
             com.github.tvbox.osc.ui.kit.WidgetPressEffect.attach(mBinding.getRoot().findViewById(id));
@@ -134,7 +132,6 @@ final class PlayingControlPanel {
         });
         // 播放器:点击直接列出所有播放器选择
         mBinding.player.setOnClickListener(view -> showPlayerDialog());
-        mBinding.decode.setOnClickListener(view -> changeAndUpdateText(mBinding.decode, mController.settingsIjkBtn()));
         mBinding.renderMode.setOnClickListener(view -> showRenderDialog());
         mBinding.videoPurifyRow.setOnClickListener(view -> showVideoPurifyDialog());
         mBinding.backgroundPlay.setOnClickListener(view -> showBackgroundPlayDialog());
@@ -165,9 +162,6 @@ final class PlayingControlPanel {
         targetView.performClick();
         if (view != null) {
             view.setText(targetView.getText());
-            if (view == mBinding.player) {
-                updateAboutIjkVisible();
-            }
         }
     }
 
@@ -244,7 +238,6 @@ final class PlayingControlPanel {
                     mController.setPlayerType(type);
                 }
                 mBinding.player.setText(PlayerHelper.getPlayerName(type));
-                updateAboutIjkVisible();
             }
 
             @Override
@@ -338,13 +331,6 @@ final class PlayingControlPanel {
             // 代码不再手动换底/换字色(用户口径:"选择按钮点击选中背景色和文字颜色都切换成纯色按钮")
             tv.setSelected(selected);
         }
-    }
-
-    /** IJK 解码仅对 IJK 内核有意义，播放器切换后同步更新当前抽屉。 */
-    public void updateAboutIjkVisible() {
-        mBinding.decode.setText(mController.settingsIjkBtn().getText());
-        int visibility = mController.getPlayerType() == 1 ? View.VISIBLE : View.GONE;
-        mBinding.decode.setVisibility(visibility);
     }
 
     /** 重置片头/尾,刷新文字 */

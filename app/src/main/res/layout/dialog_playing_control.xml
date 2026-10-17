@@ -334,22 +334,6 @@
                         app:drawableIconSize="20dp"
                         android:drawablePadding="8dp"
                         tools:text="Media3播放器" />
-
-                    <com.github.tvbox.osc.ui.kit.SizedIconTextView style="@style/WidgetBtn"
-                        android:id="@+id/decode"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:gravity="center"
-                        android:singleLine="true"
-                        android:paddingVertical="4dp"
-                        android:paddingHorizontal="10dp"
-                        android:drawableRight="@drawable/ic_change_20"
-                        app:drawableTint="@color/text_foreground"
-                        app:drawableIconSize="20dp"
-                        android:drawablePadding="8dp"
-                        android:visibility="gone"
-                        tools:visibility="visible"
-                        tools:text="硬解码" />
                 </LinearLayout>
             </HorizontalScrollView>
 

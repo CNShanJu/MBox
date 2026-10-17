@@ -18,7 +18,7 @@ public final class PlayerTrackHelper {
     private PlayerTrackHelper() {
     }
 
-    /** 内置字幕文本回调（内核差异在此收敛：IJK TimedText / Exo Cue） */
+    /** 内置字幕文本回调（内核差异在此收敛：Media3 Cue） */
     public interface SubtitleListener {
         /** text 为 null 表示字幕清除（Exo 空 cues 场景） */
         void onSubtitle(@Nullable String text);
@@ -30,7 +30,7 @@ public final class PlayerTrackHelper {
                 ? ((KernelTrackSupport) mediaPlayer).getTrackInfo() : null;
     }
 
-    /** 切换轨道（IJK 按 trackId / Exo 按 TrackInfoBean）；null bean 或未实现内核忽略 */
+    /** 切换轨道（Media3 按 TrackInfoBean）；null bean 或未实现内核忽略 */
     public static void selectTrack(AbstractPlayer mediaPlayer, @Nullable TrackInfoBean bean) {
         if (mediaPlayer == null || bean == null) return;
         if (mediaPlayer instanceof KernelTrackSupport) {
@@ -38,21 +38,17 @@ public final class PlayerTrackHelper {
         }
     }
 
-    /** 切换后是否需调用方恢复进度 UI（仅 Exo 需要 startProgress，IJK 由内核自行恢复） */
+    /** 切换后是否需调用方恢复进度 UI（Media3 需要 startProgress） */
     public static boolean requiresControllerProgressRestart(AbstractPlayer mediaPlayer) {
         return mediaPlayer instanceof KernelTrackSupport
                 && ((KernelTrackSupport) mediaPlayer).requiresControllerProgressRestart();
     }
 
-    /** 注册内置字幕回调（IJK/Exo 差异由内核实现收敛，回调统一为文本）；不支持的内核忽略 */
+    /** 注册内置字幕回调（内核差异由内核实现收敛，回调统一为文本）；不支持的内核忽略 */
     public static void setOnSubtitleListener(@NonNull AbstractPlayer mediaPlayer, @NonNull SubtitleListener listener) {
         if (mediaPlayer instanceof KernelTrackSupport) {
             ((KernelTrackSupport) mediaPlayer).setOnSubtitleListener(listener);
         }
     }
 
-    /** DoT 端口开关(仅 IJK 内核提供;随安全 DNS 选择联动)。内核差异集中在本适配层,UI 不直触内核类 */
-    public static void toggleDotPort(boolean enable) {
-        tv.danmaku.ijk.media.player.IjkMediaPlayer.toggleDotPort(enable);
-    }
 }

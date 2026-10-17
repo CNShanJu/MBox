@@ -107,7 +107,8 @@ public class ExoMediaPlayer extends AbstractPlayer implements Player.Listener {
             // 编解码异常时允许回退到其它解码器, 提升健壮性
             mRenderersFactory.setEnableDecoderFallback(true);
         }
-        mRenderersFactory.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER);
+        // 扩展渲染器(FFmpeg 音频软解)作为 MediaCodec 的兜底，硬件优先；参照 AVBox 的 EXTENSION_RENDERER_MODE_ON。
+        mRenderersFactory.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON);
         if (mTrackSelector == null) {
             mTrackSelector = new DefaultTrackSelector(mAppContext);
         }

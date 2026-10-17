@@ -5,14 +5,12 @@ import android.content.Context;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
-import android.text.TextUtils;
 import android.util.Base64;
 
 import com.github.catvod.crawler.JarLoader;
 import com.github.catvod.crawler.JsLoader;
 import com.github.catvod.crawler.Spider;
 import com.github.tvbox.osc.bean.LiveChannelGroup;
-import com.github.tvbox.osc.bean.IJKCode;
 import com.github.tvbox.osc.bean.LiveChannelItem;
 import com.github.tvbox.osc.bean.ParseBean;
 import com.github.tvbox.osc.bean.SourceBean;
@@ -151,7 +149,6 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
         List<LiveChannelGroup> lives = new ArrayList<>();
         List<LiveChannelGroup> fallbackLives = new ArrayList<>();
         List<com.github.tvbox.osc.spiderapi.LiveChannelConfigApi.SubscribeLiveSource> liveSources = new ArrayList<>();
-        List<IJKCode> codecs;
         String spider = "";
         String wallpaper = "";
         String subscriptionUrl = "";
@@ -167,7 +164,6 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
             lives = previous.lives;
             fallbackLives = previous.fallbackLives;
             liveSources = previous.liveSources;
-            codecs = previous.codecs;
             spider = previous.spider;
             wallpaper = previous.wallpaper;
             subscriptionUrl = previous.subscriptionUrl;
@@ -183,7 +179,6 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
         final List<LiveChannelGroup> lives;
         final List<LiveChannelGroup> fallbackLives;
         final List<com.github.tvbox.osc.spiderapi.LiveChannelConfigApi.SubscribeLiveSource> liveSources;
-        final List<IJKCode> codecs;
         final String spider;
         final String wallpaper;
         final String subscriptionUrl;
@@ -197,7 +192,6 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
             lives = Collections.unmodifiableList(builder.lives);
             fallbackLives = Collections.unmodifiableList(builder.fallbackLives);
             liveSources = Collections.unmodifiableList(builder.liveSources);
-            codecs = builder.codecs == null ? null : Collections.unmodifiableList(builder.codecs);
             spider = builder.spider;
             wallpaper = builder.wallpaper;
             subscriptionUrl = builder.subscriptionUrl;
@@ -890,7 +884,6 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
         List<LiveChannelGroup> liveChannelGroupList = builder.lives;
         List<LiveChannelGroup> subscribeLiveGroupList = builder.fallbackLives;
         List<com.github.tvbox.osc.spiderapi.LiveChannelConfigApi.SubscribeLiveSource> subscribeLiveSources = builder.liveSources;
-        List<IJKCode> ijkCodes = new ArrayList<>();
         VideoParseRuler.Builder rules = new VideoParseRuler.Builder();
         String epgUrl = null;
         // 远端站点源
@@ -1111,38 +1104,6 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
             }
         }
         AdBlocker.SourceHosts ads = AdBlocker.prepareSourceHosts(sourceAds);
-        // IJK解码配置
-        {
-            boolean foundOldSelect = false;
-            String ijkCodec = PrefsDataStore.getString(HawkConfig.IJK_CODEC, "");
-            JsonArray ijkJsonArray = infoJson.has("ijk")?infoJson.get("ijk").getAsJsonArray():defaultJson.get("ijk").getAsJsonArray();
-            for (JsonElement opt : ijkJsonArray) {
-                JsonObject obj = (JsonObject) opt;
-                String name = obj.get("group").getAsString();
-                LinkedHashMap<String, String> baseOpt = new LinkedHashMap<>();
-                for (JsonElement cfg : obj.get("options").getAsJsonArray()) {
-                    JsonObject cObj = (JsonObject) cfg;
-                    String key = cObj.get("category").getAsString() + "|" + cObj.get("name").getAsString();
-                    String val = cObj.get("value").getAsString();
-                    baseOpt.put(key, val);
-                }
-                IJKCode codec = new IJKCode();
-                codec.setName(name);
-                codec.setOption(baseOpt);
-                if (name.equals(ijkCodec) || TextUtils.isEmpty(ijkCodec)) {
-                    codec.selected(true);
-                    ijkCodec = name;
-                    foundOldSelect = true;
-                } else {
-                    codec.selected(false);
-                }
-                ijkCodes.add(codec);
-            }
-            if (!foundOldSelect && ijkCodes.size() > 0) {
-                ijkCodes.get(0).selected(true);
-            }
-        }
-        builder.codecs = ijkCodes;
         builder.subscriptionUrl = apiUrl;
         return new PreparedConfig(builder, rules.build(), ads, epgUrl);
     }
@@ -1529,73 +1490,6 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
         return first.has("type")
                 ? SubscriptionLiveSourceParser.parseTypedSources(lives)
                 : SubscriptionLiveSourceParser.parseEmbeddedSources(lives);
-    }
-
-    /**
-     * 离线(订阅未配置成功时)使用内置解码配置
-     * @return
-     */
-    private List<IJKCode> offlineGetIjkCodes() {
-
-        JsonObject defaultJson = DefaultSettings.JSON;
-
-        List<IJKCode> ijkCodes = new ArrayList<>();
-        boolean foundOldSelect = false;
-        String ijkCodec = PrefsDataStore.getString(HawkConfig.IJK_CODEC, "");
-        JsonArray ijkJsonArray = defaultJson.get("ijk").getAsJsonArray();
-        for (JsonElement opt : ijkJsonArray) {
-            JsonObject obj = (JsonObject) opt;
-            String name = obj.get("group").getAsString();
-            LinkedHashMap<String, String> baseOpt = new LinkedHashMap<>();
-            for (JsonElement cfg : obj.get("options").getAsJsonArray()) {
-                JsonObject cObj = (JsonObject) cfg;
-                String key = cObj.get("category").getAsString() + "|" + cObj.get("name").getAsString();
-                String val = cObj.get("value").getAsString();
-                baseOpt.put(key, val);
-            }
-            IJKCode codec = new IJKCode();
-            codec.setName(name);
-            codec.setOption(baseOpt);
-            if (name.equals(ijkCodec) || TextUtils.isEmpty(ijkCodec)) {
-                codec.selected(true);
-                ijkCodec = name;
-                foundOldSelect = true;
-            } else {
-                codec.selected(false);
-            }
-            ijkCodes.add(codec);
-        }
-        if (!foundOldSelect && ijkCodes.size() > 0) {
-            ijkCodes.get(0).selected(true);
-        }
-        return ijkCodes;
-    }
-
-    /**
-     * 订阅成功还是用拉取的ijk解码配置,未拉取成功时用默认的
-     * @return
-     */
-    public List<IJKCode> getIjkCodes() {
-        List<IJKCode> codecs = config.codecs;
-        return codecs == null ? offlineGetIjkCodes() : new ArrayList<>(codecs);
-    }
-
-    public IJKCode getCurrentIJKCode() {
-        String codeName = PrefsDataStore.getString(HawkConfig.IJK_CODEC, "");
-        return getIJKCodec(codeName);
-    }
-
-    public IJKCode getIJKCodec(String name) {
-        List<IJKCode> all = getIjkCodes();
-        if (name != null) {
-            for (IJKCode code : all) {
-                if (name.equals(code.getName())) {
-                    return code;
-                }
-            }
-        }
-        // 原实现直接 ijkCodes.get(0):离线时成员字段 ijkCodes 为 null 或列表为空都会崩溃,统一从非空列表取
-        return all.isEmpty() ? null : all.get(0);
     }
 
     String clanToAddress(String lanLink) {

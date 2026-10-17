@@ -81,7 +81,7 @@ final class LiveSettingPanel {
         ArrayList<String> groupNames = new ArrayList<>(Arrays.asList("画面比例", "播放解码", "超时换源", "偏好设置", "后台播放"));
         ArrayList<ArrayList<String>> items = new ArrayList<>();
         items.add(new ArrayList<>(Arrays.asList("默认", "16:9", "4:3", "填充", "原始", "裁剪")));
-        items.add(new ArrayList<>(Arrays.asList("系统", "ijk硬解", "ijk软解", "Media3")));
+        items.add(new ArrayList<>(Arrays.asList("系统", "Media3")));
         items.add(new ArrayList<>(Arrays.asList("5s", "10s", "15s", "20s", "25s", "30s")));
         items.add(new ArrayList<>(Arrays.asList("显示时间", "显示网速", "换台反转", "跨选分类")));
         items.add(new ArrayList<>(BackgroundPlaySettings.MODES));

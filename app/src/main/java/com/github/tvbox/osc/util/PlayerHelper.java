@@ -3,8 +3,6 @@ package com.github.tvbox.osc.util;
 import android.app.Activity;
 import android.content.Context;
 
-import com.github.tvbox.osc.bean.IJKCode;
-import com.github.tvbox.osc.player.api.IjkCodecConfigProviders;
 import com.github.tvbox.osc.player.render.SurfaceRenderViewFactory;
 import com.github.tvbox.osc.player.thirdparty.Kodi;
 import com.github.tvbox.osc.player.thirdparty.MXPlayer;
@@ -20,7 +18,6 @@ import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.HashMap;
 
-import tv.danmaku.ijk.media.player.IjkLibLoader;
 import xyz.doikki.videoplayer.player.AndroidMediaPlayerFactory;
 import xyz.doikki.videoplayer.player.PlayerFactory;
 import xyz.doikki.videoplayer.player.VideoView;
@@ -32,22 +29,15 @@ public class PlayerHelper {
         if (videoView == null) return; // 防御:播放器视图未初始化时跳过
         int playerType = PlayConfig.getPlayType();
         int renderType = PlayConfig.getRenderType();
-        String ijkCode = PlayConfig.getIjkCodec();
         int scale = PlayConfig.getScaleType();
         try {
             playerType = playerCfg.getInt("pl");
             renderType = playerCfg.getInt("pr");
-            ijkCode = playerCfg.getString("ijk");
             scale = playerCfg.getInt("sc");
         } catch (JSONException e) {
             e.printStackTrace();
         }
-        IJKCode codec = IjkCodecConfigProviders.get().getIJKCodec(ijkCode);
-        // 同步"本次播放的解码档":面板切档位后走的是重播(播放器实例不重建),IjkMediaPlayer 读这里才能生效。
-        // 解析不出来(null)时不覆盖:让 IjkMediaPlayer 继续沿用上一份或全局设置,避免把有效档位抹成空
-        if (codec != null) com.github.tvbox.osc.player.PlayerKernels.setCurrentCodec(codec);
-        PlayerFactory playerFactory = com.github.tvbox.osc.player.PlayerKernels.doikkiFactory(playerType, codec);
-        if (playerType == 1) com.github.tvbox.osc.player.PlayerKernels.ensureIjkLibrariesLoaded();
+        PlayerFactory playerFactory = com.github.tvbox.osc.player.PlayerKernels.doikkiFactory(playerType);
         RenderViewFactory renderViewFactory = com.github.tvbox.osc.player.PlayerKernels.renderFactory(renderType);
         videoView.setPlayerFactory(playerFactory);
         videoView.setRenderViewFactory(renderViewFactory);
@@ -57,11 +47,7 @@ public class PlayerHelper {
     public static void updateCfg(VideoView videoView) {
         if (videoView == null) return; // 防御:播放器视图未初始化时跳过
         int playType = PlayConfig.getPlayType();
-        // 无 per-vod 配置时按全局设置刷新同一份"本次播放解码档"(取不到时同样不覆盖)
-        IJKCode current = IjkCodecConfigProviders.get().getCurrentIJKCode();
-        if (current != null) com.github.tvbox.osc.player.PlayerKernels.setCurrentCodec(current);
-        PlayerFactory playerFactory = com.github.tvbox.osc.player.PlayerKernels.doikkiFactory(playType, null);
-        if (playType == 1) com.github.tvbox.osc.player.PlayerKernels.ensureIjkLibrariesLoaded();
+        PlayerFactory playerFactory = com.github.tvbox.osc.player.PlayerKernels.doikkiFactory(playType);
         int renderType = PlayConfig.getRenderType();
         RenderViewFactory renderViewFactory = com.github.tvbox.osc.player.PlayerKernels.renderFactory(renderType);
         videoView.setPlayerFactory(playerFactory);
@@ -70,8 +56,7 @@ public class PlayerHelper {
 
 
     public static void init() {
-        // IJK 动态库加载单点(PlayerKernels)
-        com.github.tvbox.osc.player.PlayerKernels.ensureIjkLibrariesLoaded();
+        // IJK 已移除,无动态库需预加载
     }
 
     public static String getPlayerName(int playType) {
@@ -88,7 +73,6 @@ public class PlayerHelper {
         if (mPlayersInfo == null) {
             HashMap<Integer, String> playersInfo = new HashMap<>();
             playersInfo.put(0, "系统播放器");
-            playersInfo.put(1, "IJK播放器");
             playersInfo.put(2, "Media3播放器");
             playersInfo.put(10, "MX播放器");
             playersInfo.put(11, "Reex播放器");
@@ -105,7 +89,6 @@ public class PlayerHelper {
         if (mPlayersExistInfo == null) {
             HashMap<Integer, Boolean> playersExist = new HashMap<>();
             playersExist.put(0, false);
-            playersExist.put(1, true);
             playersExist.put(2, true);
             playersExist.put(10, MXPlayer.getPackageInfo() != null);
             playersExist.put(11, ReexPlayer.getPackageInfo() != null);
@@ -214,7 +197,7 @@ public class PlayerHelper {
 
     // ---- 全局下载网速(与内核无关) ----
     // 原理与 ExoMediaPlayer 一致:用 TrafficStats 统计本应用(Uid)接收字节差分,
-    // 无论 系统/ijk/exo 哪个内核,只要在播放,应用整体流量即真实下载速度。
+    // 无论 系统/Media3 哪个内核,只要在播放,应用整体流量即真实下载速度。
     private static long sRxBaseline = -1;
     private static long sSampleTime = 0;
     private static long sSmoothSpeed = -1;

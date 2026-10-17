@@ -15,7 +15,6 @@ import java.io.IOException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import tv.danmaku.ijk.media.player.IjkMediaPlayer;
 
 /**
  * @author pj567
@@ -403,7 +402,6 @@ public class ControlManager {
                 com.github.tvbox.osc.util.OkGoHelper.setLocalFileReadAccess(
                         tryPort, candidate.getLocalReadToken());
                 lanBound = lanEnabled; // 记下本次实例的实际绑定方式(供 lanState 区分"已开但没重启")
-                IjkMediaPlayer.setDotPort(SystemConfig.getDohUrl() > 0, tryPort);
                 // server 就绪后注入局域网地址(:spider 模块 ApiConfig 用,替代直接依赖本类)
                 try {
                     com.github.tvbox.osc.api.ApiConfig.setLanBase(candidate.getLoadAddress());

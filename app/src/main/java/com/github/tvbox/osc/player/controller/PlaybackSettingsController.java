@@ -21,8 +21,6 @@ public interface PlaybackSettingsController {
 
     TextView settingsScaleBtn();
 
-    TextView settingsIjkBtn();
-
     TextView settingsTimeStartBtn();
 
     TextView settingsTimeSkipBtn();

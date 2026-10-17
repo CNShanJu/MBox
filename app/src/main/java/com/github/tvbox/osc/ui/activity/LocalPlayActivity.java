@@ -439,7 +439,6 @@ public class LocalPlayActivity extends BaseVbActivity<ActivityLocalPlayBinding> 
         try {
             mVodPlayerCfg.put("pl", PlayConfig.getPlayType());
             mVodPlayerCfg.put("pr", PlayConfig.getRenderType());
-            mVodPlayerCfg.put("ijk", PlayConfig.getIjkCodec());
             mVodPlayerCfg.put("sc", PlayConfig.getScaleType());
             mVodPlayerCfg.put("sp", 1.0f);
             mVodPlayerCfg.put("st", 0);

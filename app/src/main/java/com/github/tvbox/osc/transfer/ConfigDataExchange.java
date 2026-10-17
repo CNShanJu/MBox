@@ -300,7 +300,7 @@ public final class ConfigDataExchange {
         system.keySet().retainAll(allowed);
         SystemConfig.importConfig(system);
         Set<String> playerKeys = new HashSet<>(java.util.Arrays.asList("play_type", "play_render", "play_scale",
-                "play_time_step", "ijk_codec", "ijk_cache_play", "background_play_type", "video_purify",
+                "play_time_step", "ijk_cache_play", "background_play_type", "video_purify",
                 "video_purify_mode",
                 "video_speed", "subtitle_open", "subtitle_text_size", "subtitle_time_delay"));
         Map<String, Object> player = new LinkedHashMap<>(values);

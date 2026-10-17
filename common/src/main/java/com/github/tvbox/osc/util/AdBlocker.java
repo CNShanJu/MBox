@@ -17,7 +17,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  *
  * <p>名单分两层,各自的生命周期不同:
  * <ul>
- *   <li><b>默认名单</b>(应用内置 {@code ads},见 ApiConfig 的 defaultIJKADS):进程内只装一次,任何源都生效;</li>
+ *   <li><b>默认名单</b>(应用内置 {@code ads},见 ApiConfig 的 DefaultSettings):进程内只装一次,任何源都生效;</li>
  *   <li><b>当前源名单</b>(源配置里的 {@code ads}):<b>每加载一次源配置就整体替换</b>。</li>
  * </ul>
  *

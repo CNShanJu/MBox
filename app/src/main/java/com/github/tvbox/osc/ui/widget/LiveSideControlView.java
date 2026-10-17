@@ -133,7 +133,7 @@ public class LiveSideControlView extends FrameLayout implements IControlComponen
 
     private void refreshSpeed() {
         if (mSpeed == null) return;
-        // 全局下载网速采样(内核无关:系统/ijk/exo 通用),由 PlayerHelper 平滑
+        // 全局下载网速采样(内核无关:系统/Media3 通用),由 PlayerHelper 平滑
         mSpeed.setText(PlayerHelper.getDisplaySpeed(PlayerHelper.sampleNetworkSpeed()));
     }
 

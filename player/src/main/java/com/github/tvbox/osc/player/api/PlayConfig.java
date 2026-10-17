@@ -15,7 +15,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * 数据维护在播放模块内部（Hawk 键沿用旧应用 key，与历史设置兼容，独立模块不依赖 app 的 HawkConfig）；
  * 对外只暴露 查询 / 操作 / 订阅 / 备份：
  * <ul>
- *   <li>查询：getPlayType / getRenderType / getScaleType / getTimeStep / getIjkCodec / isPlayCacheEnabled /
+ *   <li>查询：getPlayType / getRenderType / getScaleType / getTimeStep / isPlayCacheEnabled /
  *       getBackgroundPlayType / getVideoPurifyMode / getVideoSpeed / 字幕三件套</li>
  *   <li>操作：对应 setXxx（内部校验 + 持久化 + 广播变更）</li>
  *   <li>订阅：{@link #subscribe(Listener)}——设置页等关注方刷新 UI</li>
@@ -26,11 +26,10 @@ import java.util.concurrent.CopyOnWriteArrayList;
 public final class PlayConfig {
 
     // 键沿用旧应用 key（兼容历史设置）
-    private static final String KEY_PLAY_TYPE = "play_type";          // 0 系统 1 IJK 2 Exo 10 MX...
+    private static final String KEY_PLAY_TYPE = "play_type";          // 0 系统 2 Media3 10 MX...
     private static final String KEY_PLAY_RENDER = "play_render";      // 0 texture 1 surface
     private static final String KEY_PLAY_SCALE = "play_scale";
     private static final String KEY_PLAY_TIME_STEP = "play_time_step";
-    private static final String KEY_IJK_CODEC = "ijk_codec";
     private static final String KEY_IJK_CACHE_PLAY = PlayCacheMigration.LEGACY_KEY;
     // 播放缓存/预载(二级设置页)。master 关时播放器走各自默认缓冲,不放大。
     private static final String KEY_PLAY_CACHE_ENABLED = PlayCacheMigration.ENABLED_KEY;
@@ -66,9 +65,10 @@ public final class PlayConfig {
 
     // ── 查询 ──
 
-    /** 默认播放器：0 系统 1 IJK 2 Exo 10 MX...，默认 0 */
+    /** 默认播放器：0 系统 2 Media3 10 MX...，默认 0；原 1=IJK 已移除，存量值回落到 2 */
     public static int getPlayType() {
-        return PrefsDataStore.getInt(KEY_PLAY_TYPE, 0);
+        int t = PrefsDataStore.getInt(KEY_PLAY_TYPE, 0);
+        return t == 1 ? 2 : t;
     }
 
     /** 渲染方式：0 texture 1 surface，默认 1；已保存的用户选择保持不变 */
@@ -84,11 +84,6 @@ public final class PlayConfig {
     /** 长按倍速步进（秒），默认 1 */
     public static int getTimeStep() {
         return PrefsDataStore.getInt(KEY_PLAY_TIME_STEP, 1);
-    }
-
-    /** IJK 解码器名，默认 "软解码" */
-    public static String getIjkCodec() {
-        return PrefsDataStore.getString(KEY_IJK_CODEC, "软解码");
     }
 
     // ── 播放缓存/预载 ──
@@ -116,7 +111,7 @@ public final class PlayConfig {
         return clamp(v, PRELOAD_DURATION_MIN_S, PRELOAD_DURATION_MAX_S);
     }
 
-    /** 边播边缓存(磁盘缓存,Exo 与 IJK 通用)，新装默认开；与总开关共用归一策略。 */
+    /** 边播边缓存(磁盘缓存,Media3 通用)，新装默认开；与总开关共用归一策略。 */
     public static boolean isCacheWhilePlay() {
         return readCacheSnapshot().getWhilePlay();
     }
@@ -249,13 +244,6 @@ public final class PlayConfig {
         fireChanged();
     }
 
-    public static void setIjkCodec(String name) {
-        if (name == null) return;
-        if (name.equals(getIjkCodec())) return;
-        PrefsDataStore.put(KEY_IJK_CODEC, name);
-        fireChanged();
-    }
-
     public static void setPlayCacheEnabled(boolean on) {
         writeCacheConfig(on, null);
     }
@@ -355,7 +343,6 @@ public final class PlayConfig {
         cfg.put(KEY_PLAY_RENDER, getRenderType());
         cfg.put(KEY_PLAY_SCALE, getScaleType());
         cfg.put(KEY_PLAY_TIME_STEP, getTimeStep());
-        cfg.put(KEY_IJK_CODEC, getIjkCodec());
         PlayCacheMigration.Snapshot cache = readCacheSnapshot();
         cfg.put(KEY_PLAY_CACHE_ENABLED, cache.getEnabled());
         cfg.put(KEY_PRELOAD_NEXT, isPreloadNextEnabled());
@@ -379,7 +366,6 @@ public final class PlayConfig {
         if ((v = cfg.get(KEY_PLAY_RENDER)) instanceof Integer) setRenderType((Integer) v);
         if ((v = cfg.get(KEY_PLAY_SCALE)) instanceof Integer) setScaleType((Integer) v);
         if ((v = cfg.get(KEY_PLAY_TIME_STEP)) instanceof Integer) setTimeStep((Integer) v);
-        if ((v = cfg.get(KEY_IJK_CODEC)) instanceof String) setIjkCodec((String) v);
         // 先在备份边界归一，再覆盖本机；旧备份不能被本机已经存在的新键遮挡。
         Map<String, Boolean> cache = PlayCacheMigration.normalizeImport(cfg);
         if (!cache.isEmpty()) writeCacheConfig(cache.get(KEY_PLAY_CACHE_ENABLED), cache.get(KEY_CACHE_WHILE_PLAY));

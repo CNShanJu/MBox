@@ -25,7 +25,6 @@ import com.blankj.utilcode.util.LogUtils;
 import com.blankj.utilcode.util.SPUtils;
 import com.chad.library.adapter.base.BaseQuickAdapter;
 import com.github.tvbox.osc.R;
-import com.github.tvbox.osc.bean.IJKCode;
 import com.github.tvbox.osc.bean.ParseBean;
 import com.github.tvbox.osc.constant.CacheConst;
 import com.github.tvbox.osc.player.api.PlayConfig;
@@ -49,7 +48,6 @@ import org.json.JSONObject;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
-import java.util.List;
 
 import xyz.doikki.videoplayer.player.VideoView;
 import xyz.doikki.videoplayer.util.PlayerUtils;
@@ -136,7 +134,6 @@ public class LocalVideoController extends BaseController implements PlaybackSett
     public TextView mPlayerScaleBtn;
     public TextView mPlayerSpeedBtn;
     public TextView mPlayerBtn;
-    public TextView mPlayerIJKBtn;
     public TextView mPlayerTimeStartEndText;
     public TextView mPlayerTimeStartBtn;
     public TextView mPlayerTimeSkipBtn;
@@ -218,7 +215,6 @@ public class LocalVideoController extends BaseController implements PlaybackSett
         mPlayerScaleBtn = findViewById(R.id.play_scale);
         mPlayerSpeedBtn = findViewById(R.id.play_speed);
         mPlayerBtn = findViewById(R.id.play_player);
-        mPlayerIJKBtn = findViewById(R.id.play_ijk);
         mPlayerTimeStartEndText = findViewById(R.id.play_time_start_end_text);
         mPlayerTimeStartBtn = findViewById(R.id.play_time_start);
         mPlayerTimeSkipBtn = findViewById(R.id.play_time_end);
@@ -546,36 +542,6 @@ public class LocalVideoController extends BaseController implements PlaybackSett
                 return true;
             }
         });
-        mPlayerIJKBtn.setOnClickListener(new OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                myHandle.removeCallbacks(myRunnable);
-                myHandle.postDelayed(myRunnable, myHandleSeconds);
-                try {
-                    String ijk = mPlayerConfig.getString("ijk");
-                    List<IJKCode> codecs = com.github.tvbox.osc.player.api.IjkCodecConfigProviders.get().getIjkCodes();
-                    for (int i = 0; i < codecs.size(); i++) {
-                        if (ijk.equals(codecs.get(i).getName())) {
-                            if (i >= codecs.size() - 1)
-                                ijk = codecs.get(0).getName();
-                            else {
-                                ijk = codecs.get(i + 1).getName();
-                            }
-                            break;
-                        }
-                    }
-                    mPlayerConfig.put("ijk", ijk);
-                    updatePlayerCfgView();
-                    listener.updatePlayerCfg();
-                    listener.replay(false);
-                    hideBottom();
-                } catch (JSONException e) {
-                    e.printStackTrace();
-                }
-                mPlayerIJKBtn.requestFocus();
-                mPlayerIJKBtn.requestFocusFromTouch();
-            }
-        });
 //        增加播放页面片头片尾时间重置
         mPlayerTimeResetBtn.setOnClickListener(new OnClickListener() {
             @Override
@@ -762,8 +728,6 @@ public class LocalVideoController extends BaseController implements PlaybackSett
             int playerType = mPlayerConfig.getInt("pl");
             mPlayerBtn.setText(PlayerHelper.getPlayerName(playerType));
             mPlayerScaleBtn.setText(PlayerHelper.getScaleName(mPlayerConfig.getInt("sc")));
-            mPlayerIJKBtn.setText(mPlayerConfig.getString("ijk"));
-            mPlayerIJKBtn.setVisibility(playerType == 1 ? VISIBLE : GONE);
             mPlayerScaleBtn.setText(PlayerHelper.getScaleName(mPlayerConfig.getInt("sc")));
             mPlayerSpeedBtn.setText("x" + mPlayerConfig.getDouble("sp"));
             mPlayerTimeStartBtn.setText(PlayerUtils.stringForTime(mPlayerConfig.getInt("st") * 1000));
@@ -790,11 +754,6 @@ public class LocalVideoController extends BaseController implements PlaybackSett
     @Override
     public TextView settingsScaleBtn() {
         return mPlayerScaleBtn;
-    }
-
-    @Override
-    public TextView settingsIjkBtn() {
-        return mPlayerIJKBtn;
     }
 
     @Override

@@ -12,7 +12,7 @@ import android.view.SurfaceHolder;
 import java.util.Map;
 
 /**
- * 封装系统的MediaPlayer，不推荐，系统的MediaPlayer兼容性较差，建议使用IjkPlayer或者ExoPlayer
+ * 封装系统的MediaPlayer，不推荐，系统的MediaPlayer兼容性较差，建议使用Media3(ExoPlayer)
  */
 public class AndroidMediaPlayer extends AbstractPlayer implements MediaPlayer.OnErrorListener,
         MediaPlayer.OnCompletionListener, MediaPlayer.OnInfoListener,

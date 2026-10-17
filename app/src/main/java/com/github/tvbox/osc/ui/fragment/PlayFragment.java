@@ -1166,7 +1166,7 @@ public class PlayFragment extends BaseLazyFragment {
             return;
         }
         PlaybackConnectionProbe.Mode probeMode = beforeManifest || playerType == 2
-                ? PlaybackConnectionProbe.Mode.MEDIA3 : PlaybackConnectionProbe.Mode.IJK_NATIVE;
+                ? PlaybackConnectionProbe.Mode.MEDIA3 : PlaybackConnectionProbe.Mode.NATIVE;
         AddressProbe probe = new AddressProbe(generation, url, probeMode);
         okhttp3.Call previousCall = null;
         boolean alreadyChecked;
@@ -1585,9 +1585,6 @@ public class PlayFragment extends BaseLazyFragment {
             }
             if (!mVodPlayerCfg.has("pr")) {
                 mVodPlayerCfg.put("pr", PlayConfig.getRenderType());
-            }
-            if (!mVodPlayerCfg.has("ijk")) {
-                mVodPlayerCfg.put("ijk", PlayConfig.getIjkCodec());
             }
             if (!mVodPlayerCfg.has("sc")) {
                 mVodPlayerCfg.put("sc", PlayConfig.getScaleType());

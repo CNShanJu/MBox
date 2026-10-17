@@ -8,7 +8,7 @@ import android.content.Context;
  * - 播放地址解析契约(PlayUrlResolverApi)→ :spider 实现(下载/播放解析用)
  * - 手动视频判定(SpiderManualCheckApi)→ :spider 实现(嗅探 WebView 用)
  * - 爬虫内容服务(SpiderContentApi)→ :spider 实现(首页/分类/详情/搜索/播放用)
- * - PlayerFactory adapter 注册(type=1 IJK / type=2 Media3,roadmap 2.1 原型)
+ * - PlayerFactory adapter 注册(type=2 Media3,roadmap 2.1 原型)
  * 后续扩展位:NetworkProvider / StorageFacade 等。
  */
 public final class AppCompositionRoot {
@@ -228,23 +228,6 @@ public final class AppCompositionRoot {
                 return com.github.tvbox.osc.api.ApiConfig.get().jsonExtMix(flag, key, name, jxs, url);
             }
         });
-        // IJK 解码配置契约:播放内核/设置页经接口读取,适配器桥接 ApiConfig 现有实现
-        com.github.tvbox.osc.player.api.IjkCodecConfigProviders.set(new com.github.tvbox.osc.player.api.IjkCodecConfigApi() {
-            @Override
-            public java.util.List<com.github.tvbox.osc.bean.IJKCode> getIjkCodes() {
-                return com.github.tvbox.osc.api.ApiConfig.get().getIjkCodes();
-            }
-
-            @Override
-            public com.github.tvbox.osc.bean.IJKCode getCurrentIJKCode() {
-                return com.github.tvbox.osc.api.ApiConfig.get().getCurrentIJKCode();
-            }
-
-            @Override
-            public com.github.tvbox.osc.bean.IJKCode getIJKCodec(String name) {
-                return com.github.tvbox.osc.api.ApiConfig.get().getIJKCodec(name);
-            }
-        });
         // 网络客户端提供者:general/noRedirect 来自 OkGoHelper;playback 复用 Media3 已建实例
         networkProvider = new com.github.tvbox.osc.net.NetworkProvider() {
             @Override
@@ -268,23 +251,14 @@ public final class AppCompositionRoot {
 
     /**
      * PlayerFactory 内核适配器注册(roadmap 2.1 会话原型):
-     * type=1(IJK) / type=2(Media3) 注册引擎无关的 PlayerApi 适配器,
+     * type=2(Media3) 注册引擎无关的 PlayerApi 适配器(IJK 已移除),
      * 供 PlaybackSessions 会话层/后续 PlayFragment 薄层化按 playType 取用。
      * 适配器仅作协议收敛:真机回归前 UI 仍由 mVideoView 直接驱动,此处不改变现有播放行为。
-     * 内核/渲染工厂语义与 PlayerHelper.updateCfg 一致(IJK=type1 / Media3=type2)。
+     * 内核/渲染工厂语义与 PlayerHelper.updateCfg 一致(Media3=type2)。
      */
     private static synchronized void registerPlayerAdapters() {
         if (playerAdaptersRegistered) return;
         try {
-            // type=1 IJK:复用 PlayerHelper 的 IJK 内核工厂语义(new IjkMediaPlayer(context, codec))
-            com.github.tvbox.osc.player.api.PlayerFactory.register(1, (context, options, listener) -> {
-                android.util.Log.i("AppCompositionRoot", "PlayerFactory: 创建 IJK(type=1) 适配器");
-                xyz.doikki.videoplayer.player.VideoView vv = newVideoView(context, 1);
-                com.github.tvbox.osc.player.api.PlayerApi api =
-                        new com.github.tvbox.osc.player.VideoViewPlayerApi(vv, true);
-                api.subscribe(listener);
-                return api;
-            });
             // type=2 Media3:复用 EXOmPlayer 内核工厂语义
             com.github.tvbox.osc.player.api.PlayerFactory.register(2, (context, options, listener) -> {
                 android.util.Log.i("AppCompositionRoot", "PlayerFactory: 创建 Media3(type=2) 适配器");
@@ -295,7 +269,7 @@ public final class AppCompositionRoot {
                 return api;
             });
             playerAdaptersRegistered = true;
-            android.util.Log.i("AppCompositionRoot", "PlayerFactory: IJK(1)/Media3(2) 适配器已注册");
+            android.util.Log.i("AppCompositionRoot", "PlayerFactory: Media3(2) 适配器已注册");
         } catch (Throwable th) {
             android.util.Log.w("AppCompositionRoot", "PlayerFactory 适配器注册失败(不影响主链路)", th);
         }
@@ -305,7 +279,7 @@ public final class AppCompositionRoot {
     private static xyz.doikki.videoplayer.player.VideoView newVideoView(Context context, int playType) {
         xyz.doikki.videoplayer.player.VideoView vv = new xyz.doikki.videoplayer.player.VideoView(context);
         // 内核单点(与 PlayerHelper.updateCfg 同源;Media3 升级只改 PlayerKernels)
-        vv.setPlayerFactory(com.github.tvbox.osc.player.PlayerKernels.doikkiFactory(playType, null));
+        vv.setPlayerFactory(com.github.tvbox.osc.player.PlayerKernels.doikkiFactory(playType));
         try {
             int renderType = com.github.tvbox.osc.player.api.PlayConfig.getRenderType();
             vv.setRenderViewFactory(com.github.tvbox.osc.player.PlayerKernels.renderFactory(renderType));

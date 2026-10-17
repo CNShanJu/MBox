@@ -40,8 +40,8 @@ app / feature
 | `:common` | 全局共用:纯模型(`com.github.tvbox.osc.bean.*`,不依赖 Android/Hawk/Room/ApiConfig)+ 算法工具(AES/MD5/AdBlocker)+ 系统状态(`.state.*`);由原 `:core-model`/`:core-utils`/`:state` 三模块合并,包名不变 |
 | `:core-network` | 收敛网络客户端(OkGoHelper/HttpClient/各 OkHttp 创建),业务不得自行 `new OkHttpClient.Builder()` |
 | `:core-storage` | Room/缓存/配置收口,对外只暴露 Repository/类型安全 Config,不暴露 DAO;storage 不得依赖 spider/download/player |
-| `:spider` | 爬虫**契约 + 实现同模块**(原 `:spider-api` 已并入):契约(SourcePage/Category/Detail/Search/Play 与 SourceConfigProviders/ParseConfigProviders/LiveChannelConfigApi/SourceLoaderApi/PlayUrlResolverProviders/IjkCodecConfigProviders/SpiderFaultProviders)、QuickJS/JarLoader/ApiConfig/具体 Spider;**app/UI 一律经契约,禁止直连 `ApiConfig`/`JsLoader`/`PlayUrlResolver`**(`checkModuleDependencies` 已加该红线,白名单只剩组合根/启动注入点) |
-| `:player` | 播放**契约 + 实现同模块**(原 `:player-api` 已并入):契约(PlayerSession/PlayerState/PlayerOptions/PlayerEvent/PlayerFactory)与 MyVideoView/IJK/Media3 同模块;UI 不得直接依赖具体内核 |
+| `:spider` | 爬虫**契约 + 实现同模块**(原 `:spider-api` 已并入):契约(SourcePage/Category/Detail/Search/Play 与 SourceConfigProviders/ParseConfigProviders/LiveChannelConfigApi/SourceLoaderApi/PlayUrlResolverProviders/SpiderFaultProviders)、QuickJS/JarLoader/ApiConfig/具体 Spider;**app/UI 一律经契约,禁止直连 `ApiConfig`/`JsLoader`/`PlayUrlResolver`**(`checkModuleDependencies` 已加该红线,白名单只剩组合根/启动注入点) |
+| `:player` | 播放**契约 + 实现同模块**(原 `:player-api` 已并入):契约(PlayerSession/PlayerState/PlayerOptions/PlayerEvent/PlayerFactory)与 MyVideoView/Media3 同模块;UI 不得直接依赖具体内核 |
 | `:thirdparty` | 纯第三方归堆,不依赖任何本仓模块:TabLayout(`com.angcyo.tablayout`)、CustomActivityOnCrash(`cat.ereza.customactivityoncrash`,原 `:crash`)、QuickJS(`com.whl.quickjs.*` + `src/main/jniLibs`,原 `:quickjs`) |
 | `:download` | 只公开 DownloadFacade.enqueue/pause/resume/delete/observe;Manager/Scheduler/Executor/Archive 等为模块内部实现 |
 | `:share` | 分享/导入导出(传输层):契约(`ShareFacade`/`ShareTransport`/`ShareCapability`/`ShareLink`/`SharePackage`/`ShareManifest` 等)+ 实现(`online`=storage.to、`transport.lan`=局域网、`local`=本地文件)同模块;平台**可插拔**(注册顺序即优先级,`availablePlatforms/firstAvailable` 自动选可用平台),在线平台不可用时换实现而不改调用方。局域网 HTTP 服务在 `:app`,经 `transport.lan.LanShareHost` 桥接注入,故本模块**不得依赖 `:app`**;`internal`/`online`/`local` 为内部实现,**app 禁止 import**(门禁已加) |
@@ -49,8 +49,9 @@ app / feature
 | `:app` 的 ui-kit/ui-common | 主题资源(原 `:ui-common`)与通用组件已全部收在 app 内(app 的 `res` + `ui/kit` package);组件成熟后再考虑拆模块 |
 
 现状残留(持续治理,新代码勿新增同类):
-- app 仍直用 `MyVideoView`/IJK/Media3、`PlayerTrackHelper` 经内核能力接口分发(播放器收口长线)。
-- **旧 ExoPlayer 已迁至 Media3 1.4.1**(匹配 compileSdk 34):类型 2 沿用旧配置,`EXOmPlayer`/`xyz.doikki.videoplayer.exo` 为兼容类名,实现只用 `androidx.media3`。禁止重新引入 `com.google.android.exoplayer` 依赖或旧包 import;Media3 各组件必须同版本,UI 不得 import `androidx.media3`。取流复用组合根注入的客户端,每个媒体源独立持有请求头快照;音轨/字幕选择用 `Tracks`/`TrackSelectionOverride`,字幕回调用 `CueGroup`。真机行为待用户人工回归。
+- app 仍直用 `MyVideoView`/Media3、`PlayerTrackHelper` 经内核能力接口分发(播放器收口长线)。
+- **旧 ExoPlayer 已迁至 Media3 1.11.1**(匹配 compileSdk 36):类型 2 沿用旧配置,`EXOmPlayer`/`xyz.doikki.videoplayer.exo` 为兼容类名,实现只用 `androidx.media3`。禁止重新引入 `com.google.android.exoplayer` 依赖或旧包 import;Media3 各组件必须同版本,UI 不得 import `androidx.media3`。取流复用组合根注入的客户端,每个媒体源独立持有请求头快照;音轨/字幕选择用 `Tracks`/`TrackSelectionOverride`,字幕回调用 `CueGroup`。真机行为待用户人工回归。
+- **IJK 播放内核已移除**(2026-10 体积优化,参照 AVBox):原 IJK(内置 FFmpeg ~12MB,`libijkffmpeg.so`/`libavcodec`/`libavutil`/`libswresample`/`libijksdl`/`libplayer`/`libffmpeg_jni`/`librtmp-jni`)删除,播放器收敛到 **Media3 + 系统内核**;软解能力改由 Media3 FFmpeg decoder 提供(`org.jellyfin.media3:media3-ffmpeg-decoder`)。禁止重新引入 IJK(`tv.danmaku.ijk.*`/`xyz.doikki.videoplayer.ijk.*`/`libijkffmpeg.so`)或旧 ExoPlayer。playType 语义:0 系统、2 Media3(原 1=IJK 作废,存量 1 回落到 Media3)。
 - `:core-network` 已只剩网络职责(OkGoHelper/HttpClient/HttpUrls/FCallBack/HCallBack/SSLCompat/urlhttp 的 brotli 拦截器);AES/MD5/AdBlocker/AppLog/LOG 已迁出。残留:网络客户端装配与通用工具仍同包,后续可按职责再分目录。
 - **日志只有一条写通道**:业务日志一律 `LogStore`(`:log` 模块,结构化落 Room),错误流由 `LogcatCapture` 落 `filesDir/app_logs/logcat-*.log`;旧 `AppLog` 按天文件通道**已删除**(它与 LogStore 共用 `"app_log"` 开关,一开日志就双写且 `app-*.log` 永不清理、界面不可见;调用点已全部迁移)。新代码**不得再新增文件级日志通道**。
 - `:spider` 字符串通道(SpiderContentApi)为过渡兼容层,新功能不得新增字符串协议依赖。
@@ -61,7 +62,7 @@ app / feature
 ## 三、大页面拆分目标(§三)
 
 - **PlayFragment**:应拆为 PlayFragment(只绑 View/生命周期)+ PlayViewModel(页面状态)+ PlayCoordinator(换源/解析/重试)+ PlayerSession(播放控制)+ SubtitleCoordinator + PlayHistoryRepository。
-  - Fragment 不应直接持有 Spider、ExoPlayer、IJK 或 DAO;解析/嗅探引擎已抽 `util/player/PlayParseCoordinator`。
+  - Fragment 不应直接持有 Spider、ExoPlayer 或 DAO;解析/嗅探引擎已抽 `util/player/PlayParseCoordinator`。
   - 已抽:`PlayRequest`/`PlaySessionKeys`/`PlayedVodKey`/`SubtitleCoordinator`/`PlayHistoryRepository`/`PlayParseCoordinator`;剩余大块(startPlayUrl 等)仍与控制器耦合,拆分需真机回归。
 - **DetailActivity**:应拆 DetailViewModel/DetailRepository/EpisodeSelectionState/DetailDownloadCoordinator/QuickSearchCoordinator;Activity 只处理导航、弹窗、视图事件。
 - **SourceViewModel**:只依赖 SpiderService 等契约(可 FakeSpiderService 做 JVM 单测),不得直调 `ApiConfig.get().getCSP()` 之类具体爬虫。
@@ -415,7 +416,7 @@ app / feature
 ## 十、常用基础设施速查
 
 - 配置:core-storage `config.PrefsDataStore`(DataStore,运行权威;历史 Hawk 一次性迁移通道 `KeyValueStore` 已随 hawk 退役下线);各业务 Config 门面见 `com.github.tvbox.osc.config`(SystemConfig)与各模块 config 包。
-- 契约 Providers(在 `:spider` 模块的契约包内,原 `:spider-api`):`SourceConfigProviders`/`ParseConfigProviders`/`LiveChannelConfigApi`(含 `getSubscribeLiveSources()`:订阅自带的直播源清单(名字+地址),订阅管理「直播源」页据此列出「来自:&lt;订阅名&gt;」条目;与 `getFallbackChannelGroupList()` 的区别是**始终保留**解析结果,不受"未配用户直播源时兜底列表被清空"影响)/`SourceLoaderProviders`(含 `stopAllSourceTasks`/`resetSources` 源运行态)/`PlayUrlResolverProviders`(批量下载解析)/`IjkCodecConfigProviders`/`SpiderFaultProviders`(某源因插件缺类或初始化失败而不可用时的原因;页面据此给出说法,而不是只显示"暂无数据") 等,业务/UI 一律经它们取源元信息,禁止直触 ApiConfig。`checkModuleDependencies` 已把"app 直连 `ApiConfig`/`JsLoader`/`PlayUrlResolver`"设为红线,白名单只剩组合根 `di/AppCompositionRoot`、启动 `base/App`、`server/ControlManager` 三个装配/注入点。
+- 契约 Providers(在 `:spider` 模块的契约包内,原 `:spider-api`):`SourceConfigProviders`/`ParseConfigProviders`/`LiveChannelConfigApi`(含 `getSubscribeLiveSources()`:订阅自带的直播源清单(名字+地址),订阅管理「直播源」页据此列出「来自:&lt;订阅名&gt;」条目;与 `getFallbackChannelGroupList()` 的区别是**始终保留**解析结果,不受"未配用户直播源时兜底列表被清空"影响)/`SourceLoaderProviders`(含 `stopAllSourceTasks`/`resetSources` 源运行态)/`PlayUrlResolverProviders`(批量下载解析)/`SpiderFaultProviders`(某源因插件缺类或初始化失败而不可用时的原因;页面据此给出说法,而不是只显示"暂无数据") 等,业务/UI 一律经它们取源元信息,禁止直触 ApiConfig。`checkModuleDependencies` 已把"app 直连 `ApiConfig`/`JsLoader`/`PlayUrlResolver`"设为红线,白名单只剩组合根 `di/AppCompositionRoot`、启动 `base/App`、`server/ControlManager` 三个装配/注入点。
 - 弹窗:统一 `ui/dialog/DialogCoordinator`(center/right/bottom/loading/confirm);同构内容层合并用共享 Panel(如 LiveSettingPanel/DownloadSeriesPanel/PlayingControlPanel),Bottom/Right 收敛为薄壳。
 - 流式标签(搜索页历史/热词 chip、联想弹窗 chip):统一 `ui/kit/FlowTagLayout` + `ui/kit/FlowLineBreaker`(**自研**,2026-09-27 起替代第三方 `com.hyman:flowlayout-lib` —— 那条库行高漏算子视图外边距,标签最后一行会被裁掉下半截;排版算术是纯函数并有 `FlowLineBreakerTest` 钉住)。间距只认条目自己的 `layout_margin`,别再引入第二套 spacing 属性,也别再引第三方流式布局库。
 - 共享执行器:`util/HeavyTaskUtil`(getBigTaskExecutorService 并行 / getSerialExecutorService 串行);配合 epoch/过期自检做取消语义。
