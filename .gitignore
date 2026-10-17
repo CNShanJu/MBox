@@ -115,3 +115,6 @@ app/src/main/assets/config/default_subscriptions.json
 
 # 镜像补传临时目录(不入库)
 /.tmp-gitee-upload/
+
+# WorkBuddy 本地工作目录(项目记忆/预览图等),不入库
+.workbuddy/
