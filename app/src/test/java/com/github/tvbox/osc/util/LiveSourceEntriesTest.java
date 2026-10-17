@@ -10,11 +10,13 @@ import org.junit.Test;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 订阅管理「直播源」页列表逻辑的 JVM 单测(纯逻辑,不触碰 Android 类):
- * 订阅导入条目在前、用户自建在后;同地址去重;勾选态只命中一个;订阅导入的不可删。
+ * 订阅导入条目在前、用户自建在后;同地址去重;勾选态只命中一个;订阅导入的不可删;用户命名优先于地址推导。
  */
 public class LiveSourceEntriesTest {
 
@@ -26,6 +28,12 @@ public class LiveSourceEntriesTest {
         return out;
     }
 
+    private static Map<String, String> names(String... urlNamePairs) {
+        Map<String, String> out = new LinkedHashMap<>();
+        for (int i = 0; i + 1 < urlNamePairs.length; i += 2) out.put(urlNamePairs[i], urlNamePairs[i + 1]);
+        return out;
+    }
+
     @Test
     public void 订阅导入在前_标注来源_且不可删除() {
         List<LiveSourceEntries.Entry> list = LiveSourceEntries.build(
@@ -33,6 +41,7 @@ public class LiveSourceEntriesTest {
                 imported("Kimentanm", "https://gh.927223.xy/x/iptv.m3u",
                         "虎牙一起看", "https://sub.ottiptv.cc/huyayqk.m3u"),
                 Collections.singletonList("http://192.168.1.5:8080/mine.txt"),
+                null,
                 "");
 
         assertEquals(3, list.size());
@@ -50,6 +59,7 @@ public class LiveSourceEntriesTest {
                 "饭太硬",
                 imported("A", "https://a/1.m3u", "B", "https://b/2.m3u"),
                 Arrays.asList("https://c/3.m3u", "https://d/4.m3u"),
+                null,
                 "https://b/2.m3u");
 
         int checked = 0;
@@ -70,6 +80,7 @@ public class LiveSourceEntriesTest {
                 "肥猫",
                 imported("Kimentanm", "https://gh.927223.xy/x/iptv.m3u"),
                 new ArrayList<>(Collections.singletonList("https://gh.927223.xy/x/iptv.m3u")),
+                null,
                 "");
 
         assertEquals("同地址只出现一行", 1, list.size());
@@ -79,7 +90,7 @@ public class LiveSourceEntriesTest {
     @Test
     public void 当前直播源为空时没有任何条目被勾选_等价于用订阅自带直播() {
         List<LiveSourceEntries.Entry> list = LiveSourceEntries.build(
-                "饭太硬", imported("A", "https://a/1.m3u"), null, "");
+                "饭太硬", imported("A", "https://a/1.m3u"), null, null, "");
         for (LiveSourceEntries.Entry e : list) {
             assertFalse(e.checked);
         }
@@ -88,7 +99,7 @@ public class LiveSourceEntriesTest {
     @Test
     public void 内嵌分组_没有地址_不可单独指定() {
         List<LiveSourceEntries.Entry> list = LiveSourceEntries.build(
-                "饭太硬", imported("央视", ""), null, "");
+                "饭太硬", imported("央视", ""), null, null, "");
 
         assertEquals(1, list.size());
         assertTrue("内嵌分组没有地址", list.get(0).embedded());
@@ -99,7 +110,7 @@ public class LiveSourceEntriesTest {
     @Test
     public void 订阅没给名字时按地址推导展示名() {
         List<LiveSourceEntries.Entry> list = LiveSourceEntries.build(
-                "饭太硬", imported("", "http://193.123.86.190:14888/TV/iptv.php"), null, "");
+                "饭太硬", imported("", "http://193.123.86.190:14888/TV/iptv.php"), null, null, "");
 
         assertEquals("193.123.86.190:14888/iptv.php", list.get(0).name);
     }
@@ -110,6 +121,7 @@ public class LiveSourceEntriesTest {
         List<LiveSourceEntries.Entry> list = LiveSourceEntries.build(
                 "饭太硬",
                 imported("Kimentanm", "https://gh.927223.xy/x/iptv.m3u"),
+                null,
                 null,
                 "https://gh-proxy.com/raw.githubusercontent.com/vbskycn/iptv/master/tv/iptv4.txt");
 
@@ -126,6 +138,7 @@ public class LiveSourceEntriesTest {
                 "饭太硬",
                 imported("Kimentanm", "https://gh.927223.xy/x/iptv.m3u"),
                 null,
+                null,
                 "https://gh.927223.xy/x/iptv.m3u");
 
         assertEquals(1, list.size());
@@ -133,8 +146,37 @@ public class LiveSourceEntriesTest {
     }
 
     @Test
+    public void 用户命名优先于地址推导_订阅导入的不吃这份命名() {
+        List<LiveSourceEntries.Entry> list = LiveSourceEntries.build(
+                "饭太硬",
+                imported("Kimentanm", "https://a/1.m3u"),
+                Arrays.asList("http://192.168.1.5:8080/mine.txt", "https://b/2.m3u"),
+                names("http://192.168.1.5:8080/mine.txt", "客厅电视",
+                        "https://a/1.m3u", "不该生效的名字"),
+                "");
+
+        assertEquals("客厅电视", list.get(1).name);
+        assertEquals("客厅电视", list.get(1).userName);
+        assertEquals("没起名字的按地址推导", "b/2.m3u", list.get(2).name);
+        assertEquals("订阅导入的用订阅给的名字", "Kimentanm", list.get(0).name);
+        assertEquals("", list.get(0).userName);
+    }
+
+    @Test
+    public void 补出来的当前直播源也吃用户命名() {
+        List<LiveSourceEntries.Entry> list = LiveSourceEntries.build(
+                "饭太硬", null, null,
+                names("http://10.0.0.9/tv.m3u", "卧室"),
+                "http://10.0.0.9/tv.m3u");
+
+        assertEquals(1, list.size());
+        assertEquals("卧室", list.get(0).name);
+        assertTrue(list.get(0).checked);
+    }
+
+    @Test
     public void 空值容错() {
-        assertTrue(LiveSourceEntries.build(null, null, null, null).isEmpty());
+        assertTrue(LiveSourceEntries.build(null, null, null, null, null).isEmpty());
         assertEquals("", LiveSourceEntries.displayName(null));
         assertEquals("", LiveSourceEntries.displayName("   "));
     }

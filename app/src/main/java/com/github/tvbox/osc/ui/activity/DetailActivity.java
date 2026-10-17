@@ -1354,6 +1354,8 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
         record.id = vodInfo.id;
         record.name = vodInfo.name;
         record.pic = vodInfo.pic;
+        // 打上当前订阅指纹:换订阅后收藏卡片仍能识别来源并支持一键切回(与观看历史一致)。
+        HistorySourceBinding.stamp(record);
         final String key = sourceKey;
         collectionBusy = true;
         ++collectionQueryEpoch;

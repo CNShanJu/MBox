@@ -41,32 +41,6 @@
                 android:paddingVertical="20dp"
                 android:background="@drawable/bg_large_round_float">
                 <LinearLayout
-                    android:id="@+id/llSubscription"
-                    android:layout_width="match_parent"
-                    android:layout_height="@dimen/dp_60"
-                    android:focusable="true"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal"
-                    android:paddingHorizontal="40dp"
-                    android:foreground="?android:selectableItemBackground">
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="订阅管理"
-                        android:textColor="@color/text_foreground"
-                        android:textSize="16sp"/>
-
-                    <ImageView
-                        android:layout_width="13dp"
-                        android:layout_height="13dp"
-                        android:layout_gravity="center"
-                        android:alpha="0.75"
-                        android:src="@drawable/ic_seek_right"
-                        app:tint="@color/text_foreground"/>
-                </LinearLayout>
-                <LinearLayout
                     android:id="@+id/llHomeRec"
                     android:layout_width="match_parent"
                     android:layout_height="@dimen/dp_60"
@@ -836,11 +810,12 @@
                 </LinearLayout>
 
                 <LinearLayout
-                    android:id="@+id/llIjkCachePlay"
+                    android:id="@+id/llPlayCache"
                     android:layout_width="match_parent"
-                    android:layout_height="60dp"
+                    android:layout_height="wrap_content"
                     android:focusable="true"
                     android:gravity="center_vertical"
+                    android:minHeight="60dp"
                     android:orientation="horizontal"
                     android:paddingHorizontal="40dp"
                     android:foreground="?android:selectableItemBackground">
@@ -848,7 +823,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="IJK缓存"
+                        android:text="开启播放缓存"
                         android:textColor="@color/text_foreground"
                         android:textSize="16sp"/>
 
@@ -858,10 +833,42 @@
                         android:layout_weight="1" />
 
                     <com.github.tvbox.osc.ui.kit.AppSwitch
-                        android:id="@+id/switchIjkCachePlay"
+                        android:id="@+id/switchPlayCache"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:clickable="false"/>
+                </LinearLayout>
+
+                <!-- 仅"开启播放缓存"打开时显示:进入二级缓存/预载设置页 -->
+                <LinearLayout
+                    android:id="@+id/llPlaybackCacheSetting"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/dp_60"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="40dp"
+                    android:visibility="gone"
+                    android:foreground="?android:selectableItemBackground">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="播放缓存设置"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="16sp"/>
+
+                    <Space
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1" />
+
+                    <ImageView
+                        android:layout_width="13dp"
+                        android:layout_height="13dp"
+                        android:layout_gravity="center"
+                        android:alpha="0.75"
+                        android:src="@drawable/ic_seek_right"
+                        app:tint="@color/text_foreground"/>
                 </LinearLayout>
             </LinearLayout>
 

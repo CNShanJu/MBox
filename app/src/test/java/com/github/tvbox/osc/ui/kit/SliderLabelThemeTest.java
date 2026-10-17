@@ -40,6 +40,8 @@ public class SliderLabelThemeTest {
     public void tooltipExposesTheColorAndInvalidationApis() throws Exception {
         assertPublicMethod(TooltipDrawable.class, "setFillColor", void.class, ColorStateList.class);
         assertPublicMethod(TooltipDrawable.class, "setStrokeColor", void.class, ColorStateList.class);
+        // 气泡边框线(文字主色描边)依赖该 API;Material 升级若改名/改签名要在这里先红
+        assertPublicMethod(TooltipDrawable.class, "setStrokeWidth", void.class, float.class);
         assertPublicMethod(TooltipDrawable.class, "getTextAppearance", TextAppearance.class);
         assertPublicMethod(TextAppearance.class, "setTextColor", void.class, ColorStateList.class);
         assertPublicMethod(TooltipDrawable.class, "invalidateSelf", void.class);

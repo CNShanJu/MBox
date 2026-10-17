@@ -30,6 +30,11 @@ public final class HistorySourceBinding {
         return source == null ? "源未启用" : source.getName();
     }
 
+    /** 订阅地址指纹(SHA-256 hex，空地址返回空串)。收藏/历史识别"来自哪个订阅"共用同一算法。 */
+    public static String fingerprintOf(String url) {
+        return fingerprint(url);
+    }
+
     static void stamp(VodInfo info, String subscriptionUrl) {
         if (info != null) info.subscriptionFingerprint = fingerprint(subscriptionUrl);
     }

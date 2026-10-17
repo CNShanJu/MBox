@@ -106,6 +106,15 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
          * "搜索中"永远转、"到底了"永不出现。到点强制收尾(两波都留足余量)。
          */
         private const val SEARCH_WATCHDOG_MS = 60_000L
+
+        /**
+         * 第二波放出后的收尾宽限:死源/超时源(实测单个可卡 10s+)不该把整轮"搜索中"拖到看门狗。
+         * 到点即收尾(收起反馈圈/出空态/刷"到底了");晚到的批次仍会并入结果并自行恢复成功态。
+         */
+        private const val SETTLE_AFTER_DEFERRED_MS = 6_000L
+
+        /** 「全部显示」标签文字:标签点击回调只给到文字,用它识别"不过滤"这一档 */
+        private const val SEARCH_ALL_LABEL = "全部显示"
     }
 
     private lateinit var sourceViewModel : SourceViewModel
@@ -217,7 +226,7 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
     private var favoriteWords: List<String> = emptyList()
 
     /** 搜索是否已全部完成(全部来源返回后置真;"到底了"仅完成态显示) */
-    private var searchFinished = false
+    private val searchCompletion = com.github.tvbox.osc.util.SearchCompletionState()
 
     // ------------------------------------------------------------------
     // 聚合搜索"加载更多"(翻页):记账在 SearchPagingState(纯逻辑,有 JVM 单测),本页只负责发请求/追加列表
@@ -307,9 +316,13 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
             tabDeselectColor = androidx.core.content.ContextCompat.getColor(
                 this@FastSearchActivity, R.color.text_sub_foreground)
             onSelectViewChange  = { _, selectViewList, _, _ ->
-                    val tvItem: TextView = selectViewList.first() as TextView
-                    filterResult(tvItem.text.toString())
-                    closeSourceDrawer() // 选中来源后收起抽屉,结果区回到全屏
+                    // 库回调不保证一定带选中项(清空/重建标签期间可能给空列表),取不到就只当没选,
+                    // 不能 first() 强取(空列表是 NoSuchElementException,直接闪退)
+                    val tvItem = selectViewList.firstOrNull() as? TextView
+                    if (tvItem != null) {
+                        filterResult(tvItem.text.toString())
+                        closeSourceDrawer() // 选中来源后收起抽屉,结果区回到全屏
+                    }
                 }
         }
         // 选中来源那一行的底(库的 tab 指示器)同样要按主题给:它来自 XML 属性
@@ -359,8 +372,8 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
             mEndTipController = ListEndTipController(tip, object : ListEndTipController.State {
                 override fun list(): RecyclerView? = visibleResultList()
                 override fun hasData(): Boolean = visibleResultAdapter()?.data?.isNotEmpty() == true
-                override fun endReached(): Boolean = searchFinished && !paging.hasMore()
-                override fun busy(): Boolean = !searchFinished || paging.inRound()
+                override fun endReached(): Boolean = searchCompletion.feedbackSettled && !paging.hasMore()
+                override fun busy(): Boolean = !searchCompletion.feedbackSettled || paging.inRound()
             }, env)
             mEndTipController!!.attach(mBinding.mGridView)
             mEndTipController!!.attach(mBinding.mGridViewFilter)
@@ -396,7 +409,7 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
      * 请求走 [HeavyTaskUtil] 模块级搜索执行器(JS 源取页是同步网络调用,不能在主线程发起)。
      */
     private fun startPagingIfNeeded() {
-        if (!searchFinished || paging.inRound()) return
+        if (!searchCompletion.feedbackSettled || paging.inRound()) return
         val keys = paging.keysWithMore()
         if (keys.isEmpty() || !paging.beginRound(keys)) {
             updateEndTip()
@@ -657,8 +670,20 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
         jumpActivity(DetailActivity::class.java, bundle)
     }
 
+    /**
+     * 按来源标签过滤结果列表。标签文字 → 来源 key 的映射由 [addWordAdapterIfNeed] 在标签创建时登记,
+     * 因此"有标签"即"该 key 一定落在 resultVods 里";这里再兜一层:映射缺失/数据还没到就退回"全部显示"
+     * 的整表,而不是把空列表摆上来(旧实现在这里对 resultVods 强解包,下拉刷新清空结果后点旧标签会直接闪退)。
+     */
     private fun filterResult(spName: String) {
-        if (spName === "全部显示") {
+        if (spName == SEARCH_ALL_LABEL) {
+            mBinding.mGridView.visibility = View.VISIBLE
+            mBinding.mGridViewFilter.visibility = View.GONE
+            updateEndTip()
+            return
+        }
+        val key = spNames[spName]
+        if (key.isNullOrEmpty()) { // 认不出的标签:保持整表可见,不留空列表
             mBinding.mGridView.visibility = View.VISIBLE
             mBinding.mGridViewFilter.visibility = View.GONE
             updateEndTip()
@@ -666,12 +691,9 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
         }
         mBinding.mGridView.visibility = View.GONE
         mBinding.mGridViewFilter.visibility = View.VISIBLE
-        val key = spNames[spName]
-        if (key.isNullOrEmpty()) return
-        if (searchFilterKey === key) return
+        if (searchFilterKey == key) return
         searchFilterKey = key
-        val list: List<Movie.Video> = (resultVods[key])!!
-        searchAdapterFilter.setNewData(list)
+        searchAdapterFilter.setNewData(resultVods[key].orEmpty())
         updateEndTip()
     }
 
@@ -959,9 +981,9 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
         refreshSpinnerDismissed = false // 新一轮搜索:下拉刷新提前收圈状态复位
         searchFilterKey = ""
         isFilterMode = false
-        spNames.clear()
-        mBinding.tabLayout.removeAllViews()
-        searchFinished = false // 新轮搜索未完成:"到底了"先隐藏
+        // 来源标签与"标签文字→来源 key"映射统一由 searchResult() 按轮重置(下拉刷新走同一条路,
+        // 此前只有本方法清、下拉刷新不清,是"点旧标签取空值"闪退的根因)
+        searchCompletion.begin() // 新轮搜索未完成:"到底了"先隐藏
         updateEndTip()
         searchResult()
     }
@@ -995,7 +1017,7 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
         searchFilterKey = ""
         mBinding.mGridView.visibility = View.VISIBLE
         mBinding.mGridViewFilter.visibility = View.GONE
-        searchFinished = false
+        searchCompletion.begin()
         updateEndTip()
         searchResult()
     }
@@ -1058,19 +1080,29 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
         finishSearchRound()
     }
 
+    private val settleRound = Runnable { settleSearchFeedback() }
+    private fun settleSearchFeedback() {
+        searchCompletion.settle()
+        if (searchAdapter.data.isEmpty()) showEmpty()
+        if (mBinding.llLayout.isRefreshing) mBinding.llLayout.setRefreshing(false)
+        refreshSpinnerDismissed = true
+        updateEndTip()
+    }
+
     /**
      * 本轮搜索收尾(幂等):清"完成态"标记、没结果就空态、收起反馈圈、刷新"到底了"。
      * "全部来源已返回"与看门狗都走这里,避免两条路各写一份。
      */
     private fun finishSearchRound() {
-        if (searchFinished) return
-        searchFinished = true
+        if (searchCompletion.closed) return
+        searchCompletion.finish()
         mBinding.root.removeCallbacks(searchWatchdog)
         mBinding.root.removeCallbacks(deferredWaveFallback)
+        mBinding.root.removeCallbacks(settleRound)
         if (searchAdapter.data.size <= 0) {
             showEmpty()
         }
-        cancel()
+        if (!paging.inRound()) cancel()
         if (mBinding.llLayout.isRefreshing) {
             mBinding.llLayout.setRefreshing(false)
         }
@@ -1095,8 +1127,10 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
     }
 
     private fun searchResult() {
+        searchCompletion.begin()
         mBinding.root.removeCallbacks(searchWatchdog)
         mBinding.root.removeCallbacks(deferredWaveFallback)
+        mBinding.root.removeCallbacks(settleRound)
         deferredWaveKeys.clear()
         synchronized(searchLock) {
             searchEpoch++
@@ -1118,7 +1152,12 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
         searchRequestList.remove(home)
         searchRequestList.add(0, home)
         val siteKey = ArrayList<String>()
-        mBinding.tabLayout.addView(getSiteTextView("全部显示"))
+        // 每轮搜索都从"零标签"重建:上一轮(含下拉刷新前那一轮)的来源标签整轮作废。
+        // 标签必须与同一轮的 resultVods 严格同生共死 —— 只清结果不清标签,点旧标签就会取到空值。
+        // 顺带修掉重复的「全部显示」:此前下拉刷新会再叠一个,刷几次就多几个。
+        spNames.clear()
+        mBinding.tabLayout.removeAllViews()
+        mBinding.tabLayout.addView(getSiteTextView(SEARCH_ALL_LABEL))
         mBinding.tabLayout.setCurrentItem(0, true, false)
         for (bean: SourceBean in searchRequestList) {
             if (!bean.isSearchable) {
@@ -1128,7 +1167,6 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
                 continue
             }
             siteKey.add(bean.key)
-            spNames[bean.name] = bean.key
             allRunCount.incrementAndGet()
         }
         if (siteKey.isNotEmpty()) {
@@ -1203,6 +1241,9 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
         for (k in keys) {
             launchSearch(k)
         }
+        // 第二波已放出:给一个宽限期,到点无论死源/超时源回没回都收尾,不让整轮空转
+        mBinding.root.removeCallbacks(settleRound)
+        mBinding.root.postDelayed(settleRound, SETTLE_AFTER_DEFERRED_MS)
     }
 
     /** 暂停:不再发起新的源搜索(旧实现 shutdownNow 收集未启动任务;共享池下由 launchSearch 自检暂存) */
@@ -1233,34 +1274,34 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
     }
 
     /**
-     * 添加到最后面并返回最后一个key
-     * @param key
-     * @return
+     * 某来源首批结果到达时给它建标签(标签文字 = 来源名),并把"标签文字 → 来源 key"登记进 [spNames]。
+     *
+     * 映射只在标签**创建这一刻**登记,而不是搜索发起时按订阅全量预登记:后者遇到两个同名来源会互相
+     * 覆盖(谁后写谁说了算),点标签就查到另一个 key,而那个 key 这轮可能压根没结果 —— 过滤列表直接空/出错。
+     * 现在同名来源复用同一个标签,映射始终指向真正产出这批结果的来源。
+     *
+     * @return 本批数据所属来源 key(调用方用它做"同一来源只处理一次"的判断)
      */
-    private fun addWordAdapterIfNeed(key: String): String {
+    private fun addWordAdapterIfNeed(key: String?): String {
+        val sourceKey = key?.trim().orEmpty()
+        if (sourceKey.isEmpty()) return sourceKey
         try {
-            var name = ""
-            for (n: String in spNames.keys) {
-                if ((spNames[n] == key)) {
-                    name = n
-                }
-            }
-            if ((name == "")) return key
+            val name = SourceConfigProviders.get().getSource(sourceKey)?.name.orEmpty()
+            if (name.isEmpty()) return sourceKey // 查不到来源名:不建标签(标签靠文字标识,没名字没法点)
             for (i in 0 until mBinding.tabLayout.childCount) {
-                val item = mBinding.tabLayout.getChildAt(i) as TextView
-                if ((name == item.text.toString())) {
-                    return key
-                }
+                val item = mBinding.tabLayout.getChildAt(i) as? TextView ?: continue
+                if (name == item.text.toString()) return sourceKey // 已有同名标签:不重复建
             }
             mBinding.tabLayout.addView(getSiteTextView(name))
-            return key
+            spNames[name] = sourceKey
+            return sourceKey
         } catch (e: Exception) {
-            return key
+            return sourceKey
         }
     }
 
     private fun searchData(absXml: AbsXml?) {
-        if (searchFinished) return
+        if (searchCompletion.closed) return
         var lastSourceKey = ""
         if ((absXml != null) && (absXml.movie != null) && (absXml.movie.videoList != null) && (absXml.movie.videoList.size > 0)) {
             val data: MutableList<Movie.Video> = ArrayList()
@@ -1300,7 +1341,7 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
                 launchDeferredWave()
             }
         }
-        if (count <= 0 && !searchFinished) {
+        if (count <= 0 && !searchCompletion.closed) {
             // 全部来源已返回:进入"完成态"(与看门狗走同一条收尾,见 finishSearchRound)
             finishSearchRound()
         }
@@ -1350,6 +1391,7 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
         cancel()
         mBinding.root.removeCallbacks(deferredWaveFallback) // 页面销毁后别再放第二波
         mBinding.root.removeCallbacks(searchWatchdog) // 页面销毁后不必再强制收尾
+        mBinding.root.removeCallbacks(settleRound)
         synchronized(searchLock) {
             searchEpoch++
             searchPaused = false

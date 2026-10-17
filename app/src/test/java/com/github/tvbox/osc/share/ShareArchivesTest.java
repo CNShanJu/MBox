@@ -84,4 +84,49 @@ public class ShareArchivesTest {
         catch (SecurityException expected) { rejected = true; }
         assertTrue(rejected);
     }
+
+    @Test public void roundTripDirectoryTrees() throws Exception {
+        File tree = temporary.newFolder("tree");
+        File nested = new File(tree, "nested");
+        assertTrue(nested.mkdir());
+        writeFile(new File(tree, "root.txt"), "root");
+        writeFile(new File(nested, "inner.txt"), "inner");
+        File second = temporary.newFolder("second");
+        writeFile(new File(second, "other.txt"), "other");
+        java.util.Map<String, File> directories = new java.util.LinkedHashMap<>();
+        directories.put("a", tree);
+        directories.put("b", second);
+        File zip = new File(temporary.getRoot(), "trees.zip");
+        ShareArchives.zipDirectories(directories, zip, 1024, 4096, 100);
+        File extracted = temporary.newFolder("tree-target");
+        ShareArchives.extract(zip, extracted);
+        assertTrue(new File(extracted, "a/root.txt").isFile());
+        assertTrue(new File(extracted, "a/nested/inner.txt").isFile());
+        assertTrue(new File(extracted, "b/other.txt").isFile());
+    }
+
+    @Test public void rejectsOversizedTreeFile() throws Exception {
+        File tree = temporary.newFolder("big");
+        writeFile(new File(tree, "big.txt"), "0123456789");
+        File zip = new File(temporary.getRoot(), "big-tree.zip");
+        boolean rejected = false;
+        try { ShareArchives.zipDirectories(Collections.singletonMap("a", tree), zip, 4, 1024, 100); }
+        catch (java.io.IOException expected) { rejected = true; }
+        assertTrue(rejected);
+    }
+
+    @Test public void rejectsIllegalTreeRootName() throws Exception {
+        File tree = temporary.newFolder("plain");
+        File zip = new File(temporary.getRoot(), "bad-root.zip");
+        boolean rejected = false;
+        try { ShareArchives.zipDirectories(Collections.singletonMap("a/../b", tree), zip, 1024, 1024, 100); }
+        catch (java.io.IOException expected) { rejected = true; }
+        assertTrue(rejected);
+    }
+
+    private static void writeFile(File file, String content) throws Exception {
+        try (FileOutputStream out = new FileOutputStream(file)) {
+            out.write(content.getBytes(StandardCharsets.UTF_8));
+        }
+    }
 }

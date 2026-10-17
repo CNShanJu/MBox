@@ -1,5 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<!-- 订阅管理条目(视频源 + 直播源共用同一组件):
+     勾选圈 + 名称 + 徽标 + (可选)图钉 + 地址。
+     - 勾选圈 cb:普通态 = 当前生效的那条;多选态 = 勾选要删的那条(adapter 各自处理);
+     - 徽标 tv_from:视频源 = 「本地包」,直播源 = 「来自:<订阅名>」,adapter 各自设置文案与显隐;
+     - 图钉 iv_pushpin:仅视频源置顶用,直播源恒 GONE;
+     - 地址色走文字主色 50%(用户口径)。
+     排版(踩过的坑):名称/徽标同一行 LinearLayout + 名称 weight=1 + ellipsize=end,
+     名称再长也只自己省略,不会把徽标挤出屏幕;内容区左右间距对称(左右各 margin 8dp)。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/item"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
@@ -9,70 +17,89 @@
     android:padding="10dp">
 
     <CheckBox
-        android:id="@+id/cb"
-        android:layout_width="wrap_content"
+            android:id="@+id/cb"
+            android:layout_width="33dp"
+            android:layout_height="59dp"
+            android:clickable="false"
+            android:checked="false"
+            android:button="@drawable/button_checkbox_square"
+            android:focusable="false"
+            android:orientation="vertical"
+    />
+
+    <!-- 内容区(名称+徽标+地址)。左右留白对称:
+         左侧间距 = marginStart(8dp),右侧同样留 marginEnd(8dp),
+         勾选圈作为独立元素贴左、不参与留白,文字/徽标左右间距一致(不贴右、也不会空一大块)。 -->
+    <LinearLayout
+        android:id="@+id/content"
+        android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:clickable="false"
-        android:checked="false"
-        android:button="@drawable/button_checkbox_square"
-        android:focusable="false"/>
+        android:layout_weight="1"
+        android:layout_marginStart="@dimen/dp_6"
+        android:layout_marginEnd="@dimen/dp_6"
+        android:orientation="vertical">
 
-    <TextView
-        android:id="@+id/tv_name"
-        android:layout_width="200dp"
-        android:layout_height="wrap_content"
-        android:layout_gravity="center"
-        android:singleLine="true"
-        android:textSize="16dp"
-        android:ellipsize="end"
-        android:marqueeRepeatLimit="marquee_forever"
-        tools:text="小账订阅小账订阅小账订阅"
-        android:textColor="@color/text_foreground"
-        android:layout_toRightOf="@+id/cb"
-        />
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
 
-    <!-- 地址(链接)色:文字主色 50%(用户口径"订阅管理界面的链接颜色写死的,跟着文字主色 50% 走")。
-         原来这一行**根本没写 textColor**,于是走系统默认色(≈纯黑),在深色主题上几乎看不见。 -->
-    <TextView
-        android:id="@+id/tv_url"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="center"
-        android:ellipsize="middle"
-        android:singleLine="true"
-        android:layout_below="@+id/tv_name"
-        android:layout_marginTop="8dp"
-        android:layout_marginEnd="@dimen/dp_8"
-        android:layout_marginRight="@dimen/dp_8"
-        android:textColor="@color/text_main_half"
-        tools:text="https://"
-        android:layout_toRightOf="@+id/cb"
-        android:layout_toLeftOf="@+id/iv_del"/>
+            <TextView
+                android:id="@+id/tv_name"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:marqueeRepeatLimit="marquee_forever"
+                android:singleLine="true"
+                android:textColor="@color/text_foreground"
+                android:textSize="16sp"
+                tools:text="Kimentanm"/>
 
-    <ImageView
-        android:id="@+id/iv_del"
-        android:layout_width="30dp"
-        android:layout_height="30dp"
-        android:layout_marginStart="@dimen/dp_5"
-        android:layout_marginLeft="@dimen/dp_5"
-        android:paddingHorizontal="6dp"
-        android:src="@drawable/dkplayer_ic_action_close"
-        android:layout_alignParentRight="true"
-        android:layout_alignParentTop="true"
-        app:tint="@color/text_danger"/>
+            <!-- 徽标:「本地包」(视频源) / 「来自:<订阅名>」(直播源)。底与字都走主题,不写死色 -->
+            <TextView
+                android:id="@+id/tv_from"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="@dimen/dp_8"
+                android:layout_marginLeft="@dimen/dp_8"
+                android:background="@drawable/bg_small_round_gray"
+                android:ellipsize="end"
+                android:maxWidth="140dp"
+                android:paddingHorizontal="6dp"
+                android:paddingVertical="2dp"
+                android:singleLine="true"
+                android:textColor="@color/text_highlight"
+                android:textSize="11sp"
+                android:visibility="gone"
+                tools:text="来自: 饭太硬"
+                tools:visibility="visible"/>
 
-    <ImageView
-        android:id="@+id/iv_pushpin"
-        android:layout_width="30dp"
-        android:layout_height="30dp"
-        android:layout_marginStart="@dimen/dp_5"
-        android:layout_marginLeft="@dimen/dp_5"
-        android:paddingHorizontal="6dp"
-        android:src="@drawable/ic_pushpin"
-        android:layout_toLeftOf="@+id/iv_del"
-        app:tint="@color/red"
-        android:visibility="gone"
-        tools:visibility="visible"/>
+            <!-- 置顶图钉:仅视频源置顶条目显示,排在徽标右侧(直播源恒 GONE) -->
+            <ImageView
+                android:id="@+id/iv_pushpin"
+                android:layout_width="30dp"
+                android:layout_height="30dp"
+                android:layout_marginStart="@dimen/dp_0"
+                android:layout_marginLeft="@dimen/dp_0"
+                android:paddingHorizontal="6dp"
+                android:src="@drawable/ic_pushpin"
+                app:tint="@color/red"
+                android:visibility="gone"
+                tools:visibility="visible"/>
+        </LinearLayout>
 
-</RelativeLayout>
+        <!-- 地址色与文字主色 50% 对齐(不再走系统默认色,深色主题下也不发黑) -->
+        <TextView
+            android:id="@+id/tv_url"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:ellipsize="middle"
+            android:singleLine="true"
+            android:textColor="@color/text_main_half"
+            tools:text="https://gh.927223.xy…ster/m3u/iptv.m3u"/>
+    </LinearLayout>
 
+</LinearLayout>

@@ -330,6 +330,7 @@ dependencies {
     //崩溃
     //单元测试(JVM,纯逻辑)
     testImplementation 'junit:junit:4.13.2'
+    testImplementation 'androidx.datastore:datastore-preferences-core:1.0.0'
     // DLNA 发送端使用应用内 SSDP/UPnP 实现，避免已失效的 JitPack 依赖。
     // Lifecycles(显式依赖,替代已废弃合并包 lifecycle-extensions:ViewModel/LiveData/协程作用域)
     implementation 'androidx.lifecycle:lifecycle-viewmodel:2.6.2'

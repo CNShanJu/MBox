@@ -49,6 +49,13 @@
         android:requestLegacyExternalStorage="true"
         android:theme="@style/AppTheme"
         android:usesCleartextTraffic="true">
+        <!-- 崩溃兜底页(第三方 CustomActivityOnCrash,跑在独立 :error_activity 进程):
+             显式指定 AppTheme,不依赖 application theme 的隐式继承 —— 底色与控件默认配色要和应用一致;
+             用户主题的运行时配色另由 theme/CrashPageThemeSync 投影(见 thirdparty 的 CrashPageTheme) -->
+        <activity
+            android:name="cat.ereza.customactivityoncrash.activity.DefaultErrorActivity"
+            android:process=":error_activity"
+            android:theme="@style/AppTheme" />
         <activity
             android:name=".ui.activity.SplashActivity"
             android:exported="true"
@@ -127,6 +134,10 @@
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:exported="false"/>
         <activity
+            android:name=".ui.activity.PlaybackCacheActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="false"/>
+        <activity
             android:name=".ui.activity.LanServiceActivity"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:exported="false"/>
@@ -161,6 +172,11 @@
         <!-- 背景图设置(设置-主题颜色-设置背景图):选图/拖动缩放/遮罩透明度 -->
         <activity
             android:name=".ui.activity.BackgroundSettingActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="false"/>
+        <!-- 本地缓存(背景图二级页):展示私有目录里保存的背景图,点图设为背景、长按多选删除副本 -->
+        <activity
+            android:name=".ui.activity.BackgroundCacheActivity"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:exported="false"/>
         <!-- 自定义主题颜色编辑(设置-主题颜色-自定义主题颜色 / 长按主题「编辑」):

@@ -9,11 +9,15 @@ import android.os.ResultReceiver
 import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
+import android.view.ViewTreeObserver
+import android.widget.ScrollView
 import android.widget.TextView
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentStatePagerAdapter
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
+import androidx.recyclerview.widget.RecyclerView
 import androidx.viewpager.widget.ViewPager
 import com.angcyo.tablayout.delegate.ViewPager1Delegate.Companion.install
 import com.blankj.utilcode.util.ConvertUtils
@@ -63,7 +67,7 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
      * 提供给主页返回操作
      */
     val tabIndex: Int
-        get() = mBinding.tabLayout.currentItemIndex
+        get() = if (bindingReady) mBinding.tabLayout.currentItemIndex else 0
 
     /**
      * 提供给主页返回操作
@@ -147,6 +151,151 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
     /** 排队的自动检查任务(重复排队时先撤掉,只保留最后一次) */
     private val pendingAutoCheck = Runnable { runAutoUpdateCheck() }
 
+    // ------------------------------------------------------------------
+    // 底栏「回到顶部」
+    //
+    // 首页 tab 的底栏项要在"列表已离开顶部"时换成「回到顶部」。判定与动作都留在首页自己身上
+    // (只有它知道当前显示的是哪个分类页、哪条列表),底栏只拿一个布尔值、只在点击时回调一次。
+    // 变更脉冲两条:
+    //   ① 页面内任何纵向滚动 —— ViewTreeObserver 的全局滚动回调(整棵树里有滚动都会走到);
+    //   ② 分类页切换 —— 换页本身不产生滚动事件,且新页视图可能晚一帧才建好,故补一帧再判;
+    //      换页同时**作废缓存与限定判定范围**:ViewPager 缓存的相邻页仍在视图树里(isShown 为 true、
+    //      也可能停在半途),缓存和扫描都必须限定"当前这一页的根子树"——否则会把上一页的
+    //      "已离开顶部"带到新页(真机 bug:主页滑到一半切「热门电影」,新页明明在顶部,
+    //      底栏却仍显示「回到顶部」)。
+    // ------------------------------------------------------------------
+
+    /** 首页列表是否已离开顶部(变化时回调,由 MainActivity 换成/换回「回到顶部」外观) */
+    var onBackToTopStateChanged: ((Boolean) -> Unit)? = null
+
+    /** 脉冲是否已挂到当前视图上(视图销毁时摘掉,重建后重挂) */
+    private var backToTopPulseBound = false
+
+    /** 上一次命中的列表:稳态(同一列表持续滚动)直接复用,不必每帧全树重扫 */
+    private var lastScrolledList: View? = null
+
+    private val backToTopScrollPulse = ViewTreeObserver.OnScrollChangedListener { notifyBackToTopState() }
+
+    private val backToTopPagePulse = object : ViewPager.SimpleOnPageChangeListener() {
+        override fun onPageSelected(position: Int) {
+            // 缓存绑定的是"上一页的列表",切页必须作废,否则新页在顶部也会沿用旧页的「已离开顶部」
+            lastScrolledList = null
+            // 用 onPageSelected 给的 position 判定:此刻 tabLayout 的 currentItemIndex 可能还没跟上。
+            // 一帧后再判一次:新页的视图可能要等布局完成才建好(程序定位类动作另有 GridFragment 上报);
+            // 排队期间又切了别的页就不再上报,免得旧页结果覆盖新页。
+            notifyBackToTopStateFor(position)
+            mBinding.root.post {
+                if (mBinding.mViewPager.currentItem == position) notifyBackToTopStateFor(position)
+            }
+        }
+    }
+
+    /** 当前首页列表是否已离开顶部(底栏据此把「首页」换成「回到顶部」) */
+    fun canScrollToTop(): Boolean = findScrolledList(currentTabRoot()) != null
+
+    /** 按指定分类页上报(判定直接用该页自己的视图,避开 tabLayout.currentItemIndex 的更新时序) */
+    private fun notifyBackToTopStateFor(position: Int) {
+        onBackToTopStateChanged?.invoke(findScrolledList(fragments.getOrNull(position)?.view) != null)
+    }
+
+    /**
+     * 回到顶部:当前可见的那条纵向列表<b>平滑滚</b>回第 0 项(RecyclerView 默认速度是"快速飞到顶",
+     * 长列表也在一秒内),不是瞬间闪现。
+     * <p>
+     * 外观不在这里强行置回「首页」:滚动过程逐帧产生滚动事件,到底那一帧状态自然翻回「首页」;
+     * 中途被打断(用户又摸了一下列表)则仍停在「回到顶部」—— 正是想要的行为。
+     * 另挂一个<b>一次性</b>滚动状态回调兜底:滚停(SCROLL_STATE_IDLE)时再核对一次,
+     * 万一最后一帧没读到,也不会把「回到顶部」留在底栏上。
+     */
+    fun scrollToTop() {
+        when (val list = findScrolledList(currentTabRoot())) {
+            is RecyclerView -> {
+                list.smoothScrollToPosition(0)
+                list.addOnScrollListener(object : RecyclerView.OnScrollListener() {
+                    override fun onScrollStateChanged(rv: RecyclerView, newState: Int) {
+                        if (newState != RecyclerView.SCROLL_STATE_IDLE) return
+                        rv.removeOnScrollListener(this)
+                        // 现算当前状态(中途换了分类页也仍对)
+                        notifyBackToTopState()
+                    }
+                })
+            }
+            is ScrollView -> list.smoothScrollTo(0, 0)
+        }
+    }
+
+    /** 当前分类页的根视图(分类页还没建好时返回 null) */
+    private fun currentTabRoot(): View? = fragments.getOrNull(tabIndex)?.view
+
+    /**
+     * 找"已经离开顶部"的那条纵向可滚动列表:深度优先、只看可见视图。
+     * 递归到 RecyclerView 且它自己没离开顶部时不再往下扫 —— 下面全是条目视图,不可能再是列表,
+     * 每帧扫几十个条目纯属浪费(滚动事件是逐帧来的)。其它容器(含 ScrollView)继续往下找,
+     * 免得漏掉"外框没滚、里面那条列表滚了"的情况。
+     * 一个分类页里可能并存多条列表(如推荐/历史两块),取第一条确实能往上滚的;
+     * 返回 null 表示当前页就在顶部(或没有列表),底栏保持「首页」外观。
+     */
+    private fun findScrolledList(root: View?): View? {
+        val cached = lastScrolledList
+        // 缓存只在"同一个分类页"里有效:它必须落在当前页根 root 的子树里,否则重扫。
+        // (ViewPager 缓存的相邻页仍在视图树里:isShown 为 true、也可能停在半途 ——
+        //  不校验归属就会把上一页的列表当成本页的,切页后状态卡死在「回到顶部」)
+        if (cached != null && isDescendantOf(cached, root)
+            && cached.isShown && cached.canScrollVertically(-1)) return cached
+        val found = walkForScrolledList(root)
+        lastScrolledList = found
+        return found
+    }
+
+    /** target 是否在当前分类页根 root 的子树内(缓存归属校验:用它把上一页的列表排除掉) */
+    private fun isDescendantOf(target: View, root: View?): Boolean {
+        if (root == null) return false
+        var node: View? = target
+        while (node != null) {
+            if (node === root) return true
+            node = node.parent as? View
+        }
+        return false
+    }
+
+    private fun walkForScrolledList(root: View?): View? {
+        if (root == null || root.visibility != View.VISIBLE) return null
+        if (root.canScrollVertically(-1)) return root
+        if (root is RecyclerView) return null
+        if (root !is ViewGroup) return null
+        for (i in 0 until root.childCount) {
+            walkForScrolledList(root.getChildAt(i))?.let { return it }
+        }
+        return null
+    }
+
+    /**
+     * 上报"列表是否已离开顶部"。
+     *
+     * @param forcedScrolled 调用方已知的状态(null = 按当前视图现算)。程序定位类动作(回到顶部、
+     *        换层、还原)带的是"动作之后会是什么":列表布局落位要等到下一帧,现算只会读到旧值。
+     */
+    private fun notifyBackToTopState(forcedScrolled: Boolean? = null) {
+        onBackToTopStateChanged?.invoke(forcedScrolled ?: canScrollToTop())
+    }
+
+    /** 挂脉冲(幂等:每次视图创建挂一次) */
+    private fun bindBackToTopPulse() {
+        if (backToTopPulseBound) return
+        backToTopPulseBound = true
+        lastScrolledList = null
+        mBinding.root.viewTreeObserver.addOnScrollChangedListener(backToTopScrollPulse)
+        mBinding.mViewPager.addOnPageChangeListener(backToTopPagePulse)
+    }
+
+    private fun unbindBackToTopPulse() {
+        if (!backToTopPulseBound) return
+        backToTopPulseBound = false
+        lastScrolledList = null
+        mBinding.root.viewTreeObserver.removeOnScrollChangedListener(backToTopScrollPulse)
+        mBinding.mViewPager.removeOnPageChangeListener(backToTopPagePulse)
+    }
+
     var errorTipDialog: TipDialog? = null
 
     /**
@@ -225,6 +374,8 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
             jumpActivity(CollectActivity::class.java)
         }
         setLoadSir(mBinding.contentLayout)
+        // 底栏「回到顶部」的脉冲(滚动 + 分类页切换),视图创建时挂一次
+        bindBackToTopPulse()
         awaitingStartupPrefetch = (activity as? MainActivity)?.hasStartupHomePrefetch() == true
         if (awaitingStartupPrefetch) {
             // 先进入等待态再观察 LiveData：预取已完成时观察者会立即重放最后的结果。
@@ -624,7 +775,15 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
                 } else { //来自源的分类
                     val useStartupList = homeRec == 2 && index == 1 &&
                         (activity as? MainActivity)?.isStartupFirstGridPrefetchFor(data.id) == true
-                    fragments.add(GridFragment.newInstance(data, useStartupList))
+                    fragments.add(GridFragment.newInstance(data, useStartupList).apply {
+                        // 进/退文件夹、换层、还原这类"程序改列表位置"的动作没有滚动事件可听:
+                        // 由列表自己带着"动作后在不在顶部"报回来;非当前分类页的事件丢弃(避免改错底栏外观)
+                        setOnScrollPositionChangedListener { atTop ->
+                            if (fragments.getOrNull(tabIndex) === this) {
+                                notifyBackToTopState(forcedScrolled = !atTop)
+                            }
+                        }
+                    })
                 }
             }
             if (homeRec == 2) { //关闭主页
@@ -659,6 +818,7 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
      * 提供给主页返回操作
      */
     fun scrollToFirstTab(): Boolean {
+        if (!bindingReady) return false
         return if (mBinding.tabLayout.currentItemIndex != 0) {
             mBinding.mViewPager.setCurrentItem(0, false)
             true
@@ -702,6 +862,7 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
     override fun onDestroyView() {
         serverReadyTimeout?.let(serverReadyHandler::removeCallbacks)
         serverReadyTimeout = null
+        unbindBackToTopPulse()
         unbindNetworkState()
         pendingInit = false
         pendingStartupError = null

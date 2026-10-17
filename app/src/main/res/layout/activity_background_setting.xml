@@ -26,6 +26,11 @@
         android:layout_height="match_parent"
         android:orientation="vertical">
 
+        <!-- 标题栏右侧两个图标动作(本地缓存 / 更换图片)直接在 XML 声明:
+             两图标均为 1024 视口的 iconfont 填充矢量(已按字形边界裁剪、线宽一致)。
+             tag="raw" = 退出 AppTitleBar 的 40dp 触区扩围:组件盒贴住图标,无居中内边距;
+             图标尺寸写下面的 layout_width/height,两图标间距只由 btn_bg_switch 的
+             layout_marginStart 控制(想调多近多远都行)。本地缓存入口在主题模式下由代码置 GONE。 -->
         <com.github.tvbox.osc.ui.kit.AppTitleBar
             android:id="@+id/title_bar"
             android:layout_width="match_parent"
@@ -33,17 +38,21 @@
             app:title="背景图"
             app:titleBold="true">
 
-            <!-- 更换图片:放标题栏右侧(不再塞进底部按钮行) -->
-            <TextView
-                android:id="@+id/tv_pick"
-                android:layout_width="wrap_content"
-                android:layout_height="match_parent"
-                android:background="@android:color/transparent"
-                android:gravity="center"
-                android:paddingHorizontal="12dp"
-                android:text="更换图片"
-                android:textColor="@color/text_foreground"
-                android:textSize="14sp" />
+            <ImageView
+                android:id="@+id/btn_bg_local"
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:tag="raw"
+                android:src="@drawable/ic_bg_local" />
+
+            <!-- 间距在这调:layout_marginStart 就是两图标的净距离 -->
+            <ImageView
+                android:id="@+id/btn_bg_switch"
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:tag="raw"
+                android:layout_marginStart="10dp"
+                android:src="@drawable/ic_bg_switch" />
         </com.github.tvbox.osc.ui.kit.AppTitleBar>
 
         <FrameLayout

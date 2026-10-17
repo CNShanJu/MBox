@@ -2,20 +2,14 @@ package com.github.tvbox.osc.ui.activity
 
 import android.content.Intent
 import android.graphics.Typeface
-import android.net.Uri
-import android.os.Environment
-import android.os.Handler
-import android.os.Looper
-import android.provider.OpenableColumns
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
-import com.blankj.utilcode.util.ClipboardUtils
 import com.blankj.utilcode.util.AppUtils
-import com.github.tvbox.osc.util.AppBubble
+import com.blankj.utilcode.util.ClipboardUtils
 import com.chad.library.adapter.base.BaseQuickAdapter
 import com.github.tvbox.osc.R
 import com.github.tvbox.osc.base.BaseVbActivity
@@ -23,10 +17,8 @@ import com.github.tvbox.osc.bean.Source
 import com.github.tvbox.osc.bean.Subscription
 import com.github.tvbox.osc.config.SystemConfig
 import com.github.tvbox.osc.databinding.ActivitySubscriptionBinding
-import com.github.tvbox.osc.spiderapi.LiveChannelConfigProviders
-import com.github.tvbox.osc.spiderapi.LiveChannelConfigApi
-import com.github.tvbox.osc.transfer.ConfigBundle
-import com.github.tvbox.osc.transfer.SubscriptionImportFiles
+import com.github.tvbox.osc.log.Category
+import com.github.tvbox.osc.log.LogStore
 import com.github.tvbox.osc.ui.adapter.LiveSourceAdapter
 import com.github.tvbox.osc.ui.adapter.SubscriptionAdapter
 import com.github.tvbox.osc.ui.dialog.AttachActionDialog
@@ -39,91 +31,68 @@ import com.github.tvbox.osc.ui.dialog.SubsTipDialog
 import com.github.tvbox.osc.ui.dialog.SubsciptionDialog
 import com.github.tvbox.osc.ui.dialog.SubsciptionDialog.OnSubsciptionListener
 import com.github.tvbox.osc.ui.kit.SelectActionBar
-import com.github.tvbox.osc.ui.kit.TabSwipeHelper
 import com.github.tvbox.osc.ui.kit.TabPageAnimator
+import com.github.tvbox.osc.ui.kit.TabSwipeHelper
 import com.github.tvbox.osc.ui.startup.AppStartupCoordinator
-import com.github.tvbox.osc.log.Category
-import com.github.tvbox.osc.log.LogStore
-import com.github.tvbox.osc.spiderapi.CmsApiRules
-import com.github.tvbox.osc.util.CmsSiteImporter
+import com.github.tvbox.osc.ui.state.SubscriptionPageState
+import com.github.tvbox.osc.util.AppBubble
 import com.github.tvbox.osc.util.FastClickCheckUtil
-import com.github.tvbox.osc.util.HCallBack
-import com.github.tvbox.osc.util.HeavyTaskUtil
-import com.github.tvbox.osc.util.HtmlSiteImporter
 import com.github.tvbox.osc.util.HttpClient
 import com.github.tvbox.osc.util.LiveConfig
 import com.github.tvbox.osc.util.LiveSourceEntries
-import com.github.tvbox.osc.util.LegadoVideoImporter
-import com.github.tvbox.osc.util.LegadoVideoRules
+import com.github.tvbox.osc.util.LiveSourceExporter
+import com.github.tvbox.osc.util.LocalPackageImporter
 import com.github.tvbox.osc.util.SubscriptionConfig
-import com.github.tvbox.osc.util.SubscriptionExporter
-import com.github.tvbox.osc.util.SubscriptionImportRules
-import com.github.tvbox.osc.util.Utils
-import com.google.gson.JsonArray
-import com.google.gson.JsonElement
-import com.google.gson.JsonObject
-import com.google.gson.JsonParser
+import com.github.tvbox.osc.util.SubscriptionLibrary
+import com.github.tvbox.osc.util.subscription.LiveSourceCoordinator
+import com.github.tvbox.osc.util.subscription.SubscriptionExportCoordinator
+import com.github.tvbox.osc.util.subscription.SubscriptionExportHost
+import com.github.tvbox.osc.util.subscription.SubscriptionImportCoordinator
+import com.github.tvbox.osc.util.subscription.SubscriptionImportHost
+import com.github.tvbox.osc.util.subscription.SubscriptionLiveHost
 import com.lxj.xpopup.XPopup
-
 import java.io.File
-import java.io.FileOutputStream
-import java.lang.ref.WeakReference
-import java.net.UnknownHostException
-import java.security.MessageDigest
-import java.util.function.Consumer
 
-class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
+/**
+ * 订阅管理页(只绑视图与生命周期;导入/直播源/导出/文件操作全部在协调器与工具类里):
+ * 订阅导入 → [SubscriptionImportCoordinator];直播源列表与切换 → [LiveSourceCoordinator];
+ * 导出 → [SubscriptionExportCoordinator];内部订阅文件 → [SubscriptionLibrary];
+ * 本地包(ZIP 解包/清理)→ [LocalPackageImporter]。
+ */
+class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>(),
+    SubscriptionImportHost, SubscriptionLiveHost, SubscriptionExportHost {
 
     companion object {
         /** 调试包数据域提示只弹一次(进程内),避免反复打扰 */
         private var debugDomainWarned = false
-
-        /** 本地导入文件内容判定的读取上限:订阅配置不会这么大,超限就不判定(按旧逻辑原样加入) */
-        private const val MAX_JUDGE_BYTES = 2L * 1024 * 1024
     }
 
-    private var mBeforeUrl = SubscriptionConfig.getApiUrl()
-    private var mSelectedUrl = ""
-    private var mSubscriptions: MutableList<Subscription> = SubscriptionConfig.getSubscriptions().toMutableList()
+    private val state = SubscriptionPageState(
+        SubscriptionConfig.getApiUrl(),
+        SubscriptionConfig.getSubscriptions()
+    )
+    /**
+     * 协调器持有 Context,必须延迟到 Activity 完成 attach 之后再取 `applicationContext`:
+     * 属性初始化器在**构造期**执行,那时 ContextWrapper 的 base 还是 null,
+     * 直接写 `applicationContext` 会抛 NPE 使 Activity 无法实例化(Android 16 真机必现)。
+     * 统一用 by lazy 延迟到首次使用(页面交互阶段),与 MainActivity / CacheManagementActivity 同写法。
+     */
+    private val importCoordinator by lazy {
+        SubscriptionImportCoordinator(applicationContext, state, this@SubscriptionActivity)
+    }
+    /** 不持有 Context、构造期无副作用,可即时创建 */
+    private val liveCoordinator = LiveSourceCoordinator(state, this)
+    private val exportCoordinator by lazy {
+        SubscriptionExportCoordinator(applicationContext, this@SubscriptionActivity)
+    }
+
     private var mSubscriptionAdapter = SubscriptionAdapter()
     /** 「直播源」页的列表适配器(订阅导入的 + 用户自建的) */
     private var mLiveSourceAdapter = LiveSourceAdapter()
-    /** 当前是否停在「直播源」标签页(标题栏动作区按页切换) */
-    private var liveTabActive = false
-    /** 本次进页面是否改过"当前直播源"(退出时需要重载配置,直播页才看得到新源) */
-    private var liveSourceChanged = false
-    /** 未生效订阅的直播清单只用于本页预览；回调用 epoch 防止切源后旧结果覆盖新列表。 */
-    private val livePreviewCache = HashMap<String, List<LiveChannelConfigApi.SubscribeLiveSource>>()
-    private var livePreviewLoadingUrl: String? = null
-    private var livePreviewFailedUrl: String? = null
-    private var livePreviewSelectedUrl = ""
-    private var livePreviewEpoch = 0
     /** 底部多选操作栏(公共组件)上的"删除"键:有没有勾选项决定它的可用态 */
     private lateinit var mDeleteAction: TextView
     /** 当前多选作用于哪个列表:true=直播源页,false=订阅源页 */
     private var selectOnLive = false
-    private val mSources: MutableList<Source> = ArrayList()
-    private var batchImportInProgress = false
-    private var batchProgress = ""
-    private var batchCancelAction: (() -> Unit)? = null
-
-    private fun updateImportHint(hint: String) {
-        updateLoadingHint(if (batchImportInProgress) "$batchProgress\n$hint" else hint)
-    }
-
-    private fun dismissImportLoading() {
-        if (!batchImportInProgress) dismissLoadingDialog()
-    }
-
-    private fun showImportToast(message: String) {
-        if (!batchImportInProgress) AppBubble.toast(message)
-    }
-
-    private fun resumeBatchLoading() {
-        if (batchImportInProgress && !importCancelled) {
-            showCancelableLoading(batchProgress) { batchCancelAction?.invoke() }
-        }
-    }
 
     override fun init() {
 
@@ -141,27 +110,19 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
                 return@setOnItemClickListener
             }
             // 单选:点已勾选的那条 = 取消指定(回到"用订阅自带的直播")
-            applyLiveSource(if (entry.checked) "" else entry.url)
-        }
-        mLiveSourceAdapter.setOnItemChildClickListener { _, view, position ->
-            if (view.id != R.id.iv_del) return@setOnItemChildClickListener
-            val entry = mLiveSourceAdapter.data.getOrNull(position) ?: return@setOnItemChildClickListener
-            deleteUserLiveSource(entry)
+            val toast = liveCoordinator.applyLiveSource(if (entry.checked) "" else entry.url)
+            renderLiveSources()
+            toast?.let { AppBubble.toast(it) }
         }
         setupSelectActionBar()
-        mSubscriptions.forEach(Consumer { item: Subscription ->
-            if (item.isChecked) {
-                mSelectedUrl = item.url
-            }
-        })
 
-        mSubscriptionAdapter.setNewData(mSubscriptions)
+        mSubscriptionAdapter.setNewData(state.subscriptions)
         updateEmptyState()
-        refreshLiveSources()
+        renderLiveSources()
         mBinding.tvLivePreviewState.setOnClickListener {
-            if (livePreviewFailedUrl == mSelectedUrl) {
-                livePreviewFailedUrl = null
-                refreshLiveSources()
+            if (liveCoordinator.isPreviewFailedForSelected()) {
+                liveCoordinator.retryPreview()
+                renderLiveSources()
             }
         }
         warnIfDebugDataDomain()
@@ -171,9 +132,13 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
                 .show()
         }
 
-        // 导出:抓取勾选的订阅配置,合并成一份 txt 后分享出去
+        // 导出:视频源页 = 勾选订阅后合并成清单分享;直播源页 = 直接导出自建直播源
         mBinding.ivExport.setOnClickListener {
-            if (mSubscriptions.isEmpty()) {
+            if (state.liveTabActive) {
+                exportLiveSources()
+                return@setOnClickListener
+            }
+            if (state.subscriptions.isEmpty()) {
                 AppBubble.toast("暂无订阅可导出")
             } else if (!mSubscriptionAdapter.isExportMode) {
                 enterExportMode()
@@ -184,10 +149,10 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
             mSubscriptionAdapter.setSelectAll(!mSubscriptionAdapter.isAllSelected)
             updateExportCount()
         }
-        mBinding.btnExportOk.setOnClickListener { startExport() }
+        mBinding.btnExportOk.setOnClickListener { exportCoordinator.startExport() }
 
         mBinding.ivAdd.setOnClickListener {//添加:视频源页 = 添加订阅;直播源页 = 添加自己的直播源
-            if (liveTabActive) {
+            if (state.liveTabActive) {
                 showAddLiveSource()
                 return@setOnClickListener
             }
@@ -196,37 +161,36 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
                 .asCustom(
                     SubsciptionDialog(
                         this,
-                        "订阅: " + (mSubscriptions.size + 1),
+                        "订阅: " + (state.subscriptions.size + 1),
                         object : OnSubsciptionListener {
                             override fun onConfirm(
                                 name: String,
                                 url: String,
                                 checked: Boolean
                             ) { //只有addSub2List用到,看注释,单线路才生效,其余方法仅作为参数继续传递
-                                for (item in mSubscriptions) {
+                                for (item in state.subscriptions) {
                                     if (item.url == url) {
                                         AppBubble.toast("订阅地址已存在")
                                         return
                                     }
                                 }
                                 // 首个订阅(列表为空)时忽略勾选,直接启用,避免添加后无可用订阅
-                                val effective = checked || mSubscriptions.isEmpty()
-                                addOrigin = Subscription.ORIGIN_DIRECT   // 弹窗里输入名称+地址 = 直接导入
-                                addSubscription(name, url, effective)
+                                val effective = checked || state.subscriptions.isEmpty()
+                                importCoordinator.addDirectSubscription(name, url, effective)
                             }
 
-                            override fun chooseLocal(checked: Boolean) { //本地导入
+                            override fun chooseLocal(checked: Boolean) { //本地导入(订阅文件/清单 ZIP/本地包)
                                 // 首个订阅(列表为空)时忽略勾选,直接启用
-                                pickFile(checked || mSubscriptions.isEmpty())
+                                pickFile(checked || state.subscriptions.isEmpty())
                             }
 
                             override fun chooseJson(checked: Boolean) { //JSON 导入(粘贴 JSON 文本)
                                 // 首个订阅(列表为空)时忽略勾选,直接启用
-                                val useNew = checked || mSubscriptions.isEmpty()
+                                val useNew = checked || state.subscriptions.isEmpty()
                                 DialogCoordinator.center(
                                     this@SubscriptionActivity,
                                     JsonImportDialog(this@SubscriptionActivity) { json ->
-                                        importJsonText(json, useNew)
+                                        importCoordinator.importJsonText(json, useNew)
                                     })
                                     .show()
                             }
@@ -234,64 +198,34 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
                 ).show()
         }
 
-        mSubscriptionAdapter.setOnItemChildClickListener { _: BaseQuickAdapter<*, *>?, view: View, position: Int ->
-            if (view.id == R.id.iv_del) {
-                if (position >= mSubscriptions.size) return@setOnItemChildClickListener
-                val target = mSubscriptions[position]
-                // 允许删除"当前勾选/正在使用"的订阅(如导入坏订阅也能清理):
-                // 删除后自动切换当前订阅(置顶优先,否则取首项;删光则清空)
-                val delMsg = if (target.isChecked) {
-                    if (mSubscriptions.size <= 1) {
-                        "该订阅为当前正在使用的订阅,删除后列表将清空,确定删除吗？"
-                    } else {
-                        "该订阅为当前正在使用的订阅,删除后将自动切换到其它订阅,确定删除吗？"
-                    }
-                } else {
-                    "确定删除订阅吗？"
-                }
-                com.github.tvbox.osc.ui.dialog.ConfirmDialog.showDanger(
-                    this@SubscriptionActivity,
-                    "删除订阅",
-                    delMsg,
-                    "删除"
-                ) confirmDelete@{
-                    if (batchImportInProgress) return@confirmDelete
-                    if (mSubscriptions.none { it === target }) return@confirmDelete
-                    removeSubscription(target)
-                    persistSubscriptions()
-                }
-            }
-        }
-
         mSubscriptionAdapter.setOnItemClickListener { _: BaseQuickAdapter<*, *>?, _: View?, position: Int ->
             if (mSubscriptionAdapter.inSelectMode()) { //多选态(导出/删除):点条目=勾选,不切换当前订阅
-                if (position < mSubscriptions.size) {
-                    mSubscriptionAdapter.toggleSelection(mSubscriptions[position].url)
+                if (position < state.subscriptions.size) {
+                    mSubscriptionAdapter.toggleSelection(state.subscriptions[position].url)
                     if (mSubscriptionAdapter.isExportMode) updateExportCount()
                 }
                 return@setOnItemClickListener
             }
             //选择订阅
-            for (i in mSubscriptions.indices) {
-                val subscription = mSubscriptions[i]
+            for (i in state.subscriptions.indices) {
+                val subscription = state.subscriptions[i]
                 if (i == position) {
                     subscription.setChecked(true)
-                    mSelectedUrl = subscription.url
+                    state.selectedUrl = subscription.url
                 } else {
                     subscription.setChecked(false)
                 }
             }
-            val chosen = mSubscriptions[position]
             LogStore.log(Category.SUBSCRIPTION, "订阅: 切换当前配置")
             //删除/选择只刷新,不触发重新排序
             mSubscriptionAdapter.notifyDataSetChanged()
-            refreshLiveSources()
+            renderLiveSources()
         }
 
         mSubscriptionAdapter.onItemLongClickListener =
             BaseQuickAdapter.OnItemLongClickListener { adapter: BaseQuickAdapter<*, *>?, view: View, position: Int ->
                 if (mSubscriptionAdapter.inSelectMode()) return@OnItemLongClickListener true //多选/导出态不弹长按菜单
-                val item = mSubscriptions[position]
+                val item = state.subscriptions[position]
                 // 长按气泡统一走 AttachActionDialog(主题悬浮面 + text_main 文字色):
                 // XPopup 的 asAttachList 用库内固定样式,不吃主题文件,自定义主题下会是一块"外来"的底
                 AttachActionDialog.show(
@@ -312,8 +246,8 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
                     when (index) {
                         0 -> {
                             item.isTop = !item.isTop
-                            mSubscriptions[position] = item
-                            mSubscriptionAdapter.setNewData(mSubscriptions)
+                            state.subscriptions[position] = item
+                            mSubscriptionAdapter.setNewData(state.subscriptions)
                             LogStore.log(
                                 Category.SUBSCRIPTION,
                                 "订阅: " + (if (item.isTop) "置顶配置" else "取消置顶配置")
@@ -321,7 +255,7 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
                         }
                         1 -> showEditSubscription(position)
                         2 -> {
-                            ClipboardUtils.copyText(mSubscriptions.get(position).url)
+                            ClipboardUtils.copyText(state.subscriptions[position].url)
                             AppBubble.toast("已复制")
                         }
                         3 -> enterSelectMode(false) //多选:批量删除订阅
@@ -330,16 +264,18 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
                 true
             }
 
-        // 直播源长按菜单只保留复制地址/多选；单条删除由行尾的 × 负责。
+        // 直播源长按菜单:自建的可编辑(改名/改地址),订阅导入的只能复制/多选;删除统一走长按「多选」。
         mLiveSourceAdapter.onItemLongClickListener =
             BaseQuickAdapter.OnItemLongClickListener { _: BaseQuickAdapter<*, *>?, view: View, position: Int ->
                 val entry = mLiveSourceAdapter.data.getOrNull(position)
                     ?: return@OnItemLongClickListener true
                 if (mLiveSourceAdapter.selectMode) return@OnItemLongClickListener true //多选态不弹长按菜单
-                val labels = arrayOf("复制地址", "多选")
-                val kinds = intArrayOf(AttachActionDialog.NORMAL, AttachActionDialog.NORMAL)
+                val labels = if (entry.removable() && !entry.embedded())
+                    arrayOf("编辑", "复制地址", "多选") else arrayOf("复制地址", "多选")
+                val kinds = IntArray(labels.size) { AttachActionDialog.NORMAL }
                 AttachActionDialog.show(view.findViewById(R.id.tv_name), labels, kinds) { index: Int ->
                     when (labels[index]) {
+                        "编辑" -> showEditLiveSource(entry)
                         "复制地址" -> {
                             ClipboardUtils.copyText(entry.url)
                             AppBubble.toast("已复制")
@@ -375,48 +311,8 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
         mBinding.tvExportAll.text = if (mSubscriptionAdapter.isAllSelected) "全不选" else "全选"
     }
 
-    /** 当前启用订阅的名字(未启用返回空串) */
-    private fun currentName(): String = mSubscriptions.firstOrNull { it.isChecked }?.name ?: ""
-
-    /** 可取消的加载框(导入/导出这类长耗时流程):点"取消"执行 onCancel,调用方负责作废在跑的任务并 dismiss */
-    private fun showCancelableLoading(hint: String, onCancel: () -> Unit) {
-        showLoadingDialog(hint, Runnable { onCancel() })
-    }
-
-    /** 组装描述清单 + 落盘 + 分享(不抓取、不合并:远端配置由 App 运行时按 url 自行拉取) */
-    private fun startExport() {
-        val selected = mSubscriptionAdapter.selection()
-        if (selected.isEmpty()) {
-            AppBubble.toast("请先勾选要导出的订阅")
-            return
-        }
-        showCancelableLoading("正在导出 " + selected.size + " 个订阅…") {
-            // 取消:在跑的导出结果一律作废(已发出的单次请求撤不回,但不会再采用)
-            SubscriptionExporter.cancel()
-            AppBubble.toast("已取消导出")
-        }
-        SubscriptionExporter.export(this, selected, object : SubscriptionExporter.Callback {
-            override fun onDone(file: File, count: Int) {
-                if (isFinishing || isDestroyed) return
-                dismissLoadingDialog()
-                val text = "已导出 $count 条订阅"
-                LogStore.log(Category.SUBSCRIPTION, "订阅: 导出成功 $count 条")
-                AppBubble.toast(text)
-                exitExportMode()
-                shareExport(file)
-            }
-
-            override fun onError(message: String) {
-                if (isFinishing || isDestroyed) return
-                dismissLoadingDialog()
-                LogStore.fail(Category.SUBSCRIPTION, "订阅: 导出失败")
-                AppBubble.toast("导出失败")
-            }
-        })
-    }
-
-    /** 分享导出的订阅清单(与运行日志导出同一套 FileProvider 通道) */
-    private fun shareExport(file: File) {
+    /** 分享导出的清单(与运行日志导出同一套 FileProvider 通道) */
+    private fun shareExport(file: File, title: String = "分享订阅清单") {
         try {
             val uri = androidx.core.content.FileProvider.getUriForFile(
                 this,
@@ -427,10 +323,22 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
             intent.type = if (file.name.endsWith(".zip", ignoreCase = true)) "application/zip" else "application/json"
             intent.putExtra(Intent.EXTRA_STREAM, uri)
             intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            startActivity(Intent.createChooser(intent, "分享订阅清单"))
+            startActivity(Intent.createChooser(intent, title))
         } catch (t: Throwable) {
             LogStore.fail(Category.SUBSCRIPTION, "订阅: 分享导出文件失败 (${exceptionType(t)})")
             AppBubble.toast("分享失败")
+        }
+    }
+
+    /**
+     * 导出用户自建的直播源(名称 + 地址)成一份 JSON 分享出去。
+     * 订阅自带的直播源不导:它们跟着订阅走,导出去会在别处变成一份重复的"自建"清单。
+     */
+    private fun exportLiveSources() {
+        LiveSourceExporter.export(this, liveCoordinator.exportSnapshot()) { file, error ->
+            if (isFinishing || isDestroyed) return@export
+            if (file == null) AppBubble.toast(error ?: "导出失败")
+            else shareExport(file, "分享直播源清单")
         }
     }
 
@@ -541,23 +449,23 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
 
     /** 切标签页:同一张卡片换数据;标题栏动作区(导出/添加)跟着换 */
     private fun switchTab(live: Boolean) {
-        if (liveTabActive == live) return
+        if (state.liveTabActive == live) return
         tabPageAnimator.finish()
-        val outgoing = if (liveTabActive) mBinding.flLive else mBinding.flVideo
+        val outgoing = if (state.liveTabActive) mBinding.flLive else mBinding.flVideo
         val incoming = if (live) mBinding.flLive else mBinding.flVideo
-        liveTabActive = live
+        state.liveTabActive = live
         mBinding.flVideo.visibility = if (live) View.GONE else View.VISIBLE
         mBinding.flLive.visibility = if (live) View.VISIBLE else View.GONE
         styleTab(mBinding.tvTabVideo, !live)
         styleTab(mBinding.tvTabLive, live)
         // 指示条**滑**到目标 tab 下方(不是直接跳过去)
         moveIndicator(true)
-        // 导出只服务视频源页
-        mBinding.ivExport.visibility = if (live) View.GONE else View.VISIBLE
+        // 导出两页都有:视频源页导订阅清单,直播源页导自建直播源
+        mBinding.ivExport.visibility = View.VISIBLE
         if (live) {
             if (mSubscriptionAdapter.isExportMode) exitExportMode()
             if (mSubscriptionAdapter.getMode() == SubscriptionAdapter.Mode.DELETE) exitSelectMode()
-            refreshLiveSources()
+            renderLiveSources()
         } else {
             if (mLiveSourceAdapter.selectMode) exitSelectMode()
             updateEmptyState()
@@ -571,7 +479,7 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
      * @param animate true = 滑过去(切 tab);false = 直接就位(首帧/转屏后重新摆位)
      */
     private fun moveIndicator(animate: Boolean) {
-        val tab = if (liveTabActive) mBinding.tabLive else mBinding.tabVideo
+        val tab = if (state.liveTabActive) mBinding.tabLive else mBinding.tabVideo
         val ind = mBinding.indTab
         if (tab.width == 0 || ind.width == 0) return   // 还没量完尺寸,等下一次回调
         val target = tab.left + (tab.width - ind.width) / 2f
@@ -640,7 +548,7 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
     /** 进入多选态(长按菜单「多选」):订阅源=多选删除订阅;直播源=多选删除自建直播源 */
     private fun enterSelectMode(live: Boolean) {
         selectOnLive = live
-        if (live != liveTabActive) switchTab(live)   // 切页会顺带退出另一种多选态
+        if (live != state.liveTabActive) switchTab(live)   // 切页会顺带退出另一种多选态
         if (mSubscriptionAdapter.isExportMode) exitExportMode()
         if (live) mLiveSourceAdapter.setSelectMode(true)
         else mSubscriptionAdapter.setMode(SubscriptionAdapter.Mode.DELETE)
@@ -680,10 +588,15 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
                 AppBubble.toast("请先勾选要删除的订阅")
                 return
             }
+            val remainingUrls = state.subscriptions
+                .filterNot { s -> targets.any { it === s } }.map { it.url }
+            val pkgExtra = if (targets.any {
+                    LocalPackageImporter.cleanupNote(this, it.url, remainingUrls) != null
+                }) " 所选订阅的本地包文件将一并删除。" else ""
             val msg = if (targets.any { it.isChecked }) {
-                "所选包含当前正在使用的订阅,删除后将自动切换到其它订阅,确定删除吗？"
+                "所选包含当前正在使用的订阅,删除后将自动切换到其它订阅,确定删除吗？$pkgExtra"
             } else {
-                "确定删除所选的 " + targets.size + " 个订阅吗？"
+                "确定删除所选的 " + targets.size + " 个订阅吗？$pkgExtra"
             }
             ConfirmDialog.showDanger(this, "删除订阅", msg, "删除") {
                 deleteSelectedSubscriptions(targets)
@@ -691,222 +604,123 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
         }
     }
 
+    private var subscriptionCleanupInProgress = false
+
     private fun deleteSelectedSubscriptions(targets: List<Subscription>) {
-        if (batchImportInProgress) return
-        for (sub in targets) removeSubscription(sub)
+        if (importCoordinator.isBatchImportInProgress() || subscriptionCleanupInProgress) return
+        val removed = targets.filter { state.subscriptions.contains(it) }
+        val deletedUrls = removed.map { it.url }.distinct()
+        for (sub in removed) removeSubscription(sub)
         persistSubscriptions()
         exitSelectMode()
-        AppBubble.toast("已删除 " + targets.size + " 个订阅")
-        LogStore.log(Category.SUBSCRIPTION, "订阅: 多选删除 " + targets.size + " 个订阅")
+        subscriptionCleanupInProgress = true
+        showLoading("正在清理本地订阅文件…", null)
+        val app = applicationContext
+        val page = java.lang.ref.WeakReference(this)
+        val main = android.os.Handler(android.os.Looper.getMainLooper())
+        com.github.tvbox.osc.util.HeavyTaskUtil.getSerialExecutorService().execute {
+            var cleanupFailed = false
+            try {
+                com.github.tvbox.osc.transfer.SubscriptionImportFiles.runLocked<Unit> {
+                    val remaining = SubscriptionConfig.getSubscriptions().map { it.url }
+                    for (url in deletedUrls) {
+                        if (url in remaining) continue
+                        val file = SubscriptionLibrary.libraryFileOf(app, url)
+                        if (file != null && file.isFile && !file.delete()) cleanupFailed = true
+                    }
+                    if (!LocalPackageImporter.cleanupAfterDelete(app, deletedUrls, remaining)) cleanupFailed = true
+                }
+            } catch (_: Exception) {
+                cleanupFailed = true
+            }
+            val message = if (cleanupFailed) "订阅已删除，部分本地文件未能清理"
+                else "已删除 " + deletedUrls.size + " 个订阅"
+            LogStore.log(Category.SUBSCRIPTION, "订阅: $message")
+            main.post {
+                val activity = page.get() ?: return@post
+                activity.subscriptionCleanupInProgress = false
+                if (!activity.isPageActive()) return@post
+                activity.dismissLoading()
+                AppBubble.toast(message)
+            }
+        }
     }
 
     private fun deleteSelectedLiveSources(targets: List<LiveSourceEntries.Entry>) {
-        val history = LiveConfig.liveHistory()
-        for (entry in targets) {
-            history.remove(entry.url)
-            // 删掉的正是在用的那条 → 回到"用订阅自带的直播"
-            if (entry.url == SystemConfig.getLiveUrl()) SystemConfig.setLiveUrl("")
-        }
-        LiveConfig.setLiveHistory(history)
-        liveSourceChanged = true
+        val toast = liveCoordinator.deleteSelected(targets)
         exitSelectMode()
-        refreshLiveSources()
-        AppBubble.toast("已删除 " + targets.size + " 个直播源")
-        LogStore.log(Category.SUBSCRIPTION, "订阅: 多选删除 " + targets.size + " 个自建直播源")
+        renderLiveSources()
+        AppBubble.toast(toast)
     }
 
-    /**
-     * 删掉一条订阅:内部副本文件一并清理,并在删的是"当前订阅"时自动重选
-     * (置顶优先,否则取首项;删光则清空当前)。调用方负责 [persistSubscriptions] 落库。
-     */
     private fun removeSubscription(deleted: Subscription) {
-        if (batchImportInProgress) return
-        val provider = LiveChannelConfigProviders.get()
-        if (provider.loadedSubscriptionUrl == deleted.url) {
-            liveSourceChanged = true
-            val selectedLiveUrl = SystemConfig.getLiveUrl()
-            if (selectedLiveUrl.isNotEmpty() &&
-                provider.subscribeLiveSources.any { it.url == selectedLiveUrl } &&
-                !LiveConfig.liveHistory().contains(selectedLiveUrl)
-            ) {
-                SystemConfig.setLiveUrl("")
-                LogStore.log(Category.SUBSCRIPTION, "订阅: 删除订阅后清除其直播源选中地址")
-            }
-        }
-        mSubscriptions.remove(deleted)
-        deleteLibraryFileOf(deleted)   // 本地/JSON 导入的内部副本一并删掉,不留垃圾文件
+        liveCoordinator.onSubscriptionRemoved(deleted.url)
+        state.subscriptions.remove(deleted)
         LogStore.log(Category.SUBSCRIPTION, "订阅: 删除配置")
         if (deleted.isChecked) {
-            liveSourceChanged = true
-            val next = mSubscriptions.firstOrNull { it.isTop } ?: mSubscriptions.firstOrNull()
-            for (s in mSubscriptions) s.setChecked(false)
+            state.liveSourceChanged = true
+            val next = state.subscriptions.firstOrNull { it.isTop } ?: state.subscriptions.firstOrNull()
+            for (s in state.subscriptions) s.setChecked(false)
             if (next != null) {
                 next.setChecked(true)
-                mSelectedUrl = next.url
+                state.selectedUrl = next.url
                 LogStore.log(Category.SUBSCRIPTION, "订阅: 删除后自动切换配置")
             } else {
-                mSelectedUrl = ""
+                state.selectedUrl = ""
             }
             LogStore.log(Category.SUBSCRIPTION, "订阅: 删除当前配置，已加载直播源等待新配置刷新")
         }
     }
 
-    /** 订阅增删改后统一刷新 + 立即落库(避免 onPause 前被强杀导致改动丢失) */
-    private fun persistSubscriptions() {
-        mSubscriptionAdapter.notifyDataSetChanged()   //删除/选择只刷新,不触发重新排序
-        updateEmptyState()
-        SubscriptionConfig.setApiUrl(mSelectedUrl)
-        SubscriptionConfig.setSubscriptions(mSubscriptions)
-        refreshLiveSources()                           //订阅变了,直播源页的「来自:X」跟着变
-    }
-
     /**
-     * 重建直播源列表:订阅导入的在前(不可删)、用户自建的在后;勾中的那条 = 当前生效的直播源。
-     * 订阅导入的**不落库**。已加载的订阅读内存；页面里刚选中但还未生效的订阅读只读预览，
-     * 不加载爬虫，也不把上一条订阅的直播源误标成新订阅的内容。
+     * 重建直播源列表(快照由 [LiveSourceCoordinator] 算好,这里只绑视图):
+     * 订阅导入的在前(不可删)、用户自建的在后;勾中的那条 = 当前生效的直播源。
      */
-    private fun refreshLiveSources() {
-        val provider = LiveChannelConfigProviders.get()
-        val selected = mSelectedUrl
-        if (livePreviewSelectedUrl != selected) {
-            livePreviewSelectedUrl = selected
-            livePreviewEpoch++
-            livePreviewLoadingUrl = null
-            livePreviewFailedUrl = null
-        }
-        val importedSources = when {
-            selected.isEmpty() -> emptyList()
-            provider.loadedSubscriptionUrl == selected -> provider.subscribeLiveSources
-            livePreviewCache.containsKey(selected) -> livePreviewCache[selected].orEmpty()
-            else -> {
-                requestLivePreview(selected)
-                emptyList()
-            }
-        }
-        val imported = importedSources.map {
-            LiveSourceEntries.Imported(it.name, it.url)
-        }
-        val userHistory = LiveConfig.liveHistory()
-        val activeLiveUrl = SystemConfig.getLiveUrl()
-        val oldImported = selected != provider.loadedSubscriptionUrl &&
-            provider.subscribeLiveSources.any { it.url == activeLiveUrl } &&
-            !userHistory.contains(activeLiveUrl)
-        val displayedLiveUrl = if (oldImported && imported.none { it.url == activeLiveUrl }) ""
-            else activeLiveUrl
-        val entries = LiveSourceEntries.build(
-            currentName(),
-            imported,
-            userHistory,
-            displayedLiveUrl
-        )
-        mLiveSourceAdapter.setNewData(entries)
-        updateLivePreviewState(provider.loadedSubscriptionUrl)
-        val empty = entries.isEmpty()
-        mBinding.rvLive.visibility = if (empty) View.GONE else View.VISIBLE
-        mBinding.llEmptyLive.root.visibility = if (empty) View.VISIBLE else View.GONE
-        if (empty) {
-            mBinding.llEmptyLive.tvEmptyText.text =
-                if (livePreviewLoadingUrl == selected) "正在读取所选订阅的直播源…"
-                else "暂无直播源\n点右上角 + 添加自己的直播源\n订阅自带的直播源会自动出现在这里"
-        }
-    }
-
-    private fun requestLivePreview(url: String) {
-        if (livePreviewLoadingUrl == url || livePreviewFailedUrl == url) return
-        livePreviewLoadingUrl = url
-        val epoch = ++livePreviewEpoch
-        val owner = java.lang.ref.WeakReference(this)
-        LiveChannelConfigProviders.get().previewSubscribeLiveSources(url) { sources, error ->
-            val activity = owner.get() ?: return@previewSubscribeLiveSources
-            activity.runOnUiThread {
-                if (activity.isFinishing || activity.isDestroyed ||
-                    epoch != activity.livePreviewEpoch || activity.mSelectedUrl != url) return@runOnUiThread
-                activity.livePreviewLoadingUrl = null
-                if (error == null) activity.livePreviewCache[url] = sources.toList()
-                else activity.livePreviewFailedUrl = url
-                activity.refreshLiveSources()
-            }
-        }
-    }
-
-    private fun updateLivePreviewState(loadedUrl: String) {
-        val selected = mSelectedUrl
+    private fun renderLiveSources() {
+        val snapshot = liveCoordinator.refreshEntries()
+        mLiveSourceAdapter.setNewData(snapshot.entries)
         val state = mBinding.tvLivePreviewState
-        if (selected.isEmpty() || selected == loadedUrl) {
-            state.visibility = View.GONE
-            state.isClickable = false
-            return
-        }
-        val name = currentName().ifBlank { "所选视频源" }
-        val suffix = if (selected != mBeforeUrl) " · 退出后生效" else ""
-        state.text = when {
-            livePreviewLoadingUrl == selected -> "正在读取「$name」的直播源…$suffix"
-            livePreviewFailedUrl == selected -> "暂时无法预览「$name」的直播源，点此重试$suffix"
-            else -> "预览「$name」的直播源$suffix"
-        }
-        state.isClickable = livePreviewFailedUrl == selected
-        state.visibility = View.VISIBLE
-    }
-
-    /**
-     * 勾选/取消一条直播源:<b>勾中即成为当前直播源</b>(直播页据此拉取);取消 = 回到"用订阅自带的直播"。
-     * 内嵌分组(没有单独地址)不可选,由调用方拦掉。
-     */
-    private fun applyLiveSource(url: String) {
-        val target = url ?: ""
-        if (target == SystemConfig.getLiveUrl()) {
-            refreshLiveSources()
-            return
-        }
-        SystemConfig.setLiveUrl(target)
-        liveSourceChanged = true
-        refreshLiveSources()
-        AppBubble.toast(
-            if (target.isEmpty()) "已改用订阅直播源"
-            else "直播源已切换"
-        )
-        LogStore.log(
-            Category.SUBSCRIPTION,
-            "订阅: 当前直播源改为 " + (if (target.isEmpty()) "订阅自带" else logSource(target))
-        )
-    }
-
-    /** 删除用户自建的直播源(订阅导入的不给删:跟着订阅走,要删就删那条订阅) */
-    private fun deleteUserLiveSource(entry: LiveSourceEntries.Entry) {
-        if (!entry.removable() || entry.embedded()) return
-        val message = if (entry.url == SystemConfig.getLiveUrl()) {
-            "确定删除「${entry.name}」吗？删除后将改用订阅自带的直播源。"
-        } else {
-            "确定删除「${entry.name}」吗？"
-        }
-        ConfirmDialog.showDanger(this, "删除直播源", message, "删除") {
-            performDeleteUserLiveSource(entry)
+        state.isClickable = snapshot.previewClickable
+        state.text = snapshot.previewText
+        state.visibility = if (snapshot.previewVisible) View.VISIBLE else View.GONE
+        mBinding.rvLive.visibility = if (snapshot.empty) View.GONE else View.VISIBLE
+        mBinding.llEmptyLive.root.visibility = if (snapshot.empty) View.VISIBLE else View.GONE
+        if (snapshot.empty) {
+            mBinding.llEmptyLive.tvEmptyText.text = snapshot.emptyText
         }
     }
 
-    private fun performDeleteUserLiveSource(entry: LiveSourceEntries.Entry) {
-        val history = LiveConfig.liveHistory()
-        val inHistory = history.remove(entry.url)
-        if (inHistory) LiveConfig.setLiveHistory(history)
-        // 删掉的正是在用的那条(含"内置默认源"那类不在用户历史里的补行)→ 回到用订阅自带的直播
-        val wasActive = entry.checked || entry.url == SystemConfig.getLiveUrl()
-        if (wasActive) SystemConfig.setLiveUrl("")
-        if (!inHistory && !wasActive) return
-        liveSourceChanged = true
-        refreshLiveSources()
-        AppBubble.toast("直播源已删除")
-        LogStore.log(Category.SUBSCRIPTION, "订阅: 删除自建直播源")
-    }
-
-    /** 添加用户自建的直播源:复用设置页那套输入弹窗(填地址,确认即启用并记入用户历史) */
+    /** 添加用户自建的直播源:名称(可选)+ 地址,确认即启用并记入用户历史 */
     private fun showAddLiveSource() {
-        val before = SystemConfig.getLiveUrl()
-        val popup = DialogCoordinator.center(this, LiveApiDialog(this) {
-            // 只有"确定保存"才会回调:地址真变了就标记待重载,并立刻刷新列表勾选态
-            if (SystemConfig.getLiveUrl() != before) liveSourceChanged = true
-            refreshLiveSources()
-        })
-        popup.show()
+        val current = SystemConfig.getLiveUrl()
+        DialogCoordinator.center(this, LiveApiDialog(
+            this,
+            initialName = LiveConfig.liveName(current),
+            initialUrl = current,
+            history = LiveConfig.liveHistory(),
+            onDeleteHistory = liveCoordinator::deleteHistory
+        ) { name, url ->
+            // 只有点"确定"才回调:落库、要不要重载直播配置都在协调器里判
+            AppBubble.toast(liveCoordinator.saveNewSource(name, url))
+            renderLiveSources()
+        }).show()
+    }
+
+    /** 编辑一条自建直播源(改名/改地址);订阅导入的与内嵌分组不给编辑入口 */
+    private fun showEditLiveSource(entry: LiveSourceEntries.Entry) {
+        DialogCoordinator.center(this, LiveApiDialog(
+            this,
+            title = "编辑直播源",
+            confirmText = "保 存",
+            initialName = entry.userName,
+            initialUrl = entry.url,
+            history = LiveConfig.liveHistory(),
+            requireUrl = true,
+            onDeleteHistory = liveCoordinator::deleteHistory
+        ) { name, url ->
+            AppBubble.toast(liveCoordinator.applyEdit(entry, name, url))
+            renderLiveSources()
+        }).show()
     }
 
     override fun onBackPressed() {
@@ -918,10 +732,10 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
             exitExportMode()
             return
         }
-        if (liveSourceChanged) {
+        if (state.liveSourceChanged) {
             // 直播源变了:回首页让配置重载 —— 直播页用的"待拉取直播源"是加载配置时定下的
             // (与设置页改直播源同一个处理:不带 CACHE_CONFIG_CHANGED 回首页重新加载)
-            if (mBeforeUrl == mSelectedUrl) {
+            if (state.beforeUrl == state.selectedUrl) {
                 if (!AppStartupCoordinator.launchInternalReload(this, false)) return
                 overridePendingTransition(R.anim.fade_in, R.anim.fade_out)
             }
@@ -935,8 +749,9 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
      * 编辑已有订阅(名称 + 地址就地修改,不再只能"删了重加"):
      * 复用添加弹窗(预填当前名称/地址),保存后按需重载当前订阅。
      */
-    private fun showEditSubscription(position: Int) {        if (position >= mSubscriptions.size) return
-        val item = mSubscriptions[position]
+    private fun showEditSubscription(position: Int) {
+        if (position >= state.subscriptions.size) return
+        val item = state.subscriptions[position]
         XPopup.Builder(this)
             .autoFocusEditText(false)
             .asCustom(SubsciptionDialog(
@@ -958,11 +773,11 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
 
     /** 落地编辑结果:条目就地更新(isChecked/top 保持);改的若是当前订阅地址则立刻重载配置 */
     private fun applySubscriptionEdit(position: Int, name: String, url: String, checked: Boolean) {
-        if (position >= mSubscriptions.size) return
-        val item = mSubscriptions[position]
+        if (position >= state.subscriptions.size) return
+        val item = state.subscriptions[position]
         val oldUrl = item.url
         if (url != oldUrl) {
-            val dup = mSubscriptions.firstOrNull { it !== item && it.url == url }
+            val dup = state.subscriptions.firstOrNull { it !== item && it.url == url }
             if (dup != null) {
                 AppBubble.toast("订阅地址已存在")
                 return
@@ -972,21 +787,21 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
         item.name = name
         item.url = url
         if (checked && !wasChecked) {   // 原本未启用时,按弹窗勾选决定是否切到它
-            for (s in mSubscriptions) s.setChecked(false)
+            for (s in state.subscriptions) s.setChecked(false)
             item.setChecked(true)
-            mSelectedUrl = url
+            state.selectedUrl = url
         }
         mSubscriptionAdapter.notifyItemChanged(position)
         updateEmptyState()
-        SubscriptionConfig.setSubscriptions(mSubscriptions)
+        SubscriptionConfig.setSubscriptions(state.subscriptions)
         LogStore.log(Category.SUBSCRIPTION, "订阅: 编辑配置 (" + logSource(url) + ")")
         AppBubble.toast("已保存")
         // 改的就是当前启用订阅的地址 → 与切换订阅走同一套进程重启。
         if (wasChecked && oldUrl != url) {
-            mSelectedUrl = url
+            state.selectedUrl = url
             finish()
-        } else if (liveTabActive || checked && !wasChecked) {
-            refreshLiveSources()
+        } else if (state.liveTabActive || checked && !wasChecked) {
+            renderLiveSources()
         }
     }
 
@@ -994,7 +809,7 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
      * 订阅列表空态:无订阅时展示空态占位(列表隐藏),否则展示列表
      */
     private fun updateEmptyState() {
-        val empty = mSubscriptions.isEmpty()
+        val empty = state.subscriptions.isEmpty()
         mBinding.rv.visibility = if (empty) View.GONE else View.VISIBLE
         mBinding.llEmpty.root.visibility = if (empty) View.VISIBLE else View.GONE
         if (empty) {
@@ -1010,7 +825,7 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
      * 判定不用 BuildConfig(app 未开启 buildConfig 开关),直接看包名后缀。
      */
     private fun warnIfDebugDataDomain() {
-        if (mSubscriptions.isNotEmpty() || debugDomainWarned) return
+        if (state.subscriptions.isNotEmpty() || debugDomainWarned) return
         // 注意用 applicationContext.packageName:Activity 里裸 packageName 会命中 ViewBinding 的
         // 绑定类方法(ViewDataBinding.getPackageName),拿到的是布局包名而非应用包名
         val appId = applicationContext.packageName
@@ -1028,1022 +843,19 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
         AppBubble.toast("调试包数据独立，正式包订阅不在此处")
     }
 
-    /**
-     * 本地导入(系统 SAF 文件选择器;替代 hedzr 反射 StorageVolume 的老实现):
-     * 选择 txt/json 后,主卷文件(clan 服务器可直接按路径读)转真实路径、以 clan:// 引用原文件;
-     * 其它存储提供方(下载/云盘/第三方文件管理器等,SAF 授权读取但无主卷路径)复制进应用专属目录后
-     * 再以 clan:// 引用副本——任何能在系统文件管理器里打开的文件均可导入。
-     * @param checked 是否在导入成功后默认启用该订阅(导入菜单勾选状态,先记录后使用)
-     */
     private var mPendingChecked = true
     private val pickLocalDoc = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        uri?.let { handleLocalDoc(it) }
+        uri?.let { importCoordinator.importLocalDoc(it, mPendingChecked) }
     }
 
+    /**
+     * 本地导入的文件选择:一律放行全部类型,由导入侧按内容识别
+     * (订阅 txt/json、订阅清单 ZIP、本地包 ZIP、已解压本地包里的清单 txt)。
+     * 之前给本地包单开过一个只收 zip 的入口,结果用户选不了包里的 txt 清单,现已合并到这里。
+     */
     private fun pickFile(checked: Boolean) {
         mPendingChecked = checked
         pickLocalDoc.launch(arrayOf("*/*"))
-    }
-
-    private fun handleLocalDoc(uri: Uri) {
-        try {
-            addOrigin = Subscription.ORIGIN_LOCAL   // 本地导入:整条链路(含嗅探出来的单源)都记 local
-            val nameRaw = queryDisplayName(uri)
-            val name = nameRaw?.trim()
-            if (name.isNullOrEmpty() ||
-                !name.lowercase().endsWith(".txt") && !name.lowercase().endsWith(".json")
-                && !name.lowercase().endsWith(".zip")
-            ) {
-                AppBubble.toast("请选择 txt/json 订阅文件或订阅清单 ZIP")
-                return
-            }
-            if (name.lowercase().endsWith(".zip")) {
-                importSubscriptionZip(uri, name, mPendingChecked)
-                return
-            }
-            // 本地导入一律**复制一份进应用内部**再当订阅用(不再直接引用原文件):
-            // 用户导入完把原文件删了/改了都不影响订阅;导出时也从这份内部副本取内容(见 SubscriptionExporter)
-            val importFile = importCopyOf(uri, name)
-            if (importFile == null || !isUnderPrimaryStorage(importFile)) {
-                AppBubble.toast("文件无法读取，请选本机订阅文件")
-                return
-            }
-            if (name.lowercase().endsWith(".json") && importFile.length() > MAX_JUDGE_BYTES) {
-                importLargeSubscriptionDocument(importFile, name, mPendingChecked)
-                return
-            }
-            // 订阅清单式文件(形如 [{name,url},...],同本机调试用的默认订阅清单格式):
-            // 读取内容解析为多条订阅加入;识别失败则回落为"单个 clan:// 文件源"加入
-            if (importSubscriptionList(importFile, name, mPendingChecked)) {
-                SubscriptionConfig.setLastImportDir(importFile.parent)
-                return
-            }
-            // 文件内容按"能不能当订阅用"过一遍(与 JSON 粘贴导入同一套识别规则):
-            // 既补上"清单/多线路/多仓/单条"的展开,也把「阅读」视频书源交给 JSON 接口或站点识别,
-            // 其余不是订阅配置的内容(如频道列表)不落盘——
-            // 这类内容存成 clan:// 订阅只会让应用每次启动都"解析配置失败",还会把当前可用订阅挤掉
-            val text = readImportText(importFile)
-            if (text != null) {
-                val root = try {
-                    JsonParser.parseString(text)
-                } catch (t: Throwable) {
-                    null
-                }
-                if (root != null && importJsonEntries(root, mPendingChecked, "文件", Subscription.ORIGIN_LOCAL)) {
-                    SubscriptionConfig.setLastImportDir(importFile.parent)
-                    return
-                }
-                if (CmsApiRules.looksLikeBookSource(text)) {
-                    sniffBookSourceSite(text, mPendingChecked)
-                    return
-                }
-                val resolved = resolveSubscriptionContent(text, name)
-                if (resolved == null) {
-                    return
-                }
-                if (resolved.rewritten) {
-                    // 裸站点条目/数组:补好的 sites 外壳另存副本(clan 服务器读副本,不再引用原文件)
-                    saveJsonSubscription(resolved.content, mPendingChecked)
-                    return
-                }
-            }
-            addLocalFileSubscription(importFile, name, mPendingChecked)
-        } catch (t: Throwable) {
-            LogStore.fail(Category.SUBSCRIPTION, "订阅: 本地导入读取文件失败 (${exceptionType(t)})")
-            AppBubble.toast("读取所选文件失败")
-        }
-    }
-
-    /** ZIP 仅作为批量订阅清单入口；解压与校验在共享执行器，完成后仍逐条验证订阅。 */
-    private fun importSubscriptionZip(uri: Uri, name: String, checked: Boolean) {
-        val app = applicationContext
-        val resolver = app.contentResolver
-        val cache = app.cacheDir
-        val activityRef = WeakReference(this)
-        val main = Handler(Looper.getMainLooper())
-        AppBubble.toast("正在读取订阅清单…")
-        HeavyTaskUtil.getBigTaskExecutorService().execute {
-            var temporary: File? = null
-            var entries: JsonArray? = null
-            var error: String? = null
-            try {
-                val archive = File.createTempFile("subscription_import_", ".zip", cache)
-                temporary = archive
-                val input = resolver.openInputStream(uri) ?: throw java.io.IOException("文件打不开")
-                input.use { source ->
-                    archive.outputStream().use { target ->
-                        val buffer = ByteArray(8192)
-                        var total = 0L
-                        while (true) {
-                            val read = source.read(buffer)
-                            if (read < 0) break
-                            total += read
-                            if (total > ConfigBundle.MAX_ARCHIVE_BYTES) throw java.io.IOException("订阅包超过 64 MB")
-                            target.write(buffer, 0, read)
-                        }
-                    }
-                }
-                val parsed = ConfigBundle(app).readSubscriptionSelection(archive)
-                if (parsed.size() == 0 || parsed.size() > 500) throw java.io.IOException("订阅清单条数无效")
-                entries = activityRef.get()?.prepareEmbeddedEntries(parsed)
-                    ?: throw java.io.IOException("导入页面已关闭")
-            } catch (failure: Exception) {
-                error = failure.message ?: "订阅包读取失败"
-            } finally {
-                temporary?.delete()
-            }
-            val imported = entries
-            val failure = error
-            main.post {
-                val activity = activityRef.get() ?: return@post
-                if (activity.isFinishing || activity.isDestroyed) return@post
-                if (failure != null) {
-                    AppBubble.toast(failure)
-                } else if (imported != null) {
-                    activity.addOrigin = Subscription.ORIGIN_LOCAL
-                    if (!activity.importSubscriptionEntries(imported, checked, name, Subscription.ORIGIN_LOCAL))
-                        AppBubble.toast("清单中无有效订阅")
-                }
-            }
-        }
-    }
-
-    /** Large single JSON exports may embed an 8 MB local subscription; parse off the UI thread. */
-    private fun importLargeSubscriptionDocument(file: File, name: String, checked: Boolean) {
-        val activityRef = WeakReference(this)
-        val main = Handler(Looper.getMainLooper())
-        HeavyTaskUtil.getBigTaskExecutorService().execute {
-            var entries: JsonArray? = null
-            var error: String? = null
-            try {
-                if (file.length() <= 32L * 1024 * 1024) {
-                    val parsed = JsonParser.parseString(file.readText(Charsets.UTF_8))
-                    if (parsed.isJsonObject) {
-                        val obj = parsed.asJsonObject
-                        val schema = runCatching { obj.get("schema")?.asInt }.getOrNull()
-                        val category = runCatching { obj.get("category")?.asString }.getOrNull()
-                        if (schema == 1 && category == "subscriptions") {
-                            val items = obj.get("items")
-                            if (items == null || !items.isJsonArray || items.asJsonArray.size() !in 1..500)
-                                throw java.io.IOException("订阅清单格式无效")
-                            entries = activityRef.get()?.prepareEmbeddedEntries(items.asJsonArray)
-                                ?: throw java.io.IOException("导入页面已关闭")
-                        }
-                    }
-                }
-            } catch (failure: java.io.IOException) {
-                error = failure.message ?: "订阅清单读取失败"
-            } catch (_: Exception) {
-                // 其它大 JSON 仍按原有本地配置文件入口处理。
-            }
-            val imported = entries
-            val failure = error
-            main.post {
-                val activity = activityRef.get() ?: return@post
-                if (activity.isFinishing || activity.isDestroyed) return@post
-                when {
-                    failure != null -> AppBubble.toast(failure)
-                    imported != null -> {
-                        activity.addOrigin = Subscription.ORIGIN_LOCAL
-                        if (!activity.importSubscriptionEntries(imported, checked, name, Subscription.ORIGIN_LOCAL))
-                            AppBubble.toast("清单中无有效订阅")
-                        SubscriptionConfig.setLastImportDir(file.parent)
-                    }
-                    else -> activity.addLocalFileSubscription(file, name, checked)
-                }
-            }
-        }
-    }
-
-    /** 应用专属导入目录路径；创建留给持锁的实际写入点。 */
-    private fun importDir(): File {
-        val external = getExternalFilesDir(null) ?: throw java.io.IOException("应用存储目录不可用")
-        return File(external, "subscription_import")
-    }
-
-    /** 只在持有 SubscriptionImportFiles 锁的写入路径调用。 */
-    private fun ensureImportDir(): File {
-        val dir = importDir()
-        if (!dir.isDirectory && !dir.mkdirs()) throw java.io.IOException("无法创建订阅目录")
-        return dir
-    }
-
-    /** ZIP/大 JSON 在共享执行器先还原内嵌文件，UI 线程只负责逐条加入订阅。 */
-    private fun prepareEmbeddedEntries(entries: JsonArray): JsonArray {
-        for (element in entries) {
-            if (isFinishing || isDestroyed) throw java.io.IOException("导入页面已关闭")
-            if (!element.isJsonObject) continue
-            val item = element.asJsonObject
-            if (!SubscriptionImportRules.mayBeListEntry(item)) continue
-            val raw = item.stringValue("content")
-            if (raw.isBlank()) continue
-            val name = item.stringValue("name").trim().ifEmpty { item.stringValue("sourceName").trim() }
-            val content = SubscriptionImportRules.normalizedContent(raw)
-            val file = content?.let { writeLibraryFile(item.stringValue("file"), name, it) }
-            item.remove("content")
-            if (file == null) {
-                item.addProperty("url", "")
-                item.addProperty("sourceUrl", "")
-            } else {
-                item.addProperty("url", clanPathOf(file))
-                item.addProperty("name", name.ifEmpty { file.nameWithoutExtension })
-            }
-        }
-        return entries
-    }
-
-    /**
-     * 订阅清单文件导入(形如 assets 默认订阅 [{name,url},...]):
-     * 读取内容识别为"清单数组"后逐条去重;单条远端地址复用自定义导入的在线识别,
-     * 多条清单中的远端地址逐条在线识别;带内嵌内容的本地条目仍可离线恢复;
-     * 识别失败/无有效条目返回 false,由调用方按"单个 clan:// 文件源"回落,不影响原有导入。
-     * @return true=已按清单处理(可能 0 条新增);false=非目标格式
-     */
-    private fun importSubscriptionList(file: File, displayName: String, checked: Boolean): Boolean {
-        val text = try {
-            file.readText(Charsets.UTF_8).trim()
-        } catch (t: Throwable) {
-            return false
-        }
-        if (text.isEmpty() || text[0] != '[') return false
-        val entries = try {
-            JsonParser.parseString(text).asJsonArray
-        } catch (t: Throwable) {
-            return false // 非目标格式(如单源配置 JSON 对象),回落旧逻辑
-        }
-        if (CmsApiRules.looksLikeBookSource(text)) return false
-        return importSubscriptionEntries(entries, checked, displayName, Subscription.ORIGIN_LOCAL)
-    }
-
-    /**
-     * 订阅清单逐条加入(本地清单导入与 JSON 粘贴导入共用):
-     * 条目兼容三种写法 —— ①**导出清单** `{name,type,origin,url[,file,content]}` ②`{name,url}` ③`{sourceName,sourceUrl}`;
-     * 带 `content` 的条目(导出清单里"本地文件"那类订阅)先把原文落成内部库文件、再按 clan:// 加入,
-     * 换机导入、原文件已删都能还原;远端地址不论单条或多条都在线识别后再加入。
-     * 与本机已有订阅按地址去重。
-     * @param origin 条目自身没写 origin 时的兜底来源(本地文件导入=local / JSON 粘贴=json)
-     * @return true=已按清单处理(可能 0 条新增);false=无有效条目(调用方回落)
-     */
-    private fun importSubscriptionEntries(entries: JsonArray, checked: Boolean, label: String,
-                                         origin: String, onComplete: (() -> Unit)? = null): Boolean {
-        val parsed = ArrayList<Subscription>()
-        var candidates = 0
-        var invalid = 0
-        for (el in entries) {
-            if (!el.isJsonObject) continue
-            val obj = el.asJsonObject
-            if (!SubscriptionImportRules.mayBeListEntry(obj)) continue
-            val name = obj.stringValue("name").trim().ifEmpty { obj.stringValue("sourceName").trim() }
-            val url = obj.stringValue("url").trim().ifEmpty { obj.stringValue("sourceUrl").trim() }
-            val itemOrigin = obj.stringValue("origin").trim().ifEmpty { origin }
-            val rawContent = obj.stringValue("content")
-            if (url.isEmpty() && rawContent.isBlank()) continue
-            candidates++
-            if (rawContent.isNotBlank()) {
-                val content = SubscriptionImportRules.normalizedContent(rawContent)
-                val file = content?.let { writeLibraryFile(obj.stringValue("file"), name, it) }
-                if (file == null) {
-                    invalid++
-                    LogStore.fail(Category.SUBSCRIPTION, "订阅: 清单条目无效，内部文件写入失败")
-                    continue
-                }
-                parsed.add(Subscription(name.ifEmpty { file.nameWithoutExtension }, clanPathOf(file), itemOrigin))
-                continue
-            }
-            if (name.isNotEmpty() && SubscriptionImportRules.isSupportedAddress(url)) {
-                parsed.add(Subscription(name, url, itemOrigin))
-            } else {
-                invalid++
-                LogStore.fail(Category.SUBSCRIPTION, "订阅: 清单条目无效，名称或地址不符合格式")
-            }
-        }
-        if (parsed.isEmpty()) {
-            if (candidates == 0) return false
-            AppBubble.toast("清单中无有效订阅")
-            onComplete?.invoke()
-            return true
-        }
-        val wasEmpty = mSubscriptions.isEmpty()
-        // 只有一条远端地址时按自定义导入拉取并识别内容，避免把无效配置地址直接收进列表。
-        if (parsed.size == 1 && parsed[0].url.startsWith("http")) {
-            val single = parsed[0]
-            addOrigin = single.origin
-            addSubscription(single.name, single.url, checked || wasEmpty, onComplete)
-            return true
-        }
-        val pending = parsed.distinctBy { it.url }
-        var added = 0
-        var failed = invalid
-        var duplicates = parsed.size - pending.size
-        var index = 0
-        var processed = 0
-        val parentBatch = batchImportInProgress
-        val parentProgress = batchProgress
-        if (!parentBatch) {
-            importEpoch++
-            importCancelled = false
-            batchImportInProgress = true
-        }
-        if (!parentBatch) {
-            batchCancelAction = {
-                importCancelled = true
-                importEpoch++
-                activeImportUrls.clear()
-                batchImportInProgress = false
-                batchCancelAction = null
-                dismissLoadingDialog()
-                persistSubscriptions()
-                LogStore.log(Category.SUBSCRIPTION,
-                    "订阅: 清单校验取消 已处理=$processed/${pending.size} 成功=$added 失败=$failed 重复=$duplicates")
-                AppBubble.toast("已取消导入，已保留 $added 条")
-            }
-            showCancelableLoading("正在准备校验 ${pending.size} 条订阅…") { batchCancelAction?.invoke() }
-        }
-        fun next() {
-            if (isFinishing || isDestroyed || importCancelled) return
-            if (index >= pending.size) {
-                if (parentBatch) {
-                    batchProgress = parentProgress
-                } else {
-                    batchImportInProgress = false
-                    batchCancelAction = null
-                    dismissLoadingDialog()
-                }
-                mSubscriptionAdapter.setNewData(mSubscriptions)
-                updateEmptyState()
-                if (!parentBatch) persistSubscriptions()
-                LogStore.log(Category.SUBSCRIPTION,
-                    "订阅: 清单校验完成 成功=" + added + " 失败=" + failed + " 重复=" + duplicates)
-                if (!parentBatch) AppBubble.toast("已导入 $added 条" +
-                    (if (failed > 0) "，跳过 $failed 条无效或不可用地址" else "") +
-                    (if (duplicates > 0) "，重复 $duplicates 条" else ""))
-                onComplete?.invoke()
-                return
-            }
-            val item = pending[index++]
-            batchProgress = "正在校验订阅 $index/${pending.size}：${item.name}（已导入 $added，失败 $failed，重复 $duplicates）"
-            updateImportHint(item.url)
-            if (mSubscriptions.any { it.url == item.url }) {
-                duplicates++
-                processed++
-                mBinding.root.post { next() }
-                return
-            }
-            val before = mSubscriptions.size
-            addOrigin = item.origin
-            addSubscription(item.name, item.url, (checked || wasEmpty) && added == 0,
-                onComplete = {
-                    if (mSubscriptions.size > before) {
-                        val count = mSubscriptions.size - before
-                        added += count
-                    } else {
-                        failed++
-                        LogStore.fail(Category.SUBSCRIPTION,
-                            "订阅: 清单条目失败 $index/${pending.size} 未加入订阅列表")
-                    }
-                    processed++
-                    persistSubscriptions()
-                    mBinding.root.post { next() }
-                }, loadingHint = batchProgress)
-        }
-        next()
-        return true
-    }
-
-    /**
-     * JSON 粘贴导入:先按已知订阅格式识别;单条地址复用自定义导入的在线校验,
-     * 多条清单逐项校验远端地址,内嵌配置可离线恢复,整份配置按本地文件导入的内容规则判定后落盘。
-     * <pre>
-     * 1) 清单数组          [{name,url}...] / [{sourceName,sourceUrl}...]
-     * 2) 多线路            {"urls":[{name,url}...]}
-     * 3) 多仓              {"storeHouse":[{sourceName,sourceUrl}...]} → 弹窗选仓
-     * 4) 单条订阅          {"name":..,"url":..} / {"sourceName":..,"sourceUrl":..}
-     * 5) 其它(单源规则配置、整份配置等)→ 存为本地 json 并以 clan:// 订阅加入(与本地导入一致)
-     * </pre>
-     * 「阅读」视频书源先按 sortUrl / 规则字段接入 JSON 接口,其余回落站点识别;
-     * 其它内容落盘前过 [resolveSubscriptionContent],
-     * 无效内容不存成 clan:// 订阅,避免启动时"解析配置失败"并挤掉当前可用订阅。
-     * @param checked 是否在导入成功后默认启用(导入菜单勾选状态)
-     */
-    private fun importJsonText(json: String, checked: Boolean) {
-        addOrigin = Subscription.ORIGIN_JSON   // JSON 导入
-        val text = json.trim()
-        if (text.isEmpty()) {
-            LogStore.fail(Category.SUBSCRIPTION, "订阅: JSON 导入内容为空")
-            AppBubble.toast("请输入 JSON 内容")
-            return
-        }
-        val root = try {
-            JsonParser.parseString(text)
-        } catch (t: Throwable) {
-            null
-        }
-        if (root == null) {
-            LogStore.fail(Category.SUBSCRIPTION, "订阅: JSON 格式不正确 字符=${text.length}")
-            AppBubble.toast("JSON 格式不正确")
-            return
-        }
-        // 1) 清单数组 / 多线路 / 多仓 / 单条订阅
-        if (importJsonEntries(root, checked, "JSON")) return
-        if (CmsApiRules.looksLikeBookSource(text)) {
-            sniffBookSourceSite(text, checked)
-            return
-        }
-        // 2) 兜底:存为本地 json 文件,以 clan:// 订阅加入
-        val resolved = resolveSubscriptionContent(text, "JSON导入")
-        if (resolved == null) {
-            return
-        }
-        saveJsonSubscription(resolved.content, checked)
-    }
-
-    /**
-     * JSON 文本按"清单数组 / 多线路 / 多仓 / 单条订阅"识别展开(JSON 粘贴导入与本地文件导入共用):
-     * 命中即按对应逻辑加入并返回 true;识别不了返回 false,由调用方按"订阅配置/本地文件"兜底。
-     * @param label 日志与提示里的来源说明(如 "JSON"/"文件")
-     */
-    private fun importJsonEntries(root: JsonElement, checked: Boolean, label: String,
-                                    origin: String = Subscription.ORIGIN_JSON): Boolean {
-        // 1) 清单数组 / 多仓数组
-        if (root.isJsonArray && importSubscriptionEntries(root.asJsonArray, checked, label + "清单", origin)) return true
-        if (!root.isJsonObject) return false
-        val obj = root.asJsonObject
-        // 新单条导出与批量 ZIP 内的 subscriptions.json 共用这一层描述格式。
-        val schema = runCatching { obj.get("schema")?.asInt }.getOrNull()
-        val category = runCatching { obj.get("category")?.asString }.getOrNull()
-        val described = obj.get("items")
-        if (schema == 1 && category == "subscriptions" && described != null && described.isJsonArray
-            && importSubscriptionEntries(described.asJsonArray, checked, label + "订阅", origin)
-        ) return true
-        // 2) 多线路
-        val urls = obj.get("urls")
-        if (urls != null && urls.isJsonArray
-            && importSubscriptionEntries(urls.asJsonArray, checked, label + "多线路", origin)
-        ) return true
-        // 3) 多仓(列出仓源让用户选择)
-        val storeHouse = obj.get("storeHouse")
-        if (storeHouse != null && storeHouse.isJsonArray && isStoreHouseList(storeHouse.asJsonArray)) {
-            showStoreHouseChoose(storeHouse.asJsonArray, checked)
-            return true
-        }
-        // 4) 单条订阅走自定义地址的同一条拉取/识别链路;清单则保留批量恢复语义。
-        if (SubscriptionImportRules.mayBeListEntry(obj)) {
-            val single = subscriptionOf(obj, "name", "url") ?: subscriptionOf(obj, "sourceName", "sourceUrl")
-            if (single != null) {
-                addOrigin = origin
-                if (obj.stringValue("content").isNotBlank()) {
-                    val one = JsonArray()
-                    one.add(obj)
-                    return importSubscriptionEntries(one, checked, label + "订阅", origin)
-                }
-                addSubscription(single.name, single.url, checked)
-                return true
-            }
-        }
-        return false
-    }
-
-    /** 订阅导入判定结果:@param rewritten 内容被补过 sites 外壳(须另存副本,不能引用原文件) */
-    private class SubscriptionContent(val content: String, val rewritten: Boolean)
-
-    /**
-     * 判定一段内容能不能当订阅配置(JSON 粘贴导入与本地文件导入共用),并按需补 {"sites":[…]} 外壳。
-     * 不能用的内容一律不落盘:存成 clan:// 订阅只会让应用每次启动都"解析配置失败",还会挤掉当前可用订阅。
-     * @return null=不是 TVBox 订阅配置(已提示用户并记日志)
-     */
-    private fun resolveSubscriptionContent(text: String, label: String): SubscriptionContent? {
-        val trimmed = text.trim()
-        // 裸站点条目/数组(用户从别处复制的单站配置):补外壳后当单源订阅用
-        val wrapped = CmsApiRules.wrapSiteJson(trimmed)
-        if (wrapped != null && wrapped != trimmed) {
-            return SubscriptionContent(wrapped, true)
-        }
-        return when (CmsApiRules.subscriptionShape(trimmed)) {
-            // 完整配置 / 加密套路(加载阶段解码):原样存
-            CmsApiRules.SHAPE_CONFIG, CmsApiRules.SHAPE_ENCRYPTED -> SubscriptionContent(trimmed, false)
-            // 裸站点类内容在上一段就该被补壳改写(判定与补壳用的是同一套规则),走到这说明补壳失败,不落盘
-            else -> {
-                rejectSubscriptionContent(trimmed, label)
-                null
-            }
-        }
-    }
-
-    /** 拒绝落盘时按内容形态给用户能懂的原因(「阅读」书源 / 只有直播源 / 单站条目 / 缺 sites),并记日志 */
-    private fun rejectSubscriptionContent(text: String, label: String) {
-        val reason = when (CmsApiRules.subscriptionShape(text)) {
-            CmsApiRules.SHAPE_BOOK_SOURCE -> "这是阅读书源，无法作为订阅"
-            CmsApiRules.SHAPE_LIVES -> "仅含直播源，无法作为订阅"
-            CmsApiRules.SHAPE_SITE -> "单站条目，请用 JSON 导入"
-            else -> "缺少站点列表，无法导入"
-        }
-        LogStore.fail(Category.SUBSCRIPTION, "订阅: 拒绝导入非订阅内容 (" + reason + ")")
-        showImportToast(reason)
-    }
-
-    /** 阅读视频书源优先按静态 JSON 接口规则验证；不匹配时再探测 CMS 接口与页面。 */
-    private fun sniffBookSourceSite(text: String, checked: Boolean) {
-        if (!CmsApiRules.looksLikeBookSource(text)) return
-        val videoSpec = LegadoVideoRules.parse(text)
-        if (videoSpec != null) {
-            importEpoch++
-            importCancelled = false
-            val epoch = importEpoch
-            val cancelled = java.util.concurrent.atomic.AtomicBoolean(false)
-            legadoImportCancelled?.set(true)
-            legadoImportCancelled = cancelled
-            showCancelableLoading("正在验证阅读视频源…") {
-                cancelled.set(true)
-                if (legadoImportCancelled === cancelled) legadoImportCancelled = null
-                importCancelled = true
-                importEpoch++
-                dismissLoadingDialog()
-                AppBubble.toast("已取消")
-            }
-            LegadoVideoImporter.probe(videoSpec, importDir(), cancelled, object : LegadoVideoImporter.Callback {
-                override fun onFound(name: String, configFile: File) {
-                    if (isFinishing || isDestroyed || importCancelled || epoch != importEpoch) return
-                    if (legadoImportCancelled === cancelled) legadoImportCancelled = null
-                    dismissImportLoading()
-                    val before = mSubscriptions.size
-                    addLocalFileSubscription(configFile, name, checked)
-                    mSubscriptionAdapter.setNewData(mSubscriptions)
-                    updateEmptyState()
-                    if (mSubscriptions.size > before) showImportToast("阅读视频源已接入")
-                }
-
-                override fun onNotFound(reason: String) {
-                    if (isFinishing || isDestroyed || importCancelled || epoch != importEpoch) return
-                    if (legadoImportCancelled === cancelled) legadoImportCancelled = null
-                    dismissImportLoading()
-                    showImportToast("书源验证失败：$reason")
-                }
-            }, LegadoVideoImporter.Progress { hint ->
-                if (!isFinishing && !isDestroyed && !importCancelled && epoch == importEpoch) {
-                    updateImportHint(hint)
-                }
-            })
-            return
-        }
-        val siteUrl = CmsApiRules.bookSourceSiteUrl(text)
-        if (siteUrl == null || !CmsApiRules.looksLikeSiteUrl(siteUrl)) {
-            AppBubble.toast("书源缺少可用站点地址")
-            return
-        }
-        showLoadingDialog("正在读取地址…")
-        // 带上完整书源文本:抓页面时用 sortUrl 的分类、搜索路径及子目录。
-        sniffSource(guessJsonName(text) ?: "", siteUrl, null, CmsSiteImporter.InputKind.SITE, checked, text)
-    }
-
-    /**
-     * 采集接口走不通时的兜底:按苹果CMS 站点页面结构抓(首页分类 → 分类页 → 详情页 → 播放页),
-     * 探通后生成指向 {@code assets://js/lib/maccms.js} 的单源配置加入订阅。
-     * 探不通不加(宁缺毋滥:打不开的订阅会让应用每次启动都"解析配置失败")。
-     */
-    private fun scrapeSite(name: String, siteUrl: String, hintText: String?, checked: Boolean,
-                           onComplete: (() -> Unit)? = null) {
-        val epoch = importEpoch
-        updateImportHint("正在按站点页面识别…\n" + CmsApiRules.displayHost(siteUrl))
-        HtmlSiteImporter.probe(siteUrl, hintText, importDir(), object : HtmlSiteImporter.Callback {
-            override fun onFound(siteName: String, file: File, samplePlayUrl: String) {
-                if (isFinishing || isDestroyed || importCancelled || epoch != importEpoch) return
-                dismissImportLoading()
-                val display = if (isDefaultSubName(name)) siteName else name.trim()
-                addLocalFileSubscription(file, display, checked)
-                showImportToast("站点已接入")
-                onComplete?.invoke()
-            }
-
-            override fun onNotFound() {
-                if (isFinishing || isDestroyed || importCancelled || epoch != importEpoch) return
-                dismissImportLoading()
-                LogStore.fail(Category.SUBSCRIPTION,
-                    "订阅: 采集接口与站点页面均不可用 (" + logSource(siteUrl) + ")")
-                showImportToast("未找到可用站点接口")
-                onComplete?.invoke()
-            }
-        }, object : HtmlSiteImporter.Progress {
-            override fun onStep(hint: String) {
-                if (isFinishing || isDestroyed || importCancelled || epoch != importEpoch) return
-                updateImportHint(hint)
-            }
-        })
-    }
-
-    /**
-     * 远端响应能否直接存成订阅地址:完整配置({@code sites} 数组)与加密套路可用;
-     * 裸站点条目/清单不行——那要就地补壳另存,只能走 JSON 粘贴或本地文件导入。
-     */
-    private fun isLoadableSubscription(text: String): Boolean {
-        return when (CmsApiRules.subscriptionShape(text.trim())) {
-            CmsApiRules.SHAPE_CONFIG, CmsApiRules.SHAPE_ENCRYPTED -> true
-            else -> false
-        }
-    }
-
-    /**
-     * 读本地导入文件文本用于内容判定;文件过大(订阅配置不可能这么大)或读不出返回 null,
-     * 调用方按旧逻辑"原样当 clan:// 订阅加入",不因判定失败阻断导入。
-     */
-    private fun readImportText(file: File): String? {
-        if (file.length() > MAX_JUDGE_BYTES) return null
-        return try {
-            file.readText(Charsets.UTF_8)
-        } catch (t: Throwable) {
-            null
-        }
-    }
-
-    /**
-     * 未识别的 JSON(单源规则配置、整份配置等):按内容摘要存成应用专属目录下的 json 文件,
-     * 再以 clan:// 本地订阅加入;启用时按普通订阅配置拉取解析。
-     */
-    private fun saveJsonSubscription(text: String, checked: Boolean) {
-        try {
-            val name = guessJsonName(text) ?: "本地JSON导入"
-            val base = sanitizeImportName(name)
-            val dot = base.lastIndexOf('.')
-            val stem = if (dot > 0) base.substring(0, dot) else base
-            val fileName = stem + "_" + contentDigest(text) + ".json"
-            val file = SubscriptionImportFiles.runLocked {
-                File(ensureImportDir(), fileName).also { if (!it.exists()) it.writeText(text, Charsets.UTF_8) }
-            }
-            addLocalFileSubscription(file, name, checked)
-        } catch (t: Throwable) {
-            LogStore.fail(Category.SUBSCRIPTION, "订阅: JSON 导入保存本地文件失败 (${exceptionType(t)})")
-            AppBubble.toast("JSON 导入失败")
-        }
-    }
-
-    /** 从 JSON 里猜一个订阅名:sourceName / name / title / sites[0].name,取不到返回 null */
-    private fun guessJsonName(text: String): String? {
-        val root = try {
-            JsonParser.parseString(text)
-        } catch (t: Throwable) {
-            return null
-        }
-        if (!root.isJsonObject) return null
-        val obj = root.asJsonObject
-        for (key in arrayOf("sourceName", "name", "title")) {
-            val v = obj.stringValue(key).trim()
-            if (v.isNotEmpty()) return v.take(20)
-        }
-        val sites = obj.get("sites")
-        if (sites != null && sites.isJsonArray && sites.asJsonArray.size() > 0 && sites.asJsonArray[0].isJsonObject) {
-            val v = sites.asJsonArray[0].asJsonObject.stringValue("name").trim()
-            if (v.isNotEmpty()) return v.take(20)
-        }
-        return null
-    }
-
-    /**
-     * 以 clan:// 本地文件订阅加入列表(本地导入与 JSON 导入共用):
-     * 校验文件位于主存储、记忆导入目录,按 clan:// 地址去重后加入。
-     */
-    private fun addLocalFileSubscription(file: File, name: String, checked: Boolean) {
-        if (!isUnderPrimaryStorage(file)) {
-            showImportToast("请选本机存储中的订阅文件")
-            return
-        }
-        // 记忆导入目录(与旧文件选择器一致:以父目录为准)
-        SubscriptionConfig.setLastImportDir(file.parent)
-        val clanPath = clanPathOf(file)
-        for (item in mSubscriptions) {
-            if (item.url == clanPath) {
-                showImportToast("订阅地址已存在")
-                return
-            }
-        }
-        addSubscription(name, clanPath, checked)
-    }
-
-    /** 内部订阅文件 → clan:// 订阅地址(clan 本地服务按主存储相对路径取文件) */
-    private fun clanPathOf(file: File): String =
-        "clan://localhost" + file.absolutePath.removePrefix("/storage/emulated/0")
-
-    /**
-     * clan:// 地址 → 内部订阅库里的文件;**只认本应用内部目录下的路径**(防止删订阅时误删别处文件,或
-     * 导出时读到不该读的文件);不在内部目录内返回 null。
-     */
-    private fun libraryFileOf(url: String): File? {
-        val prefix = "clan://localhost/"
-        if (!url.startsWith(prefix)) return null
-        return try {
-            val f = File("/storage/emulated/0/" + url.removePrefix(prefix)).canonicalFile
-            val dir = importDir().canonicalFile
-            if (f.path.startsWith(dir.path + File.separator)) f else null
-        } catch (_: java.io.IOException) {
-            null
-        }
-    }
-
-    /**
-     * 把文本内容落成内部订阅库文件(导出清单里的本地条目导入时用):
-     * 文件名优先沿用清单里的 file(同名内容直接复用),否则按"名字_内容摘要"生成。
-     */
-    private fun writeLibraryFile(suggestedName: String, displayName: String, content: String): File? {
-        return try {
-            val bytes = content.toByteArray(Charsets.UTF_8)
-            if (bytes.size > 8 * 1024 * 1024) return null
-            val base = sanitizeImportName(suggestedName.ifBlank { displayName.ifBlank { "导入订阅" } })
-            val dot = base.lastIndexOf('.')
-            val stem = if (dot > 0) base.substring(0, dot) else base
-            val ext = if (dot > 0) base.substring(dot) else ".json"
-            val fileName = stem + "_" + contentDigest(content) + ext
-            SubscriptionImportFiles.runLocked {
-                val file = File(ensureImportDir(), fileName)
-                val atomic = android.util.AtomicFile(file)
-                val output = atomic.startWrite()
-                try {
-                    output.write(bytes)
-                    atomic.finishWrite(output)
-                } catch (failure: Throwable) {
-                    atomic.failWrite(output)
-                    throw failure
-                }
-                file
-            }
-        } catch (t: Throwable) {
-            LogStore.fail(Category.SUBSCRIPTION, "订阅: 写入内部订阅文件失败 (${exceptionType(t)})")
-            null
-        }
-    }
-
-    /** 删除订阅时清掉它的内部副本(仅本地导入/JSON 导入的 clan:// 条目有);非内部文件空操作 */
-    private fun deleteLibraryFileOf(sub: Subscription?) {
-        if (sub == null) return
-        try {
-            SubscriptionImportFiles.runLocked {
-                val file = libraryFileOf(sub.url)
-                if (file?.isFile == true) file.delete()
-            }
-        } catch (t: Throwable) {
-            LogStore.fail(Category.SUBSCRIPTION, "订阅: 删除订阅内部文件失败 (${exceptionType(t)})")
-        }
-    }
-
-    /** 从 JSON 对象取订阅条目(名称与地址都非空才算有效) */
-    private fun subscriptionOf(obj: JsonObject, nameKey: String, urlKey: String): Subscription? {
-        val name = obj.stringValue(nameKey).trim()
-        val url = obj.stringValue(urlKey).trim()
-        return if (name.isNotEmpty() && url.isNotEmpty()) Subscription(name, url) else null
-    }
-
-    /** 安全取 JSON 字符串字段(缺失/非字符串返回空串) */
-    private fun JsonObject.stringValue(key: String): String {
-        val el = get(key) ?: return ""
-        return if (el.isJsonPrimitive) el.asString else ""
-    }
-
-    /** 是否多仓格式:首条为对象且带 sourceName/sourceUrl */
-    private fun isStoreHouseList(list: JsonArray): Boolean {
-        return list.size() > 0 && list[0].isJsonObject
-            && list[0].asJsonObject.has("sourceName") && list[0].asJsonObject.has("sourceUrl")
-    }
-
-    /**
-     * 是否"配置类"JSON(整份 TVBox 配置或带规则字段的单源配置):
-     * 这类内容不能当订阅条目解析,只能存成本地文件按订阅配置加载。
-     */
-    private fun looksLikeConfigJson(obj: JsonObject): Boolean {
-        for (key in obj.keySet()) {
-            if (key.startsWith("rule") || key == "sites" || key == "lives" || key == "spider"
-                || key == "parses" || key == "wallpaper" || key == "rules" || key == "storeHouse"
-            ) return true
-        }
-        return false
-    }
-
-    /** 多仓 {"storeHouse":[{sourceName,sourceUrl},...]}:列出仓源供用户选择后加入(订阅地址返回多仓时同一套逻辑) */
-    private fun showStoreHouseChoose(storeHouseList: JsonArray, checked: Boolean,
-                                     onComplete: (() -> Unit)? = null) {
-        mSources.clear()
-        for (el in storeHouseList) {
-            if (!el.isJsonObject) continue
-            val obj = el.asJsonObject
-            val name = obj.stringValue("sourceName").trim().replace("<|>|《|》|-".toRegex(), "")
-            val url = obj.stringValue("sourceUrl").trim()
-            if (name.isNotEmpty() && url.isNotEmpty()) mSources.add(Source(name, url))
-        }
-        if (mSources.isEmpty()) {
-            LogStore.fail(Category.SUBSCRIPTION, "订阅: 多仓配置中没有可用的源")
-            showImportToast("多仓配置中没有可用的源")
-            onComplete?.invoke()
-            return
-        }
-        XPopup.Builder(this)
-            .asCustom(
-                ChooseSourceDialog(
-                    this,
-                    mSources,
-                    { position: Int, _: String? ->
-                    // 再根据多线路格式获取配置,如果仓内是正常多线路模式,name没用,直接使用线路的命名
-                    resumeBatchLoading()
-                    addSubscription(
-                        mSources[position].sourceName,
-                        mSources[position].sourceUrl,
-                        checked,
-                        onComplete
-                    )
-                    },
-                    Runnable {
-                        resumeBatchLoading()
-                        onComplete?.invoke()
-                    }
-                ))
-            .show()
-    }
-
-    /**
-     * 把 SAF 选中的文件内容复制进应用专属导入目录。
-     * 使用 URI 摘要作为副本名,重复选择同一文件时复用已有副本。
-     */
-    private fun importCopyOf(uri: Uri, displayName: String): File? {
-        return try {
-            val base = sanitizeImportName(displayName)
-            val dot = base.lastIndexOf('.')
-            val stem = if (dot > 0) base.substring(0, dot) else base
-            val ext = if (dot > 0) base.substring(dot) else ""
-            val fileName = stem + "_" + uriDigest(uri) + ext
-            val existing = SubscriptionImportFiles.runLocked {
-                File(importDir(), fileName).takeIf { it.exists() }
-            }
-            if (existing != null) return existing
-            // SAF providers can block on remote reads; stage outside the directory lock.
-            val staged = File.createTempFile("subscription_copy_", ".tmp", cacheDir)
-            try {
-                contentResolver.openInputStream(uri)?.use { input ->
-                    FileOutputStream(staged).use { output -> input.copyTo(output) }
-                } ?: return null
-                SubscriptionImportFiles.runLocked {
-                    val target = File(ensureImportDir(), fileName)
-                    if (!target.exists()) {
-                        val atomic = android.util.AtomicFile(target)
-                        val output = atomic.startWrite()
-                        try {
-                            staged.inputStream().use { input -> input.copyTo(output) }
-                            atomic.finishWrite(output)
-                        } catch (failure: Throwable) {
-                            atomic.failWrite(output)
-                            throw failure
-                        }
-                    }
-                    target
-                }
-            } finally {
-                staged.delete()
-            }
-        } catch (t: Throwable) {
-            LogStore.fail(Category.SUBSCRIPTION, "订阅: 本地文件复制失败 (${exceptionType(t)})")
-            null
-        }
-    }
-
-    private fun uriDigest(uri: Uri): String = contentDigest(uri.toString())
-
-    /** 文本内容摘要(导入副本命名去重用:同一文件/同一 JSON 重复导入复用已有副本) */
-    private fun contentDigest(text: String): String {
-        val digest = MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
-        return digest.joinToString("") { "%02x".format(it) }.take(16)
-    }
-
-    /** 清理文件名中不能出现在真实路径的字符,并确保带 txt/json 扩展名 */
-    private fun sanitizeImportName(displayName: String): String {
-        var n = displayName.replace(Regex("[/\\\\:*?\"<>|\\u0000\\s]"), "_").trim()
-        if (!n.lowercase().endsWith(".txt") && !n.lowercase().endsWith(".json")) {
-            n += ".txt"
-        }
-        if (n.length > 80) n = n.substring(0, 80)
-        return n
-    }
-
-    /** 查询所选文档的显示名(取不到时用 uri 末段兜底) */
-    private fun queryDisplayName(uri: Uri): String? {
-        return try {
-            contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
-                if (c.moveToFirst()) c.getString(0) else null
-            }
-        } catch (t: Throwable) {
-            uri.lastPathSegment
-        }
-    }
-
-    private fun isUnderPrimaryStorage(file: File): Boolean {
-        return try {
-            val root = Environment.getExternalStorageDirectory().canonicalFile
-            val candidate = file.canonicalFile
-            candidate == root || candidate.path.startsWith(root.path + File.separator)
-        } catch (t: Throwable) {
-            false
-        }
-    }
-
-    /** 支持更多存储提供方转真实路径;主要支持 primary/home 等可被 clan 服务器按路径读取的存储 */
-    private fun addSubscription(name: String, url: String, checked: Boolean,
-                                onComplete: (() -> Unit)? = null,
-                                loadingHint: String = "正在读取地址…") {
-        if (!SubscriptionImportRules.isSupportedAddress(url)) {
-            LogStore.fail(Category.SUBSCRIPTION, "订阅: 地址格式不正确 (" + logSource(url) + ")")
-            showImportToast("订阅地址格式不正确")
-            onComplete?.invoke()
-            return
-        }
-        val duplicate = mSubscriptions.firstOrNull { it.url == url }
-        if (duplicate != null) {
-            LogStore.fail(Category.SUBSCRIPTION, "订阅: 地址已存在 (" + logSource(url) + ")")
-            showImportToast("订阅地址已存在")
-            onComplete?.invoke()
-            return
-        }
-        if (url.startsWith("clan://")) {
-            addSub2List(name, url, checked)
-            mSubscriptionAdapter.setNewData(mSubscriptions)
-            updateEmptyState()
-            onComplete?.invoke()
-        } else if (url.startsWith("http")) {
-            if (!activeImportUrls.add(url)) {
-                LogStore.fail(Category.SUBSCRIPTION, "订阅: 清单包含循环地址 (" + logSource(url) + ")")
-                showImportToast("订阅清单包含循环地址")
-                onComplete?.invoke()
-                return
-            }
-            val finish: () -> Unit = {
-                activeImportUrls.remove(url)
-                onComplete?.invoke()
-                Unit
-            }
-            // 从点击这一刻就把加载态亮出来:拉页面 → 嗅探接口可能要十几秒
-            // (以前这里拉完页面先 dismiss、再由嗅探重新 show,中间那段就是"点了没反应")。
-            // 可取消:点"取消"把这次添加作废,后面回来的结果一律不再采用
-            if (batchImportInProgress) {
-                // 批量流程持有同一个加载框；逐条识别时只更新状态，不清掉整批的取消标志。
-                updateImportHint("正在读取地址…")
-            } else {
-                importEpoch++
-                importCancelled = false
-                showCancelableLoading(loadingHint) {
-                    importCancelled = true
-                    importEpoch++
-                    activeImportUrls.remove(url)
-                    dismissLoadingDialog()
-                    AppBubble.toast("已取消")
-                }
-            }
-            val epoch = importEpoch
-            HttpClient.get(url, null, "get_subscription", object : HCallBack {
-                    override fun onSuccess(response: String) {
-                        if (isFinishing || isDestroyed || importCancelled || epoch != importEpoch) return
-                        // 「图片裹配置」套路(8 位字母/0 + ** + base64,http://www.饭太硬.net/tv 这类分享地址就是):
-                        // 响应本身是**二进制/乱码**(图片 + 尾部 base64),直接按 JSON 解析必然失败,
-                        // 接着会被当成资源站去嗅探采集接口 —— 用户口径"接口明明可以用啊,为啥弹未识别到采集接口"。
-                        // 解出来确认能当配置用,就按 JSON 响应的同一条流程判定;地址仍原样存成订阅
-                        // (加载阶段 ApiConfig.FindResult 用的是同一套解包规则,配置更新时能跟着变)。
-                        val packed = CmsApiRules.unwrapPackedConfig(response)
-                        handleSubscriptionBody(name, url, packed ?: response, checked, finish)
-                        mSubscriptionAdapter.setNewData(mSubscriptions)
-                        updateEmptyState()
-                    }
-
-                    override fun onError(e: Throwable) {
-                        if (isFinishing || isDestroyed || importCancelled || epoch != importEpoch) return
-                        // 拉取这一步失败:只记异常类型;"新增算不算失败"的结论交给下面两个分支
-                        // 各自落(站点形态转嗅探,它自己记成功/失败;非站点形态由紧随的 LogStore.fail 记)——
-                        // 这里不再下"新增订阅失败"的结论,否则站点形态后续接入成功时日志里会留一条误导
-                        LogStore.fail(Category.SUBSCRIPTION,
-                            "订阅: 新增订阅拉取失败 (" + logSource(url) + ", " + exceptionType(e) + ")")
-                        if (hasUnknownHost(e)) {
-                            dismissImportLoading()
-                            showImportToast("域名无法解析，请检查地址或 DNS")
-                            finish()
-                            return
-                        }
-                        // 通用兜底:地址像资源站就说"拉不到页面"太苛刻(站点常拦非浏览器 UA/首页超时),
-                        // 仍按站点候选路径实探一次,能探到接口就正常接入
-                        if (CmsApiRules.looksLikeSiteUrl(url)) {
-                            sniffSource(name, url, null, CmsSiteImporter.InputKind.SITE, checked,
-                                onComplete = finish)
-                        } else {
-                            dismissImportLoading()
-                            LogStore.fail(Category.SUBSCRIPTION, "订阅: 新增订阅失败 网络错误/地址无效")
-                            showImportToast("订阅失败，请检查地址或网络")
-                            finish()
-                        }
-                    }
-                })
-        } else {
-            LogStore.fail(Category.SUBSCRIPTION, "订阅: 格式不正确 (" + logSource(url) + ")")
-            showImportToast("订阅格式不正确")
-            onComplete?.invoke()
-        }
-    }
-
-    private fun hasUnknownHost(error: Throwable): Boolean {
-        var cause: Throwable? = error
-        while (cause != null) {
-            if (cause is UnknownHostException) return true
-            cause = cause.cause
-        }
-        return false
     }
 
     /** 订阅地址可能带鉴权信息；业务日志只保留可安全区分的来源类型。 */
@@ -2056,197 +868,21 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
     private fun exceptionType(error: Throwable?): String =
         error?.javaClass?.simpleName ?: "未知错误"
 
-    /**
-     * 订阅地址的响应按"多线路 / 多仓 / 单线路配置 / 资源站页面"判定并落地。
-     *
-     * 新增订阅(HTTP)两条来源共用:响应本来就是 JSON,或响应是「图片裹配置」
-     * ({@link CmsApiRules#unwrapPackedConfig})解出来的配置正文。地址始终用用户填的那个 ——
-     * 完整配置存 URL(配置更新能跟着变),多线路/多仓则展开成各自的地址。
-     *
-     * @param body 判定用的正文(图片裹配置时是解包结果,其余情况就是响应原文)
-     */
-    private fun handleSubscriptionBody(name: String, url: String, body: String, checked: Boolean,
-                                       onComplete: (() -> Unit)? = null) {
-        if (SubscriptionImportRules.isAccessDeniedResponse(body)) {
-            dismissImportLoading()
-            LogStore.fail(Category.SUBSCRIPTION, "订阅: 地址拒绝访问 (" + logSource(url) + ")")
-            showImportToast("订阅地址拒绝访问，请检查站点权限或更换地址")
-            onComplete?.invoke()
-            return
-        }
-        try {
-            val json = JsonParser.parseString(body).asJsonObject
-            // 多线路?
-            val urls = json["urls"]
-            // 多仓?
-            val storeHouse = json["storeHouse"]
-            if (urls != null && urls.isJsonArray) { // 多线路
-                dismissImportLoading()
-                if (!importSubscriptionEntries(urls.asJsonArray, checked, "多线路", addOrigin,
-                        onComplete)) onComplete?.invoke()
-            } else if (storeHouse != null && storeHouse.isJsonArray
-                && isStoreHouseList(storeHouse.asJsonArray)
-            ) { // 多仓
-                dismissLoadingDialog()   // 要让位给选仓弹窗
-                showStoreHouseChoose(storeHouse.asJsonArray, checked, onComplete)
-            } else if (looksLikeConfigJson(json) || CmsApiRules.detectKind(body) < 0) {
-                // 单线路订阅配置(含只有 flags/ads 之类键的最小配置)→ 原样加入;
-                // 响应确实是 CMS 采集数据时,若粘的就是采集接口则直接落成单源配置,否则按站点嗅探
-                if (looksLikeConfigJson(json)) {
-                    // 配置类 JSON 不代表能当订阅加载(缺 sites 的存进去必然"解析配置失败"、
-                    // 还会把当前可用订阅挤掉):先判定,不能用的直接说明原因,不再原样加入
-                    if (isLoadableSubscription(body)) {
-                        dismissImportLoading()
-                        addSub2List(name, url, checked)
-                        onComplete?.invoke()
-                    } else {
-                        dismissImportLoading()
-                        rejectSubscriptionContent(body.trim(), "订阅地址 " + url)
-                        onComplete?.invoke()
-                    }
-                } else {
-                    sniffSource(
-                        name, url, body,
-                        if (CmsApiRules.looksLikeApi(url)) CmsSiteImporter.InputKind.API
-                        else CmsSiteImporter.InputKind.SITE,
-                        checked,
-                        onComplete = onComplete
-                    )
-                }
-            } else { // 填的是资源站采集接口/首页(典型 MacCMS 站):嗅探并生成单源订阅
-                sniffSource(name, url, body, CmsSiteImporter.InputKind.SITE, checked,
-                    onComplete = onComplete)
-            }
-        } catch (th: Throwable) {
-            // 不是 JSON 配置:多半是资源站网页,按站点嗅探采集接口
-            sniffSource(name, url, body, CmsSiteImporter.InputKind.SITE, checked,
-                onComplete = onComplete)
-        }
-    }
-
-    /**
-     * 填入的是资源站地址(首页/栏目页/说明页)或采集接口,而不是订阅配置:
-     * 嗅探采集接口并生成单源订阅配置后以 clan:// 加入。
-     * <p>
-     * 通用接入:只看"这份响应能不能当订阅用"——
-     * 能当订阅(多线路/多仓/完整配置)的原样加入;不能当订阅的一律嗅探;响应根本读不到但地址像站点时也嗅探。
-     * 嗅探不到接口时不再把站点地址原样存成订阅(那会在加载配置阶段报"解析配置失败"),直接提示用户。
-     * <p>
-     * 站点类输入(kind=SITE)在找不到采集接口时还会继续走 [scrapeSite]:直接抓站点页面
-     * (苹果CMS 站页面结构固定,接口关闭也常能抓),这是"接口不可用"站点的最后一档兜底。
-     * <p>
-     * 加载态:调用方已经亮起加载框(带"正在读取地址…"),这里接管并显示探测进度;
-     * 探测要逐个试候选地址、可能十几秒,结束(成功/失败)才关闭,中途不关。
-     *
-     * @param hintText 已知的线索文本(书源 JSON / 站点页面),用于推断站点子目录;可为 null
-     */
-    private fun sniffSource(name: String, inputUrl: String, probedContent: String?,
-                            kind: CmsSiteImporter.InputKind, checked: Boolean,
-                            hintText: String? = null, onComplete: (() -> Unit)? = null) {
-        val epoch = importEpoch
-        updateImportHint("正在识别资源站…\n$inputUrl")
-        CmsSiteImporter.probeInput(
-            inputUrl, probedContent, kind, importDir(),
-            object : CmsSiteImporter.Callback {
-                override fun onFound(siteName: String, file: File, api: String) {
-                    if (isFinishing || isDestroyed || importCancelled || epoch != importEpoch) return
-                    dismissImportLoading()
-                    val display = if (isDefaultSubName(name)) siteName else name.trim()
-                    addLocalFileSubscription(file, display, checked)
-                    showImportToast("资源站已接入")
-                    onComplete?.invoke()
-                }
-
-                override fun onNotFound() {
-                    if (isFinishing || isDestroyed || importCancelled || epoch != importEpoch) return
-                    // 站点类输入:采集接口不可用(如接口关闭)时继续按页面结构抓一次,别让用户只得到一句"没找到"
-                    if (kind == CmsSiteImporter.InputKind.SITE && CmsApiRules.looksLikeSiteUrl(inputUrl)) {
-                        scrapeSite(name, inputUrl, hintText ?: probedContent, checked, onComplete)
-                        return
-                    }
-                    dismissImportLoading()
-                    LogStore.fail(Category.SUBSCRIPTION,
-                        "订阅: 资源站未识别到采集接口 (" + logSource(inputUrl) + ")")
-                    showImportToast("未找到接口，请换个地址")
-                    onComplete?.invoke()
-                }
-            },
-            object : CmsSiteImporter.Progress {
-                override fun onProbe(done: Int, total: Int, url: String) {
-                    if (isFinishing || isDestroyed || importCancelled || epoch != importEpoch) return
-                    // 显示"第几个候选 + 该候选主机名":用户能看到在动,而不是以为点了没反应
-                    val shown = if (done <= 0) "正在查说明页…" else "正在探测接口 $done/$total"
-                    updateImportHint("识别资源站：$shown\n${CmsApiRules.displayHost(url)}")
-                }
-            })
-    }
-
-    /** 用户没在弹窗里改名(默认"订阅: N")时,用站点自己的名字 */
-    private fun isDefaultSubName(name: String): Boolean {
-        val n = name.trim()
-        return n.isEmpty() || n.startsWith("订阅:") || n.startsWith("订阅：")
-    }
-
-    /**
-     * 当前这次"添加订阅"的来源({@link Subscription#getOrigin()}):直接导入/本地导入/JSON 导入。
-     * 三条路径最后都汇到 {@link #addSub2List} 与 {@link #addLocalFileSubscription},用字段传递比把参数
-     * 穿过十几个函数干净;流程都是模态的(带加载框),不存在并发交错。
-     */
-    private var addOrigin: String = Subscription.ORIGIN_DIRECT
-    private val activeImportUrls = HashSet<String>()
-
-    /** 导入/嗅探被用户取消:之后回来的异步结果一律丢弃 */
-    private var importCancelled = false
-    private var importEpoch = 0
-    private var legadoImportCancelled: java.util.concurrent.atomic.AtomicBoolean? = null
-
-    /**
-     * 仅当选中本地文件和添加的为单线路时,使用此订阅生效。多线路会直接解析全部并添加,多仓会展开并选择,最后也按多线路处理,直接添加
-     * @param name
-     * @param url
-     * @param checkNewest
-     */
-    private fun addSub2List(name: String, url: String, checkNewest: Boolean) {
-        if (checkNewest) { //选中最新的,清除以前的选中订阅
-            for (subscription in mSubscriptions) {
-                if (subscription.isChecked) {
-                    subscription.setChecked(false)
-                }
-            }
-            mSelectedUrl = url
-            mSubscriptions.add(Subscription(name, url, addOrigin).setChecked(true))
-        } else {
-            mSubscriptions.add(Subscription(name, url, addOrigin).setChecked(false))
-        }
-        LogStore.success(Category.SUBSCRIPTION, "订阅: 导入成功 (" + logSource(url) + ")")
-        if (checkNewest && liveTabActive) refreshLiveSources()
-    }
-
     override fun onPause() {
         super.onPause()
         // 更新缓存
-        SubscriptionConfig.setApiUrl(mSelectedUrl)
-        SubscriptionConfig.setSubscriptions(mSubscriptions)
+        SubscriptionConfig.setApiUrl(state.selectedUrl)
+        SubscriptionConfig.setSubscriptions(state.subscriptions)
     }
 
     override fun finish() {
         // 不同订阅的 csp.jar 可加载同名 native 库。只清 Activity 任务栈仍在同一进程，
         // 旧 ClassLoader 持有该库时新 ClassLoader 会被 ART 拒绝，首页可能卡到 45 秒看门狗。
-        if (mBeforeUrl != mSelectedUrl) {
+        if (state.beforeUrl != state.selectedUrl) {
             // relaunchApp(true) 会结束当前进程；先同步落盘，不能依赖稍后的 onPause。
-            val provider = LiveChannelConfigProviders.get()
-            val selectedLiveUrl = SystemConfig.getLiveUrl()
-            if (selectedLiveUrl.isNotEmpty() &&
-                provider.loadedSubscriptionUrl != mSelectedUrl &&
-                provider.subscribeLiveSources.any { it.url == selectedLiveUrl } &&
-                !LiveConfig.liveHistory().contains(selectedLiveUrl) &&
-                livePreviewCache[mSelectedUrl].orEmpty().none { it.url == selectedLiveUrl }
-            ) {
-                // 旧订阅独有的直播地址不能随着视频源切换变成一条“用户自建”源。
-                SystemConfig.setLiveUrl("")
-            }
-            SubscriptionConfig.setApiUrl(mSelectedUrl)
-            SubscriptionConfig.setSubscriptions(mSubscriptions)
+            liveCoordinator.clearStaleLiveUrlBeforeRestart()
+            SubscriptionConfig.setApiUrl(state.selectedUrl)
+            SubscriptionConfig.setSubscriptions(state.subscriptions)
             if (packageManager.getLaunchIntentForPackage(packageName) == null) {
                 AppBubble.toast("订阅已保存，自动重启失败，请手动重开应用")
                 return
@@ -2266,9 +902,83 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>() {
     }
 
     override fun onDestroy() {
-        legadoImportCancelled?.set(true)
+        importCoordinator.onPageDestroyed()
         tabPageAnimator.finish()
         super.onDestroy()
         HttpClient.cancel("get_subscription")
+    }
+
+    // ------------------------------------------------------------------
+    // SubscriptionImportHost / SubscriptionLiveHost / SubscriptionExportHost
+    // ------------------------------------------------------------------
+
+    override fun isPageActive(): Boolean = !isFinishing && !isDestroyed
+
+    override fun post(runnable: Runnable) {
+        mBinding.root.post(runnable)
+    }
+
+    override fun runOnUi(runnable: Runnable) {
+        runOnUiThread(runnable)
+    }
+
+    override fun showToast(text: String) {
+        AppBubble.toast(text)
+    }
+
+    override fun showLoading(hint: String, onCancel: (() -> Unit)?) { // 接口默认值只在接口调用点生效,这里不能重复声明
+        showLoadingDialog(hint, if (onCancel != null) Runnable { onCancel() } else null)
+    }
+
+    override fun setLoadingHint(hint: String) {
+        updateLoadingHint(hint)
+    }
+
+    override fun dismissLoading() {
+        dismissLoadingDialog()
+    }
+
+    override fun onSubscriptionListChanged() {
+        mSubscriptionAdapter.setNewData(state.subscriptions)
+        updateEmptyState()
+    }
+
+    override fun persistSubscriptions() {
+        mSubscriptionAdapter.notifyDataSetChanged()   //删除/选择只刷新,不触发重新排序
+        updateEmptyState()
+        SubscriptionConfig.setApiUrl(state.selectedUrl)
+        SubscriptionConfig.setSubscriptions(state.subscriptions)
+        renderLiveSources()                           //订阅变了,直播源页的「来自:X」跟着变
+    }
+
+    override fun refreshLiveSources() {
+        renderLiveSources()
+    }
+
+    override fun showStoreHouseChoose(
+        sources: List<Source>,
+        onPick: (name: String, url: String) -> Unit,
+        onDismiss: () -> Unit
+    ) {
+        XPopup.Builder(this)
+            .asCustom(
+                ChooseSourceDialog(
+                    this,
+                    sources,
+                    { position: Int, _: String? -> onPick(sources[position].sourceName, sources[position].sourceUrl) },
+                    Runnable { onDismiss() }
+                ))
+            .show()
+    }
+
+    override fun onLiveSourcesRenderNeeded() {
+        renderLiveSources()
+    }
+
+    override fun selectedForExport(): List<Subscription> = mSubscriptionAdapter.selection()
+
+    override fun onExportFinished(file: File, count: Int) {
+        exitExportMode()
+        shareExport(file)
     }
 }

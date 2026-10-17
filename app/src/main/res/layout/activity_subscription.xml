@@ -28,21 +28,21 @@
             <ImageView
                     android:id="@+id/iv_use_tip"
                     android:layout_width="wrap_content"
-                    android:layout_height="21dp"
+                    android:layout_height="18dp"
                     android:paddingLeft="4dp"
                     android:src="@drawable/ic_use_description_24"/>
 
             <ImageView
                     android:id="@+id/iv_export"
                     android:layout_width="wrap_content"
-                    android:layout_height="20dp"
+                    android:layout_height="16dp"
                     android:paddingLeft="2dp"
                     android:src="@drawable/ic_export_24"/>
 
             <ImageView
                 android:id="@+id/iv_add"
                 android:layout_width="wrap_content"
-                android:layout_height="28dp"
+                android:layout_height="20dp"
                 android:paddingLeft="2dp"
                 android:src="@drawable/ic_add_24"/>
         </LinearLayout>
@@ -192,7 +192,7 @@
             android:background="@android:color/transparent"
             android:clipToPadding="false"
             android:paddingVertical="10dp"
-            tools:listitem="@layout/item_live_source"
+            tools:listitem="@layout/item_subscription"
             app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"/>
 
         <include

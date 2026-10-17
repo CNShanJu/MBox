@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 来源信息弹窗:收藏/历史卡片点"来源徽标"弹出。主题面板底(bg_dialog → bg_float),文字走主题色。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="300dp"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_dialog"
+    android:orientation="vertical"
+    android:padding="20dp">
+
+    <TextView
+        android:id="@+id/tv_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:text="来源信息"
+        android:textColor="@color/text_foreground"
+        android:textSize="17sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/tv_vod"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="14dp"
+        android:ellipsize="end"
+        android:gravity="center"
+        android:maxLines="2"
+        android:textColor="@color/text_foreground"
+        android:textSize="15sp"
+        tools:text="影片名称" />
+
+    <TextView
+        android:id="@+id/tv_subscription"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:gravity="center"
+        android:textColor="@color/text_sub_foreground"
+        android:textSize="13sp"
+        tools:text="来源订阅：xxx" />
+
+    <TextView
+        android:id="@+id/tv_source"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:gravity="center"
+        android:textColor="@color/text_sub_foreground"
+        android:textSize="13sp"
+        tools:text="站点：xxx" />
+
+    <TextView
+        android:id="@+id/tv_status"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:gravity="center"
+        android:textColor="@color/text_sub_foreground"
+        android:textSize="13sp"
+        tools:text="状态说明" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btn_use"
+        style="@style/BtnPrimary"
+        android:layout_width="wrap_content"
+        android:layout_height="40dp"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="18dp"
+        android:minWidth="140dp"
+        android:text="使用该订阅源" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btn_close"
+        style="@style/BtnGhost"
+        android:layout_width="wrap_content"
+        android:layout_height="40dp"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="6dp"
+        android:minWidth="88dp"
+        android:text="关闭" />
+
+</LinearLayout>

@@ -214,6 +214,7 @@ public class App extends MultiDexApplication {
                 com.github.tvbox.osc.storage.theme.ThemeStore.applyActiveBackground();
             }
             // 系统(OEM)翻明暗后的现场:一行写清"翻了吗、我们跟没跟"(被强翻的机型靠这行定位)
+            com.github.tvbox.osc.theme.CrashPageThemeSync.publish(this);
             com.github.tvbox.osc.util.Utils.logNightModeState("系统明暗变化");
         } catch (Throwable ignored) {
         }
@@ -230,6 +231,18 @@ public class App extends MultiDexApplication {
         }
         try {
             com.github.tvbox.osc.util.HeavyTaskUtil.getSerialExecutorService().execute(() -> {
+                try {
+                    // 换文件策略:清理旧代数据库文件(历史/收藏已随换库清空,只删不再使用的历史库文件)
+                    com.github.tvbox.osc.data.AppDataManager.cleanupLegacyDatabaseFiles();
+                } catch (Throwable failure) {
+                    android.util.Log.w("MBox-Startup", "旧代数据库清理失败", failure);
+                }
+                try {
+                    com.github.tvbox.osc.config.PrefsDataStore.runWithRollback(
+                            com.github.tvbox.osc.player.api.PlayConfig::migrateLegacyCacheConfig);
+                } catch (Exception failure) {
+                    android.util.Log.w("MBox-Startup", "播放缓存设置迁移未完成", failure);
+                }
                 try {
                     FileUtils.cleanPlayerCacheIfOverflow(100L * 1024 * 1024);
                 } catch (Throwable failure) {
@@ -264,6 +277,8 @@ public class App extends MultiDexApplication {
         // 编译期那份带 -night 限定符的资源只作"快照未装配"时的兜底(原因见 ThemeRuntime.runtimePalette)。
         com.github.tvbox.osc.storage.theme.ThemeStore.init(this);
         com.github.tvbox.osc.theme.ThemeRuntime.install();
+        // 崩溃页跑在独立进程且刻意不做业务初始化,它的配色靠这里投影过去(见 theme/CrashPageThemeSync)
+        com.github.tvbox.osc.theme.CrashPageThemeSync.publish(this);
         // 排障一行:系统翻了夜间 / 我们生效哪套 / 供色通道是否运行时(魅族等会强翻 uiMode 的机型看这行)
         com.github.tvbox.osc.util.Utils.logNightModeState("启动");
         // 当前主题的默认背景同步给全局背景系统(用户显式设过底图时仍以他的为准,见 SystemConfig 的解析链)
@@ -285,7 +300,7 @@ public class App extends MultiDexApplication {
         putDefault(HawkConfig.IGNORE_SSL_ERROR, false);       //忽略证书错误:默认关闭(开启会降低 TLS 安全性)
         putDefault(HawkConfig.LAN_SERVER_ENABLE, false);      //局域网服务:默认关闭(HTTP 服务仅监听 127.0.0.1)
         putDefault(HawkConfig.LOADING_ANIM, "");               //加载动画:空=默认,或 assets/loading/ 下的文件名
-        putDefault(HawkConfig.LIVE_URL, "https://gh-proxy.com/raw.githubusercontent.com/vbskycn/iptv/refs/heads/master/tv/iptv4.txt"); //直播源:默认地址
+        putDefault(HawkConfig.LIVE_URL, com.github.tvbox.osc.util.LiveConfig.DEFAULT_LIVE_URL);
         putDefaultApi();
         // 日志模块初始化:按 LogConfig 同步开关(默认关),开启时自动启动 logcat 捕获(package:mine)
         // 注入版本号:日志行首展示(定位问题时确认是哪个版本产生)
@@ -518,7 +533,7 @@ public class App extends MultiDexApplication {
     private static OkHttpClient buildPlaybackClient(OkHttpClient previous) {
         OkHttpClient.Builder builder = previous != null
                 ? previous.newBuilder()
-                : OkGoHelper.newBaseBuilder().retryOnConnectionFailure(true);
+                : OkGoHelper.newPlaybackBuilder();
         OkGoHelper.removeHttpLoggingInterceptor(builder);
         builder.followRedirects(true);
         builder.followSslRedirects(true);

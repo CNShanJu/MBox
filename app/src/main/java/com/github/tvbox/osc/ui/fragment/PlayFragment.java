@@ -131,6 +131,7 @@ public class PlayFragment extends BaseLazyFragment {
     private final PlayHistoryRepository mPlayHistory = new PlayHistoryRepository();
     /** playback 会话原型:当前播放对应的会话键(PlaybackSessions 观察/日志用;不驱动内核) */
     private String playbackSessionKey;
+    private com.github.tvbox.osc.util.player.NextEpisodePreloader mNextEpisodePreloader;
 
     private final long videoDuration = -1;
     /** 选集与地址解析共用代数，晚到的旧回调不能覆盖当前播放。 */
@@ -628,6 +629,7 @@ public class PlayFragment extends BaseLazyFragment {
     /** 浏览器接管播放后，手机解码器不再起播；在黑色播放器上说明当前状态。 */
     public void showBrowserCastStatus() {
         browserCastActive = true;
+        if (mNextEpisodePreloader != null) mNextEpisodePreloader.cancel();
         browserCastEpisodesAvailable = true;
         browserCastOnline = true;
         browserCastStateKnown = false;
@@ -1333,6 +1335,10 @@ public class PlayFragment extends BaseLazyFragment {
                 @Override
                 public void onStateChanged(com.github.tvbox.osc.player.api.PlayState state) {
                     android.util.Log.d("PlaybackSession", "[" + playbackSessionKey + "] state=" + state);
+                    // 当前集进入健康播放后, opportunistically 预载下一集(配置开启时)
+                    if (state == com.github.tvbox.osc.player.api.PlayState.PLAYING) {
+                        scheduleNextEpisodePreload();
+                    }
                 }
 
                 @Override
@@ -1360,6 +1366,21 @@ public class PlayFragment extends BaseLazyFragment {
             android.util.Log.w("PlaybackSession", "bind 会话异常(原型,不影响播放)", th);
             playbackSessionKey = null;
         }
+    }
+
+    private void scheduleNextEpisodePreload() {
+        if (mNextEpisodePreloader == null || mVodInfo == null || mVodInfo.seriesMap == null) return;
+        int playerType = mVodPlayerCfg == null ? com.github.tvbox.osc.player.api.PlayConfig.getPlayType()
+                : mVodPlayerCfg.optInt("pl", com.github.tvbox.osc.player.api.PlayConfig.getPlayType());
+        if (playerType != 2) return;
+        java.util.List<VodInfo.VodSeries> episodes = mVodInfo.seriesMap.get(mVodInfo.playFlag);
+        int nextIndex = mVodInfo.playIndex + 1;
+        if (episodes == null || nextIndex < 0 || nextIndex >= episodes.size()) return;
+        VodInfo.VodSeries next = episodes.get(nextIndex);
+        if (next == null) return;
+        long startMs = mVodPlayerCfg == null ? 0L : Math.max(0L, mVodPlayerCfg.optInt("st", 0) * 1000L);
+        mNextEpisodePreloader.schedule(sourceKey, mVodInfo.playFlag, next.url, startMs,
+                com.github.tvbox.osc.player.api.PlayConfig.getPreloadDurationS());
     }
 
     /** playback 会话原型:释放会话观察(不释放共享 mVideoView;视频释放仍由原流程负责) */
@@ -1412,6 +1433,7 @@ public class PlayFragment extends BaseLazyFragment {
     /** 切换详情影片时停止旧播放及解析；播放器 View 保留供新详情使用。 */
     public void clearData() {
         pendingReadyAction = null;
+        if (mNextEpisodePreloader != null) mNextEpisodePreloader.cancel();
         browserCastActive = false;
         if (mController != null) mController.setBrowserRemote(false);
         if (mPlayLoadTip != null) hideTip();
@@ -1456,6 +1478,7 @@ public class PlayFragment extends BaseLazyFragment {
     private void initViewModel() {
         sourceViewModel = new ViewModelProvider(this).get(SourceViewModel.class);
         sourceViewModel.playResult.observeForever(mObserverPlayResult);
+        mNextEpisodePreloader = com.github.tvbox.osc.di.AppCompositionRoot.newNextEpisodePreloader(requireContext());
     }
 
     private final Observer<JSONObject> mObserverPlayResult = new Observer<JSONObject>() {
@@ -1596,6 +1619,7 @@ public class PlayFragment extends BaseLazyFragment {
     @Override
     public void onPause() {
         super.onPause();
+        if (mNextEpisodePreloader != null) mNextEpisodePreloader.cancel();
         if (!browserCastActive && mPlaySession != null)
             mPlaySession.pause();
     }
@@ -1610,6 +1634,7 @@ public class PlayFragment extends BaseLazyFragment {
     @Override
     public void onHiddenChanged(boolean hidden) {
         if (hidden) {
+            if (mNextEpisodePreloader != null) mNextEpisodePreloader.cancel();
             if (!browserCastActive && mPlaySession != null)
                 mPlaySession.pause();
         } else {
@@ -1635,6 +1660,10 @@ public class PlayFragment extends BaseLazyFragment {
         super.onDestroyView();
         // 手动注销
         sourceViewModel.playResult.removeObserver(mObserverPlayResult);
+        if (mNextEpisodePreloader != null) {
+            mNextEpisodePreloader.release();
+            mNextEpisodePreloader = null;
+        }
 
         releasePlaybackSession(); // playback 会话原型:随视图销毁释放会话观察(共享视图不在此释放)
         // 字幕协调器:取消在途的"切换轨道后恢复进度"延迟任务 —— 否则 800ms 内退出播放页时,
@@ -1744,6 +1773,7 @@ public class PlayFragment extends BaseLazyFragment {
         if (mPlayLoadTip != null) mPlayLoadTip.setOnClickListener(null);
         if (mSubtitleCoordinator != null) mSubtitleCoordinator.invalidateForPlaybackChange();
         long requestGeneration = mPlaybackGeneration.incrementAndGet();
+        if (mNextEpisodePreloader != null) mNextEpisodePreloader.cancel();
         cancelAddressProbe();
         HttpClient.cancel("m3u8-1");
         HttpClient.cancel("m3u8-2");

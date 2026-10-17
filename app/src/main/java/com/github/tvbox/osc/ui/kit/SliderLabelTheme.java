@@ -34,6 +34,10 @@ final class SliderLabelTheme {
             }
             ColorStateList fillColor = ColorStateList.valueOf(fill);
             ColorStateList textColor = ColorStateList.valueOf(text);
+            // 气泡描边:文字主色细边框(用户口径"拖动进度条的气泡给个边框线,颜色=文字主色")。
+            // 原来描边色=填充色等于没有边框;这里给 1.2dp 宽的真描边。
+            float strokeWidthPx = Math.max(1f,
+                    1.2f * slider.getResources().getDisplayMetrics().density);
             for (Object item : (List<?>) pool) {
                 if (!(item instanceof TooltipDrawable)) {
                     throw new IllegalStateException("Material slider label is not a TooltipDrawable");
@@ -44,7 +48,8 @@ final class SliderLabelTheme {
                     throw new IllegalStateException("Material slider label has no TextAppearance");
                 }
                 label.setFillColor(fillColor);
-                label.setStrokeColor(fillColor);
+                label.setStrokeColor(textColor);
+                label.setStrokeWidth(strokeWidthPx);
                 appearance.setTextColor(textColor);
                 // Material 1.9.0 drawText updates its TextPaint from this appearance on every
                 // draw. Invalidating applies the color now while retaining font and text size.

@@ -2,7 +2,6 @@ package com.github.tvbox.osc.ui.dialog;
 
 import android.content.Context;
 import android.graphics.drawable.Drawable;
-import android.graphics.drawable.GradientDrawable;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.TextView;
@@ -161,15 +160,10 @@ public class LoadingDialog extends CenterPopupView {
 
     private void refreshPanelBackground() {
         if (loadingPanel == null) return;
+        // 与「添加订阅」等普通弹窗同源:bg_dialog(填充 bg_float)按主题原样渲染,色与透明度都一致。
         panelBackground = ThemeDrawables.rebuild(R.drawable.bg_dialog, getResources());
         if (panelBackground == null) {
             panelBackground = ContextCompat.getDrawable(getContext(), R.drawable.bg_dialog);
-        }
-        // 主题允许 bg_float 半透明，进度面板强制不透底以免页面文字穿透。
-        if (panelBackground instanceof GradientDrawable) {
-            panelBackground = panelBackground.mutate();
-            ((GradientDrawable) panelBackground).setColor(
-                    ContextCompat.getColor(getContext(), R.color.bg_float) | 0xFF000000);
         }
         if (msgView != null) msgView.setTextColor(getResources().getColor(R.color.text_foreground));
         updatePanelVisibility();

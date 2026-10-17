@@ -16,11 +16,13 @@ import com.github.tvbox.osc.log.LogStore
 import com.github.tvbox.osc.repo.HistoryRepositories
 import com.github.tvbox.osc.ui.adapter.HistoryAdapter
 import com.github.tvbox.osc.ui.dialog.ConfirmDialog
+import com.github.tvbox.osc.ui.dialog.SourceInfoDialog
 import com.github.tvbox.osc.ui.kit.SelectActionBar
 import com.github.tvbox.osc.util.AppBubble
 import com.github.tvbox.osc.util.FastClickCheckUtil
 import com.github.tvbox.osc.util.HistoryEntryNavigator
 import com.github.tvbox.osc.util.HistoryHelper
+import com.github.tvbox.osc.util.SubscriptionIndex
 import com.github.tvbox.osc.util.Utils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -71,9 +73,20 @@ class HistoryActivity : BaseVbActivity<ActivityHistoryBinding>() {
             HistoryEntryNavigator.open(this, vodInfo)
         }
 
+        // 点来源徽标:弹出来源信息(可一键切回来源订阅);不影响卡片本身的点击与长按多选。
+        historyAdapter.setOnItemChildClickListener { _, view, position ->
+            if (deleting || historyAdapter.isSelectMode) return@setOnItemChildClickListener
+            if (view.id != R.id.layout_source) return@setOnItemChildClickListener
+            FastClickCheckUtil.check(view)
+            val vodInfo = historyAdapter.data.getOrNull(position) ?: return@setOnItemChildClickListener
+            val origin = SubscriptionIndex.build().resolve(vodInfo.sourceKey, vodInfo.subscriptionFingerprint)
+            SourceInfoDialog.show(this, vodInfo.name, origin)
+        }
+
         // 清空全部仍保留在标题栏；所选条目的删除只走底部多选栏。
-        mBinding.titleBar.setRightDangerIcon(R.drawable.ic_clear, 16f) {
-            if (deleting) return@setRightDangerIcon
+        // 图标本身在布局里(iv_clear:尺寸/危险红都在 XML 调),这里只接点击
+        mBinding.ivClear.setOnClickListener {
+            if (deleting) return@setOnClickListener
             ConfirmDialog.showDanger(this, "提示", "确定清空全部观看历史吗？", "清空", {
                 deleting = true
                 dataEpoch++

@@ -8,6 +8,8 @@ import org.json.JSONObject;
 
 import java.lang.reflect.Type;
 import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
 
 /**
  * 直播偏好类型安全配置门面（改进.txt §五"配置：类型安全 Config"；DataStore 化）。
@@ -21,8 +23,16 @@ import java.util.ArrayList;
  */
 public final class LiveConfig {
 
+    public static final String DEFAULT_LIVE_URL = "https://gh-proxy.com/raw.githubusercontent.com/vbskycn/iptv/refs/heads/master/tv/iptv4.txt";
+
     private static final Type STRING_LIST_TYPE = new TypeToken<ArrayList<String>>() {
     }.getType();
+
+    private static final Type STRING_MAP_TYPE = new TypeToken<LinkedHashMap<String, String>>() {
+    }.getType();
+
+    /** 名称映射的条数上界(历史源本身最多 20 条,留出改名/残留余量) */
+    private static final int MAX_LIVE_NAMES = 40;
 
     private LiveConfig() {
     }
@@ -104,6 +114,57 @@ public final class LiveConfig {
     /** 整体写回历史源列表 */
     public static void setLiveHistory(ArrayList<String> history) {
         PrefsDataStore.putJson(HawkConfig.LIVE_HISTORY, history == null ? new ArrayList<String>() : history);
+    }
+
+    // ── 自建直播源的名称 ──
+
+    /**
+     * 用户给自建直播源起的名字(地址 → 名称)。
+     * <p>与 {@link #liveHistory()} 分开存:历史列表是一串裸地址(旧数据、以及播放器/设置页都按地址用),
+     * 名称只是展示与编辑用的附加信息,不改变既有读取方的语义。
+     */
+    public static LinkedHashMap<String, String> liveNames() {
+        LinkedHashMap<String, String> map = PrefsDataStore.getJson(
+                HawkConfig.LIVE_NAMES, STRING_MAP_TYPE, new LinkedHashMap<String, String>());
+        return map == null ? new LinkedHashMap<String, String>() : map;
+    }
+
+    public static void setLiveNames(LinkedHashMap<String, String> names) {
+        PrefsDataStore.putJson(HawkConfig.LIVE_NAMES,
+                names == null ? new LinkedHashMap<String, String>() : names);
+    }
+
+    /** 某地址的用户命名(没起过返回空串) */
+    public static String liveName(String url) {
+        if (url == null || url.isEmpty()) return "";
+        String name = liveNames().get(url);
+        return name == null ? "" : name;
+    }
+
+    /** 起名/改名;名字为空即清除(回到按地址推导展示名)。地址为空不记。 */
+    public static void setLiveName(String url, String name) {
+        if (url == null || url.isEmpty()) return;
+        LinkedHashMap<String, String> names = liveNames();
+        if (name == null || name.trim().isEmpty()) {
+            names.remove(url);
+        } else {
+            names.put(url, name.trim());
+            // 名称只在用户主动起名时写入,但仍给它一个上界:删源没清干净时不会无界增长
+            while (names.size() > MAX_LIVE_NAMES) {
+                Iterator<String> it = names.keySet().iterator();
+                if (!it.hasNext()) break;
+                it.next();
+                it.remove();
+            }
+        }
+        setLiveNames(names);
+    }
+
+    /** 删除直播源时一并清掉它的名字 */
+    public static void removeLiveName(String url) {
+        if (url == null || url.isEmpty()) return;
+        LinkedHashMap<String, String> names = liveNames();
+        if (names.remove(url) != null) setLiveNames(names);
     }
 
     // ── EPG / 频道播放配置 ──

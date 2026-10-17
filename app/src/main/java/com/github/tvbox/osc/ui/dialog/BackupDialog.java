@@ -29,7 +29,7 @@ import java.util.List;
 public class BackupDialog extends AppBottomPopupView {
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static final String SYSTEM_BACKUP_EXPLANATION =
-            "系统在使用本地备份前，会先保存当前设置和历史记录，日志独立保留。" +
+            "系统在使用本地备份前，会先保存当前设置、订阅源文件和历史记录，日志独立保留。" +
             "如果还原后的数据不符合预期，可使用这份临时备份恢复到还原前。\n\n" +
             "临时备份不能手动删除；主动使用它恢复成功后会自动移除。" +
             "若一直未使用，保存满 1 小时后的下次启动会自动清理。";
@@ -154,7 +154,7 @@ public class BackupDialog extends AppBottomPopupView {
     private void restore(LocalBackupEntry entry) {
         if (busy) return;
         ConfirmDialog.show(getContext(), "还原备份",
-                "将覆盖本机设置和历史记录，不会覆盖日志。恢复前会自动保留当前数据供失败时回滚；" +
+                "将覆盖本机设置、订阅源文件和历史记录，不会覆盖日志。恢复前会自动保留当前数据供失败时回滚；" +
                         "恢复成功后应用会自动重启。确认还原「" + entry.name() + "」吗？",
                 "开始还原", () -> beginRestore(entry));
     }

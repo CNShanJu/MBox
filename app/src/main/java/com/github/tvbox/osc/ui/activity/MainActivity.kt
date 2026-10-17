@@ -79,10 +79,17 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
         private const val ANIMATION_PLAYBACK_GRACE_MS = 3_000L
         private const val IMAGE_LOAD_TIMEOUT_MS = 3_000L
         private const val IMAGE_ONLY_DISPLAY_MS = 1_000L
+
+        /** 底栏「首页」项在"列表已离开顶部"时的标题(常态标题仍由 res/menu/main_bottom_navigation.xml 给出) */
+        private const val BACK_TO_TOP_TITLE = "回到顶部"
     }
 
     private var fragments: List<Fragment> = emptyList()
     private var mainShellBinding: MainHomeShellBinding? = null
+    /** 底栏「首页」项当前是否显示「回到顶部」(当前在首页且列表已离开顶部;由首页列表滚动状态同步) */
+    private var homeBackToTop = false
+    /** 「首页」项的常态标题(首次进入「回到顶部」态时从菜单项记下,切回时还原) */
+    private var homeNavTitle: CharSequence? = null
     var useCacheConfig = false
     private var exitTime = 0L
     private lateinit var startup: AppStartupCoordinator
@@ -447,14 +454,30 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
         // BaseActivity 的第二轮兼容换肤扫描已在 init() 后执行；开屏退场时补扫新挂载的视图。
         com.github.tvbox.osc.theme.ThemeSweep.apply(shell.root)
         shell.bottomNav.setOnNavigationItemSelectedListener { menuItem: MenuItem ->
-            shell.vp.setCurrentItem(menuItem.order, false)
-            updateNavIcons(menuItem.order)
+            if (menuItem.order == 0 && shell.vp.currentItem == 0 && homeBackToTop) {
+                // 已经站在首页、列表还离开着顶部:这一下不是"切 tab"(也没页可切),而是「回到顶部」
+                activeHomeFragment()?.scrollToTop()
+            } else {
+                shell.vp.setCurrentItem(menuItem.order, false)
+                updateNavIcons(menuItem.order)
+            }
             true
+        }
+        // 整条底栏(含条目两侧空白)左右滑动 = 切 tab:只认方向,边界由这里挡
+        shell.bottomNav.setOnNavSwipeListener { step ->
+            val count = shell.vp.adapter?.count ?: 0
+            if (count > 1) {
+                val target = (shell.vp.currentItem + step).coerceIn(0, count - 1)
+                if (target != shell.vp.currentItem) {
+                    shell.vp.setCurrentItem(target, true) // 与内容区左右滑一致:带平移过渡
+                }
+            }
         }
         shell.vp.addOnPageChangeListener(object : SimpleOnPageChangeListener() {
             override fun onPageSelected(position: Int) {
                 shell.bottomNav.menu.getItem(position).setChecked(true)
                 updateNavIcons(position)
+                syncBackToTopState() // 切回首页时按当前列表位置刷新「回到顶部」
             }
         })
         updateNavIcons(0)
@@ -470,11 +493,17 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
 
             override fun getCount(): Int = fragments.size
         }
+        // 外壳与首页 Fragment 到这一刻才真正存在(带开屏时是开屏退场后由 attachHomePagerAfterSplash
+        // 走到这里,那时 onResume 早过了),底栏「回到顶部」的接线必须在这里补上,否则列表滚动没人接。
+        bindAndSyncHomeBackToTop()
     }
 
     override fun onResume() {
         super.onResume()
         startup.onResume()
+        // 底栏「回到顶部」:回到前台/切回首页时,回调与外观都按当前真实的列表位置重挂一次
+        // (重建时会话里恢复的是旧 Fragment,回调必须挂到 activeHomeFragment 上)
+        bindAndSyncHomeBackToTop()
         if (!SystemConfig.isDisclaimerAccepted()) disclaimerLaunching = false
         if (pendingNotificationDetailId != null && SystemConfig.isDisclaimerAccepted() &&
             startup.phase == AppStartupCoordinator.Phase.HOME_FIRST_FRAME) {
@@ -978,13 +1007,65 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
     private fun updateNavIcons(position: Int) {
         val menu = mainShellBinding?.bottomNav?.menu ?: return
         if (menu.size() >= 2) {
-            menu.getItem(0).setIcon(
-                if (position == 0) R.drawable.ic_nav_home_sel else R.drawable.ic_nav_home
-            )
             menu.getItem(1).setIcon(
                 if (position == 1) R.drawable.ic_nav_my_sel else R.drawable.ic_nav_my
             )
         }
+        applyHomeNavAppearance()
+    }
+
+    /**
+     * 「首页」项外观:常态「首页」/ 当前就在首页且列表已离开顶部时的「回到顶部」。
+     * <p>
+     * 图标沿用布局里的 {@code itemIconSize=22dp} —— 与「我的」同档,视觉大小一致(源图字形同样接近满格);
+     * 颜色仍由底栏的 {@code itemIconTint}(主题选择器 color_highlight/text_hint)决定,
+     * 所以换内置/自定义主题时它和另外两个图标一起走。
+     * <p>
+     * 常态标题只从菜单 XML 取(首次进入「回到顶部」态时记下,切回时还原),不在这里重复写死。
+     */
+    private fun applyHomeNavAppearance() {
+        val shell = mainShellBinding ?: return
+        val menu = shell.bottomNav.menu
+        if (menu.size() < 2) return
+        val item = menu.getItem(0)
+        val onHome = shell.vp.currentItem == 0
+        if (onHome && homeBackToTop) {
+            if (homeNavTitle == null) homeNavTitle = item.title
+            item.setIcon(R.drawable.ic_nav_back_top)
+            item.setTitle(BACK_TO_TOP_TITLE)
+        } else {
+            item.setIcon(if (onHome) R.drawable.ic_nav_home_sel else R.drawable.ic_nav_home)
+            homeNavTitle?.let { item.setTitle(it) }
+        }
+    }
+
+    /** 首页列表是否离开顶部变化时调用(外观切换;同值直接返回,避免菜单反复刷新) */
+    private fun setHomeBackToTop(backToTop: Boolean) {
+        if (homeBackToTop == backToTop) return
+        homeBackToTop = backToTop
+        applyHomeNavAppearance()
+    }
+
+    /** 按"当前 tab + 首页列表当前位置"同步一次「回到顶部」外观(切回首页、回到前台时调用) */
+    private fun syncBackToTopState() {
+        val onHome = mainShellBinding?.vp?.currentItem == 0
+        setHomeBackToTop(onHome && activeHomeFragment()?.canScrollToTop() == true)
+    }
+
+    /**
+     * 把首页的列表滚动状态回调挂到<b>真正在用的那个</b>首页 Fragment 上,并按当前状态同步一次外观。
+     * <p>
+     * 两个时机都要走:① 外壳/首页 Fragment 刚装配好(带开屏时这里晚于 onResume —— 这一步漏了就会出现
+     * "刚启动时滑动首页没反应,切一次 tab 才出现");② 回到前台/切回首页。
+     * 重建时会话里恢复的是旧 Fragment(见 onCreate 注释),所以一律经 {@link #activeHomeFragment()} 取。
+     */
+    private fun bindAndSyncHomeBackToTop() {
+        val home = activeHomeFragment() ?: return
+        home.onBackToTopStateChanged = { backToTop ->
+            // 只在底栏停在首页时改外观:在「我的」页时保持普通「首页」外观
+            setHomeBackToTop(mainShellBinding?.vp?.currentItem == 0 && backToTop)
+        }
+        syncBackToTopState()
     }
 
     private fun activeHomeFragment(): HomeFragment? {

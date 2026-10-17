@@ -55,24 +55,6 @@ public class MXPlayer {
         return null;
     }
 
-    private static class Subtitle {
-        final Uri uri;
-        String name;
-        String filename;
-
-        Subtitle(Uri uri) {
-            if (uri.getScheme() == null)
-                throw new IllegalStateException("Scheme is missed for subtitle URI " + uri);
-
-            this.uri = uri;
-        }
-
-        Subtitle(String uriStr) {
-            this(Uri.parse(uriStr));
-        }
-    }
-
-
     public static boolean run(Activity activity, String url, String title, String subtitle, HashMap<String, String> headers) {
         MXPackageInfo packageInfo = getPackageInfo();
         if (packageInfo == null)

@@ -42,6 +42,29 @@
         app:hintTextColor="@color/text_main_half">
 
         <EditText
+            android:id="@+id/et_name"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@null"
+            android:layout_marginTop="10dp"
+            android:hint="名称(可选，留空按地址显示)"
+            android:textColorHint="@color/text_main_half"
+            android:maxLength="20"
+            android:singleLine="true"
+            android:textColor="@color/text_foreground"
+            android:textSize="14sp"/>
+
+    </com.google.android.material.textfield.TextInputLayout>
+
+    <com.google.android.material.textfield.TextInputLayout
+        android:layout_width="match_parent"
+        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.Dense"
+        android:layout_height="wrap_content"
+        app:boxStrokeColor="@color/text_main_half"
+        app:placeholderTextColor="@color/text_main_half"
+        app:hintTextColor="@color/text_main_half">
+
+        <EditText
             android:id="@+id/et_url"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

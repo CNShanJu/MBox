@@ -77,9 +77,6 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
 
         // 返回键与系统返回同一口径(统一头部的返回行为在这里接管)
         mBinding.titleBar.setOnBackClickListener { onBackPressed() }
-        mBinding.llSubscription.setOnClickListener {
-            jumpActivity(SubscriptionActivity::class.java)
-        }
         mBinding.tvMediaCodec.text = PlayConfig.getIjkCodec()
 
         // 下载设置:下载方式 / 仅WiFi / 并发数 / 限速
@@ -467,13 +464,19 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             }, SelectDialogAdapter.stringDiff, modes, PlayConfig.getVideoPurifyMode())
             dialog.show()
         }
-        mBinding.switchIjkCachePlay.setChecked(PlayConfig.isIjkCachePlay())
-        mBinding.llIjkCachePlay.setOnClickListener { v: View? ->
+        mBinding.switchPlayCache.setChecked(PlayConfig.isPlayCacheEnabled())
+        mBinding.llPlayCache.setOnClickListener { v: View? ->
             FastClickCheckUtil.check(v)
-            val newConfig = !PlayConfig.isIjkCachePlay()
-            mBinding.switchIjkCachePlay.setChecked(newConfig)
-            PlayConfig.setIjkCachePlay(newConfig)
+            val newConfig = !PlayConfig.isPlayCacheEnabled()
+            mBinding.switchPlayCache.setChecked(newConfig)
+            PlayConfig.setPlayCacheEnabled(newConfig)
+            updatePlayCacheEntryUi()
         }
+        mBinding.llPlaybackCacheSetting.setOnClickListener { v: View? ->
+            FastClickCheckUtil.check(v)
+            jumpActivity(PlaybackCacheActivity::class.java)
+        }
+        updatePlayCacheEntryUi()
         // 业务日志开关(默认关闭):走 LogConfig 配置门面(查询+发通知+订阅)。
         // 只控 Room 结构化业务日志;错误日志(logcat)常驻记录,不随此开关。
         mBinding.switchSubscriptionLog.setChecked(LogConfig.isEnabled())
@@ -643,7 +646,15 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             updatePageBackgroundValue()
             updatePageBackgroundVisibility()
             updateThemeValue()
+            updatePlayCacheEntryUi()
         }
+    }
+
+    /** "播放缓存设置"入口仅在主开关打开时显示 */
+    private fun updatePlayCacheEntryUi() {
+        val on = PlayConfig.isPlayCacheEnabled()
+        mBinding.switchPlayCache.setChecked(on)
+        mBinding.llPlaybackCacheSetting.visibility = if (on) View.VISIBLE else View.GONE
     }
 
     // ------------------------------------------------------------------

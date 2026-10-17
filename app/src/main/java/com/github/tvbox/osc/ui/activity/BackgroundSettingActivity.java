@@ -27,6 +27,10 @@ import com.github.tvbox.osc.util.FastClickCheckUtil;
 import com.github.tvbox.osc.util.HeavyTaskUtil;
 import com.github.tvbox.osc.util.PageBackgroundStore;
 
+import java.lang.ref.WeakReference;
+import java.util.ArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
+
 /**
  * 背景图设置(二级页,入口:设置 - 主题颜色 - 设置背景图)。
  * <p>
@@ -59,6 +63,8 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
 
     /** 系统选图请求码 */
     private static final int REQ_PICK_IMAGE = 0x0B01;
+    /** 本地缓存选图请求码(标题栏「本地仓」图标) */
+    private static final int REQ_LOCAL_CACHE = 0x0B02;
 
     // ------------------------------------------------------------------
     // 主题模式(入口:主题编辑页的「选择/调整图片」)
@@ -96,6 +102,7 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
     private static final long PANEL_ANIM_MS = 200L;
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private final AtomicInteger importEpoch = new AtomicInteger();
 
     /** 抽屉是否展开(默认展开:进来就看得到预设/透明度/遮罩;点手柄可收起来整屏看背景) */
     private boolean panelExpanded = true;
@@ -301,6 +308,9 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
      * (浅/深主题默认是纯色;以后新增内置主题/自定义主题则跟着该主题的默认背景走)。
      */
     private void confirmDraft() {
+        importEpoch.incrementAndGet();
+        dismissLoadingDialog();
+        // 确认只改引用；取消、销毁也不删图，副本统一留给缓存入口复查后清理。
         if (themeMode) {
             confirmThemeDraft();
             return;
@@ -616,13 +626,30 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
     }
 
     private void initButtons() {
-        // 更换图片:标题栏右侧
-        mBinding.tvPick.setOnClickListener(v -> {
+        // 标题栏右侧图标已在 XML 声明(尺寸/位置见 activity_background_setting.xml 注释),
+        // 这里只接点击;主题模式(改某个主题自己的背景)不提供"本地缓存"入口 —— 走主题图库。
+        if (themeMode) {
+            mBinding.btnBgLocal.setVisibility(View.GONE);
+        }
+        mBinding.btnBgLocal.setOnClickListener(v -> {
+            FastClickCheckUtil.check(v);
+            // 冻结本次父页草稿，不能只保护尚未更新的已保存配置。
+            importEpoch.incrementAndGet();
+            dismissLoadingDialog();
+            ArrayList<String> protectedPaths = new ArrayList<>();
+            if (draftPath != null && !draftPath.isEmpty()) protectedPaths.add(draftPath);
+            Intent intent = new Intent(this, BackgroundCacheActivity.class);
+            intent.putStringArrayListExtra(BackgroundCacheActivity.EXTRA_PROTECTED_PATHS, protectedPaths);
+            startActivityForResult(intent, REQ_LOCAL_CACHE);
+        });
+        mBinding.btnBgSwitch.setOnClickListener(v -> {
             FastClickCheckUtil.check(v);
             pickImage();
         });
         mBinding.btnReset.setOnClickListener(v -> {
             FastClickCheckUtil.check(v);
+            importEpoch.incrementAndGet();
+            dismissLoadingDialog();
             // 普通模式恢复该主题自带的图与摆放(内置预设可能带图)，主题编辑模式恢复纯色。
             draftTouched = true;
             draftUserSet = false;
@@ -666,63 +693,112 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode != REQ_PICK_IMAGE || resultCode != RESULT_OK || data == null) return;
+        if (resultCode != RESULT_OK) return;
+        if (requestCode == REQ_LOCAL_CACHE) {
+            // 「本地缓存」选的图:文件已在本地(WebP),直接收编进 page_bg 再进草稿
+            if (data == null) return;
+            String path = data.getStringExtra(BackgroundCacheActivity.EXTRA_RESULT_PATH);
+            if (path == null || path.isEmpty()) return;
+            applyLocalImage(path);
+            return;
+        }
+        if (requestCode != REQ_PICK_IMAGE || data == null) return;
         Uri uri = data.getData();
         if (uri == null) return;
         // 校验/转码是磁盘与解码重活:放共享执行器后台做,期间给个加载提示
+        final int epoch = importEpoch.incrementAndGet();
+        final AtomicInteger epochs = importEpoch;
+        final WeakReference<BackgroundSettingActivity> pageRef = new WeakReference<>(this);
+        final android.content.Context app = getApplicationContext();
+        final Handler handler = mainHandler;
+        final boolean importingTheme = themeMode;
         showLoadingDialog("正在导入图片…");
         HeavyTaskUtil.getBigTaskExecutorService().execute(() -> {
-            if (themeMode) {
-                // 主题模式:与"设置背景图"页同一套导入管道(限大小/纠 EXIF/转 WebP/存储预检),
-                // 差别只在收编位置 —— 进主题图库(按内容 hash 去重,多个主题用同一张图只存一份)
-                BgImageImporter.Result imported = BgImageImporter.toWebp(getApplicationContext(), uri);
-                String ref = imported.ok() ? ThemeStore.registerBackground(imported.webp) : "";
+            if (epochs.get() != epoch) return;
+            if (importingTheme) {
+                // 主题图库仍沿用原有注册契约；只清理本轮转码临时文件。
+                BgImageImporter.Result imported = BgImageImporter.toWebp(app, uri);
+                final String ref;
+                try {
+                    if (epochs.get() != epoch) return;
+                    ref = imported.ok() ? ThemeStore.registerBackground(imported.webp) : "";
+                } finally {
+                    if (imported.webp != null) imported.webp.delete();
+                }
+                final String path = ref.isEmpty() ? "" : ThemeStore.resolveBackgroundPath(ref);
                 final String error = imported.ok()
-                        ? (ref.isEmpty() ? "图片保存失败,换一张试试" : null)
+                        ? (path.isEmpty() ? "图片保存失败,换一张试试" : null)
                         : (imported.error == null ? "图片导入失败" : imported.error);
-                mainHandler.post(() -> {
-                    dismissLoadingDialog();
-                    if (isFinishing()) return;
+                handler.post(() -> {
+                    BackgroundSettingActivity page = pageRef.get();
+                    if (page == null || epochs.get() != epoch || page.isFinishing() || page.isDestroyed()) return;
+                    page.dismissLoadingDialog();
                     if (error != null) {
                         AppBubble.toast(error);
                         return;
                     }
-                    draftPath = ThemeStore.resolveBackgroundPath(ref);
-                    draftRef = ref;
-                    draftUserSet = true;
-                    draftTouched = true;
-                    draftZoom = 0f;
-                    draftAnchorX = BgImageTransform.ANCHOR_CENTER;
-                    draftAnchorY = BgImageTransform.ANCHOR_CENTER;
-                    draftLegacyOffsets = false;
-                    applyDraft();
+                    page.draftRef = ref;
+                    page.applyImportedPath(path);
                 });
                 return;
             }
-            final PageBackgroundStore.ImportResult result =
-                    PageBackgroundStore.importFromUri(getApplicationContext(), uri);
-            mainHandler.post(() -> {
-                dismissLoadingDialog();
-                if (isFinishing()) return;
+            final PageBackgroundStore.ImportResult result = PageBackgroundStore.importFromUri(app, uri);
+            handler.post(() -> {
+                BackgroundSettingActivity page = pageRef.get();
+                if (page == null || epochs.get() != epoch || page.isFinishing() || page.isDestroyed()) return;
+                page.dismissLoadingDialog();
                 if (!result.ok()) {
                     AppBubble.toast(result.error == null ? "导入失败，请换张图" : result.error);
                     return;
                 }
-                // 换新图进草稿:位置居中、缩放回到"自动"(普通图铺满屏幕,很小的图按原始像素显示)
-                draftPath = result.path;
-                draftUserSet = true;
-                draftTouched = true;
-                draftZoom = 0f;
-                draftAnchorX = BgImageTransform.ANCHOR_CENTER;
-                draftAnchorY = BgImageTransform.ANCHOR_CENTER;
-                draftLegacyOffsets = false;
-                applyDraft();
+                page.applyImportedPath(result.path);
             });
         });
     }
 
+    /**
+     * 「本地缓存」选图:直接复制成新的完整草稿,不删除源图、旧图或其他编辑会话的草稿。
+     */
+    private void applyLocalImage(final String srcPath) {
+        final int epoch = importEpoch.incrementAndGet();
+        final AtomicInteger epochs = importEpoch;
+        final WeakReference<BackgroundSettingActivity> pageRef = new WeakReference<>(this);
+        final android.content.Context app = getApplicationContext();
+        final Handler handler = mainHandler;
+        showLoadingDialog("正在应用图片…");
+        HeavyTaskUtil.getBigTaskExecutorService().execute(() -> {
+            if (epochs.get() != epoch) return;
+            PageBackgroundStore.ImportResult result = PageBackgroundStore.importFromFile(
+                    app, new java.io.File(srcPath));
+            handler.post(() -> {
+                BackgroundSettingActivity page = pageRef.get();
+                if (page == null || epochs.get() != epoch || page.isFinishing() || page.isDestroyed()) return;
+                page.dismissLoadingDialog();
+                if (!result.ok()) {
+                    AppBubble.toast(result.error == null ? "应用失败，请重试" : result.error);
+                    return;
+                }
+                page.applyImportedPath(result.path);
+            });
+        });
+    }
+
+    /** 换新图进草稿:位置居中、缩放回到"自动"(普通图铺满屏幕,很小的图按原始像素显示) */
+    private void applyImportedPath(String path) {
+        draftPath = path;
+        draftUserSet = true;
+        draftTouched = true;
+        draftZoom = 0f;
+        draftAnchorX = BgImageTransform.ANCHOR_CENTER;
+        draftAnchorY = BgImageTransform.ANCHOR_CENTER;
+        draftLegacyOffsets = false;
+        applyDraft();
+    }
+
     @Override
     protected void onDestroy() {
+        importEpoch.incrementAndGet();
+        mainHandler.removeCallbacksAndMessages(null);
         ValueAnimator running = panelAnimator;
         panelAnimator = null;
         if (running != null) running.cancel();

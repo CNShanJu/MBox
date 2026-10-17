@@ -10,7 +10,17 @@
         android:id="@+id/title_bar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        app:title="历史记录"/>
+        app:title="观看历史">
+
+        <!-- 清空全部:危险动作着危险红。图标尺寸/位置一律在这里调
+             (AppTitleBar 只补 40dp 触区,不覆盖 XML 的 tint 与 padding) -->
+        <ImageView
+            android:id="@+id/iv_clear"
+            android:layout_width="wrap_content"
+            android:layout_height="16dp"
+            android:src="@drawable/ic_clear"
+            app:tint="@color/text_danger"/>
+    </com.github.tvbox.osc.ui.kit.AppTitleBar>
 
     <TextView
         android:id="@+id/top_tip"

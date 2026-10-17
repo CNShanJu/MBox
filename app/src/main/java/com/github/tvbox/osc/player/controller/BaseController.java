@@ -523,6 +523,11 @@ public abstract class BaseController extends BaseVideoController implements Gest
      */
     public void setGestureEnabled(boolean gestureEnabled) {
         mIsGestureEnabled = gestureEnabled;
+        if (!gestureEnabled) onGestureCancel();
+    }
+
+    protected final boolean isGestureEnabled() {
+        return mIsGestureEnabled;
     }
 
     /**
@@ -562,6 +567,11 @@ public abstract class BaseController extends BaseVideoController implements Gest
     public boolean onTouch(View v, MotionEvent event) {
         boolean handled = mGestureDetector.onTouchEvent(event);
         int action = event.getActionMasked();
+        if (action == MotionEvent.ACTION_UP) {
+            onGestureEnd();
+        } else if (action == MotionEvent.ACTION_CANCEL) {
+            onGestureCancel();
+        }
         // GestureDetector 消费 ACTION_UP 时 View 不再进入 onTouchEvent，seek 仍须提交。
         if (handled && (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL)
                 && (mSeeking || mSeekPosition >= 0)) {
@@ -572,10 +582,29 @@ public abstract class BaseController extends BaseVideoController implements Gest
     }
 
     /**
+     * 自定义轨迹手势钩子(画圈/画弧)：由子类覆写，默认不启用。
+     * onDown → onGestureStart；onScroll → onGestureMove(返回 true 则跳过滑动调节)；
+     * ACTION_UP → onGestureEnd；ACTION_CANCEL → onGestureCancel(仅清理，不派发动作)。
+     */
+    protected void onGestureStart(MotionEvent e) {
+    }
+
+    protected boolean onGestureMove(MotionEvent e) {
+        return false;
+    }
+
+    protected void onGestureEnd() {
+    }
+
+    protected void onGestureCancel() {
+    }
+
+    /**
      * 手指按下的瞬间
      */
     @Override
     public boolean onDown(MotionEvent e) {
+        onGestureStart(e);
         if (!isInPlaybackState() //不处于播放状态
                 || !mIsGestureEnabled //关闭了手势
                 || PlayerUtils.isEdge(this, e)) //处于控制器边沿
@@ -674,6 +703,9 @@ public abstract class BaseController extends BaseVideoController implements Gest
      */
     @Override
     public boolean onScroll(MotionEvent e1, MotionEvent e2, float distanceX, float distanceY) {
+        if (onGestureMove(e2)) {
+            return true;
+        }
         if (!isInPlaybackState() //不处于播放状态
                 || !mIsGestureEnabled //关闭了手势
                 || !mCanSlide //关闭了滑动手势

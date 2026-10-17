@@ -1,0 +1,232 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 播放缓存设置(二级页):仅在"开启播放缓存"打开时由设置页进入。
+     缓冲/磁盘缓存的实际生效点在播放器起播时,页脚有提示。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+
+    <com.github.tvbox.osc.ui.kit.AppTitleBar
+        android:id="@+id/title_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        app:title="播放缓存"
+        app:titleBold="true" />
+
+    <com.github.tvbox.osc.ui.kit.RubberBandScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true"
+        android:overScrollMode="never">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingBottom="16dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="20dp"
+                android:layout_marginTop="12dp"
+                android:background="@drawable/bg_large_round_float"
+                android:orientation="vertical"
+                android:paddingHorizontal="8dp"
+                android:paddingVertical="8dp">
+
+                <!-- 下一集预载 -->
+                <LinearLayout
+                    android:id="@+id/ll_preload_next"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/ripple_round_background"
+                    android:gravity="center_vertical"
+                    android:minHeight="52dp"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="12dp"
+                    android:paddingVertical="8dp">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="下一集预载"
+                            android:textColor="@color/text_foreground"
+                            android:textSize="16sp" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="仅EXO播放器和部分源支持"
+                            android:textColor="@color/text_sub_foreground"
+                            android:textSize="12sp" />
+                    </LinearLayout>
+
+                    <com.github.tvbox.osc.ui.kit.AppSwitch
+                        android:id="@+id/switch_preload_next"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:clickable="false" />
+                </LinearLayout>
+
+                <!-- 预载时长:仅"下一集预载"开启时显示 -->
+                <LinearLayout
+                    android:id="@+id/ll_preload_duration"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/ripple_round_background"
+                    android:orientation="vertical"
+                    android:paddingHorizontal="12dp"
+                    android:paddingVertical="8dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <LinearLayout
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="预载时长"
+                                android:textColor="@color/text_foreground"
+                                android:textSize="16sp" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:layout_marginTop="2dp"
+                                android:text="下一集预载的秒数,有片头时自片头后起算"
+                                android:textColor="@color/text_sub_foreground"
+                                android:textSize="12sp" />
+                        </LinearLayout>
+
+                        <TextView
+                            android:id="@+id/tv_preload_duration"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:textColor="@color/text_sub_foreground"
+                            android:textSize="14sp"
+                            tools:text="60s" />
+                    </LinearLayout>
+
+                    <com.github.tvbox.osc.ui.kit.AppSlider
+                        android:id="@+id/slider_preload_duration"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp" />
+                </LinearLayout>
+
+                <!-- 边播边缓存 -->
+                <LinearLayout
+                    android:id="@+id/ll_cache_while_play"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/ripple_round_background"
+                    android:gravity="center_vertical"
+                    android:minHeight="52dp"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="12dp"
+                    android:paddingVertical="8dp">
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="边播边缓存"
+                            android:textColor="@color/text_foreground"
+                            android:textSize="16sp" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="当前播放写入磁盘缓存,重播或弱网时更顺畅"
+                            android:textColor="@color/text_sub_foreground"
+                            android:textSize="12sp" />
+                    </LinearLayout>
+
+                    <com.github.tvbox.osc.ui.kit.AppSwitch
+                        android:id="@+id/switch_cache_while_play"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:clickable="false" />
+                </LinearLayout>
+
+                <!-- 缓存容量:仅"边播边缓存"开启时显示 -->
+                <LinearLayout
+                    android:id="@+id/ll_cache_capacity"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/ripple_round_background"
+                    android:orientation="vertical"
+                    android:paddingHorizontal="12dp"
+                    android:paddingVertical="8dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="缓存容量"
+                            android:textColor="@color/text_foreground"
+                            android:textSize="16sp" />
+
+                        <Space
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1" />
+
+                        <TextView
+                            android:id="@+id/tv_cache_capacity"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:textColor="@color/text_sub_foreground"
+                            android:textSize="14sp"
+                            tools:text="1.0GB" />
+                    </LinearLayout>
+
+                    <com.github.tvbox.osc.ui.kit.AppSlider
+                        android:id="@+id/slider_cache_capacity"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp" />
+                </LinearLayout>
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="28dp"
+                android:layout_marginTop="12dp"
+                android:text="缓冲与磁盘缓存会在下次开始播放时生效;缓存容量调整自下一次建立缓存起生效。"
+                android:textColor="@color/text_sub_foreground"
+                android:textSize="12sp" />
+        </LinearLayout>
+    </com.github.tvbox.osc.ui.kit.RubberBandScrollView>
+</LinearLayout>

@@ -77,6 +77,15 @@ public class IjkMediaPlayer extends IjkPlayer implements KernelTrackSupport {
 
         mMediaPlayer.setOption(tv.danmaku.ijk.media.player.IjkMediaPlayer.OPT_CATEGORY_FORMAT, "dns_cache_clear", 1);
         mMediaPlayer.setOption(tv.danmaku.ijk.media.player.IjkMediaPlayer.OPT_CATEGORY_FORMAT, "dns_cache_timeout", -1);
+
+        // 播放缓存开启时放大 IJK 读-ahead 包缓冲(弱网减少反复缓冲);关闭时沿用解码档默认值。
+        // 放在解码档选项之后,确保覆盖订阅内置档里的 max-buffer-size。
+        // 固定加档:"预载时长"只服务下一集预载,不参与当前播放缓冲。
+        if (PlayConfig.isPlayCacheEnabled()) {
+            long bufBytes = 64L * 1024 * 1024;
+            mMediaPlayer.setOption(tv.danmaku.ijk.media.player.IjkMediaPlayer.OPT_CATEGORY_FORMAT, "max-buffer-size", bufBytes);
+            mMediaPlayer.setOption(tv.danmaku.ijk.media.player.IjkMediaPlayer.OPT_CATEGORY_FORMAT, "packet-buffering", 1);
+        }
     }
 
     @Override
@@ -91,7 +100,8 @@ public class IjkMediaPlayer extends IjkPlayer implements KernelTrackSupport {
             } else if (!TextUtils.isEmpty(path)
                     && !path.contains(".m3u8")
                     && (path.contains(".mp4") || path.contains(".mkv") || path.contains(".avi"))) {
-                if (PlayConfig.isIjkCachePlay()) {
+                // 边播边缓存:master 开启且用户打开"边播边缓存"时启用 IJK 磁盘缓存
+                if (PlayConfig.isPlayCacheEnabled() && PlayConfig.isCacheWhilePlay()) {
                     String cachePath = FileUtils.getCachePath() + "/ijkcaches/";
                     String cacheMapPath = cachePath;
                     File cacheFile = new File(cachePath);
@@ -103,7 +113,8 @@ public class IjkMediaPlayer extends IjkPlayer implements KernelTrackSupport {
                     mMediaPlayer.setOption(tv.danmaku.ijk.media.player.IjkMediaPlayer.OPT_CATEGORY_FORMAT, "cache_map_path", cacheMapPath);
                     mMediaPlayer.setOption(tv.danmaku.ijk.media.player.IjkMediaPlayer.OPT_CATEGORY_FORMAT, "parse_cache_map", 1);
                     mMediaPlayer.setOption(tv.danmaku.ijk.media.player.IjkMediaPlayer.OPT_CATEGORY_FORMAT, "auto_save_map", 1);
-                    mMediaPlayer.setOption(tv.danmaku.ijk.media.player.IjkMediaPlayer.OPT_CATEGORY_FORMAT, "cache_max_capacity", 60 * 1024 * 1024);
+                    mMediaPlayer.setOption(tv.danmaku.ijk.media.player.IjkMediaPlayer.OPT_CATEGORY_FORMAT, "cache_max_capacity",
+                            (long) PlayConfig.getCacheCapacityMb() * 1024 * 1024);
                     path = "ijkio:cache:ffio:" + path;
                 }
             }

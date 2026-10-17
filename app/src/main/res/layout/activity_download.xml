@@ -9,7 +9,15 @@
         android:id="@+id/title_bar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        app:title="下载管理" />
+        app:title="下载管理">
+
+        <!-- 下载设置:图标尺寸/位置在这里调(AppTitleBar 只补 40dp 触区与主题色) -->
+        <ImageView
+            android:id="@+id/iv_setting"
+            android:layout_width="wrap_content"
+            android:layout_height="22dp"
+            android:src="@drawable/ic_setting"/>
+    </com.github.tvbox.osc.ui.kit.AppTitleBar>
 
     <FrameLayout
         android:id="@+id/container"

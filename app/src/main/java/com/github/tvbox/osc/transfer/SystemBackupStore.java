@@ -68,7 +68,8 @@ public final class SystemBackupStore {
                 try {
                     if (!snapshot.archiveHash.equals(BackupContentHash.archiveSha256(snapshot.file))) continue;
                     if (!contentHash.equals(BackupContentHash.sha256(snapshot.file))) continue;
-                } catch (IOException corrupt) {
+                } catch (Exception corrupt) {
+                    // 快照已损坏/不可读:跳过它继续找下一个匹配快照(Kotlin 侧 IOException 非受检)
                     continue;
                 }
                 // A new restore attempt starts a fresh protection hour without changing the filename.

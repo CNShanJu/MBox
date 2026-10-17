@@ -83,6 +83,7 @@ public class LocalVideoController extends BaseController implements PlaybackSett
                         if (!isLock) {// 未上锁,锁按钮随操作栏显示
                             mLockView.setVisibility(VISIBLE);
                             mScreenRotateView.setVisibility(VISIBLE);
+                            // 系统时间与锁定键同步:同一组、同一计时一起显隐
                             mPlayPauseTime.setVisibility(VISIBLE);
                         }
                         mNextBtn.requestFocus();
@@ -93,9 +94,10 @@ public class LocalVideoController extends BaseController implements PlaybackSett
                         mTopRoot1.setVisibility(GONE);
                         mTopRoot2.setVisibility(GONE);
                         mScreenRotateView.setVisibility(GONE);
-                        mPlayPauseTime.setVisibility(GONE);
                         if (!isLock) {// 未上锁,锁按钮随操作栏隐藏
                             mLockView.setVisibility(GONE);
+                            // 系统时间与锁定键同步隐藏(锁定态由 lockRunnable 统一管)
+                            mPlayPauseTime.setVisibility(GONE);
                         }
                         break;
                     }
@@ -158,6 +160,8 @@ public class LocalVideoController extends BaseController implements PlaybackSett
         public void run() {
             if (isLock) {//上锁的才隐藏,非上锁状态随操作栏显示隐藏
                 mLockView.setVisibility(GONE);
+                // 系统时间与锁定键同步:同一计时到点一起隐藏
+                mPlayPauseTime.setVisibility(GONE);
             }
         }
     };
@@ -243,6 +247,7 @@ public class LocalVideoController extends BaseController implements PlaybackSett
                     hideBottom();
                     mHandler.removeCallbacks(lockRunnable);
                     mHandler.postDelayed(lockRunnable, dismissTimeLock);
+                    // 系统时间与锁定键同节奏:上锁时二者都保持可见,到点由 lockRunnable 一起隐藏
                 } else {// 解了锁
                     mLockView.setImageResource(R.drawable.ic_unlock);
                     showBottom();
@@ -1196,6 +1201,8 @@ public class LocalVideoController extends BaseController implements PlaybackSett
             // 上锁:消费所有触摸(手势/点按全部屏蔽),点按屏幕短暂显示锁按钮
             if (event.getAction() == MotionEvent.ACTION_UP) {
                 mLockView.setVisibility(VISIBLE);
+                // 系统时间与锁定键同步:点屏幕一起唤出,到点由 lockRunnable 一起隐藏
+                mPlayPauseTime.setVisibility(VISIBLE);
                 mHandler.removeCallbacks(lockRunnable);
                 mHandler.postDelayed(lockRunnable, dismissTimeLock);
             }

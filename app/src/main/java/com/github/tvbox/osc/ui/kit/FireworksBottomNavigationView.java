@@ -19,14 +19,19 @@ import com.google.android.material.navigation.NavigationBarItemView;
 import com.google.android.material.navigation.NavigationBarMenuView;
 
 /**
- * 底栏:<b>整条区域</b>长按都放一簇烟花(发射点=手指按下的位置),不再弹系统提示。
+ * 底栏:<b>整条区域</b>长按都放一簇烟花(发射点=手指按下的位置),不再弹系统提示;
+ * 并且<b>整条区域</b>识别左右滑动,滑动即切换 tab(方向回调给宿主,组件本身不认识 ViewPager/Fragment)。
  * <p>
- * 两件事分开做:
+ * 三件事分开做:
  * <ul>
  *   <li><b>长按检测放在整条底栏上</b>({@link #dispatchTouchEvent}):Material 的条目有最大宽度
  *       (design_bottom_navigation_active_item_max_width),条目数量少时只占中间一段,两侧是空白 ——
  *       检测挂在条目上就"只有条目那块区域生效"。挂在底栏自己身上,条目上与空白处一视同仁,发射点也
  *       直接是手指在底栏内的坐标。</li>
+ *   <li><b>左右滑动同样放在整条底栏上</b>(同一次手势账里):横向位移够大且横向多于纵向即判为滑动,
+ *       回调 {@link OnNavSwipeListener};只报"下一个/上一个",切不切得动由宿主决定。
+ *       手指落在条目上时,条目会消费这个手势,但 {@code dispatchTouchEvent} 在派发之前就能读到,
+ *       所以条目与空白区行为一致。</li>
  *   <li><b>清系统提示(Tooltip)放在条目上</b>({@link NavigationBarItemView#initialize}):
  *       Material 每次初始化条目(首次构建菜单、切 tab 或换图标引起的菜单更新)都会调
  *       {@code TooltipCompat.setTooltipText(itemView, 标题)} 把提示重新挂上;在外面清一次会被后续的
@@ -45,6 +50,21 @@ import com.google.android.material.navigation.NavigationBarMenuView;
 // 以在每次菜单重建后清理 Tooltip 并保留遥控器长按烟花。升级 Material 时需复核此实现。
 @SuppressLint("RestrictedApi")
 public class FireworksBottomNavigationView extends BottomNavigationView {
+
+    /**
+     * 底栏左右滑动监听:方向交宿主决定(本组件不认识 ViewPager/Fragment,只报"下一个/上一个")。
+     */
+    public interface OnNavSwipeListener {
+        /** @param step {@code +1}=下一个(手指往左划) / {@code -1}=上一个(手指往右划) */
+        void onNavSwipe(int step);
+    }
+
+    private OnNavSwipeListener swipeListener;
+
+    /** 滑动切 tab 监听(置 null 取消;宿主在切换时自行判断边界) */
+    public void setOnNavSwipeListener(OnNavSwipeListener listener) {
+        this.swipeListener = listener;
+    }
 
     /**
      * 换肤:选中/未选中项的文字与图标色。
@@ -80,7 +100,15 @@ public class FireworksBottomNavigationView extends BottomNavigationView {
     /** 与框架长按同一时长:触发时机和条目自身的震动反馈对得上 */
     private static final long LONG_PRESS_TIMEOUT = ViewConfiguration.getLongPressTimeout();
 
+    /** 左右滑动切 tab 的最小横向位移(dp):再叠加触摸容差,避免把"点歪了"当成滑动 */
+    private static final int SWIPE_MIN_DP = 24;
+
     private final int touchSlop = ViewConfiguration.get(getContext()).getScaledTouchSlop();
+
+    /** 滑动判定阈值:横向位移达到它(且横向多于纵向)才算一次滑动切 tab */
+    private final int swipeMinDistance = Math.max(
+            touchSlop * 3,
+            (int) (SWIPE_MIN_DP * getContext().getResources().getDisplayMetrics().density + 0.5f));
 
     /** 按下不动到时长就放烟花;此时手指位置已记在 touchX/touchY */
     private final Runnable longPressLaunch = new Runnable() {
@@ -88,6 +116,7 @@ public class FireworksBottomNavigationView extends BottomNavigationView {
         public void run() {
             if (!pressing) return;
             pressing = false;
+            longPressFired = true; // 已放烟花:这一次手势不再当作滑动(长按后拖着走再抬手不算"划一下")
             // 震动跟着整条底栏走:条目上的长按由框架给反馈(条目的长按回调返回 true 时框架会震一下),
             // 而按在条目没铺满的空白区时没有任何子视图接这个手势,框架不知道,这里自己补上,
             // 否则"只有条目长按才震"。两处都只在真正长按时震一次,不会叠成两下。
@@ -97,6 +126,10 @@ public class FireworksBottomNavigationView extends BottomNavigationView {
     };
 
     private boolean pressing;
+    /** 本次手势是否已放过烟花(放过就不再判滑动) */
+    private boolean longPressFired;
+    /** 本次手势是否已被识别成左右滑动并接管(接管后不再下发给条目) */
+    private boolean swipeCaptured;
     /** 本次手势的 DOWN 是否落在条目上(条目上的长按震动交给框架,避免同一次长按震两下) */
     private boolean itemTouch;
     private float downX, downY, touchX, touchY;
@@ -120,6 +153,8 @@ public class FireworksBottomNavigationView extends BottomNavigationView {
                 downX = touchX = ev.getX();
                 downY = touchY = ev.getY();
                 pressing = true;
+                longPressFired = false;
+                swipeCaptured = false;
                 itemTouch = true;   // 先当落在条目上;真落到空白区会在 onTouchEvent 里翻掉
                 removeCallbacks(longPressLaunch);
                 postDelayed(longPressLaunch, LONG_PRESS_TIMEOUT);
@@ -132,17 +167,55 @@ public class FireworksBottomNavigationView extends BottomNavigationView {
                         stopLongPress();   // 划动(切 tab 的滑动、拖拽误触)不算长按
                     }
                 }
+                if (!swipeCaptured && isSwipe(ev)) {
+                    // 认成左右滑动:立刻把这次手势从条目手里收回来(给条目发 CANCEL,清掉按下/点击待办),
+                    // 否则抬手时条目还会补一次点击 —— 那一下正好会把刚切过去的 tab 再切回来。
+                    swipeCaptured = true;
+                    cancelChildGesture(ev);
+                }
                 break;
             case MotionEvent.ACTION_UP:
+                stopLongPress();
+                if (swipeCaptured) {
+                    swipeCaptured = false;
+                    // 松手才切:手指往左划(dx<0)= 看下一个 tab。只报方向,边界由宿主挡
+                    if (swipeListener != null && !longPressFired) {
+                        swipeListener.onNavSwipe(ev.getX() < downX ? 1 : -1);
+                    }
+                    return true;   // 手势已归底栏:不再派发给条目
+                }
+                break;
             case MotionEvent.ACTION_CANCEL:
                 stopLongPress();
+                swipeCaptured = false;
                 break;
             default:
                 break;
         }
-        // 一律放行给子视图:条目点击/选中逻辑照旧,长按由上面自己计时(不依赖 View 的长按回调,也就不受
+        if (swipeCaptured) return true;   // 滑动已接管:后续事件不再下发(条目已收到 CANCEL)
+        // 其余一律放行给子视图:条目点击/选中逻辑照旧,长按由上面自己计时(不依赖 View 的长按回调,也就不受
         // Material 在菜单更新时重设监听的影响)
         return super.dispatchTouchEvent(ev);
+    }
+
+    /**
+     * 这一次移动是不是"左右滑动":横向位移够大、横向多于纵向,且这次手势没放过烟花。
+     * 阈值(≥24dp)必须大于触摸容差 —— 手指移出条目边界超过容差,条目自己的按下态才会被清掉,
+     * 这里再补一次 CANCEL 就万无一失(条目很宽时,24dp 可能还在条目内)。
+     */
+    private boolean isSwipe(MotionEvent move) {
+        if (longPressFired) return false;
+        float dx = move.getX() - downX;
+        float dy = move.getY() - downY;
+        return Math.abs(dx) >= swipeMinDistance && Math.abs(dx) > Math.abs(dy);
+    }
+
+    /** 给子视图补一次 ACTION_CANCEL:条目据此清掉按下态与待触发的点击 */
+    private void cancelChildGesture(MotionEvent source) {
+        MotionEvent cancel = MotionEvent.obtain(source);
+        cancel.setAction(MotionEvent.ACTION_CANCEL);
+        super.dispatchTouchEvent(cancel);
+        cancel.recycle();
     }
 
     /**

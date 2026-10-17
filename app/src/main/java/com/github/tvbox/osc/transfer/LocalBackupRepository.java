@@ -3,16 +3,11 @@ package com.github.tvbox.osc.transfer;
 import android.content.Context;
 import android.os.Environment;
 
-import com.github.tvbox.osc.config.PrefsDataStore;
-import com.github.tvbox.osc.data.AppDataManager;
 import com.github.tvbox.osc.log.Category;
 import com.github.tvbox.osc.log.LogStore;
-import com.google.gson.JsonParser;
 
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -70,18 +65,20 @@ public final class LocalBackupRepository {
         SystemBackupStore store = systemBackups();
         // A selected system backup must remain readable while a new safety snapshot is made.
         try (SystemBackupStore.Lease selectedLease = entry.isSystem() ? store.acquire(selected) : null) {
-            File protection;
-            try { protection = preserveCurrent(); }
-            catch (Exception failure) {
-                LogStore.fail(Category.SYSTEM, "本地备份: 还原前保护备份失败，停止还原，原因=" + failureMessage(failure));
-                throw new IOException("当前数据的临时备份失败，已停止还原：" + failure.getMessage(), failure);
-            }
-            try (SystemBackupStore.Lease protectionLease = store.acquire(protection)) {
+            // 整机一点可备份数据都没有时不做保护快照(空壳无需保护,否则还原永远被"临时备份"卡住);
+            // 只要有任何数据(设置/历史/收藏/搜索记录/订阅/背景配置等)就必须先保护再还原。
+            File protection = BackupModules.INSTANCE.anyHasData(context) ? preserveCurrent() : null;
+            try (SystemBackupStore.Lease protectionLease =
+                         protection != null ? store.acquire(protection) : null) {
                 String result;
                 try {
-                    result = entry.isSystem() ? archive.restoreSystem(selected)
-                            : selected.isFile() ? archive.restore(selected) : restoreLegacy(selected);
+                    result = entry.isSystem() ? archive.restoreSystem(selected) : archive.restore(selected);
                 } catch (Exception failure) {
+                    if (protection == null) {
+                        LogStore.fail(Category.SYSTEM, "本地备份: 还原失败(空机无保护快照) "
+                                + failureMessage(failure));
+                        throw new IOException("还原失败：" + failure.getMessage(), failure);
+                    }
                     boolean rolledBack = false;
                     try {
                         archive.restoreSystem(protection);
@@ -211,43 +208,6 @@ public final class LocalBackupRepository {
 
     private static File manualDirectory() {
         return new File(Environment.getExternalStorageDirectory(), "tvbox_backup");
-    }
-
-    private static String restoreLegacy(File backup) throws Exception {
-        if (!backup.isDirectory()) throw new IOException("未找到备份目录");
-        File cfgFile = firstExisting(backup, "prefs.json", "config.json");
-        String json = cfgFile == null ? null : readLegacyPrefs(cfgFile);
-        if (json != null && !JsonParser.parseString(json).isJsonObject())
-            throw new IOException("旧版设置数据格式无效");
-        File db = firstExisting(backup, "room.db", "sqlite");
-        boolean dbOk = db != null && AppDataManager.restore(db);
-        int count = json == null ? 0 : PrefsDataStore.importJson(BackupSettingsCompat.migrateLegacyVideoPurify(json));
-        if (count < 0) throw new IOException("旧版设置写入失败");
-        if (count <= 0 && !dbOk) throw new IOException("备份中无可恢复数据");
-        return "旧版备份已恢复";
-    }
-
-    private static File firstExisting(File directory, String... names) throws IOException {
-        File root = directory.getCanonicalFile();
-        for (String name : names) {
-            File file = new File(root, name).getCanonicalFile();
-            if (!root.equals(file.getParentFile())) throw new IOException("旧版备份路径无效");
-            if (file.isFile()) return file;
-        }
-        return null;
-    }
-
-    private static String readLegacyPrefs(File file) throws IOException {
-        final int limit = 32 * 1024 * 1024;
-        try (FileInputStream input = new FileInputStream(file);
-             java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream()) {
-            byte[] buffer = new byte[8192]; int count;
-            while ((count = input.read(buffer)) > 0) {
-                if (output.size() + count > limit) throw new IOException("旧版设置数据超过 32 MB");
-                output.write(buffer, 0, count);
-            }
-            return new String(output.toByteArray(), StandardCharsets.UTF_8);
-        }
     }
 
     private static void deleteTree(File root, File file) throws IOException {

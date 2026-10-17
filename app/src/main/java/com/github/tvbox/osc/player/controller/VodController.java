@@ -61,9 +61,12 @@ public class VodController extends BaseController implements PlaybackSettingsCon
     private AdaptiveVodProgressLayout mAdaptiveProgressLayout;
     /** 用户是否锁定竖屏: 锁定后刷新/重播不得按片源宽高自动转回横屏 */
     private boolean mPortraitLock = false;
+    /** 画圈/画弧手势识别(中心画圈刷新、左右画弧切上/下一集) */
+    private final PlayGestureRecognizer mGestureRecognizer;
 
     public VodController(@NonNull @NotNull Context context) {
         super(context);
+        mGestureRecognizer = new PlayGestureRecognizer(context.getResources().getDisplayMetrics().density);
         mHandlerCallback = new HandlerCallback() {
             @Override
             public void callback(Message msg) {
@@ -86,6 +89,7 @@ public class VodController extends BaseController implements PlaybackSettingsCon
                         if (!isLock){// 未上锁,随底部显示
                             toggleViewShowWithAlpha(mLockView, true);
                             toggleViewShowWithAlpha(mScreenRotateView, true);
+                            // 系统时间与锁定键同步:同一组、同一计时、同样淡入淡出
                             if (mFullWindows) {
                                 toggleViewShowWithAlpha(mPlayPauseTime, true);
                             }
@@ -98,9 +102,12 @@ public class VodController extends BaseController implements PlaybackSettingsCon
                         toggleViewShowWithAlpha(mTopRoot1, false);
                         toggleViewShowWithAlpha(mTopRoot2, false);
                         toggleViewShowWithAlpha(mScreenRotateView, false);
-                        toggleViewShowWithAlpha(mPlayPauseTime, false);
                         if (!isLock){// 未上锁,随底部显示
                             toggleViewShowWithAlpha(mLockView, false);
+                            // 系统时间与锁定键同步隐藏(锁定态由 lockRunnable 统一管)
+                            if (mFullWindows) {
+                                toggleViewShowWithAlpha(mPlayPauseTime, false);
+                            }
                         }
                         if (listener != null) {
                             listener.onHideBottom();
@@ -204,6 +211,10 @@ public class VodController extends BaseController implements PlaybackSettingsCon
         public void run() {
             if (isLock){//上锁的才隐藏,非上锁状态随操作栏显示隐藏
                 mLockView.setVisibility(GONE);
+                // 系统时间与锁定键同步:同一计时到点一起隐藏
+                if (mFullWindows) {
+                    mPlayPauseTime.setVisibility(GONE);
+                }
             }
         }
     }
@@ -270,6 +281,7 @@ public class VodController extends BaseController implements PlaybackSettingsCon
                 hideBottom();
                 mHandler.removeCallbacks(lockRunnable);
                 mHandler.postDelayed(lockRunnable,dismissTimeLock);
+                // 系统时间与锁定键同节奏:上锁时二者都保持可见,到点由 lockRunnable 一起隐藏
             }else {// 解了锁
                 mLockView.setImageResource(R.drawable.ic_unlock);
                 showBottom();
@@ -284,6 +296,10 @@ public class VodController extends BaseController implements PlaybackSettingsCon
                 if (isLock) {
                     if (event.getAction() == MotionEvent.ACTION_UP) {//短暂显示上锁view,lockRunnable统一隐藏上锁view
                         mLockView.setVisibility(VISIBLE);
+                        // 系统时间与锁定键同步:点屏幕一起唤出,到点由 lockRunnable 一起隐藏
+                        if (mFullWindows) {
+                            mPlayPauseTime.setVisibility(VISIBLE);
+                        }
                         mHandler.removeCallbacks(lockRunnable);
                         mHandler.postDelayed(lockRunnable, dismissTimeLock);
                     }
@@ -916,6 +932,7 @@ public class VodController extends BaseController implements PlaybackSettingsCon
         }
         mScreenRotateView.setContentDescription(getContext().getString(b
                 ? R.string.player_rotate_screen : R.string.player_enter_fullscreen));
+        // 系统时间与锁定键/操作栏同步:全屏且未锁定、操作栏可见时淡入,否则隐藏
         if (b && !isLock && isBottomVisible()) {
             toggleViewShowWithAlpha(mPlayPauseTime, true);
         } else {
@@ -1265,9 +1282,87 @@ public class VodController extends BaseController implements PlaybackSettingsCon
     private boolean fromLongPress;
     private float speed_old = 1.0f;
 
+    // ------------------------------------------------------------------
+    // 画圈/画弧手势(中心画圈=刷新, 左右画弧=上/下一集)
+    // 接入点在 BaseController 的 onDown/onScroll/ACTION_UP 钩子。
+    // ------------------------------------------------------------------
+
+    private boolean mGestureInterrupted;
+
+    private boolean canRecognizeShapeGesture() {
+        return !browserRemote && !isLock && !isLocked() && isInPlaybackState()
+                && isGestureEnabled() && !fromLongPress && !mGestureInterrupted;
+    }
+
+    @Override
+    protected void onGestureStart(MotionEvent e) {
+        mGestureInterrupted = false;
+        if (canRecognizeShapeGesture() && !PlayerUtils.isEdge(this, e)) {
+            mGestureRecognizer.start(e.getX(), e.getY());
+        } else {
+            onGestureCancel();
+        }
+    }
+
+    @Override
+    protected boolean onGestureMove(MotionEvent e) {
+        if (!canRecognizeShapeGesture()) {
+            onGestureCancel();
+            return false;
+        }
+        mGestureRecognizer.move(e.getX(), e.getY());
+        // 待判定 / 已判定为画手势：接管，跳过滑动调节
+        return mGestureRecognizer.isActive() || mGestureRecognizer.isUndecided();
+    }
+
+    @Override
+    protected void onGestureEnd() {
+        if (!canRecognizeShapeGesture()) {
+            onGestureCancel();
+            return;
+        }
+        PlayGestureRecognizer.Result result = mGestureRecognizer.finish();
+        dispatchGesture(result);
+    }
+
+    @Override
+    protected void onGestureCancel() {
+        mGestureInterrupted = true;
+        // Base 构造期间的开关回调可能早于本类字段初始化。
+        if (mGestureRecognizer != null) mGestureRecognizer.cancel();
+    }
+
+    @Override
+    protected void beginSeeking() {
+        // 普通滑动、进度条或按键 seek 一旦开始，本轮形状识别永久作废。
+        onGestureCancel();
+        super.beginSeeking();
+    }
+
+    /** 画手势识别结果 → 动作：中心画圈刷新、左侧画弧上一集、右侧画弧下一集 */
+    private void dispatchGesture(PlayGestureRecognizer.Result result) {
+        if (!canRecognizeShapeGesture() || result == null || listener == null) return;
+        if (result.getGesture() == PlayGestureRecognizer.Gesture.CIRCLE) {
+            listener.replay(false);
+            hideBottom();
+        } else if (result.getGesture() == PlayGestureRecognizer.Gesture.ARC) {
+            int width = getWidth();
+            if (width <= 0) return;
+            if (result.getCenterX() < width / 3f) {
+                listener.playPre();
+                hideBottom();
+            } else if (result.getCenterX() > width * 2f / 3f) {
+                listener.playNext(false);
+                hideBottom();
+            }
+        }
+    }
+
     @Override
     public void onLongPress(MotionEvent e) {
-        if (browserRemote) return;
+        boolean allowed = canRecognizeShapeGesture();
+        onGestureCancel();
+        if (!allowed) return;
         if (videoPlayState != VideoView.STATE_PAUSED) {
             fromLongPress = true;
             try {
@@ -1287,23 +1382,33 @@ public class VodController extends BaseController implements PlaybackSettingsCon
 
     @SuppressLint("ClickableViewAccessibility")
     @Override
+    public boolean onTouch(View view, MotionEvent event) {
+        boolean handled = super.onTouch(view, event);
+        if (event.getActionMasked() == MotionEvent.ACTION_UP
+                || event.getActionMasked() == MotionEvent.ACTION_CANCEL) finishLongPress();
+        return handled;
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    @Override
     public boolean onTouchEvent(MotionEvent e) {
-        if (e.getAction() == MotionEvent.ACTION_UP) {
-            if (fromLongPress) {
-                fromLongPress = false;
-                mLlSpeed.setVisibility(GONE);
-                try {
-                    float speed = speed_old;
-                    mPlayerConfig.put("sp", speed);
-                    updatePlayerCfgView();
-                    listener.updatePlayerCfg();
-                    mControlWrapper.setSpeed(speed);
-                } catch (JSONException f) {
-                    f.printStackTrace();
-                }
-            }
-        }
+        if (e.getActionMasked() == MotionEvent.ACTION_UP
+                || e.getActionMasked() == MotionEvent.ACTION_CANCEL) finishLongPress();
         return super.onTouchEvent(e);
+    }
+
+    private void finishLongPress() {
+        if (!fromLongPress) return;
+        fromLongPress = false;
+        mLlSpeed.setVisibility(GONE);
+        try {
+            mPlayerConfig.put("sp", speed_old);
+            updatePlayerCfgView();
+            listener.updatePlayerCfg();
+            mControlWrapper.setSpeed(speed_old);
+        } catch (JSONException failure) {
+            failure.printStackTrace();
+        }
     }
 
     @Override

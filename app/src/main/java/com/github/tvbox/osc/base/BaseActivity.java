@@ -62,6 +62,9 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
         } catch (Throwable ignored) {
         }
         super.attachBaseContext(com.github.tvbox.osc.theme.ThemeContextWrapper.wrap(newBase));
+        // 快照刚对齐过,顺手把投影同步给崩溃页(独立进程读它上色;写入幂等,值没变不落盘)。
+        // 这里是"跟随系统翻明暗不重启进程、应用级回调又没派发"的兜底点,投影也必须跟着走一遍。
+        com.github.tvbox.osc.theme.CrashPageThemeSync.publish(this);
     }
 
     /**

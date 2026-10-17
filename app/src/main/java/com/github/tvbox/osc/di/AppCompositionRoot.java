@@ -311,6 +311,21 @@ public final class AppCompositionRoot {
         return p != null ? p : com.github.tvbox.osc.net.NetworkProvider.DEFAULT;
     }
 
+    @androidx.annotation.OptIn(markerClass = androidx.media3.common.util.UnstableApi.class)
+    public static com.github.tvbox.osc.util.player.NextEpisodePreloader newNextEpisodePreloader(Context context) {
+        Context appContext = context.getApplicationContext();
+        android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
+        return new com.github.tvbox.osc.util.player.NextEpisodePreloader(
+                com.github.tvbox.osc.spiderapi.PlayUrlResolverProviders.get(),
+                new com.github.tvbox.osc.player.internal.Media3Preloader(appContext,
+                        (url, headers) -> xyz.doikki.videoplayer.exo.ExoMediaSourceHelper
+                                .getInstance(appContext).getMediaSource(url, headers, true)),
+                com.github.tvbox.osc.util.HeavyTaskUtil.getBigTaskExecutorService(),
+                command -> main.post(command),
+                () -> com.github.tvbox.osc.player.api.PlayConfig.isPlayCacheEnabled()
+                        && com.github.tvbox.osc.player.api.PlayConfig.isPreloadNextEnabled());
+    }
+
     /** DLNA controls exposed to the page without sharing relay or renderer implementation types. */
     public static com.github.tvbox.osc.cast.api.DlnaCastControl dlnaCastControl() {
         return DLNA_CAST_CONTROL;

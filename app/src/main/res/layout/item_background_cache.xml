@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 本地缓存图片网格项:缩略图 + 左上角状态角标 + 右上角多选勾。
+     瀑布流:高度由适配器按图片原始宽高比设置(XML 里的 120dp 只是首绑兜底),
+     宽度 = 网格列宽(列数按"单卡最大 190dp"自适应,与观看历史海报同一口径)。
+     圆角走 radius_thumb(与下载页小封面/本地视频同档),缩略图铺 bg_thumb_round + clipToOutline。 -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_margin="3dp">
+
+    <ImageView
+        android:id="@+id/iv_thumb"
+        android:layout_width="match_parent"
+        android:layout_height="120dp"
+        android:background="@drawable/bg_thumb_round"
+        android:clipToOutline="true"
+        android:scaleType="centerCrop" />
+
+    <!-- 状态角标:使用中 / 主题 / 副本 -->
+    <TextView
+        android:id="@+id/tv_badge"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|start"
+        android:layout_margin="6dp"
+        android:background="@drawable/bg_cache_badge"
+        android:paddingHorizontal="6dp"
+        android:paddingVertical="2dp"
+        android:textColor="@color/white"
+        android:textSize="10sp"
+        tools:text="使用中" />
+
+    <!-- 多选勾:右上角,多选模式显示 -->
+    <ImageView
+        android:id="@+id/iv_select"
+        android:layout_width="24dp"
+        android:layout_height="24dp"
+        android:layout_gravity="top|end"
+        android:layout_margin="8dp"
+        android:src="@drawable/ic_select_ring"
+        android:visibility="gone"
+        tools:visibility="visible" />
+</FrameLayout>

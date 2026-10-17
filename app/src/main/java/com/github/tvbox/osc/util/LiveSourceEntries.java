@@ -4,6 +4,7 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 订阅管理「直播源」页的展示模型与纯逻辑(不碰 Android,便于 JVM 单测)。
@@ -35,6 +36,8 @@ public final class LiveSourceEntries {
     public static final class Entry {
         /** 展示名(已兜底推导,不会为空) */
         public final String name;
+        /** 用户给这条起的名字;空 = 没起过({@link #name} 是按地址推导的),编辑弹窗据此区分预填内容 */
+        public final String userName;
         /** 直播源地址;空 = 订阅里的内嵌频道分组(没有可单独指定的地址) */
         public final String url;
         /** 来源订阅名;null = 用户自建 */
@@ -42,8 +45,9 @@ public final class LiveSourceEntries {
         /** 是否当前生效的直播源 */
         public final boolean checked;
 
-        Entry(String name, String url, String fromSubscription, boolean checked) {
+        Entry(String name, String userName, String url, String fromSubscription, boolean checked) {
             this.name = name;
+            this.userName = userName == null ? "" : userName;
             this.url = url;
             this.fromSubscription = fromSubscription;
             this.checked = checked;
@@ -70,11 +74,14 @@ public final class LiveSourceEntries {
      * @param subscriptionName 当前订阅名(用于标注「来自:&lt;订阅名&gt;」;空则显示"订阅")
      * @param imported         订阅自带的直播源(见 {@code LiveChannelConfigApi.getSubscribeLiveSources()})
      * @param userUrls         用户自建的直播源地址(见 {@link LiveConfig#liveHistory()})
+     * @param userNames        用户给自建直播源起的名字(地址 → 名称,见 {@link LiveConfig#liveNames()});
+     *                         没起名字的按地址推导展示名
      * @param checkedUrl       当前生效的直播源地址(见 {@code SystemConfig.getLiveUrl()};空 = 用订阅自带的直播)
      */
     public static List<Entry> build(String subscriptionName,
                                     List<Imported> imported,
                                     List<String> userUrls,
+                                    Map<String, String> userNames,
                                     String checkedUrl) {
         String checked = checkedUrl == null ? "" : checkedUrl.trim();
         String sub = subscriptionName == null || subscriptionName.trim().isEmpty()
@@ -91,7 +98,7 @@ public final class LiveSourceEntries {
                 if (!seen.add(key)) continue;
                 if (name.isEmpty()) name = displayName(url);
                 if (name.isEmpty()) name = "订阅自带分组";
-                out.add(new Entry(name, url, sub, !url.isEmpty() && url.equals(checked)));
+                out.add(new Entry(name, "", url, sub, !url.isEmpty() && url.equals(checked)));
             }
         }
         if (userUrls != null) {
@@ -100,17 +107,28 @@ public final class LiveSourceEntries {
                 String url = raw.trim();
                 if (url.isEmpty() || seen.contains(url)) continue;
                 seen.add(url);
-                String name = displayName(url);
-                out.add(new Entry(name.isEmpty() ? url : name, url, null, url.equals(checked)));
+                out.add(userEntry(url, userNames, url.equals(checked)));
             }
         }
         // 当前生效的直播源不在清单里(首次装机内置的默认源就是这种:在 SystemConfig 里、但不在用户历史里)
         // → 补一行出来,否则"实际在用的那条"看不见勾选,用户会以为没在用它
         if (!checked.isEmpty() && !seen.contains(checked)) {
-            String name = displayName(checked);
-            out.add(new Entry(name.isEmpty() ? checked : name, checked, null, true));
+            out.add(userEntry(checked, userNames, true));
         }
         return out;
+    }
+
+    /** 用户自建的一条:有用户命名就用它,否则按地址推导;都推不出来就原样显示地址 */
+    private static Entry userEntry(String url, Map<String, String> userNames, boolean checked) {
+        String userName = nameOf(userNames, url);
+        String name = userName.isEmpty() ? displayName(url) : userName;
+        return new Entry(name.isEmpty() ? url : name, userName, url, null, checked);
+    }
+
+    private static String nameOf(Map<String, String> names, String url) {
+        if (names == null) return "";
+        String name = names.get(url);
+        return name == null ? "" : name.trim();
     }
 
     /**

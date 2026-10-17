@@ -30,6 +30,14 @@ abstract class BaseVbFragment<T : ViewBinding> : Fragment(), CustomAdapt {
     protected var mActivity: Activity? = null
 
     protected lateinit var mBinding: T
+
+    /**
+     * binding 是否已就绪(onCreateView 之后才可读 mBinding)。
+     * 宿主(Activity)可能在 Fragment 刚被加进 FragmentManager、视图还没建出来时就调它的公开 API
+     * (如 ViewPager 装配后立刻同步「回到顶部」外观),公开入口一律先过这道判断再读 mBinding。
+     */
+    protected val bindingReady: Boolean get() = ::mBinding.isInitialized
+
     private var mLoadService: LoadService<*>? = null
     override fun onCreateView(
         inflater: LayoutInflater,

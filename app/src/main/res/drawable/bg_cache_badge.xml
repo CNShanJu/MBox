@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 图片角标底:半透明黑圆角,压在缩略图左上角,主题无关(叠在图上而非页面底) -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="#99000000" />
+    <corners android:radius="8dp" />
+</shape>

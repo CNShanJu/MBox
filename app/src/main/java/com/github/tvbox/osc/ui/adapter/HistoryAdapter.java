@@ -60,6 +60,8 @@ public class HistoryAdapter extends BaseQuickAdapter<VodInfo, BaseViewHolder> {
 
         helper.setVisible(R.id.layout_source, !selectMode);
         helper.setVisible(R.id.iv_select, selectMode);
+        // 非多选时来源徽标可点开来源信息弹窗(与收藏页一致)。
+        helper.addOnClickListener(R.id.layout_source);
         if (selectMode) {
             ImageView selectIcon = helper.getView(R.id.iv_select);
             selectIcon.setImageResource(selectedKeys.contains(keyOf(item))

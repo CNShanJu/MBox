@@ -80,9 +80,11 @@
         app:layout_constraintTop_toBottomOf="@+id/list"
         tools:visibility="visible" />
 
+    <!-- 底部留白:列表自身已有 paddingBottom 10dp(clipToPadding=false),这里只补页脚/末行
+         与弹窗底边的一点缝;原来 30dp 叠加列表的 10dp 显得底部空一大块(用户口径"底部内边距太多")。 -->
     <View
         android:layout_width="match_parent"
-        android:layout_height="@dimen/dp_30"
+        android:layout_height="@dimen/dp_10"
         app:layout_constraintLeft_toLeftOf="parent"
         app:layout_constraintRight_toRightOf="parent"
         app:layout_constraintTop_toBottomOf="@+id/ll_footer" />

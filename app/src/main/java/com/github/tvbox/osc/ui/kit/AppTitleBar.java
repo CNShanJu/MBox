@@ -85,6 +85,7 @@ public class AppTitleBar extends FrameLayout {
 
     /** 返回键触区容器(40dp 宽、居中;里面是 {@link #BACK_ICON_DP} 的图标) */
     private final FrameLayout backView;
+    private final ImageView backIconView;
     private final TextView titleView;
     private final LinearLayout rightBox;
 
@@ -106,6 +107,7 @@ public class AppTitleBar extends FrameLayout {
         // 图标尺寸**不随标题栏高度变化**(以前用 padding 挤出来,标题栏一矮图标就跟着缩)。
         backView = new FrameLayout(context);
         ImageView backIcon = new ImageView(context);
+        backIconView = backIcon;
         Drawable back = ContextCompat.getDrawable(context, R.drawable.ic_seek_left);
         if (back != null) {
             back.setTint(textColor);
@@ -150,16 +152,42 @@ public class AppTitleBar extends FrameLayout {
             CharSequence text = a.getText(R.styleable.AppTitleBar_title);
             bold = a.getBoolean(R.styleable.AppTitleBar_titleBold, false);
             boolean showBack = a.getBoolean(R.styleable.AppTitleBar_showBack, true);
+            float backIconDp = a.getDimension(R.styleable.AppTitleBar_backIconSize, dp(BACK_ICON_DP));
             a.recycle();
             if (text != null) titleView.setText(text);
             backView.setVisibility(showBack ? VISIBLE : GONE);
+            applyBackIconSize(backIconDp);
         }
         setTitleBold(bold);
     }
 
+    /** 返回图标光学尺寸(dp):素材覆盖率不同,个别页需要微调以与右侧图标观感一致 */
+    private void applyBackIconSize(float sizePx) {
+        int px = Math.max(dp(8), Math.round(sizePx));
+        FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) backIconView.getLayoutParams();
+        if (lp == null) {
+            lp = new FrameLayout.LayoutParams(px, px);
+            lp.gravity = Gravity.CENTER;
+        } else {
+            lp.width = px;
+            lp.height = px;
+        }
+        backIconView.setLayoutParams(lp);
+    }
+
     /**
-     * 布局里的子 View = <b>右侧动作</b>:统一搬进右容器并垂直居中,
-     * 只规范化对齐与间距,<b>保留各自的尺寸</b>(20dp 图标、铺满高度的文字胶囊都按原样)。
+     * 布局里的子 View = <b>右侧动作</b>:统一搬进右容器并垂直居中。
+     *
+     * <p>ImageView 子 View 自己写的固定 dp 视为<b>图标光学尺寸</b>(两边都写取大者;只写一边、
+     * 另一边 wrap_content 也行,取固定那边):组件把它扩成与返回键同一套 {@link #BACK_TOUCH_DP}
+     * 触区(图标居中)并着主题色,于是"左右图标观感一致"与"页面按素材覆盖率微调 dp"两者兼得。
+     * <b>尺寸与位置一律以布局为准</b>:XML 里写的 padding 是光学微调(素材重心偏、想往哪挪一点),
+     * 叠在居中 padding 之上保留,预览里调了立刻看得见;layout_margin 也原样保留(在统一间距之外叠加)。
+     * 着色同理:XML 已给 tint(如清空键的危险红)就不覆盖,没给才着主题色。
+     * 非 ImageView 或没写固定 dp 的子 View 原样保留。
+     * <b>特例</b>:子 View 写 {@code android:tag="raw"} 表示退出上述触区扩围 ——
+     * 组件盒贴住图标(不加居中 padding、不扩触区、不自动补 RIGHT_GAP),
+     * 尺寸与图标间距完全交给页面布局控制,适合需要精确把控间距的页面。
      */
     @Override
     protected void onFinishInflate() {
@@ -173,16 +201,60 @@ public class AppTitleBar extends FrameLayout {
         for (View child : actions) {
             removeView(child);
         }
+        int touch = dp(BACK_TOUCH_DP);
         for (int i = 0; i < actions.size(); i++) {
             View child = actions.get(i);
-            LayoutParams old = (LayoutParams) child.getLayoutParams();
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
-                    old == null ? LayoutParams.WRAP_CONTENT : old.width,
-                    old == null ? LayoutParams.WRAP_CONTENT : old.height);
+            ViewGroup.LayoutParams old = child.getLayoutParams();
+            int w = old == null ? LayoutParams.WRAP_CONTENT : old.width;
+            int h = old == null ? LayoutParams.WRAP_CONTENT : old.height;
+            int glyph = iconGlyphPx(w, h, touch);
+            // android:tag="raw" = 退出触区扩围:组件盒贴住图标(不加居中 padding、不扩 40dp、
+            // 不自动补间距),尺寸/间距完全由布局自己控制;主题色 tint 照常生效。
+            boolean raw = "raw".equals(child.getTag());
+            boolean iconLike = child instanceof ImageView && glyph > 0;
+            boolean wrapped = iconLike && !raw;
+            if (iconLike) {
+                ImageView icon = (ImageView) child;
+                if (icon.getImageTintList() == null) {
+                    icon.setImageTintList(ColorStateList.valueOf(
+                            ContextCompat.getColor(getContext(), R.color.text_main)));
+                }
+            }
+            if (wrapped) {
+                // 固定 dp = 图标光学尺寸:扩成标准触区,图标居中
+                int pad = Math.max(0, Math.round((touch - glyph) / 2f));
+                child.setPadding(pad + child.getPaddingLeft(), pad + child.getPaddingTop(),
+                        pad + child.getPaddingRight(), pad + child.getPaddingBottom());
+                w = touch;
+                h = touch;
+            }
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(w, h);
             lp.gravity = Gravity.CENTER_VERTICAL;
-            if (i > 0) lp.leftMargin = dp(RIGHT_GAP_DP);
+            if (old instanceof MarginLayoutParams) {
+                MarginLayoutParams m = (MarginLayoutParams) old;
+                lp.leftMargin = m.leftMargin;
+                lp.topMargin = m.topMargin;
+                lp.rightMargin = m.rightMargin;
+                lp.bottomMargin = m.bottomMargin;
+            }
+            // 触区盒自带居中内边距,相邻图标间的视觉间距已由它提供;再叠 RIGHT_GAP 会显得"隔太远"。
+            // 仅非触区盒的动作(文字胶囊等)才补统一间距;raw 图标的间距完全交给布局 margin。
+            if (i > 0 && !wrapped && !raw) lp.leftMargin += dp(RIGHT_GAP_DP);
             rightBox.addView(child, lp);
         }
+    }
+
+    /**
+     * 布局尺寸是不是"图标光学尺寸":至少一边是 ≤ 触区的固定 dp。
+     * @return 图标边长(px);0 = 不按图标处理(原样保留子 View 自己的尺寸)
+     */
+    private static int iconGlyphPx(int w, int h, int touch) {
+        boolean fixedW = w > 0 && w <= touch;
+        boolean fixedH = h > 0 && h <= touch;
+        if (fixedW && fixedH) return Math.max(w, h);
+        if (fixedW) return w;
+        if (fixedH) return h;
+        return 0;
     }
 
     @Override
@@ -285,6 +357,9 @@ public class AppTitleBar extends FrameLayout {
     /**
      * 右侧放一个主题色图标动作(常用的那种):{@link #BACK_TOUCH_DP} 触区里画 {@code sizeDp} 图标,
      * 与返回键同一套几何,所以左右两侧观感一致。
+     *
+     * <p><b>优先在布局里写 ImageView</b>(尺寸/padding/tint 都能在预览里直接调,见 {@link #onFinishInflate()});
+     * 本方法只留给"运行时才知道图标或监听器"的场景。
      *
      * @return 生成的 ImageView(需要动态换图/改可用态时用)
      */

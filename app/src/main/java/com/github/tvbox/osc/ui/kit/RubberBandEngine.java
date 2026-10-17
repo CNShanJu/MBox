@@ -105,22 +105,31 @@ public class RubberBandEngine {
 
     /** 越界原始拖出距离(px,有符号):顶部为正,底部为负 */
     private float mOverscrollRaw = 0f;
+    /** 回弹方向:0=未回弹;+1=顶部下拉(越界位移为正);-1=底部上推(越界位移为负) */
+    private int mBounceDir = 0;
+    /** 越界位移基准 y:越界位移 = 当前 y - 基准,排除"区间内已滚动"部分,避免起步闪现 */
+    private float mBounceBaseY = 0f;
 
     private ValueAnimator mSpring = null;
+
+    /** 退出回弹的滞回阈值(px):反向位移超过它才退出回弹,否则停在原点 —— 见 onTouchEvent 的 MOVE 分支 */
+    private final float mBounceHysteresis;
 
     // ---- 可配置项(默认值即"两方向都可回弹、内容模式") ----
     private boolean mTopEnabled = true;
     private boolean mBottomEnabled = true;
     private Target mTarget = Target.CONTENT;
     private float mMaxOverscrollPx;
-    /** 阻尼"拉伸比"参数:>=1,越大回弹越"松"(跟手比例 1/k);1=接近 1:1 跟手 */
-    private float mSaturation = 1.0f;
+    /** 阻尼"拉伸比"参数:>=1,越大回弹越"松"(起始跟手比例 1/k);1=1:1 跟手(无阻尼感) */
+    private float mSaturation = 3.0f;
 
     public RubberBandEngine(Host host) {
         mHost = host;
         mTouchSlop = ViewConfiguration.get(host.view().getContext()).getScaledTouchSlop();
         mDensity = host.view().getResources().getDisplayMetrics().density;
         mMaxOverscrollPx = 120f * mDensity;
+        // 滞回按系统 touch slop 计:反向位移不到 slop 一律视为"边界微抖",不退出回弹
+        mBounceHysteresis = mTouchSlop;
     }
 
     // ================= 配置接口 =================
@@ -195,8 +204,21 @@ public class RubberBandEngine {
                     float dy = ev.getY() - mDownY;
                     float dx = ev.getX() - mDownX;
                     if (Math.abs(dy) > mTouchSlop && Math.abs(dy) > Math.abs(dx)) {
-                        mTracking = true;
-                        return true;
+                        // 只在"已到边界且向外拖"时才由引擎接管;区间内滚动一律放行给原生,
+                        // 让 RecyclerView/ScrollView 自己拦截并保持原生惯性与速度跟踪。
+                        // 若这里对所有竖向拖动都拦截,会抢走原生手势、丢掉拦截帧的位移(表现为
+                        // 起步"闪现"),并破坏 VelocityTracker(fling 变弱、太跟手)。
+                        boolean atTop = !mHost.canScrollUp();
+                        boolean atBottom = !mHost.canScrollDown();
+                        boolean wantTop = atTop && dy > 0f && mTopEnabled;
+                        boolean wantBottom = atBottom && dy < 0f && mBottomEnabled;
+                        if (wantTop || wantBottom) {
+                            mTracking = true;
+                            mBounceDir = wantTop ? 1 : -1;
+                            mBounceBaseY = ev.getY();
+                            return true;
+                        }
+                        // 区间内:不置 mTracking,交给 super.onInterceptTouchEvent 处理
                     }
                 }
                 return false;
@@ -227,26 +249,28 @@ public class RubberBandEngine {
                 float y = ev.getY();
                 float dy = y - mLastY;
 
-                // 已处于越界回弹:同向加大;反向先减小,越过原点后转原生滚动
-                if (mOverscrollRaw != 0f) {
-                    float before = mOverscrollRaw;
-                    float after = before + dy;
-                    boolean crossed = after == 0f || Math.signum(after) != Math.signum(before);
-                    if (crossed) {
-                        // 拖回越过原点:剩余位移 = 内容正常滚动(手指反向拖动)
-                        float leftover = after;
+                // 已处于越界回弹:位移 = 相对 intercept 基准的偏移(排除"区间内已滚动"部分,避免起步闪现)
+                if (mBounceDir != 0) {
+                    float raw = y - mBounceBaseY;
+                    if (raw != 0f && Math.signum(raw) != mBounceDir && Math.abs(raw) > mBounceHysteresis) {
+                        // 反向位移超过滞回阈值:明确的反向拖动,退出回弹,剩余位移转为内容正常滚动
+                        float leftover = raw;
+                        mBounceDir = 0;
                         mOverscrollRaw = 0f;
                         applyBounce(bounceView, 0f);
-                        // 死区:边界处的微小反向抖动(<1.5px)不滚动、不交还原生,
-                        // 避免"越界↔滚动"来回切换造成步进跳动
-                        if (Math.abs(leftover) >= 1.5f) {
-                            mHost.scrollContentBy(-Math.round(leftover));
-                            // 后续移动交原生接管(保持原生滚动/惯性)
-                            ensureNativeGesture(x, y);
-                        }
+                        mHost.scrollContentBy(-Math.round(leftover));
+                        // 后续移动交原生接管(保持原生滚动/惯性)
+                        ensureNativeGesture(x, y);
+                    } else if (raw != 0f && Math.signum(raw) != mBounceDir) {
+                        // 反向但未超滞回阈值:视为快速滑动到底后的边界微抖,停在回弹原点,
+                        // 不跟随反向也不退出 —— 消除"回弹↔滚动"来回切换导致的震荡
+                        mOverscrollRaw = 0f;
+                        applyBounce(bounceView, 0f);
                     } else {
-                        mOverscrollRaw = after;
-                        applyBounce(bounceView, rubberBand(after));
+                        // 同向跟手;raw==0(刚接管的首帧)也走这里:保持接管、零位移,
+                        // 不再因"恰好回到原点"反复进出回弹(震荡的主要来源之一)
+                        mOverscrollRaw = raw;
+                        applyBounce(bounceView, rubberBand(raw));
                     }
                     mLastX = x;
                     mLastY = y;
@@ -259,10 +283,14 @@ public class RubberBandEngine {
                 boolean pullTop = atTop && dy > 0f && mTopEnabled;
                 boolean pullBottom = atBottom && dy < 0f && mBottomEnabled;
                 if (pullTop || pullBottom) {
-                    if (mNativeActive) {
-                        mHost.nativeEndGesture();
-                        mNativeActive = false;
-                    }
+                    // 无条件向原生补发 CANCEL:RecyclerView/ScrollView 可能已在原生侧进入拖拽
+                    // (此时 mNativeActive 未必为真)。不取消会让它停留在 DRAGGING、速度跟踪不回收,
+                    // 松手后与回弹叠加成"震荡"。
+                    mHost.nativeEndGesture();
+                    mNativeActive = false;
+                    mBounceDir = pullTop ? 1 : -1;
+                    // 以上一帧为越界基准:本帧 dy 即"越过边界后"的增量,不含区间内已滚动部分
+                    mBounceBaseY = mLastY;
                     mOverscrollRaw = dy;
                     applyBounce(bounceView, rubberBand(dy));
                     mLastX = x;
@@ -279,8 +307,9 @@ public class RubberBandEngine {
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_CANCEL: {
                 mTracking = false;
-                if (mOverscrollRaw != 0f) {
+                if (mBounceDir != 0) {
                     // 松开时仍处于越界 → 回弹
+                    mBounceDir = 0;
                     springBack(bounceView);
                     mNativeActive = false;
                     return true;
@@ -317,6 +346,8 @@ public class RubberBandEngine {
     private void resetGesture(float x, float y) {
         stopSpring();
         mOverscrollRaw = 0f;
+        mBounceDir = 0;
+        mBounceBaseY = 0f;
         View bounceView = resolveBounceView();
         if (bounceView != null) {
             bounceView.setTranslationY(0f);

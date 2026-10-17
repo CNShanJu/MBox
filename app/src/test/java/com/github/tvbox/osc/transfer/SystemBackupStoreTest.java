@@ -10,6 +10,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -42,6 +43,32 @@ public class SystemBackupStoreTest {
                 new byte[] { 1, 2, 4 }, "{}", 1_000L, false);
         assertNotEquals(BackupContentHash.sha256(first), BackupContentHash.sha256(changedPrefs));
         assertNotEquals(BackupContentHash.sha256(first), BackupContentHash.sha256(changedRoom));
+    }
+
+    @Test
+    public void contentHashAcceptsExtraModuleEntriesLikeSubs() throws Exception {
+        // 回归:含 subs.zip 的备份必须能哈希 —— 旧白名单只认 prefs/room/manifest,
+        // 多一个订阅条目就抛"条目无效",把整机还原误判成"当前数据临时备份失败"。
+        File withSubs = zipWithExtra("with-subs.zip", "{\"a\":1}", "subs-v1");
+        File withOtherSubs = zipWithExtra("with-other-subs.zip", "{\"a\":1}", "subs-v2");
+        File withoutSubs = zip("without-subs.zip", "{\"a\":1}", null, "{}", 1_000L, false);
+        BackupContentHash.sha256(withSubs);
+        assertNotEquals(BackupContentHash.sha256(withSubs), BackupContentHash.sha256(withOtherSubs));
+        assertNotEquals(BackupContentHash.sha256(withSubs), BackupContentHash.sha256(withoutSubs));
+    }
+
+    private File zipWithExtra(String name, String prefs, String subs) throws IOException {
+        File file = temporary.newFile(name);
+        ByteArrayOutputStream nested = new ByteArrayOutputStream();
+        try (ZipOutputStream output = new ZipOutputStream(nested)) {
+            entry(output, "subscription_import/source.json", subs.getBytes(StandardCharsets.UTF_8), 1_000L);
+        }
+        try (ZipOutputStream output = new ZipOutputStream(new FileOutputStream(file))) {
+            entry(output, "prefs.json", prefs.getBytes(StandardCharsets.UTF_8), 1_000L);
+            entry(output, "subs.zip", nested.toByteArray(), 1_000L);
+            entry(output, "manifest.json", "{}".getBytes(StandardCharsets.UTF_8), 1_000L);
+        }
+        return file;
     }
 
     @Test

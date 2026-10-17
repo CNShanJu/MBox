@@ -32,9 +32,8 @@ class DownloadActivity : BaseVbActivity<ActivityDownloadBinding>() {
         supportFragmentManager.beginTransaction()
             .replace(mBinding.container.id, DownloadFragment())
             .commitAllowingStateLoss()
-        // 标题栏右侧齿轮:统一走 AppTitleBar(40dp 触区 + 主题色,与返回键同一套几何);
-        // 点击 = 下载设置弹窗(跟随主题:并发 SelectDialog + 仅WiFi 开关)
-        mBinding.titleBar.setRightIcon(R.drawable.ic_setting, 22f) {
+        // 标题栏右侧齿轮:图标在布局里(iv_setting,尺寸/位置在 XML 调),点击 = 下载设置弹窗
+        mBinding.ivSetting.setOnClickListener {
             XPopup.Builder(this)
                 .isDarkTheme(Utils.isDarkTheme()) // 遮罩/弹窗样式跟随主题
                 .asCustom(DownloadSettingsDialog(this))

@@ -78,6 +78,8 @@ public class GridFragment extends BaseLazyFragment {
     /** 下拉刷新 + 到底了 装配门面 */
     private ListRefreshSupport mRefreshSupport = null;
     private boolean isTop = true;
+    /** 列表位置被程序改动时的宿主回调(底栏「回到顶部」同步,见 setOnScrollPositionChangedListener) */
+    private OnScrollPositionChanged scrollPositionChangedListener;
     private View focusedView = null;
     /** 层级快照:每深入一层只把上一层的轻量状态(数据引用/分页/滚动)入栈;
      *  全 fragment 只保留一套 RecyclerView + GridAdapter,不再逐层新建/隐藏视图(避免深目录内存累积) */
@@ -250,6 +252,8 @@ public class GridFragment extends BaseLazyFragment {
                 mEndReached = false;
             }
             restoreScroll(info.scrollPos, info.scrollOffset);
+            // 还原到上一层离开时的位置:这一次定位没有用户滚动事件可听,按记录的位置直接报给宿主
+            notifyScrollPositionChanged(info.scrollPos <= 0);
             mGridView.requestFocus();
             if (mRefreshSupport != null) mRefreshSupport.updateEndTip();
         }
@@ -281,6 +285,7 @@ public class GridFragment extends BaseLazyFragment {
         this.isLoad = false;
         this.mEndReached = false;
         if (mRefreshSupport != null) mRefreshSupport.updateEndTip(); // 清掉旧层残留的"到底了"
+        notifyScrollPositionChanged(true); // 新层从顶部开始,底栏「回到顶部」跟着复位
     }
 
     private void initView() {
@@ -680,6 +685,28 @@ public class GridFragment extends BaseLazyFragment {
     public void scrollTop() {
         isTop = true;
         mGridView.scrollToPosition(0);
+        notifyScrollPositionChanged(true);
+    }
+
+    /**
+     * 列表位置变化回调(宿主用来同步底栏「回到顶部」外观)。
+     * <p>
+     * 只报<b>程序改的</b>那几次定位(回顶/换层/还原):用户自己滑动由宿主的滚动监听统一收,
+     * 这里不重复报。参数直接给出"动作之后列表在不在顶部"——因为定位要等到下一帧布局才生效,
+     * 宿主这时去读 {@link #canScrollToTop()} 只会读到旧值。
+     */
+    public void setOnScrollPositionChangedListener(OnScrollPositionChanged listener) {
+        this.scrollPositionChangedListener = listener;
+    }
+
+    /** 列表位置变化回调(参数=true 表示这次变化后列表确定在顶部) */
+    public interface OnScrollPositionChanged {
+        void onScrollPositionChanged(boolean atTop);
+    }
+
+    private void notifyScrollPositionChanged(boolean atTop) {
+        OnScrollPositionChanged listener = scrollPositionChangedListener;
+        if (listener != null) listener.onScrollPositionChanged(atTop);
     }
 
     public void showFilter() {

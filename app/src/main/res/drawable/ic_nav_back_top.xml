@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  底栏「回到顶部」图标(源图 D:\Code\Video\LiteIcon\返回顶部.svg,经 scripts/svg2vector.py 同规则转换)。
+  单色矢量:根节点写 android:tint="@color/text_foreground" —— 这是本仓库图标跟主题走的写法
+  (ThemeDrawables 扫到根 tint → 认成"单色矢量图标" → 按运行时主题色着色);
+  放进底栏时实际颜色仍由底栏的 itemIconTint(主题选择器 color_highlight/text_hint)决定,与首页/我的图标同源。
+  字形包围盒与 ic_nav_home 同为"接近满格"(1024 视框里高度约 94%),同尺寸(22dp)下视觉大小与首页一致。
+  2026-10-16 用户反馈"回到顶部图标太大"：这个上箭头+杆的字形几乎铺满 1024 视框(实际高度 985.6,中心约
+  (505,510)),而首页/我的图标字形是"实心块且不满格",同样的 22dp 下箭头反而显大。用 group 把字形缩放
+  到 0.88 并平移回视框中心(scale 以左上角为基准,平移量 = 512 - 0.88*字形中心),视觉上缩到与另外两枚
+  图标等大;外框仍 24dp、根 tint 不变,主题上色与底栏 itemIconTint 都不受影响。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="1024"
+    android:viewportHeight="1024"
+    android:tint="@color/text_foreground">
+    <group
+        android:scaleX="0.88"
+        android:scaleY="0.88"
+        android:translateX="67.42"
+        android:translateY="62.85">
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M936 407.2l-368-368c-16-16-38.4-21.6-59.2-16-16 0-32 5.6-44.8 17.6L98.4 407.2c-24 24-24 62.4 0 86.4 24 24 62.4 24 86.4 0L462.4 216v725.6c0 33.6 27.2 61.6 61.6 61.6 33.6 0 61.6-27.2 61.6-61.6V232l263.2 263.2c24 24 63.2 24 87.2 0 24.8-24 24.8-63.2 0-88z"/>
+    </group>
+</vector>

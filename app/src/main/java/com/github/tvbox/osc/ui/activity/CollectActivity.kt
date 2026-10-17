@@ -8,6 +8,7 @@ import android.widget.TextView
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
 import com.chad.library.adapter.base.BaseQuickAdapter
+import com.github.tvbox.osc.R
 import com.github.tvbox.osc.base.BaseVbActivity
 import com.github.tvbox.osc.databinding.ActivityCollectBinding
 import com.github.tvbox.osc.log.Category
@@ -16,9 +17,11 @@ import com.github.tvbox.osc.repo.HistoryRepositories
 import com.github.tvbox.osc.spiderapi.SourceConfigProviders
 import com.github.tvbox.osc.ui.adapter.CollectAdapter
 import com.github.tvbox.osc.ui.dialog.ConfirmDialog
+import com.github.tvbox.osc.ui.dialog.SourceInfoDialog
 import com.github.tvbox.osc.ui.kit.SelectActionBar
 import com.github.tvbox.osc.util.AppBubble
 import com.github.tvbox.osc.util.FastClickCheckUtil
+import com.github.tvbox.osc.util.SubscriptionIndex
 import com.github.tvbox.osc.util.Utils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -72,6 +75,16 @@ class CollectActivity : BaseVbActivity<ActivityCollectBinding>() {
                 intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
                 startActivity(intent)
             }
+        }
+
+        // 点来源徽标:弹出来源信息(可一键切回来源订阅);不影响卡片本身的点击与长按多选。
+        collectAdapter.setOnItemChildClickListener { _, view, position ->
+            if (deleting || collectAdapter.isSelectMode) return@setOnItemChildClickListener
+            if (view.id != R.id.layout_source) return@setOnItemChildClickListener
+            FastClickCheckUtil.check(view)
+            val item = collectAdapter.data.getOrNull(position) ?: return@setOnItemChildClickListener
+            val origin = SubscriptionIndex.build().resolve(item.sourceKey, item.subscriptionFingerprint)
+            SourceInfoDialog.show(this, item.name, origin)
         }
 
         mBinding.selectActionBar.addAction("全选", SelectActionBar.Kind.NORMAL) { view ->
@@ -150,8 +163,10 @@ class CollectActivity : BaseVbActivity<ActivityCollectBinding>() {
         super.onResume()
         lifecycleScope.launch(Dispatchers.IO) {
             val items = ArrayList(HistoryRepositories.collect().query())
+            val index = SubscriptionIndex.build()
             withContext(Dispatchers.Main) {
                 if (deleting || collectAdapter.isSelectMode) return@withContext
+                collectAdapter.setOriginIndex(index)
                 collectAdapter.exitSelectMode()
                 collectAdapter.setNewData(items)
                 mBinding.selectActionBar.visibility = View.GONE
