@@ -36,7 +36,7 @@ def cfgAppIcon = appConfig.getProperty('appIcon', '@drawable/app_icon') ?: '@dra
 // ------------------------------------------------------------------
 android {
     namespace 'com.github.tvbox.osc'
-    compileSdk 34
+    compileSdk 36
 
     defaultConfig {
         // 专属包名:与 TVBox 系开源应用通用的 com.github.tvbox.osc 区分开,

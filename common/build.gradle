@@ -10,7 +10,7 @@ plugins {
 // 禁止本模块反向依赖业务/UI(checkModuleDependencies 门禁)。
 android {
     namespace 'com.github.tvbox.osc.common'
-    compileSdk 34
+    compileSdk 36
 
     defaultConfig {
         minSdk 24

@@ -5,7 +5,7 @@ plugins {
 
 android {
     namespace 'com.github.tvbox.osc.player'
-    compileSdk 34
+    compileSdk 36
 
     defaultConfig {
         minSdk 24
@@ -38,8 +38,8 @@ dependencies {
     implementation project(':common')
     implementation project(':core-storage')
     implementation project(':log')
-    // 1.4.1 与现有 compileSdk 34 匹配；升级 SDK/AGP 时再显式升级这一组。
-    def media3Version = "1.4.1"
+    // 1.11.1 要求 minCompileSdk=36；compileSdk 已同步升到 36。
+    def media3Version = "1.11.1"
     implementation "androidx.annotation:annotation:1.3.0"
     // app 的内核适配器继承 ExoMediaPlayer，暂需暴露其 ExoPlayer/TrackSelector 类型。
     api "androidx.media3:media3-exoplayer:$media3Version"
@@ -47,6 +47,8 @@ dependencies {
     implementation "androidx.media3:media3-exoplayer-hls:$media3Version"
     implementation "androidx.media3:media3-exoplayer-rtsp:$media3Version"
     implementation "androidx.media3:media3-datasource-rtmp:$media3Version"
+    // IJK 软解移除后，用 jellyfin 的 FFmpeg 音频软解补齐(参照 AVBox，与 Media3 1.11.1 兼容的可用版本为 1.9.0+1)。
+    implementation "org.jellyfin.media3:media3-ffmpeg-decoder:1.9.0+1"
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
     api 'xyz.doikki.android.dkplayer:dkplayer-ui:3.3.5'
     testImplementation 'junit:junit:4.13.2'

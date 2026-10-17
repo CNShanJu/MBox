@@ -5,7 +5,7 @@ plugins {
 android {
     // 模块与物理目录已从 common 更名对齐 :core-network(namespace 仅为资源生成,无外部引用)
     namespace 'com.github.tvbox.osc.corenetwork'
-    compileSdk 34
+    compileSdk 36
 
     defaultConfig {
         minSdk 24
