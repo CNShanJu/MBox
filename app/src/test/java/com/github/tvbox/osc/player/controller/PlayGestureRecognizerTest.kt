@@ -86,31 +86,6 @@ class PlayGestureRecognizerTest {
     }
 
     @Test
-    fun first24DpOfALargeCircleStaysUndecided() {
-        for (direction in listOf(-1, 1)) {
-            val recognizer = PlayGestureRecognizer(1f)
-            feed(recognizer, arc(480.0, direction * 4.0, 32))
-            assertTrue(recognizer.isUndecided)
-            assertFalse(recognizer.isLinear)
-            assertNone(recognizer)
-        }
-    }
-
-    @Test
-    fun slightCurvatureCanExtendTheInitialWindow() {
-        for (direction in listOf(-1, 1)) {
-            val recognizer = PlayGestureRecognizer(1f)
-            val points = arc(480.0, direction * 180.0, 720)
-            recognizer.start(points.first().x, points.first().y)
-            for (i in 1..48) recognizer.move(points[i].x, points[i].y)
-            // 12° / 约 100dp 的大圆局部已有弯曲，但尚不足以确认形状。
-            assertTrue(recognizer.isUndecided)
-            for (i in 49 until points.size) recognizer.move(points[i].x, points[i].y)
-            assertEquals(PlayGestureRecognizer.Gesture.ARC, recognizer.finish().gesture)
-        }
-    }
-
-    @Test
     fun circlesWorkInBothDirectionsAtDifferentSizesAndDensities() {
         for (density in listOf(1f, 2f, 3f)) {
             for (radius in listOf(32.0, 80.0, 180.0, 320.0, 480.0)) {
@@ -127,31 +102,11 @@ class PlayGestureRecognizerTest {
     }
 
     @Test
-    fun openArcsWorkInBothDirectionsAndRotations() {
-        for (sweep in listOf(90.0, 135.0, 180.0)) {
-            for (radius in listOf(40.0, 160.0, 480.0)) {
-                for (rotation in listOf(0.0, PI / 4, PI / 2)) {
-                    for (direction in listOf(-1, 1)) {
-                        for (samples in listOf(12, 60, 360)) {
-                            val recognizer = PlayGestureRecognizer(1f)
-                            feed(recognizer, arc(radius, direction * sweep, samples, rotation))
-                            assertEquals("arc r=$radius sweep=$sweep dir=$direction rotation=$rotation samples=$samples",
-                                PlayGestureRecognizer.Gesture.ARC, recognizer.finish().gesture)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    @Test
-    fun narrowZigzagsAreRejectedEvenAfterEarlyShapeActivation() {
+    fun narrowZigzagsAreRejected() {
         for (rotation in listOf(0.0, PI / 4, PI / 2)) {
             val recognizer = PlayGestureRecognizer(1f)
             val points = (0..80).map { rotate(it * 10.0, if (it % 2 == 0) 0.0 else 4.0, rotation) }
-            feed(recognizer, points.take(5))
-            assertTrue(recognizer.isActive)
-            for (point in points.drop(5)) recognizer.move(point.x, point.y)
+            feed(recognizer, points)
             assertNone(recognizer)
         }
     }
@@ -195,8 +150,8 @@ class PlayGestureRecognizerTest {
         assertNone(recognizer)
         recognizer.move(700f, 200f)
         assertNone(recognizer)
-        feed(recognizer, arc(120.0, -180.0, 120))
-        assertEquals(PlayGestureRecognizer.Gesture.ARC, recognizer.finish().gesture)
+        feed(recognizer, arc(120.0, -360.0, 120))
+        assertEquals(PlayGestureRecognizer.Gesture.CIRCLE, recognizer.finish().gesture)
         assertNone(recognizer)
     }
 

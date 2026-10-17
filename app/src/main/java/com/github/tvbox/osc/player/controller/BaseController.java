@@ -582,7 +582,7 @@ public abstract class BaseController extends BaseVideoController implements Gest
     }
 
     /**
-     * 自定义轨迹手势钩子(画圈/画弧)：由子类覆写，默认不启用。
+     * 自定义轨迹手势钩子(画圈)：由子类覆写，默认不启用。
      * onDown → onGestureStart；onScroll → onGestureMove(返回 true 则跳过滑动调节)；
      * ACTION_UP → onGestureEnd；ACTION_CANCEL → onGestureCancel(仅清理，不派发动作)。
      */

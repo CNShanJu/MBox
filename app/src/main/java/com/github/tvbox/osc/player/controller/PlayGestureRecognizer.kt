@@ -6,12 +6,11 @@ import kotlin.math.hypot
 import kotlin.math.max
 
 /**
- * 纯轨迹识别：画圆 / 画弧，不区分顺逆时针。
+ * 纯轨迹识别：画圈(中心画圈刷新)，不区分顺逆时针。
  * start 后先观察初始窗口；直线一旦交还普通滑动，本轮不再识别形状。
- * 用横向弯曲量而非路径/首尾距离消歧，避免把直线折返当作弧线。
  */
 class PlayGestureRecognizer(density: Float) {
-    enum class Gesture { NONE, CIRCLE, ARC }
+    enum class Gesture { NONE, CIRCLE }
 
     class Result(val gesture: Gesture, val centerX: Float)
 
@@ -25,6 +24,8 @@ class PlayGestureRecognizer(density: Float) {
     private var pathLength = 0.0
     private var sampleStep = MIN_SAMPLE_DP * scale.toDouble()
     private var centerX = 0f
+    private var absDx = 0.0
+    private var absDy = 0.0
 
     val isActive: Boolean get() = phase == Phase.SHAPE
     val isUndecided: Boolean get() = phase == Phase.UNDECIDED
@@ -52,22 +53,37 @@ class PlayGestureRecognizer(density: Float) {
         if (pts.size == MAX_POINTS) compactPoints()
         pathLength += distance
         pts.add(Pt(x, y))
+        absDx += abs(x.toDouble() - last.x)
+        absDy += abs(y.toDouble() - last.y)
         if (phase == Phase.UNDECIDED) decide()
     }
 
     private fun decide() {
         // 两点总是共线；低采样率下第一次大位移也不能据此锁死真实圆弧。
         if (pts.size < 3 || pathLength < MIN_PATH_DP * scale) return
+        // 纯轴向直线滑动（上下调音量/亮度、左右调进度）：垂直方向累计位移几乎为零，快速交还。
+        // 画圈两轴都有明显位移，不会被这里误判；被误判的只有横向跨度 < 3dp 的"线"。
+        val noise = LINE_NOISE_DP * scale * 2.0
+        if (absDx <= noise || absDy <= noise) {
+            phase = Phase.LINEAR
+            pts.clear()
+            return
+        }
         val bend = measureBend()
-        if (bend.deviation >= MIN_BEND_DP * scale && bend.deviation >= bend.span * BEND_RATIO) {
+        val ratio = if (bend.span > 0) bend.deviation / bend.span else 0.0
+        val (_, totalSweep) = sweepMetrics()
+        val curved = ratio >= BEND_RATIO
+        // 明显在画圈：弯曲 且 总转角(折返不抵消)已 >= SHAPE_SWEEP，提前锁定，避免圈前半段被误判成滑动。
+        // 用总转角锁 SHAPE 后，recognize 只会更大，不会因折返掉回 NONE。
+        if (curved && totalSweep >= SHAPE_SWEEP) {
             phase = Phase.SHAPE
-        } else if (pathLength >= INITIAL_WINDOW_DP * scale) {
-            // 大圆的前 24dp 很像直线：至少观察 96dp；已有轻微弯曲则延长到 160dp。
-            // 不能一直等待形状，一旦确认普通滑动，后面的回退/画圈都不能抢回本轮。
-            if (bend.deviation <= LINE_NOISE_DP * scale || pathLength >= MAX_WINDOW_DP * scale) {
-                phase = Phase.LINEAR
-                pts.clear()
-            }
+            return
+        }
+        // 交还：不弯(直线,含穿过质心的斜线) → 走普通滑动。
+        // 带弯的(可能是画圈起笔)继续观察，不在此交还，避免把大半径画圈误判成滑动。
+        if (pathLength >= INITIAL_WINDOW_DP * scale && !curved) {
+            phase = Phase.LINEAR
+            pts.clear()
         }
     }
 
@@ -90,6 +106,31 @@ class PlayGestureRecognizer(density: Float) {
         return Bend(span, deviation)
     }
 
+    /**
+     * 绕质心的转角，返回 (净转角, 总转角)，单位度。
+     * - 净转角 = 相邻角度差(带符号)累加的绝对值：单方向绕圈≈360°，折返会抵消到≈0°。
+     * - 总转角 = 相邻角度差绝对值累加：折返不抵消，衡量"总共画了多少弧"。
+     * 画圈判定用总转角(>=CIRCLE_SWEEP) + 净转角(>=CIRCLE_SWEEP，排除折返)。
+     */
+    private fun sweepMetrics(): Pair<Double, Double> {
+        if (pts.size < 3) return 0.0 to 0.0
+        val cx = pts.sumOf { it.x.toDouble() } / pts.size
+        val cy = pts.sumOf { it.y.toDouble() } / pts.size
+        var net = 0.0
+        var total = 0.0
+        var last = atan2(pts[0].y - cy, pts[0].x - cx)
+        for (i in 1 until pts.size) {
+            val a = atan2(pts[i].y - cy, pts[i].x - cx)
+            var d = a - last
+            while (d > Math.PI) d -= 2.0 * Math.PI
+            while (d < -Math.PI) d += 2.0 * Math.PI
+            net += d
+            total += abs(d)
+            last = a
+        }
+        return abs(Math.toDegrees(net)) to Math.toDegrees(total)
+    }
+
     /** 结束后回到 IDLE；未 start、cancel 后或重复 finish 均无动作。 */
     fun finish(): Result {
         val gesture = recognize()
@@ -102,45 +143,20 @@ class PlayGestureRecognizer(density: Float) {
     fun cancel() = reset()
 
     private fun recognize(): Gesture {
-        if (phase != Phase.SHAPE || pts.size < 5) return Gesture.NONE
+        if (phase != Phase.SHAPE || pts.size < 5) {
+            return Gesture.NONE
+        }
         val cx = pts.sumOf { it.x.toDouble() } / pts.size
         val cy = pts.sumOf { it.y.toDouble() } / pts.size
         centerX = cx.toFloat()
 
-        // 协方差的 det / trace² 与旋转无关；排除直线、窄折线、扁平往返轨迹。
-        // 仅绕质心 atan2 累加会把穿过质心的共线折返误算成 180°。
-        var xx = 0.0
-        var yy = 0.0
-        var xy = 0.0
-        for (p in pts) {
-            val dx = p.x - cx
-            val dy = p.y - cy
-            xx += dx * dx
-            yy += dy * dy
-            xy += dx * dy
-        }
-        val trace = xx + yy
-        if (trace <= 0.0 || (xx * yy - xy * xy) / (trace * trace) < MIN_AREA_RATIO) {
-            return Gesture.NONE
-        }
-
-        var total = 0.0
-        var lastAngle = atan2(pts[0].y - cy, pts[0].x - cx)
-        for (i in 1 until pts.size) {
-            val angle = atan2(pts[i].y - cy, pts[i].x - cx)
-            var delta = angle - lastAngle
-            while (delta > Math.PI) delta -= 2.0 * Math.PI
-            while (delta < -Math.PI) delta += 2.0 * Math.PI
-            total += delta
-            lastAngle = angle
-        }
-        val swept = abs(Math.toDegrees(total))
+        // 画圈 = 总转角 >= CIRCLE_SWEEP 且 净转角 >= CIRCLE_SWEEP(排除折返) 且 首尾闭合。
+        val (netSweep, totalSweep) = sweepMetrics()
         val start = pts.first()
         val end = pts.last()
         val direct = hypot(end.x.toDouble() - start.x, end.y.toDouble() - start.y)
-        if (swept >= CIRCLE_SWEEP && direct <= pathLength * CIRCLE_CLOSE_RATIO) return Gesture.CIRCLE
-        if (swept >= ARC_SWEEP) return Gesture.ARC
-        return Gesture.NONE
+        return if (totalSweep >= CIRCLE_SWEEP && netSweep >= CIRCLE_SWEEP
+                && direct <= pathLength * CIRCLE_CLOSE_RATIO) Gesture.CIRCLE else Gesture.NONE
     }
 
     private fun compactPoints() {
@@ -163,6 +179,8 @@ class PlayGestureRecognizer(density: Float) {
         pathLength = 0.0
         sampleStep = MIN_SAMPLE_DP * scale.toDouble()
         centerX = 0f
+        absDx = 0.0
+        absDy = 0.0
     }
 
     companion object {
@@ -170,13 +188,12 @@ class PlayGestureRecognizer(density: Float) {
         private const val MIN_SAMPLE_DP = 2.0
         private const val MIN_PATH_DP = 24f
         private const val INITIAL_WINDOW_DP = 96f
-        private const val MAX_WINDOW_DP = 160f
         private const val LINE_NOISE_DP = 1.5f
-        private const val MIN_BEND_DP = 3f
-        private const val BEND_RATIO = 0.04
-        private const val MIN_AREA_RATIO = 0.015
+        /** 弯曲度阈值(dev/span)：低于此视为直线(交还滑动)；调到 0.02 让大半径画圈起笔不被当直线。 */
+        private const val BEND_RATIO = 0.02
         private const val CIRCLE_SWEEP = 270.0
-        private const val ARC_SWEEP = 90.0
+        /** 进入形状识别(锁 SHAPE)的最低总转角：画圈前半段即锁定，避免被误判成滑动。 */
+        private const val SHAPE_SWEEP = 150.0
         private const val CIRCLE_CLOSE_RATIO = 0.4
     }
 }

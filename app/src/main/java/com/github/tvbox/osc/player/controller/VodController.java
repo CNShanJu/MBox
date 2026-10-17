@@ -61,7 +61,7 @@ public class VodController extends BaseController implements PlaybackSettingsCon
     private AdaptiveVodProgressLayout mAdaptiveProgressLayout;
     /** 用户是否锁定竖屏: 锁定后刷新/重播不得按片源宽高自动转回横屏 */
     private boolean mPortraitLock = false;
-    /** 画圈/画弧手势识别(中心画圈刷新、左右画弧切上/下一集) */
+    /** 画圈手势识别(中心画圈刷新) */
     private final PlayGestureRecognizer mGestureRecognizer;
 
     public VodController(@NonNull @NotNull Context context) {
@@ -1283,7 +1283,7 @@ public class VodController extends BaseController implements PlaybackSettingsCon
     private float speed_old = 1.0f;
 
     // ------------------------------------------------------------------
-    // 画圈/画弧手势(中心画圈=刷新, 左右画弧=上/下一集)
+    // 画圈手势(中心画圈=刷新；切上/下一集改由底部对应 icon 触发)
     // 接入点在 BaseController 的 onDown/onScroll/ACTION_UP 钩子。
     // ------------------------------------------------------------------
 
@@ -1339,22 +1339,14 @@ public class VodController extends BaseController implements PlaybackSettingsCon
         super.beginSeeking();
     }
 
-    /** 画手势识别结果 → 动作：中心画圈刷新、左侧画弧上一集、右侧画弧下一集 */
+    /** 画手势识别结果 → 动作：中心画圈刷新（切上/下一集改由底部对应 icon 触发） */
     private void dispatchGesture(PlayGestureRecognizer.Result result) {
         if (!canRecognizeShapeGesture() || result == null || listener == null) return;
+        android.util.Log.i("PlayerGesture", "dispatch gesture=" + result.getGesture()
+                + " centerX=" + result.getCenterX() + " width=" + getWidth());
         if (result.getGesture() == PlayGestureRecognizer.Gesture.CIRCLE) {
             listener.replay(false);
             hideBottom();
-        } else if (result.getGesture() == PlayGestureRecognizer.Gesture.ARC) {
-            int width = getWidth();
-            if (width <= 0) return;
-            if (result.getCenterX() < width / 3f) {
-                listener.playPre();
-                hideBottom();
-            } else if (result.getCenterX() > width * 2f / 3f) {
-                listener.playNext(false);
-                hideBottom();
-            }
         }
     }
 
