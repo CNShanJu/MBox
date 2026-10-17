@@ -25,6 +25,9 @@ public class VodCollect implements Serializable {
     public String name;
     @ColumnInfo(name = "pic")
     public String pic;
+    /** 收藏时的订阅地址指纹；升级前的老收藏为空，无法追溯来源订阅（与历史记录的 subscriptionFingerprint 同义）。 */
+    @ColumnInfo(name = "subscriptionFingerprint")
+    public String subscriptionFingerprint;
 
     public int getId() {
         return id;

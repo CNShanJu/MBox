@@ -2,8 +2,6 @@ package com.github.tvbox.osc.repo;
 
 import com.github.tvbox.osc.bean.VodInfo;
 import com.github.tvbox.osc.cache.RoomDataManger;
-import com.github.tvbox.osc.cache.VodRecord;
-import com.github.tvbox.osc.data.AppDataManager;
 
 import java.util.List;
 import java.util.function.Predicate;
@@ -32,12 +30,7 @@ public final class RoomHistoryRepository implements HistoryRepository {
 
     @Override
     public void delete(String sourceKey, String vodId) {
-        AppDataManager.runOnDb(() -> {
-            VodRecord record = AppDataManager.get().getVodRecordDao().getVodRecord(sourceKey, vodId);
-            if (record != null) {
-                AppDataManager.get().getVodRecordDao().delete(record);
-            }
-        });
+        RoomDataManger.deleteVodRecord(sourceKey, vodId);
     }
 
     @Override

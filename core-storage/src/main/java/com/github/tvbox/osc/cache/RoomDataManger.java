@@ -131,8 +131,12 @@ public class RoomDataManger {
     }
 
     public static void deleteVodRecord(String sourceKey, VodInfo vodInfo) {
+        deleteVodRecord(sourceKey, vodInfo.id);
+    }
+
+    public static void deleteVodRecord(String sourceKey, String vodId) {
         AppDataManager.runOnDb(() -> {
-            VodRecord record = AppDataManager.get().getVodRecordDao().getVodRecord(sourceKey, vodInfo.id);
+            VodRecord record = AppDataManager.get().getVodRecordDao().getVodRecord(sourceKey, vodId);
             if (record != null) {
                 AppDataManager.get().getVodRecordDao().delete(record);
             }
@@ -200,6 +204,7 @@ public class RoomDataManger {
             record.updateTime = System.currentTimeMillis();
             record.name = vodInfo.name;
             record.pic = vodInfo.pic;
+            record.subscriptionFingerprint = vodInfo.subscriptionFingerprint;
             AppDataManager.get().getVodCollectDao().insert(record);
         });
     }
@@ -211,8 +216,12 @@ public class RoomDataManger {
     }
 
     public static void deleteVodCollect(String sourceKey, VodInfo vodInfo) {
+        deleteVodCollect(sourceKey, vodInfo.id);
+    }
+
+    public static void deleteVodCollect(String sourceKey, String vodId) {
         AppDataManager.runOnDb(() -> {
-            VodCollect record = AppDataManager.get().getVodCollectDao().getVodCollect(sourceKey, vodInfo.id);
+            VodCollect record = AppDataManager.get().getVodCollectDao().getVodCollect(sourceKey, vodId);
             if (record != null) {
                 AppDataManager.get().getVodCollectDao().delete(record);
             }

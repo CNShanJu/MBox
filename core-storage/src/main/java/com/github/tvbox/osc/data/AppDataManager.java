@@ -8,7 +8,6 @@ import android.database.sqlite.SQLiteException;
 import androidx.annotation.NonNull;
 import androidx.room.Room;
 import androidx.room.RoomDatabase;
-import androidx.room.migration.Migration;
 import androidx.sqlite.db.SupportSQLiteDatabase;
 
 import java.io.File;
@@ -22,6 +21,8 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 
 /**
@@ -31,8 +32,13 @@ import java.util.concurrent.Future;
  * @since 2020/5/15
  */
 public class AppDataManager {
-    private static final int DB_FILE_VERSION = 3;
+    // 换文件策略:每次 schema 变更升此值换新文件名(新库 onCreate 建全表),不写 Room Migration。
+    // 老版本数据库文件残留为孤儿、不再读取;历史/收藏随换库清空(用户确认放弃老数据兼容)。
+    private static final int DB_FILE_VERSION = 4;
     private static final String DB_NAME = "tvbox";
+    /** 匹配历史库文件 tvbox.v<N>.db 及其 -journal/-wal/-shm sidecar */
+    private static final Pattern LEGACY_DB_PATTERN =
+            Pattern.compile(Pattern.quote(DB_NAME) + "\\.v(\\d+)\\.db(?:-(?:journal|wal|shm))?");
     private static AppDataManager manager;
     private static AppDataBase dbInstance;
     private static volatile Thread dbThread;
@@ -74,41 +80,31 @@ public class AppDataManager {
         return appContext.getDatabasePath(dbPath());
     }
 
-    static final Migration MIGRATION_1_2 = new Migration(1, 2) {
-        @Override
-        public void migrate(SupportSQLiteDatabase database) {
-            // 高频条件列补索引:历史/收藏按 (sourceKey,vodId) 点查、updateTime 排序
-            database.execSQL("CREATE INDEX IF NOT EXISTS `index_vodRecord_sourceKey_vodId` ON `vodRecord` (`sourceKey`, `vodId`)");
-            database.execSQL("CREATE INDEX IF NOT EXISTS `index_vodRecord_updateTime` ON `vodRecord` (`updateTime`)");
-            database.execSQL("CREATE INDEX IF NOT EXISTS `index_vodCollect_sourceKey_vodId` ON `vodCollect` (`sourceKey`, `vodId`)");
-            database.execSQL("CREATE INDEX IF NOT EXISTS `index_vodCollect_updateTime` ON `vodCollect` (`updateTime`)");
-        }
-    };
-
-    static final Migration MIGRATION_2_3 = new Migration(2, 3) {
-        @Override
-        public void migrate(SupportSQLiteDatabase database) {
-            try {
-                database.execSQL("ALTER TABLE vodRecord ADD COLUMN dataJson TEXT");
-            } catch (SQLiteException e) {
-                e.printStackTrace();
-            }
-        }
-    };
-
-    static final Migration MIGRATION_3_4 = new Migration(3, 4) {
-        @Override
-        public void migrate(SupportSQLiteDatabase database) {
-            try {
-                database.execSQL("ALTER TABLE localSource ADD COLUMN type INTEGER NOT NULL DEFAULT 0");
-            } catch (SQLiteException e) {
-                e.printStackTrace();
-            }
-        }
-    };
-
     static String dbPath() {
         return DB_NAME + ".v" + DB_FILE_VERSION + ".db";
+    }
+
+    /** 清理旧代数据库文件(换文件策略下,DB_FILE_VERSION 之前的历史库不再使用)。
+     *  同步执行,调用方应在后台线程调用;删除失败静默(下次启动再试),不影响当前库。 */
+    public static void cleanupLegacyDatabaseFiles() {
+        File dbDir = dbFile().getParentFile();
+        if (dbDir == null || !dbDir.isDirectory()) return;
+        File[] files = dbDir.listFiles();
+        if (files == null) return;
+        for (File f : files) {
+            if (!f.isFile() || !isLegacyDbFile(f.getName())) continue;
+            f.delete();
+        }
+    }
+
+    private static boolean isLegacyDbFile(String name) {
+        Matcher m = LEGACY_DB_PATTERN.matcher(name);
+        if (!m.matches()) return false;
+        try {
+            return Integer.parseInt(m.group(1)) < DB_FILE_VERSION;
+        } catch (NumberFormatException e) {
+            return false; // 版本号溢出等极端情况,不当旧库处理
+        }
     }
 
     /** 在 Room 专用线程上同步执行一个写/读任务(阻塞其他线程,保证串行)；专用线程内可重入。 */
@@ -210,7 +206,6 @@ public class AppDataManager {
                 if (dbInstance == null) {
                     dbInstance = Room.databaseBuilder(appContext, AppDataBase.class, dbPath())
                             .setJournalMode(RoomDatabase.JournalMode.TRUNCATE)
-                            .addMigrations(MIGRATION_1_2)
                             .addCallback(new RoomDatabase.Callback() {
                                 @Override
                                 public void onCreate(@NonNull SupportSQLiteDatabase db) {
@@ -249,6 +244,11 @@ public class AppDataManager {
             if (e.getCause() instanceof IOException) throw (IOException) e.getCause();
             throw e;
         }
+    }
+
+    /** 是否存在应用数据库文件(备份/保护快照判断"有无历史/收藏数据"用;不打开数据库)。 */
+    public static boolean hasDatabaseFile() {
+        return dbFile().exists();
     }
 
     /** 校验已生成的数据库备份；不修改运行中的 Room 数据库。 */
@@ -335,7 +335,8 @@ public class AppDataManager {
                     throw new IOException("备份数据库校验失败");
             }
             try (Cursor cursor = sqlite.rawQuery("PRAGMA user_version", null)) {
-                if (!cursor.moveToFirst() || cursor.getInt(0) < 1 || cursor.getInt(0) > 2)
+                // 只接受当前代库(schema v4)的备份;旧代库(v1~v3)不再兼容
+                if (!cursor.moveToFirst() || cursor.getInt(0) != 4)
                     throw new IOException("备份数据库版本不受支持");
             }
             try (Cursor cursor = sqlite.rawQuery(

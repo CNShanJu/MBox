@@ -17,7 +17,7 @@ import com.github.tvbox.osc.cache.VodRecordDao;
  * @author pj567
  * @since 2020/5/15
  */
-@Database(entities = {Cache.class, VodRecord.class, VodCollect.class}, version = 2)
+@Database(entities = {Cache.class, VodRecord.class, VodCollect.class}, version = 4)
 public abstract class AppDataBase extends RoomDatabase {
     public abstract CacheDao getCacheDao();
 

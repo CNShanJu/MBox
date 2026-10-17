@@ -3,7 +3,6 @@ package com.github.tvbox.osc.repo;
 import com.github.tvbox.osc.bean.VodInfo;
 import com.github.tvbox.osc.cache.RoomDataManger;
 import com.github.tvbox.osc.cache.VodCollect;
-import com.github.tvbox.osc.data.AppDataManager;
 
 import java.util.List;
 
@@ -26,12 +25,7 @@ public final class RoomCollectRepository implements CollectRepository {
 
     @Override
     public void delete(String sourceKey, String vodId) {
-        AppDataManager.runOnDb(() -> {
-            VodCollect record = AppDataManager.get().getVodCollectDao().getVodCollect(sourceKey, vodId);
-            if (record != null) {
-                AppDataManager.get().getVodCollectDao().delete(record);
-            }
-        });
+        RoomDataManger.deleteVodCollect(sourceKey, vodId);
     }
 
     @Override

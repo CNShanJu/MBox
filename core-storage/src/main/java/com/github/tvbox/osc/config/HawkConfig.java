@@ -18,6 +18,8 @@ public class HawkConfig {
     /** 字幕开关(默认关闭,播放器设置里可打开/关闭) */
     public static final String SUBTITLE_OPEN = "subtitle_open";
     public static final String LIVE_HISTORY = "live_history";
+    /** 用户给自建直播源起的名字(地址 → 名称);没起过的按地址推导展示名 */
+    public static final String LIVE_NAMES = "live_names";
     public static final String EPG_HISTORY = "epg_history";
     public static final String HOME_API = "home_api";
     public static final String DEFAULT_PARSE = "parse_default";
