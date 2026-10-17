@@ -38,6 +38,10 @@ import java.util.UUID;
  * File ↔ JsonObject 的适配；清空语义按"清空本机该域可转移数据"实现。领域逻辑仍由各
  * 配置门面（SubscriptionConfig / LiveConfig / ThemeStore / SystemConfig 等）自己管理，
  * 这里不另起炉灶 —— 某域格式变了，只需改那个域。
+ *
+ * <p>同一调度器上还注册着三个备份数据域（prefs / room / subs，见 BackupModules 的
+ * DataDomain 适配）：本地备份的创建/还原与局域网配置导入因此走同一条 share 调度，
+ * 只是选定的数据域与导入语义不同。
  */
 public final class ConfigDomains {
 
@@ -50,14 +54,14 @@ public final class ConfigDomains {
     private ConfigDomains() {
     }
 
-    /** 已初始化的统一调度器（含配置域；备份域在 BackupModules 注册）。 */
+    /** 已初始化的统一调度器（配置域 + 备份域）。 */
     public static DataTransferHub hub() {
         DataTransferHub h = hub;
         if (h == null) throw new IllegalStateException("ConfigDomains 未初始化");
         return h;
     }
 
-    /** 在组合根（App 启动）注册配置数据域。幂等。 */
+    /** 在组合根（App 启动）注册配置与备份数据域。幂等。 */
     public static void init(Context context) {
         if (hub != null) return;
         Context app = context.getApplicationContext();
@@ -68,6 +72,9 @@ public final class ConfigDomains {
         h.register(new ThemesDomain(app));
         h.register(new SettingsDomain(app));
         h.register(new HistoryDomain(app));
+        h.register(new PrefsBackupDomain(app));
+        h.register(new RoomBackupDomain(app));
+        h.register(new SubsBackupDomain(app));
         hub = h;
     }
 

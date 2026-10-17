@@ -4,6 +4,7 @@ import android.content.Context
 import com.github.tvbox.osc.config.PrefsDataStore
 import com.github.tvbox.osc.data.AppDataManager
 import com.github.tvbox.osc.share.ShareArchives
+import com.github.tvbox.osc.share.domain.DataDomain
 import com.github.tvbox.osc.util.LocalPackageImporter
 import com.github.tvbox.osc.util.SubscriptionLibrary
 import java.io.File
@@ -21,6 +22,9 @@ import java.util.UUID
  * - 还原 = 先遍历**所有**模块 [clear](把本机该模块数据清空,保证"备份里没有=还原后也没有"),
  *   再对入口文件里登记的模块逐个 [import];
  * - [hasData] 同时是"还原前保护快照是否需要做"的依据:整机一点数据都没有就不做临时备份。
+ *
+ * 本契约同时是 share 统一调度器({@link DataDomain})的适配来源:三个备份模块各自桥接出一个
+ * 数据域(见文件底部),领域逻辑仍留在模块内,某模块的导入导出逻辑变动不影响其他链路。
  */
 interface BackupModule {
     val id: String
@@ -29,7 +33,8 @@ interface BackupModule {
     fun hasData(context: Context): Boolean
     fun export(context: Context, target: File): Boolean
     fun clear(context: Context)
-    fun import(context: Context, source: File)
+    /** 导入并返回本次实际落地的条目数(供结果文案)。 */
+    fun import(context: Context, source: File): Int
 }
 
 object BackupModules {
@@ -61,11 +66,13 @@ object PrefsBackupModule : BackupModule {
         PrefsDataStore.replaceTransferableJson("{}")
     }
 
-    override fun import(context: Context, source: File) {
+    override fun import(context: Context, source: File): Int {
         val text = source.inputStream().use {
             String(BackupContentHash.readBounded(it, maxBytes, source.length()), StandardCharsets.UTF_8)
         }
-        if (PrefsDataStore.importJson(text) < 0) throw IOException("设置数据写入失败")
+        val count = PrefsDataStore.importJson(text)
+        if (count < 0) throw IOException("设置数据写入失败")
+        return count
     }
 }
 
@@ -87,8 +94,9 @@ object RoomBackupModule : BackupModule {
         AppDataManager.restoreMissingDatabase()
     }
 
-    override fun import(context: Context, source: File) {
+    override fun import(context: Context, source: File): Int {
         if (!AppDataManager.restore(source)) throw IOException("播放历史/收藏还原失败")
+        return 1
     }
 }
 
@@ -115,8 +123,8 @@ object SubsBackupModule : BackupModule {
         }
     }
 
-    override fun import(context: Context, source: File) {
-        SubscriptionImportFiles.runLocked<Unit> {
+    override fun import(context: Context, source: File): Int {
+        return SubscriptionImportFiles.runLocked<Int> {
             SubsBackupFiles.importArchive(source, dirs(context))
         }
     }
@@ -160,12 +168,14 @@ internal object SubsBackupFiles {
         for (child in children(directory)) deleteTree(root, child)
     }
 
-    fun mergeTree(source: File, target: File) = io {
+    /** 把 source 目录树合并进 target，返回本次落地的文件数。 */
+    fun mergeTree(source: File, target: File): Int = io {
         val sourceRoot = checkedRoot(source)
         val targetRoot = checkedRoot(target)
         if (sourceRoot == targetRoot || sourceRoot.path.startsWith(targetRoot.path + File.separator)
             || targetRoot.path.startsWith(sourceRoot.path + File.separator)) throw IOException("订阅复制目录重叠")
         ensureDirectory(target)
+        var copied = 0
         walk(sourceRoot, source) { child ->
             val relative = child.absolutePath.substring(sourceRoot.path.length + 1)
             val dest = File(targetRoot, relative)
@@ -182,11 +192,14 @@ internal object SubsBackupFiles {
                         }
                     }
                 }
+                copied++
             }
         }
+        copied
     }
 
-    fun importArchive(source: File, targets: Map<String, File>) {
+    /** 解压订阅归档并合并进各目标目录，返回本次落地的文件数。 */
+    fun importArchive(source: File, targets: Map<String, File>): Int {
         BackupContentHash.subsSha256(source)
         val extractDir = File(source.parentFile, "subs_extract_" + UUID.randomUUID())
         if (!extractDir.mkdir()) throw IOException("无法创建订阅还原目录")
@@ -196,11 +209,13 @@ internal object SubsBackupFiles {
             } catch (failure: SecurityException) {
                 throw IOException("订阅源备份内容超限或非法", failure)
             }
+            var merged = 0
             for (root in children(extractDir)) {
                 val target = targets[root.name] ?: throw IOException("订阅源备份包含未知目录: " + root.name)
                 if (!root.isDirectory) throw IOException("订阅源根条目不是目录")
-                mergeTree(root, target)
+                merged += mergeTree(root, target)
             }
+            return merged
         } finally {
             extractDir.deleteRecursively()
         }
@@ -263,4 +278,69 @@ internal object SubsBackupFiles {
     } catch (failure: SecurityException) {
         throw IOException("订阅文件不可访问", failure)
     }
+}
+
+// ------------------------------------------------------------------
+// DataDomain 适配：三个备份模块桥接到 share 的统一调度器（DataTransferHub）
+// ------------------------------------------------------------------
+
+/**
+ * 备份数据域（prefs / room / subs）的 {@link DataDomain} 实现。
+ *
+ * <p>领域逻辑（序列化格式、校验规则、存储位置）仍由各 {@link BackupModule} 自己管理，
+ * 这里只做 File ↔ 模块 的接口适配。注册进 share 的调度器后，本地备份/还原与其他链路
+ * （局域网配置导入）走同一条统一调度；某个模块的导入导出逻辑变动只改模块自己，不影响其他链路。
+ */
+class PrefsBackupDomain(private val context: Context) : DataDomain {
+    private val module = PrefsBackupModule
+
+    override fun id() = module.id
+    override fun label() = "设置"
+    override fun entryName() = module.entryName
+    override fun maxBytes() = module.maxBytes
+    override fun hasData() = module.hasData(context)
+
+    override fun exportTo(target: File) {
+        // 调度器只在 hasData() 为 true 时调用导出；此时模块报"无数据"即为失败，不能静默跳过。
+        if (!module.export(context, target)) throw IOException("备份模块导出失败: " + module.id)
+    }
+
+    override fun mergeFrom(source: File) = module.import(context, source)
+    override fun clearData() = module.clear(context)
+}
+
+/** 播放历史/收藏（Room 整库）备份域。 */
+class RoomBackupDomain(private val context: Context) : DataDomain {
+    private val module = RoomBackupModule
+
+    override fun id() = module.id
+    override fun label() = "历史与收藏"
+    override fun entryName() = module.entryName
+    override fun maxBytes() = module.maxBytes
+    override fun hasData() = module.hasData(context)
+
+    override fun exportTo(target: File) {
+        if (!module.export(context, target)) throw IOException("备份模块导出失败: " + module.id)
+    }
+
+    override fun mergeFrom(source: File) = module.import(context, source)
+    override fun clearData() = module.clear(context)
+}
+
+/** 订阅源本地文件（subscription_import / local_packages）备份域。 */
+class SubsBackupDomain(private val context: Context) : DataDomain {
+    private val module = SubsBackupModule
+
+    override fun id() = module.id
+    override fun label() = "订阅源文件"
+    override fun entryName() = module.entryName
+    override fun maxBytes() = module.maxBytes
+    override fun hasData() = module.hasData(context)
+
+    override fun exportTo(target: File) {
+        if (!module.export(context, target)) throw IOException("备份模块导出失败: " + module.id)
+    }
+
+    override fun mergeFrom(source: File) = module.import(context, source)
+    override fun clearData() = module.clear(context)
 }

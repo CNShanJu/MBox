@@ -4,7 +4,12 @@ import android.content.Context
 import com.github.tvbox.osc.config.PrefsDataStore
 import com.github.tvbox.osc.data.AppDataManager
 import com.github.tvbox.osc.share.ShareArchives
-import com.google.gson.Gson
+import com.github.tvbox.osc.share.ShareManifest
+import com.github.tvbox.osc.share.domain.DataTransferHub
+import com.github.tvbox.osc.share.domain.ImportMode
+import com.github.tvbox.osc.share.domain.ImportProtection
+import com.github.tvbox.osc.share.domain.TransferHook
+import com.github.tvbox.osc.share.domain.TransferSession
 import com.google.gson.stream.JsonReader
 import com.google.gson.stream.JsonToken
 import java.io.File
@@ -18,102 +23,126 @@ import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 
+/**
+ * 本地备份归档：创建与还原统一走 share 的 {@link DataTransferHub} 调度。
+ *
+ * <p>导出 = 调度器把三个备份数据域（prefs / room / subs，见 {@link BackupModules} 的
+ * DataDomain 适配）各自打进归档，没有数据的域不产出条目；还原 = 覆盖模式分发
+ * （{@link ImportMode#OVERWRITE}：备份里没有的数据域，还原后本机也没有）。
+ *
+ * <p>归档格式有两代，还原都支持：
+ * <ul>
+ *   <li>新格式 = share 统一归档（{@link ShareManifest} 清单 + 各域条目文件）；</li>
+ *   <li>旧格式 = schema 2 严格清单（逐条目 SHA-256），由 {@link BackupArchiveFiles} 校验后
+ *       转换成调度器清单分发，老版本写的备份继续可还原。</li>
+ * </ul>
+ *
+ * <p>定制化入口：还原接受 {@link TransferHook}，调用方可在通用流程前插入自己的逻辑 ——
+ * 本地备份的"覆写前先做 1 小时保护快照"就是这样接入的（见 LocalBackupRepository）。
+ */
 class BackupArchive(private val context: Context) {
     companion object {
         const val ENTRY_MANIFEST = "manifest.json"
         const val FILE_NAME = "mbox-backup.zip"
-        private val GSON = Gson()
+        private val BACKUP_DOMAINS = linkedSetOf(
+                PrefsBackupModule.id, RoomBackupModule.id, SubsBackupModule.id)
     }
+
+    private val hub = ConfigDomains.hub()
 
     fun create(backupDirectory: File): File {
         BackupArchiveFiles.ensureDirectory(backupDirectory)
-        val staging = File(backupDirectory, "staging_" + UUID.randomUUID())
-        if (!staging.mkdir()) throw IOException("无法准备备份临时目录")
         val temporary = File(backupDirectory, "mbox_backup_" + UUID.randomUUID() + ".tmp")
+        var archive: File? = null
         try {
-            val modules = withDataLock {
-                BackupModules.all.mapNotNull { module ->
-                    BackupArchiveFiles.exportEntry(module, File(staging, module.entryName),
-                        { module.hasData(context) }, { module.export(context, File(staging, module.entryName)) })
-                }
-            }
-            if (modules.isEmpty()) throw IOException("当前无数据可备份")
-            val manifest = File(staging, ENTRY_MANIFEST)
-            manifest.writeText(manifestJson(modules), StandardCharsets.UTF_8)
-            val entries = LinkedHashMap<String, File>()
-            for (entry in modules) entries[entry.entry] = File(staging, entry.entry)
-            entries[ENTRY_MANIFEST] = manifest
-            ShareArchives.zip(entries, temporary)
+            // 导出期间占住 Room 线程 + 订阅文件锁，与配置导入互斥（原 withDataLock 语义）。
+            archive = BackupDataLock.withDataLock { hub.exportArchive(BACKUP_DOMAINS, FILE_NAME, true) }
+            copyBounded(archive, temporary)
             if (temporary.length() > BackupLimits.ARCHIVE) throw IOException("备份 ZIP 过大")
             val saved = File(backupDirectory, uniqueName(backupDirectory))
             if (!temporary.renameTo(saved)) throw IOException("备份文件落盘失败")
             return saved
         } finally {
+            archive?.delete()
             temporary.delete()
-            deleteTree(staging)
         }
     }
 
-    fun restore(backupZip: File): String = restoreInternal(backupZip)
-
-    fun restoreSystem(backupZip: File): String = restoreInternal(backupZip)
-
-    private fun restoreInternal(backupZip: File): String {
+    /**
+     * 还原备份（覆盖模式，经 share 统一调度）。
+     *
+     * @param hook 定制化钩子，可为 {@code null}；本地备份还原传入"保护快照"钩子
+     */
+    fun restore(backupZip: File, hook: TransferHook?): String {
         BackupArchiveFiles.requireArchive(backupZip)
         val work = File(context.cacheDir, "restore_" + UUID.randomUUID())
         if (!work.mkdir()) throw IOException("无法准备还原临时目录")
         try {
-            val copy = File(work, "backup.zip")
-            backupZip.inputStream().use { input ->
-                copy.outputStream().use { output ->
-                    BackupContentHash.consume(input, BackupLimits.ARCHIVE, backupZip.length()) { buffer, count ->
-                        output.write(buffer, 0, count)
-                    }
-                }
-            }
             // 输入副本与解压产物分离，恶意条目不能覆盖仍在读取的 ZIP。
+            val copy = File(work, "backup.zip")
+            copyBounded(backupZip, copy)
             val payload = File(work, "payload")
-            val modules = BackupArchiveFiles.extractValidated(copy, payload)
-            modules.firstOrNull { it.id == RoomBackupModule.id }?.let {
-                AppDataManager.validateBackup(File(payload, it.entry))
+            val manifest = ShareArchives.manifest(copy)
+            val restored: List<String>
+            val dispatchManifest: ShareManifest
+            if (manifest != null && isCurrentFormat(manifest)) {
+                // 新格式：解压 + 条目与域内容预校验后交调度器分发。
+                ShareArchives.check(copy, manifest)
+                ShareArchives.extract(copy, payload, BackupLimits.ARCHIVE, BackupLimits.ARCHIVE)
+                validatePayload(payload, manifest.domains())
+                dispatchManifest = manifest
+                restored = manifest.domains()
+            } else {
+                // 旧格式：严格清单校验（含逐条目 SHA-256 与 Room 预校验）后转换成调度器清单。
+                val entries = BackupArchiveFiles.extractValidated(copy, payload)
+                dispatchManifest = ShareManifest(ShareManifest.SCHEMA_CURRENT, FILE_NAME, 0, "",
+                        System.currentTimeMillis(), appVersion(), 0, entries.map { it.id })
+                restored = entries.map { it.id }
             }
-            return withDataLock {
-                for (module in BackupModules.all) module.clear(context)
-                for (entry in modules) {
-                    val module = BackupModules.byId(entry.id) ?: throw IOException("未知备份模块: " + entry.id)
-                    module.import(context, File(payload, entry.entry))
-                }
-                modules.joinToString("/") { it.id } + " 已恢复"
-            }
+            hub.importValidated(payload, dispatchManifest, BACKUP_DOMAINS, ImportMode.OVERWRITE,
+                    hook, BackupTransferLocks())
+            return restored.joinToString("/") + " 已恢复"
         } finally {
             deleteTree(work)
         }
     }
 
-    private fun <T> withDataLock(action: () -> T): T {
-        try {
-            // 与配置导入保持 Room → 订阅文件 → Prefs 的顺序，且订阅清空和写回不可被插入。
-            return AppDataManager.runOnDb<T> {
-                SubscriptionImportFiles.runLocked<T> {
-                    PrefsDataStore.runWithRollback<T> { action() }
-                }
+    /** 新格式 = share 统一归档清单（当前 schema + 备份文件名 + 数据域全部是已注册备份域）。 */
+    private fun isCurrentFormat(manifest: ShareManifest): Boolean =
+            manifest.schema() == ShareManifest.SCHEMA_CURRENT
+                    && FILE_NAME == manifest.fileName()
+                    && manifest.domains().isNotEmpty()
+                    && BACKUP_DOMAINS.containsAll(manifest.domains())
+
+    /** 新格式解压后的条目校验：条目集合必须与清单一致，且各域内容先过自己的预校验。 */
+    private fun validatePayload(payload: File, ids: List<String>) {
+        val expected = ids.map { hub.domain(it).entryName() }.toSet() + ENTRY_MANIFEST
+        val files = payload.listFiles() ?: throw IOException("备份包解压失败")
+        if (files.size != expected.size) throw IOException("备份包条目不完整或包含额外文件")
+        for (file in files) {
+            if (!file.isFile || file.name !in expected) throw IOException("备份包包含未知条目")
+        }
+        // 与旧格式一致：room 先 validateBackup 再动本机数据，损坏的备份在清空前就失败。
+        for (id in ids) {
+            when (id) {
+                RoomBackupModule.id ->
+                    AppDataManager.validateBackup(File(payload, RoomBackupModule.entryName))
+                SubsBackupModule.id ->
+                    BackupContentHash.subsSha256(File(payload, SubsBackupModule.entryName))
+                PrefsBackupModule.id ->
+                    BackupContentHash.validatePrefs(File(payload, PrefsBackupModule.entryName))
             }
-        } catch (error: RuntimeException) {
-            throw (error.cause as? IOException ?: error)
         }
     }
 
-    private fun manifestJson(entries: List<BackupEntry>): String {
-        val header = linkedMapOf<String, Any>(
-            "schema" to 2,
-            "fileName" to FILE_NAME,
-            "createdAt" to System.currentTimeMillis(),
-            "appVersion" to appVersion(),
-            "modules" to entries.map { entry ->
-                linkedMapOf("id" to entry.id, "entry" to entry.entry, "size" to entry.size, "sha256" to entry.sha256)
+    private fun copyBounded(source: File, target: File) {
+        source.inputStream().use { input ->
+            target.outputStream().use { output ->
+                BackupContentHash.consume(input, BackupLimits.ARCHIVE, source.length()) { buffer, count ->
+                    output.write(buffer, 0, count)
+                }
             }
-        )
-        return GSON.toJson(header)
+        }
     }
 
     private fun appVersion(): String = try {
@@ -137,6 +166,36 @@ class BackupArchive(private val context: Context) {
         if (file.isDirectory) file.listFiles()?.forEach { deleteTree(it) }
         file.delete()
     }
+}
+
+/**
+ * Room 线程 → 订阅文件锁 → Prefs 回滚作用域：备份导出与还原共用的锁序（与配置导入一致，
+ * 保证备份/还原和配置导入不会并发交错写同一批数据）。
+ */
+internal object BackupDataLock {
+    fun <T> withDataLock(action: () -> T): T {
+        return try {
+            AppDataManager.runOnDb<T> {
+                SubscriptionImportFiles.runLocked<T> {
+                    PrefsDataStore.runWithRollback<T> { action() }
+                }
+            }
+        } catch (error: RuntimeException) {
+            throw (error.cause as? IOException ?: error)
+        }
+    }
+}
+
+/**
+ * 备份还原的导入保护：只做锁串行（{@link BackupDataLock}）。
+ *
+ * 快照与回滚不在这里 —— 备份链路用 SystemBackupStore 的"还原前 1 小时保护快照"兜底
+ * （由调用方以 {@link TransferHook} 插入）；默认保护的文件快照不覆盖 room 域的整库替换，
+ * 对备份还原没有意义，这正是"下游可重写导入保护"的落地。
+ */
+internal class BackupTransferLocks : ImportProtection {
+    override fun runProtected(session: TransferSession, action: ImportProtection.ImportAction): List<String> =
+            BackupDataLock.withDataLock { action.run() }
 }
 
 internal data class BackupEntry(val id: String, val entry: String, val size: Long, val sha256: String)

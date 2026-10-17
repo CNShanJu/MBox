@@ -149,21 +149,60 @@ public final class DataTransferHub {
         try {
             ShareArchives.extract(archive, work, MAX_ARCHIVE_BYTES, MAX_UNPACKED_BYTES);
             validateEntries(work, manifest.domains());
-
-            TransferSession session = new TransferSession(selected, mode, false);
-            ImportProtection guard = protection;
-            if (hook != null) hook.before(session);
-            boolean success = false;
-            try {
-                ImportProtection.ImportAction action = () -> distribute(work, selected, mode, manifest);
-                List<String> imported = guard != null ? guard.runProtected(session, action) : action.run();
-                success = true;
-                return imported;
-            } finally {
-                if (hook != null) hook.after(session, success);
-            }
+            return dispatch(work, selected, mode, manifest, hook, null);
         } finally {
             clean(work);
+        }
+    }
+
+    /**
+     * 从调用方已校验的解压目录导入（备份等"自有归档格式"的链路用）。
+     *
+     * <p>归档的读取、格式校验与解压由调用方按自己的格式完成 —— 例如备份包自带严格清单
+     * （逐条目 SHA-256、Room 预校验），旧版本备份格式也在这条路上继续可还原；本方法只负责
+     * 统一调度：钩子 → 导入保护 → 逐域分发，与 {@link #importArchive} 走完全相同的分发逻辑。
+     *
+     * @param work        已解压的归档内容目录（由调用方持有与清理）
+     * @param manifest    与目录内容对应的清单（清单内的数据域条目必须已存在于 work 中）
+     * @param ids         允许导入的数据域 id
+     * @param mode        合并（保留现有）或覆盖（先清空）
+     * @param hook        通用流程前后的定制化钩子，可为 {@code null}
+     * @param protection 本次使用的导入保护，{@code null} 表示用调度器默认实现
+     * @return 实际导入的域 id（调用方用于结果文案）
+     */
+    public List<String> importValidated(File work, ShareManifest manifest, Set<String> ids,
+                                        ImportMode mode, TransferHook hook,
+                                        ImportProtection protection) throws IOException {
+        Set<String> selected = requireDomains(ids);
+        if (work == null || !work.isDirectory()) throw new IOException("导入目录无效");
+        if (manifest == null || !manifest.isReadableByCurrentVersion()
+                || manifest.domains().isEmpty()
+                || !selected.containsAll(manifest.domains())) {
+            throw new IOException("数据包清单无效或包含未选中的数据域");
+        }
+        for (String id : manifest.domains()) {
+            if (!new File(work, domains.get(id).entryName()).isFile()) {
+                throw new IOException("数据域条目缺失: " + id);
+            }
+        }
+        return dispatch(work, selected, mode, manifest, hook, protection);
+    }
+
+    /** 钩子 → 导入保护 → 逐域分发（所有导入链路统一的尾部）。 */
+    private List<String> dispatch(File work, Set<String> selected, ImportMode mode,
+                                  ShareManifest manifest, TransferHook hook,
+                                  ImportProtection protection) throws IOException {
+        TransferSession session = new TransferSession(selected, mode, false);
+        if (hook != null) hook.before(session);
+        boolean success = false;
+        try {
+            ImportProtection guard = protection != null ? protection : this.protection;
+            ImportProtection.ImportAction action = () -> distribute(work, selected, mode, manifest);
+            List<String> imported = guard != null ? guard.runProtected(session, action) : action.run();
+            success = true;
+            return imported;
+        } finally {
+            if (hook != null) hook.after(session, success);
         }
     }
 

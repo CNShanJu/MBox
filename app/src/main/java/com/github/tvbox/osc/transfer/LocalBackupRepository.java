@@ -5,6 +5,8 @@ import android.os.Environment;
 
 import com.github.tvbox.osc.log.Category;
 import com.github.tvbox.osc.log.LogStore;
+import com.github.tvbox.osc.share.domain.TransferHook;
+import com.github.tvbox.osc.share.domain.TransferSession;
 
 import java.io.File;
 import java.io.IOException;
@@ -65,27 +67,34 @@ public final class LocalBackupRepository {
         SystemBackupStore store = systemBackups();
         // A selected system backup must remain readable while a new safety snapshot is made.
         try (SystemBackupStore.Lease selectedLease = entry.isSystem() ? store.acquire(selected) : null) {
-            // 整机一点可备份数据都没有时不做保护快照(空壳无需保护,否则还原永远被"临时备份"卡住);
-            // 只要有任何数据(设置/历史/收藏/搜索记录/订阅/背景配置等)就必须先保护再还原。
-            File protection = BackupModules.INSTANCE.anyHasData(context) ? preserveCurrent() : null;
-            try (SystemBackupStore.Lease protectionLease =
-                         protection != null ? store.acquire(protection) : null) {
+            RestoreProtection protection = new RestoreProtection();
+            try {
+                // 定制化钩子：通用还原流程前先做 1 小时保护快照。整机一点可备份数据都没有时不做
+                // (空壳无需保护,否则还原永远被"临时备份"卡住);只要有任何数据(设置/历史/收藏/
+                // 搜索记录/订阅/背景配置等)就必须先保护再还原。
+                TransferHook protect = new TransferHook() {
+                    @Override public void before(TransferSession session) throws IOException {
+                        File snapshot = BackupModules.INSTANCE.anyHasData(context) ? preserveCurrent() : null;
+                        protection.snapshot = snapshot;
+                        protection.lease = snapshot != null ? store.acquire(snapshot) : null;
+                    }
+                };
                 String result;
                 try {
-                    result = entry.isSystem() ? archive.restoreSystem(selected) : archive.restore(selected);
+                    result = archive.restore(selected, protect);
                 } catch (Exception failure) {
-                    if (protection == null) {
+                    if (protection.snapshot == null) {
                         LogStore.fail(Category.SYSTEM, "本地备份: 还原失败(空机无保护快照) "
                                 + failureMessage(failure));
                         throw new IOException("还原失败：" + failure.getMessage(), failure);
                     }
                     boolean rolledBack = false;
                     try {
-                        archive.restoreSystem(protection);
+                        archive.restore(protection.snapshot, null);
                         rolledBack = true;
                     } catch (Exception recoveryFailure) { failure.addSuppressed(recoveryFailure); }
                     LogStore.fail(Category.SYSTEM, rolledBack ? "本地备份: 还原失败，已回滚当前数据"
-                            : "本地备份: 还原失败，自动回滚未完成，保留临时备份 " + protection.getName());
+                            : "本地备份: 还原失败，自动回滚未完成，保留临时备份 " + protection.snapshot.getName());
                     throw new IOException(rolledBack ? "还原失败，已恢复还原前的数据：" + failure.getMessage()
                             : "还原失败，自动回滚未完成；请使用临时备份回滚：" + failure.getMessage(), failure);
                 }
@@ -100,11 +109,20 @@ public final class LocalBackupRepository {
                 }
                 LogStore.success(Category.SYSTEM, "本地备份: 还原成功 " + entry.name());
                 return result;
+            } finally {
+                // 保护快照的租约覆盖整个还原(含失败回滚)：过期清理不能在还原途中删掉它。
+                if (protection.lease != null) protection.lease.close();
             }
         }
     }
 
-    private File preserveCurrent() throws Exception {
+    /** 还原前的保护快照句柄：由 TransferHook.before 创建，失败回滚与租约释放都要用到。 */
+    private static final class RestoreProtection {
+        File snapshot;
+        SystemBackupStore.Lease lease;
+    }
+
+    private File preserveCurrent() throws IOException {
         File staging = new File(context.getCacheDir(), "pre_restore_" + java.util.UUID.randomUUID());
         if (!staging.mkdir()) throw new IOException("无法准备临时备份目录");
         File candidate = null;
