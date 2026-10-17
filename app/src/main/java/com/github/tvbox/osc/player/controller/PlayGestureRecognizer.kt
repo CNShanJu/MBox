@@ -24,8 +24,6 @@ class PlayGestureRecognizer(density: Float) {
     private var pathLength = 0.0
     private var sampleStep = MIN_SAMPLE_DP * scale.toDouble()
     private var centerX = 0f
-    private var absDx = 0.0
-    private var absDy = 0.0
 
     val isActive: Boolean get() = phase == Phase.SHAPE
     val isUndecided: Boolean get() = phase == Phase.UNDECIDED
@@ -53,25 +51,15 @@ class PlayGestureRecognizer(density: Float) {
         if (pts.size == MAX_POINTS) compactPoints()
         pathLength += distance
         pts.add(Pt(x, y))
-        absDx += abs(x.toDouble() - last.x)
-        absDy += abs(y.toDouble() - last.y)
         if (phase == Phase.UNDECIDED) decide()
     }
 
     private fun decide() {
         // 两点总是共线；低采样率下第一次大位移也不能据此锁死真实圆弧。
         if (pts.size < 3 || pathLength < MIN_PATH_DP * scale) return
-        // 纯轴向直线滑动（上下调音量/亮度、左右调进度）：垂直方向累计位移几乎为零，快速交还。
-        // 画圈两轴都有明显位移，不会被这里误判；被误判的只有横向跨度 < 3dp 的"线"。
-        val noise = LINE_NOISE_DP * scale * 2.0
-        if (absDx <= noise || absDy <= noise) {
-            phase = Phase.LINEAR
-            pts.clear()
-            return
-        }
         val bend = measureBend()
         val ratio = if (bend.span > 0) bend.deviation / bend.span else 0.0
-        val (_, totalSweep) = sweepMetrics()
+        val (netSweep, totalSweep) = sweepMetrics()
         val curved = ratio >= BEND_RATIO
         // 明显在画圈：弯曲 且 总转角(折返不抵消)已 >= SHAPE_SWEEP，提前锁定，避免圈前半段被误判成滑动。
         // 用总转角锁 SHAPE 后，recognize 只会更大，不会因折返掉回 NONE。
@@ -79,9 +67,15 @@ class PlayGestureRecognizer(density: Float) {
             phase = Phase.SHAPE
             return
         }
-        // 交还：不弯(直线,含穿过质心的斜线) → 走普通滑动。
-        // 带弯的(可能是画圈起笔)继续观察，不在此交还，避免把大半径画圈误判成滑动。
-        if (pathLength >= INITIAL_WINDOW_DP * scale && !curved) {
+        // 交还普通滑动前必须观察满初始窗口：大半径画圈的起点切向也是"纯轴向"，
+        // 24dp 处的局部几何与直线滑动无法区分，提前交还会把画圈误判成滑动且不可逆。
+        if (pathLength < INITIAL_WINDOW_DP * scale) return
+        // 满窗口后交还：不弯(直线,含穿过质心的斜线与折返) → 走普通滑动；
+        // 弯但转向太缓——轨迹隐含半径(路径/净转角)超出屏幕尺度,不可能是本屏画得出来的圆
+        // (真实滑动的横向抖动随路径线性增长,画圈的横向累积随路径平方增长,满窗口即可分辨) → 交还；
+        // 持续转向的圆弧继续观察,等 SHAPE 锁定,保证各半径画圈不被提前交还。
+        val impliedRadius = if (netSweep > 0) pathLength / Math.toRadians(netSweep) else Double.MAX_VALUE
+        if (!curved || impliedRadius > MAX_PLAUSIBLE_RADIUS_DP * scale) {
             phase = Phase.LINEAR
             pts.clear()
         }
@@ -179,8 +173,6 @@ class PlayGestureRecognizer(density: Float) {
         pathLength = 0.0
         sampleStep = MIN_SAMPLE_DP * scale.toDouble()
         centerX = 0f
-        absDx = 0.0
-        absDy = 0.0
     }
 
     companion object {
@@ -188,12 +180,13 @@ class PlayGestureRecognizer(density: Float) {
         private const val MIN_SAMPLE_DP = 2.0
         private const val MIN_PATH_DP = 24f
         private const val INITIAL_WINDOW_DP = 96f
-        private const val LINE_NOISE_DP = 1.5f
         /** 弯曲度阈值(dev/span)：低于此视为直线(交还滑动)；调到 0.02 让大半径画圈起笔不被当直线。 */
         private const val BEND_RATIO = 0.02
         private const val CIRCLE_SWEEP = 270.0
         /** 进入形状识别(锁 SHAPE)的最低总转角：画圈前半段即锁定，避免被误判成滑动。 */
         private const val SHAPE_SWEEP = 150.0
         private const val CIRCLE_CLOSE_RATIO = 0.4
+        /** 轨迹隐含半径上限(dp)：转向比这更缓的弧不可能是本屏上画得出来的圆，按滑动交还。 */
+        private const val MAX_PLAUSIBLE_RADIUS_DP = 1000f
     }
 }
