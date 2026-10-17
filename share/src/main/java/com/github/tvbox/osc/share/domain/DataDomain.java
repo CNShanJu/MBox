@@ -38,6 +38,11 @@ public interface DataDomain {
         return true;
     }
 
+    /** 展示名（结果文案用），默认返回 {@link #id()}。 */
+    default String label() {
+        return id();
+    }
+
     /** 导出本域数据到 {@code target}（调用方保证该文件可写、随后打包进归档）。 */
     void exportTo(File target) throws IOException;
 

@@ -82,6 +82,7 @@ public final class ConfigDomains {
         }
 
         @Override public String id() { return "subscriptions"; }
+        @Override public String label() { return "订阅源"; }
         @Override public String entryName() { return "subscriptions.json"; }
         @Override public long maxBytes() { return JSON_MAX_BYTES; }
 
@@ -110,6 +111,7 @@ public final class ConfigDomains {
         }
 
         @Override public String id() { return "live"; }
+        @Override public String label() { return "直播源"; }
         @Override public String entryName() { return "live.json"; }
         @Override public long maxBytes() { return JSON_MAX_BYTES; }
 
@@ -138,6 +140,7 @@ public final class ConfigDomains {
         }
 
         @Override public String id() { return "themes"; }
+        @Override public String label() { return "主题"; }
         @Override public String entryName() { return "themes.zip"; }
         @Override public long maxBytes() { return THEMES_MAX_BYTES; }
 
@@ -212,6 +215,7 @@ public final class ConfigDomains {
         }
 
         @Override public String id() { return "settings"; }
+        @Override public String label() { return "设置"; }
         @Override public String entryName() { return "settings.json"; }
         @Override public long maxBytes() { return JSON_MAX_BYTES; }
 
@@ -240,6 +244,7 @@ public final class ConfigDomains {
         }
 
         @Override public String id() { return "history"; }
+        @Override public String label() { return "历史记录"; }
         @Override public String entryName() { return "history.json"; }
         @Override public long maxBytes() { return JSON_MAX_BYTES; }
 

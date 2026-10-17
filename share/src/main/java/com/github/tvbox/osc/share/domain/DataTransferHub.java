@@ -174,16 +174,20 @@ public final class DataTransferHub {
         for (String id : selected) {
             DataDomain domain = domains.get(id);
             boolean present = manifest.domains().contains(id);
+            int count;
             if (mode == ImportMode.OVERWRITE) {
                 if (present) {
-                    domain.overwriteFrom(new File(work, domain.entryName()));
+                    count = domain.overwriteFrom(new File(work, domain.entryName()));
                 } else {
                     domain.clearData();
+                    count = 0;
                 }
             } else if (present) {
-                domain.mergeFrom(new File(work, domain.entryName()));
+                count = domain.mergeFrom(new File(work, domain.entryName()));
+            } else {
+                continue;
             }
-            imported.add(id);
+            imported.add(domain.label() + " " + count + " 项");
         }
         return imported;
     }
