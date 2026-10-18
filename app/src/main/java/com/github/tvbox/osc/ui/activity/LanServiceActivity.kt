@@ -239,6 +239,17 @@ class LanServiceActivity : BaseVbActivity<ActivityLanServiceBinding>() {
                 openConnectDialog()
             }
         }
+        mBinding.btnLanDisconnect.setOnClickListener {
+            if (importSession.isImporting()) {
+                AppBubble.toast("正在导入配置，请稍后再断开")
+                return@setOnClickListener
+            }
+            ConfirmDialog.show(this, "断开连接",
+                "断开后需要重新输入地址和配对码才能再次连接。", "断开") {
+                importSession.disconnect()
+                renderImportConnection()
+            }
+        }
         mBinding.btnShowLanQr.setOnClickListener { showLanQr() }
         mBinding.btnLanExport.setOnClickListener {
             val urls = ControlManager.get().lanAccessUrls
@@ -351,6 +362,7 @@ class LanServiceActivity : BaseVbActivity<ActivityLanServiceBinding>() {
 
     private fun renderImportConnection() {
         mBinding.btnLanImport.text = if (importSession.hasConnection()) "导入配置" else "连接服务器"
+        mBinding.btnLanDisconnect.visibility = if (importSession.hasConnection()) View.VISIBLE else View.GONE
         mBinding.tvImportConnection.text = when (importSession.state()) {
             ConfigImportSession.State.CONNECTED -> "已连接：${importSession.address()}"
             ConfigImportSession.State.UNREACHABLE -> "服务器暂时无法访问，正在重试：${importSession.address()}"

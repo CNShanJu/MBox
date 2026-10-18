@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.os.Build
+import android.view.View
 import android.widget.CheckBox
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
@@ -33,6 +34,7 @@ class LanImportActivity : BaseVbActivity<ActivityLanImportBinding>() {
     override fun init() {
         showCategories(session.catalog())
         mBinding.btnImportSelected.setOnClickListener { confirmImport() }
+        mBinding.btnDisconnect.setOnClickListener { confirmDisconnect() }
         renderConnection()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             !notificationPermissionRequested &&
@@ -68,6 +70,8 @@ class LanImportActivity : BaseVbActivity<ActivityLanImportBinding>() {
         }))
         mBinding.btnImportSelected.isEnabled = !importing && !session.isImporting &&
             session.state() == ConfigImportSession.State.CONNECTED
+        mBinding.btnDisconnect.visibility = if (session.hasConnection()) View.VISIBLE else View.GONE
+        mBinding.btnDisconnect.isEnabled = !importing && !session.isImporting
     }
 
     private fun showCategories(catalog: JsonObject?) {
@@ -105,6 +109,15 @@ class LanImportActivity : BaseVbActivity<ActivityLanImportBinding>() {
                 textSize = 13f
                 setTextColor(ContextCompat.getColor(this@LanImportActivity, R.color.text_sub_foreground))
             })
+        }
+    }
+
+    private fun confirmDisconnect() {
+        if (importing || session.isImporting) return
+        ConfirmDialog.show(this, "断开连接",
+            "断开后需要重新输入地址和配对码才能再次连接。", "断开") {
+            session.disconnect()
+            renderConnection()
         }
     }
 

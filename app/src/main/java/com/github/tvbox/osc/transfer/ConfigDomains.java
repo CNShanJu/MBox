@@ -12,6 +12,7 @@ import com.github.tvbox.osc.share.domain.DataDomain;
 import com.github.tvbox.osc.share.domain.DataTransferHub;
 import com.github.tvbox.osc.storage.theme.ThemeStore;
 import com.github.tvbox.osc.util.LiveConfig;
+import com.github.tvbox.osc.util.LocalPackageImporter;
 import com.github.tvbox.osc.util.SubscriptionConfig;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -47,6 +48,11 @@ public final class ConfigDomains {
 
     private static final long JSON_MAX_BYTES = 32L * 1024L * 1024L;
     private static final long THEMES_MAX_BYTES = 64L * 1024L * 1024L;
+    private static final long PACKAGES_MAX_BYTES = 256L * 1024L * 1024L;
+    private static final long PACKAGE_FILE_MAX_BYTES = 128L * 1024L * 1024L;
+    private static final int PACKAGE_MAX_FILES = 2000;
+    private static final String PACKAGE_ENTRY = "packages.zip";
+    private static final String SUBSCRIPTIONS_JSON = "subscriptions.json";
 
     private static volatile DataTransferHub hub;
     private static volatile Context appContext;
@@ -79,31 +85,102 @@ public final class ConfigDomains {
     }
 
     // ------------------------------------------------------------------
-    // 订阅源
+    // 订阅源（清单 + 本地包关联文件，域内打包为单个 subscriptions.zip）
     // ------------------------------------------------------------------
     static final class SubscriptionsDomain implements DataDomain {
+        private final Context context;
         private final ConfigDataExchange exchange;
 
         SubscriptionsDomain(Context context) {
+            this.context = context.getApplicationContext();
             this.exchange = new ConfigDataExchange(context);
         }
 
         @Override public String id() { return "subscriptions"; }
         @Override public String label() { return "订阅源"; }
-        @Override public String entryName() { return "subscriptions.json"; }
-        @Override public long maxBytes() { return JSON_MAX_BYTES; }
+        @Override public String entryName() { return "subscriptions.zip"; }
+        @Override public long maxBytes() { return PACKAGES_MAX_BYTES; }
 
         @Override public void exportTo(File target) throws IOException {
-            writeJson(target, ConfigDataExchange.exportCategory("subscriptions"));
+            JsonObject data = ConfigDataExchange.exportCategory("subscriptions");
+            if (data == null) throw new IOException("订阅源导出失败");
+            File work = workDir();
+            try {
+                Map<String, File> entries = new LinkedHashMap<>();
+                entries.put(SUBSCRIPTIONS_JSON, writeJsonFile(new File(work, SUBSCRIPTIONS_JSON), data));
+                // 本地包订阅的关联文件(广联文件/jar/js 等)放在 local_packages 目录，随域一并打包，
+                // 保证换机导入、原文件已删都能还原。
+                File packages = LocalPackageImporter.packageRootDir(context);
+                if (packages != null) {
+                    File packagesZip = new File(work, PACKAGE_ENTRY);
+                    ShareArchives.zipDirectories(
+                            java.util.Collections.singletonMap("local_packages", packages),
+                            packagesZip, PACKAGE_FILE_MAX_BYTES, PACKAGES_MAX_BYTES, PACKAGE_MAX_FILES);
+                    if (packagesZip.isFile() && packagesZip.length() > 0) {
+                        entries.put(PACKAGE_ENTRY, packagesZip);
+                    }
+                }
+                ShareArchives.zip(entries, target);
+            } finally {
+                clean(work);
+            }
         }
 
         @Override public int mergeFrom(File source) throws IOException {
-            return importCategory(exchange, "subscriptions", source);
+            File work = workDir();
+            try {
+                ShareArchives.extract(source, work, PACKAGES_MAX_BYTES, PACKAGES_MAX_BYTES * 2);
+                File packagesZip = new File(work, PACKAGE_ENTRY);
+                if (packagesZip.isFile()) {
+                    restorePackages(packagesZip);
+                }
+                JsonObject data = readJson(new File(work, SUBSCRIPTIONS_JSON));
+                return exchange.importCategory("subscriptions", data);
+            } catch (IOException error) {
+                throw error;
+            } catch (Exception error) {
+                throw new IOException(error.getMessage(), error);
+            } finally {
+                clean(work);
+            }
         }
 
         @Override public void clearData() {
             SubscriptionConfig.setSubscriptions(new ArrayList<Subscription>());
             SubscriptionConfig.setApiUrl("");
+        }
+
+        /** 解压 packages.zip 并把 local_packages 目录合并回应用目录；目录名与导出侧保持一致。 */
+        private void restorePackages(File packagesZip) throws IOException {
+            File packagesRoot = LocalPackageImporter.ensurePackageRootDir(context);
+            if (packagesRoot == null) throw new IOException("本地包目录不可用");
+            File extract = new File(workDir(), "packages_extract");
+            try {
+                ShareArchives.extract(packagesZip, extract, PACKAGE_FILE_MAX_BYTES, PACKAGES_MAX_BYTES);
+                File localPackages = new File(extract, "local_packages");
+                if (!localPackages.isDirectory()) return;
+                mergeTree(localPackages, packagesRoot);
+            } finally {
+                clean(extract);
+            }
+        }
+
+        /** 把源目录树合并进目标目录（保留本机已有文件，同名覆盖）。 */
+        private void mergeTree(File source, File target) throws IOException {
+            File[] children = source.listFiles();
+            if (children == null) return;
+            for (File child : children) {
+                File dest = new File(target, child.getName());
+                if (child.isDirectory()) {
+                    if (!dest.isDirectory() && !dest.mkdirs()) throw new IOException("无法创建目录：" + dest.getName());
+                    mergeTree(child, dest);
+                } else if (child.isFile()) {
+                    File parent = dest.getParentFile();
+                    if (parent != null && !parent.isDirectory() && !parent.mkdirs())
+                        throw new IOException("无法创建目录：" + parent.getName());
+                    copy(child, dest, PACKAGE_FILE_MAX_BYTES);
+                }
+            }
         }
     }
 

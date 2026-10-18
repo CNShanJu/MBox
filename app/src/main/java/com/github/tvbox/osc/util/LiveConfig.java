@@ -167,17 +167,15 @@ public final class LiveConfig {
         if (names.remove(url) != null) setLiveNames(names);
     }
 
-    // ── EPG / 频道播放配置 ──
+    // ── 频道播放配置 ──
 
-    /** EPG 地址(由 :spider ApiConfig 加载订阅时写入,此处只读;未配置返回空串,调用方给默认值) */
-    public static String epgUrl() {
-        return PrefsDataStore.getString(HawkConfig.EPG_URL, "");
-    }
+    /** 频道播放配置键前缀:频道名直接作 DataStore 键会与全局键共命名空间(撞名互覆),统一加前缀隔离 */
+    private static final String CHANNEL_CFG_KEY_PREFIX = "live_channel_cfg.";
 
     /** 某频道的播放配置覆写(未覆写返回 null,走默认配置) */
     public static JSONObject channelPlayerConfig(String channelName) {
         if (channelName == null || channelName.isEmpty()) return null;
-        String s = PrefsDataStore.getString(channelName, null);
+        String s = PrefsDataStore.getString(CHANNEL_CFG_KEY_PREFIX + channelName, null);
         if (s == null || s.isEmpty()) return null;
         try {
             return new JSONObject(s);
@@ -190,15 +188,15 @@ public final class LiveConfig {
     public static void setChannelPlayerConfig(String channelName, JSONObject cfg) {
         if (channelName == null || channelName.isEmpty()) return;
         if (cfg == null) {
-            PrefsDataStore.delete(channelName);
+            PrefsDataStore.delete(CHANNEL_CFG_KEY_PREFIX + channelName);
         } else {
-            PrefsDataStore.put(channelName, cfg.toString());
+            PrefsDataStore.put(CHANNEL_CFG_KEY_PREFIX + channelName, cfg.toString());
         }
     }
 
     /** 清除某频道覆写(回到默认配置) */
     public static void deleteChannelPlayerConfig(String channelName) {
         if (channelName == null || channelName.isEmpty()) return;
-        PrefsDataStore.delete(channelName);
+        PrefsDataStore.delete(CHANNEL_CFG_KEY_PREFIX + channelName);
     }
 }

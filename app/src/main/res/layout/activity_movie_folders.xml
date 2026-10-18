@@ -14,8 +14,8 @@
         />
 
     <!-- 列表卡片:margin 是卡片与屏幕/标题栏的间距,padding 是卡片内部留白。
-         clipToPadding=true:滚动内容不越过 padding,行滚到卡片上下边时被截断,始终留着 10dp 内边距 ——
-         之前是 false,行会一直滚到卡片的圆角边上(= "贴边滚动,没有内边距")。 -->
+         clipToPadding=false:与全站口径一致(AGENTS §六.7)——首末条目停在 padding 处不贴边,
+         滚动过程内容可见地滑过 padding 区(而非在边缘被硬裁);padding=10dp 保证首末离卡片边 10dp。 -->
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/rv"
         android:layout_width="match_parent"
@@ -27,7 +27,7 @@
         tools:listitem="@layout/item_folder"
         tools:itemCount="3"
         app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"
-        android:clipToPadding="true" />
+        android:clipToPadding="false" />
 
     <!-- 长按多选操作栏:公共组件(与下载页同款)。背景/键色/透明度全部由组件按主题取,
          以前这里写死 android:background="@color/white" —— 暗色主题下就是一条白杠,也不吃主题的面透明度。

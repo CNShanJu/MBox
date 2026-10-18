@@ -220,6 +220,8 @@ public final class UpdateCheck {
             return;
         }
         if (!CHECK_GATE.beginAutoCheck()) {
+            com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM,
+                    "更新: 跳过自动检查(本进程已检查过或被手动检查接管)");
             if (onFinished != null) onFinished.run();
             return;
         }
@@ -233,20 +235,39 @@ public final class UpdateCheck {
                 if (newVersion != null) {
                     com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM,
                             "更新: 发现新版本 v" + newVersion.versionName);
+                } else {
+                    com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM,
+                            "更新: 已是最新版本");
                 }
                 if (onFinished != null) MAIN.post(onFinished);
                 if (newVersion != null && CHECK_GATE.mayShowAutoPrompt()
                         && SystemConfig.isAutoCheckUpdate()) {
                     MAIN.post(() -> {
                         // 网络回调与主线程排队期间都可能发生手动检查。
-                        if (!CHECK_GATE.mayShowAutoPrompt() || !SystemConfig.isAutoCheckUpdate()) return;
+                        if (!CHECK_GATE.mayShowAutoPrompt() || !SystemConfig.isAutoCheckUpdate()) {
+                            com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM,
+                                    "更新: 跳过自动弹窗(被手动检查接管或开关已关)");
+                            return;
+                        }
                         if (context instanceof Activity) {
                             Activity host = (Activity) context;
                             if (host.isFinishing() || host.isDestroyed()
-                                    || com.blankj.utilcode.util.ActivityUtils.getTopActivity() != host) return;
+                                    || com.blankj.utilcode.util.ActivityUtils.getTopActivity() != host) {
+                                com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM,
+                                        "更新: 跳过自动弹窗(宿主不在前台)");
+                                return;
+                            }
                         }
-                        if (SystemConfig.claimAutoUpdatePrompt(newVersion.versionName)) showNote(context, newVersion);
+                        if (SystemConfig.claimAutoUpdatePrompt(newVersion.versionName)) {
+                            showNote(context, newVersion);
+                        } else {
+                            com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM,
+                                    "更新: 自动弹窗 24 小时内已提示过 v" + newVersion.versionName + "，跳过");
+                        }
                     });
+                } else if (newVersion != null) {
+                    com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM,
+                            "更新: 发现新版本但未弹窗(被手动检查接管或开关已关)");
                 }
                 return true;
             }

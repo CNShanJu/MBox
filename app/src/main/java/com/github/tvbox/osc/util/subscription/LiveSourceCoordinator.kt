@@ -150,6 +150,7 @@ class LiveSourceCoordinator(
         if (target == SystemConfig.getLiveUrl()) return null
         SystemConfig.setLiveUrl(target)
         state.liveSourceChanged = true
+        reloadLiveConfig()
         LogStore.log(
             Category.SUBSCRIPTION,
             "订阅: 当前直播源改为 " + (if (target.isEmpty()) "订阅自带" else logSource(target))
@@ -174,6 +175,7 @@ class LiveSourceCoordinator(
         }
         if (before != target) {
             state.liveSourceChanged = true
+            reloadLiveConfig()
             LogStore.log(Category.SUBSCRIPTION, "订阅: 当前直播源改为 " + logSource(target))
         }
         return "设置成功"
@@ -202,6 +204,7 @@ class LiveSourceCoordinator(
         if (target != oldUrl && oldUrl == SystemConfig.getLiveUrl()) {
             SystemConfig.setLiveUrl(target)
             state.liveSourceChanged = true
+            reloadLiveConfig()
             LogStore.log(Category.SUBSCRIPTION, "订阅: 编辑当前直播源地址")
         } else {
             LogStore.log(Category.SUBSCRIPTION, "订阅: 编辑自建直播源")
@@ -212,14 +215,19 @@ class LiveSourceCoordinator(
     /** 多选删除自建直播源;删除正在用的那条会顺带清掉"当前直播源" */
     fun deleteSelected(targets: List<LiveSourceEntries.Entry>): String {
         val history = LiveConfig.liveHistory()
+        var removedCurrent = false
         for (entry in targets) {
             history.remove(entry.url)
             LiveConfig.removeLiveName(entry.url)
             // 删掉的正是在用的那条 → 回到"用订阅自带的直播"
-            if (entry.url == SystemConfig.getLiveUrl()) SystemConfig.setLiveUrl("")
+            if (entry.url == SystemConfig.getLiveUrl()) {
+                SystemConfig.setLiveUrl("")
+                removedCurrent = true
+            }
         }
         LiveConfig.setLiveHistory(history)
         state.liveSourceChanged = true
+        if (removedCurrent) reloadLiveConfig()
         LogStore.log(Category.SUBSCRIPTION, "订阅: 多选删除 " + targets.size + " 个自建直播源")
         return "已删除 " + targets.size + " 个直播源"
     }
@@ -249,6 +257,18 @@ class LiveSourceCoordinator(
         if (LiveConfig.liveHistory().contains(selectedLiveUrl)) return
         if (previewCache[state.selectedUrl].orEmpty().any { it.url == selectedLiveUrl }) return
         SystemConfig.setLiveUrl("")
+    }
+
+    /**
+     * 直播源切换后就地重载主直播分组(免重启):契约实现同步原子替换快照、无 IO。
+     * 页面(直播页/主页直播入口)在各自回前台时按新快照重建,不依赖 Activity 重建。
+     */
+    private fun reloadLiveConfig() {
+        try {
+            LiveChannelConfigProviders.get().reloadLiveSource()
+        } catch (t: Throwable) {
+            LogStore.fail(Category.SUBSCRIPTION, "订阅: 直播源就地重载失败 (" + (t.javaClass.simpleName) + ")")
+        }
     }
 
     private fun logSource(url: String): String = when {

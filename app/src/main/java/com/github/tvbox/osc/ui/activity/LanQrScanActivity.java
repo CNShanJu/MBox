@@ -5,6 +5,8 @@ import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.ImageFormat;
+import android.graphics.Matrix;
+import android.graphics.RectF;
 import android.graphics.SurfaceTexture;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
@@ -73,6 +75,8 @@ public final class LanQrScanActivity extends BaseVbActivity<ActivityLanQrScanBin
     private boolean permissionPending;
     private int cameraEpoch;
     private long lastDecodeAt;
+    private int sensorOrientation;
+    private int cameraFacing;
 
     @Override protected void init() {
         Map<DecodeHintType, Object> hints = new EnumMap<>(DecodeHintType.class);
@@ -85,7 +89,9 @@ public final class LanQrScanActivity extends BaseVbActivity<ActivityLanQrScanBin
                 openIfReady();
             }
 
-            @Override public void onSurfaceTextureSizeChanged(@NonNull SurfaceTexture texture, int width, int height) { }
+            @Override public void onSurfaceTextureSizeChanged(@NonNull SurfaceTexture texture, int width, int height) {
+                configureTransform(width, height);
+            }
 
             @Override public boolean onSurfaceTextureDestroyed(@NonNull SurfaceTexture texture) {
                 ++cameraEpoch;
@@ -128,6 +134,10 @@ public final class LanQrScanActivity extends BaseVbActivity<ActivityLanQrScanBin
             if (cameraId == null) throw new IllegalStateException("这台设备没有可用相机");
             CameraCharacteristics characteristics = manager.getCameraCharacteristics(cameraId);
             Size frameSize = chooseSize(characteristics);
+            Integer orientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION);
+            sensorOrientation = orientation == null ? 0 : orientation;
+            Integer facing = characteristics.get(CameraCharacteristics.LENS_FACING);
+            cameraFacing = facing == null ? CameraCharacteristics.LENS_FACING_BACK : facing;
             frames = ImageReader.newInstance(frameSize.getWidth(), frameSize.getHeight(), ImageFormat.YUV_420_888, 2);
             frames.setOnImageAvailableListener(reader -> scanFrame(reader, epoch), main);
             mBinding.qrCameraPreview.getSurfaceTexture().setDefaultBufferSize(frameSize.getWidth(), frameSize.getHeight());
@@ -185,6 +195,8 @@ public final class LanQrScanActivity extends BaseVbActivity<ActivityLanQrScanBin
                             session = configured;
                             try {
                                 session.setRepeatingRequest(request.build(), null, main);
+                                configureTransform(mBinding.qrCameraPreview.getWidth(),
+                                        mBinding.qrCameraPreview.getHeight());
                                 mBinding.tvScanStatus.setText("将二维码放入取景框");
                             } catch (CameraAccessException | IllegalStateException error) {
                                 closeCamera();
@@ -203,6 +215,29 @@ public final class LanQrScanActivity extends BaseVbActivity<ActivityLanQrScanBin
             closeCamera();
             showCameraError("相机预览失败，请重试");
         }
+    }
+
+    /**
+     * 按相机传感器方向与取景框尺寸做等比裁剪(centerCrop)变换，消除横屏下的画面拉伸扭曲。
+     * 相机帧通常是 4:3，而横屏取景框是宽扁矩形，直接拉伸会变形；这里按两者比例取最大覆盖、
+     * 多余部分裁掉，再按传感器方向旋转，画面始终不变形。
+     */
+    private void configureTransform(int viewWidth, int viewHeight) {
+        if (viewWidth <= 0 || viewHeight <= 0 || frames == null) return;
+        int frameWidth = frames.getWidth();
+        int frameHeight = frames.getHeight();
+        if (frameWidth <= 0 || frameHeight <= 0) return;
+        boolean swap = (sensorOrientation % 180) != 0;
+        int rotatedWidth = swap ? frameHeight : frameWidth;
+        int rotatedHeight = swap ? frameWidth : frameHeight;
+        float scale = Math.max((float) viewWidth / rotatedWidth, (float) viewHeight / rotatedHeight);
+        Matrix matrix = new Matrix();
+        matrix.setRotate(sensorOrientation, viewWidth / 2f, viewHeight / 2f);
+        matrix.postScale(scale, scale, viewWidth / 2f, viewHeight / 2f);
+        if (cameraFacing == CameraCharacteristics.LENS_FACING_FRONT) {
+            matrix.postScale(-1f, 1f, viewWidth / 2f, viewHeight / 2f);
+        }
+        mBinding.qrCameraPreview.setTransform(matrix);
     }
 
     private void scanFrame(ImageReader reader, int epoch) {

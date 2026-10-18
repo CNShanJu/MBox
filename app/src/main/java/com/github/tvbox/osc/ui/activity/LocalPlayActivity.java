@@ -10,14 +10,13 @@ import android.view.View;
 import android.view.WindowManager;
 
 import com.blankj.utilcode.util.GsonUtils;
-import com.blankj.utilcode.util.SPUtils;
 import com.github.tvbox.osc.util.AppBubble;
+import com.github.tvbox.osc.util.LocalVideoConfig;
 import com.github.tvbox.osc.base.BaseVbActivity;
 import com.github.tvbox.osc.bean.ParseBean;
 import com.github.tvbox.osc.bean.VideoInfo;
 import com.github.tvbox.osc.bean.VodInfo;
 import com.github.tvbox.osc.bean.CastVideo;
-import com.github.tvbox.osc.constant.CacheConst;
 import com.github.tvbox.osc.databinding.ActivityLocalPlayBinding;
 import com.github.tvbox.osc.player.MyVideoView;
 import com.github.tvbox.osc.player.PlayerSession;
@@ -137,13 +136,13 @@ public class LocalPlayActivity extends BaseVbActivity<ActivityLocalPlayBinding> 
             @Override
             public void saveProgress(String url, long progress) {// 就本地视频页面用sp,其余用Hawk
                 //有点本地文件确实总时长,设置下总时长,为什么用path,因为电影列表要通过媒体文件的path获取缓存的时长/进度,存取报纸缓存的key一直
-                SPUtils.getInstance(CacheConst.VIDEO_DURATION_SP).put(path, mVideoView.getDuration());
-                SPUtils.getInstance(CacheConst.VIDEO_PROGRESS_SP).put(path, progress);
+                LocalVideoConfig.saveDuration(path, mVideoView.getDuration());
+                LocalVideoConfig.saveProgress(path, progress);
             }
 
             @Override
             public long getSavedProgress(String url) {
-                long saved = SPUtils.getInstance(CacheConst.VIDEO_PROGRESS_SP).getLong(path);
+                long saved = LocalVideoConfig.getProgress(path, -1L);
                 // "跳过片头":与在线播放一致,起播位置取 保存进度 与 st(片头跳过秒数) 的较大者
                 int st = 0;
                 try {
@@ -165,9 +164,6 @@ public class LocalPlayActivity extends BaseVbActivity<ActivityLocalPlayBinding> 
         }
     }
 
-    /** 本地文件播放设置持久化:SP 文件名固定,key=文件绝对路径 */
-    private static final String LOCAL_CFG_SP = "video_local_player_cfg";
-
     /** 当前正在播放的文件路径 */
     private String currentPath() {
         if (mVideoList == null || mPosition < 0 || mPosition >= mVideoList.size()) return null;
@@ -179,7 +175,7 @@ public class LocalPlayActivity extends BaseVbActivity<ActivityLocalPlayBinding> 
     private void loadSavedCfgForPath(String path) {
         try {
             if (path == null || mVodPlayerCfg == null) return;
-            String saved = SPUtils.getInstance(LOCAL_CFG_SP).getString(path, null);
+            String saved = LocalVideoConfig.getPlayerCfg(path);
             if (saved == null || saved.isEmpty()) return;
             JSONObject jo = new JSONObject(saved);
             java.util.Iterator<String> it = jo.keys();
@@ -234,7 +230,7 @@ public class LocalPlayActivity extends BaseVbActivity<ActivityLocalPlayBinding> 
                 // 下次播放同一文件自动恢复(片头片尾调节/重置因此生效)
                 String path = currentPath();
                 if (path != null && mVodPlayerCfg != null) {
-                    SPUtils.getInstance(LOCAL_CFG_SP).put(path, mVodPlayerCfg.toString());
+                    LocalVideoConfig.savePlayerCfg(path, mVodPlayerCfg.toString());
                 }
             }
 
@@ -246,7 +242,7 @@ public class LocalPlayActivity extends BaseVbActivity<ActivityLocalPlayBinding> 
                 if (replay) {
                     String path = currentPath();
                     if (path != null) {
-                        SPUtils.getInstance(CacheConst.VIDEO_PROGRESS_SP).remove(path);
+                        LocalVideoConfig.removeProgress(path);
                     }
                 }
                 play(replay);

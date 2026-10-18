@@ -114,8 +114,8 @@ public final class AppCompositionRoot {
             }
 
             @Override
-            public void loadLives(com.google.gson.JsonArray livesArray) {
-                com.github.tvbox.osc.api.ApiConfig.get().loadLives(livesArray);
+            public void reloadLiveSource() {
+                com.github.tvbox.osc.api.ApiConfig.get().reloadLiveSource();
             }
 
             @Override
@@ -250,6 +250,15 @@ public final class AppCompositionRoot {
         // 数据域统一导入导出：注册配置域到 share 调度器（备份域由 BackupModules 注册）。
         com.github.tvbox.osc.transfer.ConfigDomains.init(
                 com.github.tvbox.osc.base.App.getInstance());
+        // 分享门面:初始化(注册在线/本地传输)+ 接入局域网桥(复用 RemoteServer)。
+        try {
+            com.github.tvbox.osc.share.ShareFacade.init(
+                    com.github.tvbox.osc.base.App.getInstance());
+            com.github.tvbox.osc.share.ShareFacade.installLanHost(
+                    new com.github.tvbox.osc.server.AppLanShareHost());
+        } catch (Throwable th) {
+            android.util.Log.w("AppCompositionRoot", "分享门面初始化失败(不影响主链路)", th);
+        }
     }
 
     /**

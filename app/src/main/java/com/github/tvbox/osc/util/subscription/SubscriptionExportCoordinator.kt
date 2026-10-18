@@ -24,7 +24,7 @@ class SubscriptionExportCoordinator(
             return
         }
         if (selected.any { it.origin == com.github.tvbox.osc.bean.Subscription.ORIGIN_PACKAGE }) {
-            host.showToast("本地包订阅含关联文件，请分享原始压缩包或使用完整备份")
+            host.showToast("本地包订阅含关联文件，此入口仅导出清单；请使用完整备份或局域网导入导出")
             return
         }
         host.showLoading("正在导出 " + selected.size + " 个订阅…") {

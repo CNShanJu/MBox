@@ -210,11 +210,20 @@ public final class ConfigDataExchange {
             if (name.isEmpty()) continue;
             String url = string(item, "url").trim();
             String content = string(item, "content");
+            String origin = string(item, "origin");
+            // 本地包订阅(origin=package)：关联文件已随 local_packages 目录整体传输并还原，
+            // url 指向的包内配置在还原后即存在，这里按原地址直接加入，不需要内嵌 content。
+            if (Subscription.ORIGIN_PACKAGE.equals(origin)) {
+                if (!url.startsWith("clan://") || url.isEmpty() || !urls.add(url)) continue;
+                merged.add(new Subscription(name, url, Subscription.ORIGIN_PACKAGE));
+                added++;
+                continue;
+            }
             if (content.isEmpty() && url.startsWith("clan://")) continue;
             if (!content.isEmpty()) url = storeLocalSubscription(content, string(item, "file"));
             if (url.isEmpty() || !validSubscriptionUrl(url) || !urls.add(url)) continue;
-            String origin = string(item, "origin");
-            merged.add(new Subscription(name, url, origin.isEmpty() ? Subscription.ORIGIN_DIRECT : origin));
+            String itemOrigin = origin.isEmpty() ? Subscription.ORIGIN_DIRECT : origin;
+            merged.add(new Subscription(name, url, itemOrigin));
             added++;
         }
         if (added > 0) {

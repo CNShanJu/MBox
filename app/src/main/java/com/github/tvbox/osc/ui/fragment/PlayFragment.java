@@ -17,16 +17,15 @@ import com.blankj.utilcode.util.ColorUtils;
 import com.blankj.utilcode.util.LogUtils;
 import com.blankj.utilcode.util.RegexUtils;
 import com.blankj.utilcode.util.ScreenUtils;
-import com.blankj.utilcode.util.SPUtils;
 import com.blankj.utilcode.util.SpanUtils;
 import com.github.tvbox.osc.util.AppBubble;
+import com.github.tvbox.osc.util.LocalVideoConfig;
 import com.github.tvbox.osc.R;
 import com.github.tvbox.osc.base.App;
 import com.github.tvbox.osc.base.BaseLazyFragment;
 import com.github.tvbox.osc.bean.ParseBean;
 import com.github.tvbox.osc.bean.SourceBean;
 import com.github.tvbox.osc.bean.VodInfo;
-import com.github.tvbox.osc.constant.CacheConst;
 import com.github.tvbox.osc.player.MyVideoView;
 import com.github.tvbox.osc.player.api.PlayConfig;
 import com.github.tvbox.osc.player.controller.VodController;
@@ -1101,12 +1100,11 @@ public class PlayFragment extends BaseLazyFragment {
         final int index = mVodInfo.playIndex;
         com.github.tvbox.osc.util.HeavyTaskUtil.getSerialExecutorService().execute(() -> {
             try {
-                SPUtils sp = SPUtils.getInstance(CacheConst.VIDEO_PLAYED_SP);
-                Set<String> set = sp.getStringSet(videoId, null);
+                Set<String> set = LocalVideoConfig.getPlayed(videoId);
                 if (set == null)
                     set = new HashSet<>();
                 if (set.add(String.valueOf(index))) {
-                    sp.put(videoId, set);
+                    LocalVideoConfig.savePlayed(videoId, set);
                 }
             } catch (Throwable ignored) {
             }
@@ -1811,7 +1809,7 @@ public class PlayFragment extends BaseLazyFragment {
             mPlayHistory.delete(progressKey);
             mPlayHistory.delete(subtitleCacheKey);
         }
-        if (Jianpian.isJpUrl(vs.url)) {// 荐片地址特殊判断
+        if (com.github.tvbox.osc.config.SystemConfig.isThunderP2pEnabled() && Jianpian.isJpUrl(vs.url)) {// 荐片地址特殊判断
             String jp_url = vs.url;
             mController.showParse(false);
             if (vs.url.startsWith("tvbox-xg:")) {
@@ -1821,7 +1819,7 @@ public class PlayFragment extends BaseLazyFragment {
             }
             return;
         }
-        if (Thunder.play(vs.url, new Thunder.ThunderCallback() {
+        if (com.github.tvbox.osc.config.SystemConfig.isThunderP2pEnabled() && Thunder.play(vs.url, new Thunder.ThunderCallback() {
             @Override
             public void status(int code, String info) {
                 if (!isCurrentPlayback(requestGeneration)) return;

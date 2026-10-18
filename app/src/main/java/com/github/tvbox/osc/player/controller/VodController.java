@@ -739,7 +739,6 @@ public class VodController extends BaseController implements PlaybackSettingsCon
             int playerType = mPlayerConfig.getInt("pl");
             mPlayerBtn.setText(PlayerHelper.getPlayerName(playerType));
             mPlayerScaleBtn.setText(PlayerHelper.getScaleName(mPlayerConfig.getInt("sc")));
-            mPlayerScaleBtn.setText(PlayerHelper.getScaleName(mPlayerConfig.getInt("sc")));
             mPlayerSpeedBtn.setText("x" + mPlayerConfig.getDouble("sp"));
             mPlayerTimeStartBtn.setText(PlayerUtils.stringForTime(mPlayerConfig.getInt("st") * 1000));
             mPlayerTimeSkipBtn.setText(PlayerUtils.stringForTime(mPlayerConfig.getInt("et") * 1000));
@@ -1255,10 +1254,25 @@ public class VodController extends BaseController implements PlaybackSettingsCon
                 && isGestureEnabled() && !fromLongPress && !mGestureInterrupted;
     }
 
+    /** 画圈刷新手势仅在中 1/3 区域起手识别；左右 1/3 起手一律按滑动处理，避免滑动与画圈互相吞手势。 */
+    private boolean isInCircleZone(float x) {
+        float third = getWidth() / 3f;
+        return x >= third && x <= third * 2f;
+    }
+
+    /** 纵向滑动分区：左 1/3 亮度、右 1/3 音量、中 1/3 留给画圈刷新(横向拖进度仍全屏可用)。 */
+    @Override
+    protected int slideAdjustZone(float startX, int width) {
+        float third = width / 3f;
+        if (startX < third) return -1;
+        if (startX > third * 2f) return 1;
+        return 0;
+    }
+
     @Override
     protected void onGestureStart(MotionEvent e) {
         mGestureInterrupted = false;
-        if (canRecognizeShapeGesture() && !PlayerUtils.isEdge(this, e)) {
+        if (canRecognizeShapeGesture() && !PlayerUtils.isEdge(this, e) && isInCircleZone(e.getX())) {
             mGestureRecognizer.start(e.getX(), e.getY());
         } else {
             onGestureCancel();

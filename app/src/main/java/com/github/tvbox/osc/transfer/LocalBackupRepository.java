@@ -74,9 +74,20 @@ public final class LocalBackupRepository {
                 // 搜索记录/订阅/背景配置等)就必须先保护再还原。
                 TransferHook protect = new TransferHook() {
                     @Override public void before(TransferSession session) throws IOException {
-                        File snapshot = BackupModules.INSTANCE.anyHasData(context) ? preserveCurrent() : null;
-                        protection.snapshot = snapshot;
-                        protection.lease = snapshot != null ? store.acquire(snapshot) : null;
+                        if (!BackupModules.INSTANCE.anyHasData(context)) {
+                            // 空机:无任何可备份数据,无需保护快照
+                            return;
+                        }
+                        try {
+                            File snapshot = preserveCurrent();
+                            protection.snapshot = snapshot;
+                            protection.lease = store.acquire(snapshot);
+                        } catch (IOException snapshotFailure) {
+                            // 保护快照创建失败(非空机):与"空机无快照"区分开,避免排查误导
+                            LogStore.fail(Category.SYSTEM, "本地备份: 保护快照创建失败，还原中止 "
+                                    + failureMessage(snapshotFailure));
+                            throw snapshotFailure;
+                        }
                     }
                 };
                 String result;
@@ -88,6 +99,7 @@ public final class LocalBackupRepository {
                                 + failureMessage(failure));
                         throw new IOException("还原失败：" + failure.getMessage(), failure);
                     }
+                    // 边界:若当前数据与所选系统备份内容一致,保护快照=待还原文件本身,回滚落空(内容不变,可接受)
                     boolean rolledBack = false;
                     try {
                         archive.restore(protection.snapshot, null);

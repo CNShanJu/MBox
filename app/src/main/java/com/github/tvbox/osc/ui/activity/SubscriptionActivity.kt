@@ -33,7 +33,6 @@ import com.github.tvbox.osc.ui.dialog.SubsciptionDialog.OnSubsciptionListener
 import com.github.tvbox.osc.ui.kit.SelectActionBar
 import com.github.tvbox.osc.ui.kit.TabPageAnimator
 import com.github.tvbox.osc.ui.kit.TabSwipeHelper
-import com.github.tvbox.osc.ui.startup.AppStartupCoordinator
 import com.github.tvbox.osc.ui.state.SubscriptionPageState
 import com.github.tvbox.osc.util.AppBubble
 import com.github.tvbox.osc.util.FastClickCheckUtil
@@ -733,12 +732,8 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>(),
             return
         }
         if (state.liveSourceChanged) {
-            // 直播源变了:回首页让配置重载 —— 直播页用的"待拉取直播源"是加载配置时定下的
-            // (与设置页改直播源同一个处理:不带 CACHE_CONFIG_CHANGED 回首页重新加载)
-            if (state.beforeUrl == state.selectedUrl) {
-                if (!AppStartupCoordinator.launchInternalReload(this, false)) return
-                overridePendingTransition(R.anim.fade_in, R.anim.fade_out)
-            }
+            // 直播源已就地重载(LiveSourceCoordinator 切完即 reloadLiveSource),无需软重启回首页;
+            // 订阅源切换(beforeUrl != selectedUrl)仍走 finish() 里的整进程重启(后续 M2 再免重启)。
             finish()
             return
         }

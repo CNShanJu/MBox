@@ -699,6 +699,14 @@ public abstract class BaseController extends BaseVideoController implements Gest
     }
 
     /**
+     * 纵向滑动调节的目标分区(按手势起点横坐标)：正=音量(右)、负=亮度(左)、零=不响应纵向滑动。
+     * 默认左半亮度、右半音量；子类可覆写以把中间区域让给其它手势(如画圈刷新)。
+     */
+    protected int slideAdjustZone(float startX, int width) {
+        return startX > width / 2f ? 1 : -1;
+    }
+
+    /**
      * 在屏幕上滑动
      */
     @Override
@@ -717,11 +725,11 @@ public abstract class BaseController extends BaseVideoController implements Gest
         if (mFirstTouch) {
             mChangePosition = Math.abs(distanceX) >= Math.abs(distanceY);
             if (!mChangePosition) {
-                //半屏宽度
-                float halfScreen = getWidth() / 2f;
-                if (e1.getX() > halfScreen) {
+                // 纵向滑动分区(按起点)：正=音量、负=亮度、零=不响应；默认左半亮度右半音量，子类可覆写。
+                int zone = slideAdjustZone(e1.getX(), getWidth());
+                if (zone > 0) {
                     mChangeVolume = true;
-                } else {
+                } else if (zone < 0) {
                     mChangeBrightness = true;
                 }
             }

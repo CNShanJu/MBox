@@ -6,15 +6,14 @@ import android.widget.TextView
 import androidx.lifecycle.lifecycleScope
 import com.blankj.utilcode.util.FileUtils
 import com.blankj.utilcode.util.GsonUtils
-import com.blankj.utilcode.util.SPUtils
 import com.chad.library.adapter.base.BaseQuickAdapter
 import com.github.tvbox.osc.base.BaseVbActivity
 import com.github.tvbox.osc.bean.VideoInfo
-import com.github.tvbox.osc.constant.CacheConst
 import com.github.tvbox.osc.databinding.ActivityMovieFoldersBinding
 import com.github.tvbox.osc.ui.adapter.LocalVideoAdapter
 import com.github.tvbox.osc.ui.kit.SelectActionBar
 import com.github.tvbox.osc.util.FastClickCheckUtil
+import com.github.tvbox.osc.util.LocalVideoConfig
 import com.github.tvbox.osc.util.Utils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -75,8 +74,8 @@ class VideoListActivity : BaseVbActivity<ActivityMovieFoldersBinding>() {
                             deleteList.add(item)
                             if (FileUtils.delete(item.path)) {
                                 // 删除缓存的影片时长、进度
-                                SPUtils.getInstance(CacheConst.VIDEO_DURATION_SP).remove(item.path)
-                                SPUtils.getInstance(CacheConst.VIDEO_PROGRESS_SP).remove(item.path)
+                                LocalVideoConfig.removeDuration(item.path)
+                                LocalVideoConfig.removeProgress(item.path)
                                 // 联动清理已下载档案 + 下载任务: 否则详情页仍显示"已下载",
                                 // 且残留任务会在网络恢复时自动续传把已删文件又下回来
                                 // UI 只通过门面操作档案/任务(改进.txt 第一阶段边界)

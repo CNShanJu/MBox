@@ -373,12 +373,14 @@ object LocalPackageImporter {
     // ------------------------------------------------------------------
 
     /** 本地包根目录;目录不存在时返回 null(备份侧据此决定要不要带本地包) */
+    @JvmStatic
     fun packageRootDir(context: Context): File? {
         val root = packageRoot(context) ?: return null
         return if (root.isDirectory) root else null
     }
 
     /** 确保本地包根目录存在(恢复等写入路径用);创建失败返回 null */
+    @JvmStatic
     fun ensurePackageRootDir(context: Context): File? {
         val root = packageRoot(context) ?: return null
         return if (root.isDirectory || root.mkdirs()) root else null

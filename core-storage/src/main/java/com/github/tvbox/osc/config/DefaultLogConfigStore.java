@@ -4,7 +4,7 @@ import com.github.tvbox.osc.log.LogConfigStore;
 
 /**
  * {@link LogConfigStore} 的 Preferences DataStore 实现（:log 依赖倒置端；App 启动注入,
- * 与全应用现代化偏好同一底层;旧 Hawk 存量一次性迁移）。
+ * 与全应用现代化偏好同一底层）。
  */
 public final class DefaultLogConfigStore implements LogConfigStore {
 
@@ -13,7 +13,6 @@ public final class DefaultLogConfigStore implements LogConfigStore {
     private static final String KEY_RETENTION = "log_retention";
 
     private static final DefaultLogConfigStore INSTANCE = new DefaultLogConfigStore();
-    private static volatile boolean migrated = false;
 
     private DefaultLogConfigStore() {
     }

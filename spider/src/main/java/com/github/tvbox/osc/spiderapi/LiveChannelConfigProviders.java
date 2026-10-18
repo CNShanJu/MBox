@@ -38,7 +38,8 @@ public final class LiveChannelConfigProviders {
         }
 
         @Override
-        public void loadLives(JsonArray livesArray) {
+        public void reloadLiveSource() {
+            // 注入前无 :spider 实现：无直播配置可重载，空转即可
         }
 
         @Override

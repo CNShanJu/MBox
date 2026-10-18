@@ -194,6 +194,8 @@ class CacheManagementActivity : BaseVbActivity<ActivityCacheManagementBinding>()
         val impact = buildString {
             if (validIds.contains(CacheCatalog.IMAGE_HTTP)) append("\n图片清理后会重新加载。")
             if (validIds.contains(CacheCatalog.TEMP_FILES)) append("\n旧导出文件的分享链接可能失效。")
+            if (validIds.contains(CacheCatalog.PLAYBACK_CACHE))
+                append("\n播放缓存清理后，已缓存的视频片段需重新缓存。")
             if (validIds.contains(CacheCatalog.LOGS))
                 append("\n将清空业务日志记录、本应用错误日志文件及旧版日志残留，历史排障信息无法恢复；新日志仍可能继续产生。")
         }

@@ -57,7 +57,6 @@ import java.util.function.Consumer;
 public class SourceViewModel extends ViewModel {
     public MutableLiveData<AbsSortXml> sortResult;
     public MutableLiveData<AbsXml> listResult;
-    public MutableLiveData<AbsXml> searchResult;
     public MutableLiveData<AbsXml> quickSearchResult;
     public MutableLiveData<AbsXml> detailResult;
     public MutableLiveData<JSONObject> playResult;
@@ -65,7 +64,6 @@ public class SourceViewModel extends ViewModel {
     public SourceViewModel() {
         sortResult = new MutableLiveData<>();
         listResult = new MutableLiveData<>();
-        searchResult = new MutableLiveData<>();
         quickSearchResult = new MutableLiveData<>();
         detailResult = new MutableLiveData<>();
         playResult = new MutableLiveData<>();
@@ -1052,6 +1050,7 @@ public class SourceViewModel extends ViewModel {
 
     private void checkThunder(AbsXml data, int index, int epoch) {
         if (!detailGate.isCurrent(epoch) || data == null) return;
+        if (!SystemConfig.isThunderP2pEnabled()) return;
         boolean thunderParse = false;
         if (data.movie != null && data.movie.videoList != null && data.movie.videoList.size() == 1) {
             Movie.Video video = data.movie.videoList.get(0);

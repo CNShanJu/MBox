@@ -75,12 +75,12 @@ public final class ShareManifest {
         return fileName;
     }
 
-    /** 归档字节数 */
+    /** 归档内数据条目(不含清单)的解压后字节总和;0=导出侧未算,导入侧跳过大小校验 */
     public long sizeBytes() {
         return sizeBytes;
     }
 
-    /** 归档内容 SHA-256(小写十六进制);空串=导出侧没算,导入侧跳过校验 */
+    /** 归档内数据条目(不含清单,按条目名排序)的合并 SHA-256(小写十六进制);空串=导出侧未算,导入侧跳过校验 */
     @NonNull
     public String checksumSha256() {
         return checksumSha256;

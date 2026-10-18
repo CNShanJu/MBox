@@ -27,7 +27,6 @@ import okhttp3.Response;
  * </ul>
  */
 public class HttpClient {
-    public static final long DEFAULT_MILLISECONDS = 10000;
 
     /** 单次响应体读取上限(见 {@link HttpBodyReader#MAX_TEXT_BYTES}) */
     static long maxBodyBytes() {
@@ -35,7 +34,6 @@ public class HttpClient {
     }
 
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
-    private static volatile OkHttpClient client;
 
     private HttpClient() {
     }
@@ -46,21 +44,8 @@ public class HttpClient {
     }
 
     public static OkHttpClient getClient() {
-        OkHttpClient c = OkGoHelper.getDefaultClient();
-        if (c != null) return c;
-        if (client == null) {
-            synchronized (HttpClient.class) {
-                if (client == null) {
-                    client = new OkHttpClient.Builder()
-                            .connectTimeout(DEFAULT_MILLISECONDS, TimeUnit.MILLISECONDS)
-                            .readTimeout(DEFAULT_MILLISECONDS, TimeUnit.MILLISECONDS)
-                            .writeTimeout(DEFAULT_MILLISECONDS, TimeUnit.MILLISECONDS)
-                            .addInterceptor(new UserAgentInterceptor())
-                            .build();
-                }
-            }
-        }
-        return client;
+        // 统一收敛到 OkGoHelper(init 必先于任何请求):本地自建 fallback 分支不可达,且会绕过 TLS/DoH 配置
+        return OkGoHelper.getDefaultClient();
     }
 
     /** 为没有显式设置 User-Agent 的请求补充默认 UA(还原 OkGo 全局 UA 行为,保持与旧版一致的 okhttp/3.x 字符串) */

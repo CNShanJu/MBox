@@ -3,6 +3,7 @@ package com.github.tvbox.osc.ui.activity
 import android.content.res.Configuration
 import android.view.View
 import android.widget.TextView
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
 import com.chad.library.adapter.base.BaseQuickAdapter
@@ -13,7 +14,7 @@ import com.github.tvbox.osc.config.SystemConfig
 import com.github.tvbox.osc.databinding.ActivityHistoryBinding
 import com.github.tvbox.osc.log.Category
 import com.github.tvbox.osc.log.LogStore
-import com.github.tvbox.osc.repo.HistoryRepositories
+import com.github.tvbox.osc.viewmodel.HistoryViewModel
 import com.github.tvbox.osc.ui.adapter.HistoryAdapter
 import com.github.tvbox.osc.ui.dialog.ConfirmDialog
 import com.github.tvbox.osc.ui.dialog.SourceInfoDialog
@@ -29,6 +30,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class HistoryActivity : BaseVbActivity<ActivityHistoryBinding>() {
+    private val historyViewModel: HistoryViewModel by lazy {
+        ViewModelProvider(this, HistoryViewModel.Factory()).get(HistoryViewModel::class.java)
+    }
     private val historyAdapter = HistoryAdapter()
     private lateinit var deleteAction: TextView
     private var deleting = false
@@ -94,7 +98,7 @@ class HistoryActivity : BaseVbActivity<ActivityHistoryBinding>() {
                 showLoadingDialog()
                 lifecycleScope.launch(Dispatchers.IO) {
                     try {
-                        HistoryRepositories.history().clear()
+                        historyViewModel.history().clear()
                         withContext(Dispatchers.Main) {
                             showHistoryRecords(ArrayList())
                             LogStore.log(Category.SYSTEM, "清空全部观看历史")
@@ -153,7 +157,7 @@ class HistoryActivity : BaseVbActivity<ActivityHistoryBinding>() {
                 showLoadingDialog()
                 lifecycleScope.launch(Dispatchers.IO) {
                     try {
-                        val repository = HistoryRepositories.history()
+                        val repository = historyViewModel.history()
                         selectedKeys.forEach { repository.delete(it.first, it.second) }
                         val remaining = loadHistoryRecords()
                         withContext(Dispatchers.Main) {
@@ -193,7 +197,7 @@ class HistoryActivity : BaseVbActivity<ActivityHistoryBinding>() {
 
     private fun loadHistoryRecords(): ArrayList<VodInfo> {
         // 保留旧订阅来源的记录；来源不可用时卡片仍可进入同名搜索。
-        val records = HistoryRepositories.history().query(
+        val records = historyViewModel.history().query(
             100, null, HistoryHelper.getHisNum(SystemConfig.getHistoryNum())
         )
         return ArrayList<VodInfo>(records.size).apply {

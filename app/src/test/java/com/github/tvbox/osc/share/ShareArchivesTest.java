@@ -7,7 +7,10 @@ import org.junit.rules.TemporaryFolder;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -121,6 +124,53 @@ public class ShareArchivesTest {
         boolean rejected = false;
         try { ShareArchives.zipDirectories(Collections.singletonMap("a/../b", tree), zip, 1024, 1024, 100); }
         catch (java.io.IOException expected) { rejected = true; }
+        assertTrue(rejected);
+    }
+
+    @Test public void archiveSummaryMatchesAndDetectsTampering() throws Exception {
+        File data1 = temporary.newFile("prefs.json");
+        writeFile(data1, "{\"schema\":1}");
+        File data2 = temporary.newFile("room.db");
+        writeFile(data2, "room-database-bytes");
+
+        Map<String, File> entries = new LinkedHashMap<>();
+        entries.put("prefs.json", data1);
+        entries.put("room.db", data2);
+
+        // 导出侧:算数据条目摘要(不含清单)
+        ShareArchiveSummary summary = ShareArchives.summarizeEntries(entries);
+        assertTrue(summary.sizeBytes > 0);
+        assertEquals(64, summary.sha256Hex.length());
+
+        // 用摘要写清单
+        ShareManifest manifest = new ShareManifest(1, "mbox-backup.zip",
+                summary.sizeBytes, summary.sha256Hex, 1L, "1.0", 0,
+                Arrays.asList("prefs", "room"));
+        File manifestFile = temporary.newFile("manifest.json");
+        try (FileOutputStream out = new FileOutputStream(manifestFile)) {
+            out.write(manifest.toJson().getBytes(StandardCharsets.UTF_8));
+        }
+        entries.put("manifest.json", manifestFile);
+        File zip = new File(temporary.getRoot(), "backup.zip");
+        ShareArchives.zip(entries, zip);
+
+        // 导入侧:完整归档校验通过(清单摘要与实际数据一致)
+        ShareArchives.check(zip, ShareArchives.manifest(zip));
+
+        // 篡改数据条目,但保留旧清单(摘要不变)→ 校验应失败
+        writeFile(data1, "{\"schema\":2}");
+        Map<String, File> tampered = new LinkedHashMap<>();
+        tampered.put("prefs.json", data1);
+        tampered.put("room.db", data2);
+        tampered.put("manifest.json", manifestFile);
+        File tamperedZip = new File(temporary.getRoot(), "tampered.zip");
+        ShareArchives.zip(tampered, tamperedZip);
+        boolean rejected = false;
+        try {
+            ShareArchives.check(tamperedZip, ShareArchives.manifest(tamperedZip));
+        } catch (ShareException expected) {
+            rejected = true;
+        }
         assertTrue(rejected);
     }
 

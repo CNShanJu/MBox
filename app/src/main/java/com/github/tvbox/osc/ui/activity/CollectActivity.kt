@@ -5,6 +5,7 @@ import android.content.res.Configuration
 import android.os.Bundle
 import android.view.View
 import android.widget.TextView
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
 import com.chad.library.adapter.base.BaseQuickAdapter
@@ -13,7 +14,7 @@ import com.github.tvbox.osc.base.BaseVbActivity
 import com.github.tvbox.osc.databinding.ActivityCollectBinding
 import com.github.tvbox.osc.log.Category
 import com.github.tvbox.osc.log.LogStore
-import com.github.tvbox.osc.repo.HistoryRepositories
+import com.github.tvbox.osc.viewmodel.HistoryViewModel
 import com.github.tvbox.osc.spiderapi.SourceConfigProviders
 import com.github.tvbox.osc.ui.adapter.CollectAdapter
 import com.github.tvbox.osc.ui.dialog.ConfirmDialog
@@ -29,6 +30,9 @@ import kotlinx.coroutines.withContext
 
 class CollectActivity : BaseVbActivity<ActivityCollectBinding>() {
 
+    private val historyViewModel: HistoryViewModel by lazy {
+        ViewModelProvider(this, HistoryViewModel.Factory()).get(HistoryViewModel::class.java)
+    }
     private val collectAdapter = CollectAdapter()
     private lateinit var deleteAction: TextView
     private var deleting = false
@@ -123,7 +127,7 @@ class CollectActivity : BaseVbActivity<ActivityCollectBinding>() {
                 showLoadingDialog()
                 lifecycleScope.launch(Dispatchers.IO) {
                     try {
-                        val repository = HistoryRepositories.collect()
+                        val repository = historyViewModel.collect()
                         selectedIds.forEach(repository::deleteById)
                         val remaining = ArrayList(repository.query())
                         withContext(Dispatchers.Main) {
@@ -136,7 +140,7 @@ class CollectActivity : BaseVbActivity<ActivityCollectBinding>() {
                     } catch (error: Exception) {
                         // 已成功删除的记录不能在异常后继续显示为仍被收藏。
                         val remaining = runCatching {
-                            ArrayList(HistoryRepositories.collect().query())
+                            ArrayList(historyViewModel.collect().query())
                         }.getOrNull()
                         withContext(Dispatchers.Main) {
                             if (remaining != null) {
@@ -162,7 +166,7 @@ class CollectActivity : BaseVbActivity<ActivityCollectBinding>() {
     override fun onResume() {
         super.onResume()
         lifecycleScope.launch(Dispatchers.IO) {
-            val items = ArrayList(HistoryRepositories.collect().query())
+            val items = ArrayList(historyViewModel.collect().query())
             val index = SubscriptionIndex.build()
             withContext(Dispatchers.Main) {
                 if (deleting || collectAdapter.isSelectMode) return@withContext

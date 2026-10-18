@@ -8,7 +8,6 @@ package com.github.tvbox.osc.config;
 public class HawkConfig {
     public static final String API_URL = "api_url";
     public static final String LIVE_URL = "live_url";
-    public static final String EPG_URL = "epg_url";
     public static final String SHOW_PREVIEW = "show_preview";
     public static final String SUBSCRIPTIONS = "api_history";
     /** 本地默认订阅文件注入的订阅集合(用于与文件内容同步增删) */

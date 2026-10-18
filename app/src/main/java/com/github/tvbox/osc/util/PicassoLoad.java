@@ -1,15 +1,18 @@
 package com.github.tvbox.osc.util;
 
+import android.graphics.Bitmap;
+import android.graphics.drawable.BitmapDrawable;
+import android.graphics.drawable.Drawable;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Handler;
 import android.os.Looper;
 import android.text.TextUtils;
-import android.graphics.drawable.Drawable;
-import android.graphics.drawable.GradientDrawable;
 import android.widget.ImageView;
 
 import com.github.tvbox.osc.ui.kit.PicassoShimmer;
 import com.squareup.picasso.Callback;
 import com.squareup.picasso.Picasso;
+import com.squareup.picasso.Target;
 
 import java.io.File;
 
@@ -96,11 +99,16 @@ public class PicassoLoad {
      */
     public static void clear(ImageView iv) {
         if (iv == null) return;
+        Object oldTarget = iv.getTag(TAG_TARGET);
+        if (oldTarget instanceof Target) {
+            Picasso.get().cancelRequest((Target) oldTarget);
+        }
         Picasso.get().cancelRequest(iv);
         cancelShimmer(iv);
         PicassoShimmer.stop(iv);
         iv.setTag(TAG_LAST_URL, null);
         iv.setTag(TAG_FILE_LOADING, null);
+        iv.setTag(TAG_TARGET, null);
         iv.setImageDrawable(null);
     }
 
@@ -171,17 +179,19 @@ public class PicassoLoad {
             showFailedPlaceholder(iv);
             return;
         }
-        // 恢复为正常占位(上一张可能是"加载失败");此时不动 src —— 下面同图去重命中要保留已显示的图
+        // 恢复为正常占位(上一张可能是"加载失败");占位走背景层,不动 src。
         setLoadingPlaceholder(iv);
-        // 同一张图已显示(滑回/复用相同项):不重载、不闪
-        if (trimUrl.equals(iv.getTag(TAG_LAST_URL))) return;
-        iv.setTag(TAG_LAST_URL, trimUrl);
-        iv.setImageDrawable(null);
-        // 复用列表项切到新图前:先取消上一张遗留的延迟扫光任务并停掉正在跑的扫光。
-        // 否则上一张的 run 仍挂在 MAIN 上,待它到点触发时新图往往已 onSuccess(回调只能清掉
-        // 被覆盖后的当前 tag,清不到这条孤儿 run),就会给"已出图的 view"再叠一层无人停止的扫光。
+        // 复用列表项切到新图前:先取消上一张还在途的 Picasso 请求(含旧 Target 与旧 target 请求),
+        // 再取消延迟扫光任务并停掉扫光,并清空 src 露出占位(否则复用瞬间会残留上一张不同 item 的旧图)。
+        Object oldTarget = iv.getTag(TAG_TARGET);
+        if (oldTarget instanceof Target) {
+            Picasso.get().cancelRequest((Target) oldTarget);
+        }
+        Picasso.get().cancelRequest(iv);
         cancelShimmer(iv);
         PicassoShimmer.stop(iv);
+        iv.setTag(TAG_LAST_URL, trimUrl);
+        iv.setImageDrawable(null);
         // 已成功加载过(会话缓存命中)→ 不再启动骨架屏,直接出图;仅真正加载(慢)才延迟扫光
         boolean cached = sessionLoaded.contains(trimUrl);
         if (!cached) {
@@ -196,25 +206,40 @@ public class PicassoLoad {
             iv.setTag(TAG_SHIMMER_RUN, run);
             MAIN.postDelayed(run, SHIMMER_DELAY_MS);
         }
-        Picasso.get()
-                .load(DefaultConfig.checkReplaceProxy(trimUrl))
-                .into(iv, new Callback() {
-                    @Override
-                    public void onSuccess() {
-                        sessionLoaded.add(trimUrl);
-                        sessionFailed.remove(trimUrl); // 重试成功:清掉失败记录
-                        cancelShimmer(iv);
-                        PicassoShimmer.stop(iv);
-                    }
+        // 关键:不用 into(iv, callback) —— 它内部 ImageViewAction.complete() 会无条件把下载结果
+        // setImageDrawable 到 view 上,即使这个 view 已经被复用给别的 item(weak reference 还活着时),
+        // 这正是图片错位的根源。改用自定义 Target,在 onBitmapLoaded 里自己校验"view 当前绑定的
+        // URL 仍是本 URL"后才 setImageBitmap,彻底杜绝旧请求把图错画到复用后的 view。
+        final String loadUrl = DefaultConfig.checkReplaceProxy(trimUrl);
+        final Target target = new Target() {
+            @Override
+            public void onBitmapLoaded(Bitmap bitmap, Picasso.LoadedFrom from) {
+                if (!trimUrl.equals(iv.getTag(TAG_LAST_URL))) return; // view 已复用给别的 URL,丢弃
+                sessionLoaded.add(trimUrl);
+                sessionFailed.remove(trimUrl);
+                cancelShimmer(iv);
+                PicassoShimmer.stop(iv);
+                iv.setImageDrawable(new BitmapDrawable(iv.getResources(), bitmap));
+            }
 
-                    @Override
-                    public void onError(Exception e) {
-                        // 加载失败:记入失败窗口(窗口内滑回不再重试)并切到带"图片加载失败"文字的占位
-                        sessionFailed.put(trimUrl, System.currentTimeMillis());
-                        showFailedPlaceholder(iv);
-                    }
-                });
+            @Override
+            public void onBitmapFailed(Exception e, Drawable errorDrawable) {
+                if (!trimUrl.equals(iv.getTag(TAG_LAST_URL))) return; // view 已复用,不处理
+                sessionFailed.put(trimUrl, System.currentTimeMillis());
+                showFailedPlaceholder(iv);
+            }
+
+            @Override
+            public void onPrepareLoad(Drawable placeHolderDrawable) {
+                // 占位走背景层,不塞 src;这里不处理,避免与 setImageDrawable(null) 冲突
+            }
+        };
+        iv.setTag(TAG_TARGET, target); // 强引用 Target,防止被 GC(复用前先清理旧 Target)
+        Picasso.get().load(loadUrl).into(target);
     }
+
+    /** Target 强引用 tag:复用 view 时先清理旧 Target,避免旧 Target 被 GC 后回调丢失/错乱 */
+    private static final int TAG_TARGET = 0x3D000004;
 
     /**
      * 本地图片文件统一入口(下载页剧集海报等):占位/失败语义与 {@link #into(ImageView, String)} 完全一致

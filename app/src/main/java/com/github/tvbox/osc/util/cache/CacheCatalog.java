@@ -5,6 +5,8 @@ import android.content.Context;
 import com.github.tvbox.osc.log.LogStore;
 import com.github.tvbox.osc.util.OkGoHelper;
 
+import xyz.doikki.videoplayer.exo.ExoMediaSourceHelper;
+
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayDeque;
@@ -25,6 +27,7 @@ public final class CacheCatalog {
     public static final String IMAGE_HTTP = "image_http";
     public static final String LOGS = "logs";
     public static final String TEMP_FILES = "temp_files";
+    public static final String PLAYBACK_CACHE = "playback_cache";
 
     private static final String RUNTIME_DATA = "runtime_data";
     private static final long STALE_AFTER_MS = 24L * 60 * 60 * 1000;
@@ -33,7 +36,8 @@ public final class CacheCatalog {
             new Definition(IMAGE_HTTP, "图片缓存", "已浏览的海报和封面，清理后会重新加载", true),
             new Definition(LOGS, "运行日志", "业务日志记录、错误日志文件及旧版日志残留（内容约大小）", true),
             new Definition(TEMP_FILES, "遗留的副本", "保存图片、分享或导入导出后遗留的旧副本", true),
-            new Definition(RUNTIME_DATA, "应用运行文件", "播放、站点等功能使用的文件，不可清理", false)
+            new Definition(PLAYBACK_CACHE, "播放缓存", "边播边缓存与下一集预载的视频片段，清理后重新缓存", true),
+            new Definition(RUNTIME_DATA, "应用运行文件", "站点等功能使用的运行文件，不可清理", false)
     };
 
     private final File internalRoot;
@@ -41,6 +45,7 @@ public final class CacheCatalog {
     private final File filesRoot;
     private final ImageCacheEvictor imageCacheEvictor;
     private final LogCacheAccess logCacheAccess;
+    private final PlaybackCacheEvictor playbackCacheEvictor;
 
     private static final LogCacheAccess NO_LOGS = new LogCacheAccess() {
         @Override public long bytes() { return 0L; }
@@ -53,6 +58,7 @@ public final class CacheCatalog {
         externalRoot = app.getExternalCacheDir();
         filesRoot = app.getFilesDir();
         imageCacheEvictor = OkGoHelper::evictImageDiskCache;
+        playbackCacheEvictor = () -> ExoMediaSourceHelper.getInstance(app).clearPlaybackCache();
         LogStore logs = LogStore.get();
         logCacheAccess = new LogCacheAccess() {
             @Override public long bytes() { return logs.storedLogBytes(); }
@@ -78,6 +84,7 @@ public final class CacheCatalog {
         this.filesRoot = filesRoot;
         this.imageCacheEvictor = imageCacheEvictor;
         this.logCacheAccess = logCacheAccess;
+        this.playbackCacheEvictor = () -> {};
     }
 
     /** Cache/file bytes plus an estimate of stored log content. */
@@ -176,6 +183,13 @@ public final class CacheCatalog {
                     else failures.put(id, "有日志未能清理，请重试");
                 } catch (RuntimeException error) {
                     failures.put(id, "运行日志清理失败：" + safeMessage(error));
+                }
+            } else if (PLAYBACK_CACHE.equals(id)) {
+                try {
+                    playbackCacheEvictor.evict();
+                    cleared.add(id);
+                } catch (RuntimeException error) {
+                    failures.put(id, "播放缓存清理失败：" + safeMessage(error));
                 }
             } else {
                 failures.put(id == null ? "" : id, "此类数据不可清理");
@@ -291,6 +305,7 @@ public final class CacheCatalog {
 
     private static String classify(boolean external, String top, int depth,
                                    File file, long staleBefore) {
+        if ("exo-video-cache".equals(top)) return PLAYBACK_CACHE;
         if (!external && "image_http_cache".equals(top)) return IMAGE_HTTP;
         if (!external && "image_viewer".equals(top) && depth == 2
                 && file.getName().startsWith("img_") && isStale(file, staleBefore))
@@ -357,6 +372,7 @@ public final class CacheCatalog {
 
     interface ImageCacheEvictor { void evict() throws IOException; }
     interface LogCacheAccess { long bytes(); boolean clear(); }
+    interface PlaybackCacheEvictor { void evict(); }
     private interface FileVisitor { void visit(File file, String category); }
     private interface ScanError { void failed(String topName, boolean external); }
 

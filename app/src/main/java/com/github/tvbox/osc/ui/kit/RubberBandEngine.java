@@ -213,6 +213,11 @@ public class RubberBandEngine {
                         boolean wantTop = atTop && dy > 0f && mTopEnabled;
                         boolean wantBottom = atBottom && dy < 0f && mBottomEnabled;
                         if (wantTop || wantBottom) {
+                            // 与 onTouchEvent 的进入分支保持对称:接管前先无条件结束原生手势。
+                            // 原生可能已在 DRAGGING(速度跟踪未回收),不取消就会与引擎的 translationY
+                            // 回弹叠加 —— 表现为"快速拉到边界原地弹跳/震荡"。
+                            mHost.nativeEndGesture();
+                            mNativeActive = false;
                             mTracking = true;
                             mBounceDir = wantTop ? 1 : -1;
                             mBounceBaseY = ev.getY();

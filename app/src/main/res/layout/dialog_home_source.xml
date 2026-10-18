@@ -134,8 +134,10 @@
         app:layout_constraintEnd_toEndOf="@id/list"
         app:layout_constraintTop_toTopOf="@id/list" />
 
+    <!-- 列表底部的固定留白:列表自身已有 paddingBottom=10dp,这里再给 6dp,
+         底部总留白约 16dp(之前 30dp 叠加 10dp=40dp,观感上底部空太多)。 -->
     <View
         android:layout_width="match_parent"
-        android:layout_height="30dp"
+        android:layout_height="6dp"
         app:layout_constraintTop_toBottomOf="@id/list" />
 </androidx.constraintlayout.widget.ConstraintLayout>

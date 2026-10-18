@@ -186,16 +186,6 @@
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:exported="false"/>
 
-        <!-- 广播接收器不对三方 App 开放(exported=false):CustomWebReceiver 无外部契约,
-             避免任意应用向本应用注入刷新指令 -->
-        <receiver
-            android:name=".receiver.CustomWebReceiver"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="android.content.movie.custom.web.Action" />
-            </intent-filter>
-        </receiver>
-
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

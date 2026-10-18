@@ -2,6 +2,7 @@ package com.github.tvbox.osc.share.domain;
 
 import android.content.Context;
 
+import com.github.tvbox.osc.share.ShareArchiveSummary;
 import com.github.tvbox.osc.share.ShareArchives;
 import com.github.tvbox.osc.share.ShareException;
 import com.github.tvbox.osc.share.ShareManifest;
@@ -35,7 +36,7 @@ import java.util.UUID;
  */
 public final class DataTransferHub {
 
-    private static final long MAX_ARCHIVE_BYTES = 1024L * 1024L * 1024L;      // 1 GB
+    private static final long MAX_ARCHIVE_BYTES = 1024L * 1024L * 1024L;      // 1 GB(注:与 LAN 下载 64MB 上限不一致;在线分享路径启用时入口需按平台收紧)
     private static final long MAX_UNPACKED_BYTES = 2L * 1024L * 1024L * 1024L; // 2 GB
 
     private final Context context;
@@ -103,8 +104,10 @@ public final class DataTransferHub {
                 exported.add(id);
             }
             if (exported.isEmpty()) throw new IOException("没有可导出的数据");
+            // 归档级摘要:针对数据条目(不含清单),写入清单供导入侧校验传输完整性(挡住截断/损坏)
+            ShareArchiveSummary summary = ShareArchives.summarizeEntries(entries);
             ShareManifest manifest = new ShareManifest(
-                    ShareManifest.SCHEMA_CURRENT, fileName, 0, "",
+                    ShareManifest.SCHEMA_CURRENT, fileName, summary.sizeBytes, summary.sha256Hex,
                     System.currentTimeMillis(), appVersionName(), 0, exported);
             entries.put(ShareManifest.ENTRY_MANIFEST, writeManifest(work, manifest));
             archive = File.createTempFile("share_data_", ".zip", context.getCacheDir());

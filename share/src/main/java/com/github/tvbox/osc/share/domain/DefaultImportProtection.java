@@ -32,8 +32,16 @@ public final class DefaultImportProtection implements ImportProtection {
         this.context = context.getApplicationContext();
     }
 
+    /**
+     * 注意:本默认保护把导入动作包进 Room 事务(见 {@link #protectedRun} 的 runInTransaction)。
+     * room 域(整库替换:close 库 + rename 换文件)不能在事务内替换库文件,语义未定义;
+     * 该域必须用独立保护实现({@link DataTransferHub#setProtection}),不能用本事务型默认保护。
+     */
     @Override
     public List<String> runProtected(TransferSession session, ImportAction action) throws IOException {
+        if (session != null && session.domains().contains("room")) {
+            throw new IOException("room 域需专用导入保护(整库替换不能在事务内执行)");
+        }
         try {
             return AppDataManager.runOnDb(() -> ThemeStore.runWithStorageLock(() ->
                     SubscriptionImportFiles.runLocked(() -> protectedRun(session, action))));

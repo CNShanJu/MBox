@@ -27,6 +27,7 @@ import com.chad.library.adapter.base.BaseQuickAdapter;
 import com.github.tvbox.osc.R;
 import com.github.tvbox.osc.base.App;
 import com.github.tvbox.osc.base.BaseActivity;
+import com.github.tvbox.osc.config.SystemConfig;
 import com.github.tvbox.osc.bean.CastVideo;
 import com.github.tvbox.osc.bean.LiveChannelGroup;
 import com.github.tvbox.osc.bean.LiveChannelItem;
@@ -81,7 +82,6 @@ import xyz.doikki.videoplayer.player.VideoView;
  */
 public class LiveActivity extends BaseActivity implements LiveLineSelectHost, LiveSettingHost {
     private VideoView mVideoView;
-    private TextView tvChannelInfo;
     private LinearLayout tvLeftChannelListLayout;
     private RecyclerView mChannelGroupView;
     private RecyclerView mLiveChannelView;
@@ -98,16 +98,16 @@ public class LiveActivity extends BaseActivity implements LiveLineSelectHost, Li
     private LivePlayerManager livePlayerManager = new LivePlayerManager();
     private ArrayList<Integer> channelGroupPasswordConfirmed = new ArrayList<>();
 
-//EPG   by 龍
     private static LiveChannelItem  channel_Name = null;
     TextView tv_channelnum;
     TextView tip_chname;
 
     TextView tv_srcinfo;
-    public String epgStringAddress ="";
 
     private boolean isBack = false;
     private volatile int liveLoadEpoch = 0;
+    /** 本次加载频道列表时的直播源签名(SystemConfig.getLiveUrl());回前台比对变化用 */
+    private String loadedLiveUrl = null;
     private LiveSideControlView mSideControlView;
     private LiveNormalControlView mNormalControlView;
     private BasePopupView mSettingRightDialog;
@@ -161,10 +161,6 @@ public class LiveActivity extends BaseActivity implements LiveLineSelectHost, Li
                 .hideBar(BarHide.FLAG_HIDE_NAVIGATION_BAR)
                 .init();
         applySystemBarsPadding();
-        epgStringAddress = LiveConfig.epgUrl();
-        if(epgStringAddress == null || epgStringAddress.length()<5)
-            epgStringAddress = "http://epg.51zmt.top:8000/api/diyp/";
-
         setLoadSir(findViewById(R.id.live_root));
         mVideoView = findViewById(R.id.mVideoView);
 
@@ -175,9 +171,6 @@ public class LiveActivity extends BaseActivity implements LiveLineSelectHost, Li
         mChannelGroupView.addItemDecoration(new LinearSpacingItemDecoration(20,true));
         mLiveChannelView.addItemDecoration(new LinearSpacingItemDecoration(20,true));
 
-        tvChannelInfo = findViewById(R.id.tvChannel);
-
-        //EPG  findViewById  by 龍
         tip_chname = findViewById(R.id.tv_channel_bar_name);//底部名称
         tip_chname.setOnClickListener(view -> {
             mChannelGroupView.scrollToPosition(currentChannelGroupIndex);
@@ -301,6 +294,11 @@ public class LiveActivity extends BaseActivity implements LiveLineSelectHost, Li
         if (mVideoView != null) {
             mVideoView.resume();
         }
+        // 直播源可能已在订阅管理页切换(免重启就地生效):回前台发现签名变了就重建频道列表。
+        // 本页前台时不会发生切换(切换在别的 Activity),故这里只在后台期间变化时才重载。
+        if (!java.util.Objects.equals(loadedLiveUrl, SystemConfig.getLiveUrl())) {
+            initLiveChannelList();
+        }
     }
 
     @Override
@@ -375,33 +373,9 @@ public class LiveActivity extends BaseActivity implements LiveLineSelectHost, Li
         }
     }
 
-    private void showChannelInfo() {
-        tvChannelInfo.setText(String.format(Locale.getDefault(), "%d %s %s(%d/%d)", currentLiveChannelItem.getChannelNum(),
-                currentLiveChannelItem.getChannelName(), currentLiveChannelItem.getSourceName(),
-                currentLiveChannelItem.getSourceIndex() + 1, currentLiveChannelItem.getSourceNum()));
-
-        FrameLayout.LayoutParams lParams = new FrameLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        lParams.gravity = Gravity.RIGHT;
-        lParams.rightMargin = 60;
-        lParams.topMargin = 30;
-        tvChannelInfo.setLayoutParams(lParams);
-
-        tvChannelInfo.setVisibility(View.VISIBLE);
-        mHandler.removeCallbacks(mHideChannelInfoRun);
-        mHandler.postDelayed(mHideChannelInfoRun, 3000);
-    }
-
-    private Runnable mHideChannelInfoRun = new Runnable() {
-        @Override
-        public void run() {
-            tvChannelInfo.setVisibility(View.INVISIBLE);
-        }
-    };
-
     private boolean playChannel(int channelGroupIndex, int liveChannelIndex, boolean changeSource) {
         if ((channelGroupIndex == currentChannelGroupIndex && liveChannelIndex == currentLiveChannelIndex && !changeSource)
                 || (changeSource && currentLiveChannelItem.getSourceNum() == 1)) {
-           // showChannelInfo();
             return true;
         }
         mVideoView.release();
@@ -423,7 +397,6 @@ public class LiveActivity extends BaseActivity implements LiveLineSelectHost, Li
         showBottomEpg();
 
         mVideoView.setUrl(currentLiveChannelItem.getUrl());
-       // showChannelInfo();
         mVideoView.start();
         return true;
     }
@@ -656,6 +629,7 @@ public class LiveActivity extends BaseActivity implements LiveLineSelectHost, Li
 
 
     private void initLiveChannelList() {
+        loadedLiveUrl = SystemConfig.getLiveUrl();
         List<LiveChannelGroup> list = com.github.tvbox.osc.spiderapi.LiveChannelConfigProviders.get().getChannelGroupList();
         if (list.isEmpty()) {
             AppBubble.toast("频道列表为空");

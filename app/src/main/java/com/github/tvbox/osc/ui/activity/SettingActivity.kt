@@ -66,9 +66,6 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
     private companion object {
         /** 主题编辑页请求码 */
         const val REQ_THEME_EDITOR = 0x0E10
-
-        /** 调试包的主题自检提示:整个进程只弹一次(见 showThemeProbeOnce) */
-        private var themeProbeShown = false
     }
 
     override fun init() {
@@ -454,6 +451,15 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             mBinding.switchInternalDownload.setChecked(enabled)
             refreshInternalDownloadSettingsVisibility()
         }
+        // 磁力/荐片通道开关(默认关闭:涉及伪造设备标识/硬编码凭证/仅 ARM so)
+        mBinding.switchThunderP2p.setChecked(SystemConfig.isThunderP2pEnabled())
+        mBinding.llThunderP2p.setOnClickListener { view: View ->
+            FastClickCheckUtil.check(view)
+            val enabled = !SystemConfig.isThunderP2pEnabled()
+            SystemConfig.setThunderP2pEnabled(enabled)
+            mBinding.switchThunderP2p.setChecked(enabled)
+            AppBubble.toast("磁力/荐片通道已" + if (enabled) "开启" else "关闭")
+        }
         // 仅 Wi-Fi 下载开关
         mBinding.switchDlWifiOnly.setChecked(DownloadFacade.get().isWifiOnly())
         mBinding.llDlWifiOnly.setOnClickListener {
@@ -695,17 +701,6 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
         val label = resources.getStringArray(R.array.video_purify_modes)[PlayConfig.getVideoPurifyMode()]
         mBinding.tvVideoPurifyMode.text = label
         mBinding.llVideoPurify.contentDescription = "广告过滤，$label"
-    }
-
-    /**
-     * 调试包专用(每次进程一次):把"这次到底解析成了什么配色"直接摆出来,省去翻日志 ——
-     * 内容包括生效主题名、面的实际 ARGB、浮层的实际 ARGB,以及**面/浮层 drawable 能否按主题重建**。
-     * 有了这三项就能立刻分清:"没选中自定义主题" / "派生出的透明度不对" / "drawable 重建通道没通"。
-     */
-    private fun showThemeProbeOnce() {
-        // 用户口径:"主题自检先移除" —— 自检提示已停用(保留空实现,免得 removed 掉调用点后
-        // 有人又照旧文档去找这个弹窗)。要临时再开,把下面这段恢复即可:
-        //   按 debuggable 判断 → 打印 主题名 / 面 / 浮层 / 重建 / 包装 / 文本 / 圆角 / 主题文件里的值
     }
 
     /** 背景图取值:默认(跟随主题) / 自定义(用户自己设过,含显式纯色) */
