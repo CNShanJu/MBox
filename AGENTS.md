@@ -43,7 +43,7 @@ app / feature
 | `:spider` | 爬虫**契约 + 实现同模块**(原 `:spider-api` 已并入):契约(SourcePage/Category/Detail/Search/Play 与 SourceConfigProviders/ParseConfigProviders/LiveChannelConfigApi/SourceLoaderApi/PlayUrlResolverProviders/SpiderFaultProviders)、QuickJS/JarLoader/ApiConfig/具体 Spider;**app/UI 一律经契约,禁止直连 `ApiConfig`/`JsLoader`/`PlayUrlResolver`**(`checkModuleDependencies` 已加该红线,白名单只剩组合根/启动注入点) |
 | `:player` | 播放**契约 + 实现同模块**(原 `:player-api` 已并入):契约(PlayerSession/PlayerState/PlayerOptions/PlayerEvent/PlayerFactory)与 MyVideoView/Media3 同模块;UI 不得直接依赖具体内核 |
 | `:thirdparty` | 纯第三方归堆,不依赖任何本仓模块:TabLayout(`com.angcyo.tablayout`)、CustomActivityOnCrash(`cat.ereza.customactivityoncrash`,原 `:crash`)、QuickJS(`com.whl.quickjs.*` + `src/main/jniLibs`,原 `:quickjs`) |
-| `:download` | 只公开 DownloadFacade.enqueue/pause/resume/delete/observe;Manager/Scheduler/Executor/Archive 等为模块内部实现 |
+| `:download` | 只公开 DownloadFacade(enqueue/pause/resume/delete/observe 与 pauseAll/startAll/moveToFront/setPriority 等门面转发方法);Manager/Scheduler/Executor/Archive 等为模块内部实现 |
 | `:share` | 分享/导入导出(传输层):契约(`ShareFacade`/`ShareTransport`/`ShareCapability`/`ShareLink`/`SharePackage`/`ShareManifest` 等)+ 实现(`online`=storage.to、`transport.lan`=局域网、`local`=本地文件)同模块;平台**可插拔**(注册顺序即优先级,`availablePlatforms/firstAvailable` 自动选可用平台),在线平台不可用时换实现而不改调用方。局域网 HTTP 服务在 `:app`,经 `transport.lan.LanShareHost` 桥接注入,故本模块**不得依赖 `:app`**;`internal`/`online`/`local` 为内部实现,**app 禁止 import**(门禁已加) |
 | `:log` | 日志(LogStore + 落盘/Logcat 采集),不依赖任何业务模块 |
 | `:app` 的 ui-kit/ui-common | 主题资源(原 `:ui-common`)与通用组件已全部收在 app 内(app 的 `res` + `ui/kit` package);组件成熟后再考虑拆模块 |

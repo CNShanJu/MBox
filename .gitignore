@@ -118,3 +118,9 @@ app/src/main/assets/config/default_subscriptions.json
 
 # WorkBuddy 本地工作目录(项目记忆/预览图等),不入库
 .workbuddy/
+
+# 新版设计参考图(本地视觉参考材料,非代码/文档),不入库
+/新版设计参考/
+
+# 本地备份目录(如 EPG 数据备份),不入库
+/backups/
