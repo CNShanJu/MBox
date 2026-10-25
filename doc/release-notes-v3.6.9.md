@@ -38,5 +38,5 @@
 - 本版含大批底层重构:数据库换文件策略(移除 Room 迁移、支持旧代库清理)、移除 IJK 内核(软解改 jellyfin FFmpeg decoder)、
   Media3 升级 1.11.1、开启 R8 混淆与资源收缩、传输/分享链路统一到 DataTransferHub、应用层 Java→Kotlin 迁移、
   播放缓存总闸恒开、移除画弧切集手势等。因存储结构变更,故发布时置顶"需删除重装"提示。
-- 下载地址:gitee(占位)、proxy(占位)、github(占位)。
+- 下载地址:Gitee `https://gitee.com/CnAyo/MBox/releases/download/v3.6.9/MBox_v3.6.9_release.apk`;GitHub `https://github.com/CNShanJu/MBox/releases/download/v3.6.9/MBox_v3.6.9_release_20261025.apk`;proxy 加速地址待补充。
 <!-- /dev -->
