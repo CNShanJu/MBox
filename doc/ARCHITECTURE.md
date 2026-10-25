@@ -24,7 +24,7 @@ flowchart TD
 
     subgraph L3["业务实现层"]
         C1["spider: QuickJS / JarLoader / ApiConfig / 具体 Spider"]
-        C2["player: IJK / Media3 / 系统内核 / MyVideoView"]
+        C2["player: Media3 / 系统内核 / MyVideoView"]
         C3["download: Scheduler / Executor / Archive"]
         C4["share: online / transport.lan / local"]
     end
@@ -121,7 +121,7 @@ graph LR
 | `:core-network` | 基础设施 | `OkGoHelper`、`HttpClient`、`HttpUrls` | OkHttp 装配、SSL 兼容、brotli 拦截器 |
 | `:core-storage` | 基础设施 | Repository、类型安全 Config | DAO、Room 迁移、`PrefsDataStore` 底层 |
 | `:log` | 基础设施 | `LogStore` | 落库、`LogcatCapture` |
-| `:player` | 业务实现 | `PlayerFactory` / `PlayerSession` / `PlayerState` / `PlayerOptions` / `PlayerEvent` | IJK / Media3 / 系统内核、MyVideoView |
+| `:player` | 业务实现 | `PlayerFactory` / `PlayerSession` / `PlayerState` / `PlayerOptions` / `PlayerEvent` | Media3 / 系统内核、MyVideoView（IJK 已于 2026-10 移除） |
 | `:spider` | 业务实现 | `SpiderService` / `SourceLoaderApi` / `PlayUrlResolverProviders` | QuickJS / JarLoader / ApiConfig / 具体 Spider |
 | `:download` | 业务实现 | `DownloadFacade` | Scheduler / Executor / Archive |
 | `:share` | 业务实现 | `ShareFacade` / `ShareTransport` / `ShareLink` / `SharePackage` | online / transport.lan / local |

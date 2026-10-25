@@ -228,7 +228,7 @@ public final class SystemConfig {
     /** 配对码在一次开启周期内保持不变，服务或进程重建时复用。 */
     public static synchronized String getOrCreateLanPairingCode() {
         String code = PrefsDataStore.getString(KEY_LAN_PAIRING_CODE, "");
-        if (code.matches("[0-9]{8}")) return code;
+        if (code.matches("[0-9]{6}")) return code;
         return regenerateLanPairingCode();
     }
 
@@ -238,7 +238,7 @@ public final class SystemConfig {
         SecureRandom random = new SecureRandom();
         String code;
         do {
-            code = String.format(Locale.ROOT, "%08d", random.nextInt(100000000));
+            code = String.format(Locale.ROOT, "%06d", random.nextInt(1000000));
         } while (code.equals(previous));
         LanSessionConfig.clear();
         PrefsDataStore.put(KEY_LAN_PAIRING_CODE, code);

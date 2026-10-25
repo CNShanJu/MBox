@@ -153,6 +153,14 @@ public final class SubscriptionExporter {
         o.addProperty("type", local ? "clan" : "cms");
         o.addProperty("origin", item.getOrigin());
         o.addProperty("url", url);
+        // 批次信息(一次多仓/批量导入的分组):随多签导出,重导入时按 batchId 归回同一手风琴
+        if (item.getBatchId() != null && !item.getBatchId().isEmpty()) {
+            o.addProperty("batchId", item.getBatchId());
+            if (item.getBatchName() != null && !item.getBatchName().isEmpty()) {
+                o.addProperty("batchName", item.getBatchName());
+            }
+            if (item.getBatchTime() > 0) o.addProperty("batchTime", item.getBatchTime());
+        }
         if (Subscription.ORIGIN_PACKAGE.equals(item.getOrigin())) {
             // 本地包订阅：关联文件(广联文件/jar/js 等)随 local_packages 目录整体打包传输，
             // 这里只保留指向包内配置的 clan:// 地址；导入侧还原目录后按原地址加入即可。

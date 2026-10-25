@@ -127,6 +127,10 @@ public class App extends MultiDexApplication {
         clearSplashNightModeOverride();
         initParams();
         LogStore.get().installCrashHandler();
+        // 第三方爬虫把扫码 cookie 直接写到 /sdcard/tvfan/xxx.txt,只 open 文件不建父目录;
+        // 父目录不存在时写入抛异常被 jar 自己吞掉,表现是"扫码成功却什么都没留下"。
+        // 放在启动期(而不是等 jar 加载)是为了让目录在任何一次爬虫写入之前就已经存在。
+        com.github.catvod.crawler.JarLoader.prepareCredentialDirs();
         StartupGuard.scheduleHealthyMark(this);
         // OKGo: 全局 OkHttpClient 初始化(:core-network, context 注入); Exo/Picasso 初始化拆回 app 侧
         OkGoHelper.init(this);

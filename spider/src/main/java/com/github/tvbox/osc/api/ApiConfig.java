@@ -90,6 +90,26 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
     /** 局域网地址前缀注入（app 侧 ControlManager.get().getAddress(true) 设置） */
     public static void setLanBase(String base) {
         lanBase = base == null ? "" : base;
+        // 顺手把端口同步给 catvod.Proxy：第三方爬虫 jar 普遍用它拼
+        // http://127.0.0.1:<port>/file/... 这类本机地址（读自己写下的 cookie、套本地代理）。
+        // 此前 MBox 完全没有注入点，这类 jar 拿到的是自己写死的兜底端口，拼出来的地址无效，
+        // 于是一步都不发出去、直接返回空字符串。AVBox 一直有这一步，这里补齐。
+        int port = parseLocalPort(lanBase);
+        if (port > 0) com.github.catvod.Proxy.set(port);
+    }
+
+    /** 从 {@code http://host:port/} 里取端口；解析不出来返回 0（调用方据此跳过注入）。 */
+    private static int parseLocalPort(String base) {
+        if (base == null || base.isEmpty()) return 0;
+        try {
+            String trimmed = base.endsWith("/") ? base.substring(0, base.length() - 1) : base;
+            int idx = trimmed.lastIndexOf(':');
+            if (idx < 0 || idx + 1 >= trimmed.length()) return 0;
+            int value = Integer.parseInt(trimmed.substring(idx + 1));
+            return value > 0 && value <= 65535 ? value : 0;
+        } catch (Throwable ignored) {
+            return 0;
+        }
     }
 
     /** 局域网地址前缀（util.js 等用） */

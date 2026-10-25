@@ -4,6 +4,9 @@
 > 的落地状态、关键改动点与真机回归矩阵。代码级验证：Debug/Release 双变体 BUILD SUCCESSFUL。
 
 > **当前模块（2026-10-03）**：全仓 10 个模块，`:app`、`:common`、`:core-network`、`:core-storage`、`:log`、`:player`、`:spider`、`:download`、`:share`、`:thirdparty`。下文按修复发生时的顺序记录，涉及当时的模块名时以 `settings.gradle` 的当前划分为准。
+>
+> **本文是历史快照（2026-10-05 截止）**：文中"Media3 1.4.1 / compileSdk 34 / IJK 内核"均为当时口径。
+> 2026-10 已升级 Media3 1.11.1 + compileSdk 36，并移除 IJK。**当前口径以 `doc/项目状态速查.md` 为准**，本文只用于回查历史决策。
 
 ## 0. 近期进展补充（2026-09-25）
 

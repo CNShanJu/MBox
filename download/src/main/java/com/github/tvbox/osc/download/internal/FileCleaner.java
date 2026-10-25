@@ -110,19 +110,17 @@ public class FileCleaner {
         return base;
     }
 
-    /** All current and older download roots; inspecting them must not create directories. */
+    /** All current download roots; inspecting them must not create directories. */
     static List<File> knownSaveRoots() {
         List<File> roots = new ArrayList<>();
         File publicDownloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
         if (publicDownloads != null) {
             roots.add(new File(publicDownloads, SAVE_DIR_NAME));
-            roots.add(new File(publicDownloads, "TVBox"));
         }
         if (appContext != null) {
             File privateDownloads = appContext.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
             if (privateDownloads != null) {
                 roots.add(new File(privateDownloads, SAVE_DIR_NAME));
-                roots.add(new File(privateDownloads, "TVBox"));
             }
             roots.add(new File(appContext.getFilesDir(), "downloads"));
         }

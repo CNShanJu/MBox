@@ -15,6 +15,9 @@ import com.github.tvbox.osc.util.LoadingAnim;
 
 /** Preview the long-pressed loading animation without changing the selected setting. */
 public final class LoadingAnimPreviewDialog extends AppCenterPopupView {
+    /** 预览倍数:长按预览把加载动画放大一倍展示(实际加载尺寸不变) */
+    private static final float PREVIEW_SCALE = 2f;
+
     private final String animName;
     private final String displayName;
     private LottieAnimationView animationView;
@@ -61,8 +64,25 @@ public final class LoadingAnimPreviewDialog extends AppCenterPopupView {
         animationView.setClipToCompositionBounds(false);
         LoadingAnim.applyAppearance(animationView, animName, false);
         LoadingAnim.applySize(animationView, animName);
+        scalePreview(PREVIEW_SCALE);
         fitPreviewToWindow();
         animationView.playAnimation();
+    }
+
+    /**
+     * 预览放大:长按预览按实际加载尺寸的 {@link #PREVIEW_SCALE} 倍展示,便于看清小尺寸动画
+     * (如 32dp 的"初始")的细节。只改弹窗里这个视图的边长,动画素材、设置里保存的 size 与
+     * 其它加载位置都不受影响;超出窗口时由 {@link #fitPreviewToWindow()} 收回到可用空间。
+     */
+    private void scalePreview(float factor) {
+        ViewGroup.LayoutParams params = animationView.getLayoutParams();
+        if (params == null) return;
+        int width = Math.max(1, Math.round(params.width * factor));
+        int height = Math.max(1, Math.round(params.height * factor));
+        if (params.width == width && params.height == height) return;
+        params.width = width;
+        params.height = height;
+        animationView.setLayoutParams(params);
     }
 
     private void fitPreviewToWindow() {

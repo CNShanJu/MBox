@@ -144,6 +144,24 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
         bindActions()
         refreshHeader()
         refreshAllValues()
+        importPendingFile()
+    }
+
+    /**
+     * 系统「打开方式」进来(主题 .json / 主题包 .zip):直接落到草稿,
+     * 后面仍是页内「导入主题」那套语义 —— 用户能先检查/改名,再决定保存。
+     */
+    private fun importPendingFile() {
+        val path = intent?.getStringExtra(LocalFileOpenActivity.EXTRA_PENDING_FILE) ?: return
+        val file = File(path)
+        if (!file.isFile) {
+            AppBubble.toast("文件已失效，请重新选择")
+            return
+        }
+        mBinding.root.post {
+            if (isFinishing || isDestroyed) return@post
+            importFromFile(Uri.fromFile(file))
+        }
     }
 
     /** schema 3 形状项:数值统一为 dp,输入框不带 dp 后缀。 */

@@ -86,6 +86,14 @@ android {
         }
     }
 
+    // 单元测试跑在 JVM 上,android.jar 只是桩实现,未 mock 的框架方法默认抛
+    // "Method xxx not mocked"。业务代码的日志门面(LOG → android.util.Log)在
+    // 单测路径里很常见(如 TxtSubscribe 解析非 JSON 内容时的降级日志),
+    // 打开 returnDefaultValues 让这类调用返回默认值(Log.i → 0)而非炸掉用例。
+    testOptions {
+        unitTests.returnDefaultValues = true
+    }
+
     // ------------------------------------------------------------------
     // 签名:密钥一律不入库(见 .gitignore:*.jks / keystore.properties 已忽略)。
     // 本项目正式密钥:仓库根目录 mbox-release.jks(2025 年生成,全新建库,

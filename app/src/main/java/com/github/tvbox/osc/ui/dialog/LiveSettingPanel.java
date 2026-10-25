@@ -5,6 +5,7 @@ import android.view.View;
 import com.chad.library.adapter.base.BaseQuickAdapter;
 import com.github.tvbox.osc.bean.LiveSettingGroup;
 import com.github.tvbox.osc.bean.LiveSettingItem;
+import com.github.tvbox.osc.config.SystemConfig;
 import com.github.tvbox.osc.ui.adapter.LiveSettingGroupAdapter;
 import com.github.tvbox.osc.ui.adapter.LiveSettingItemAdapter;
 import com.github.tvbox.osc.util.BackgroundPlaySettings;
@@ -21,7 +22,10 @@ import java.util.List;
 /**
  * 直播设置面板协调器（合并 LiveSettingDialog / LiveSettingRightDialog 的重复实现）。
  * <p>
- * 分组:画面比例 / 播放解码 / 超时换源 / 偏好设置 / 后台播放。
+ * 分组:直播源 / 画面比例 / 播放解码 / 超时换源 / 偏好设置 / 后台播放。
+ * 「直播源」组是动态的(跟随订阅 + 订阅自带 + 用户历史),打开抽屉默认聚焦它 ——
+ * 换源是直播页的高频动作;首页换源弹窗不展示直播源,切换统一在这里做。
+ * <p>
  * 线路选择已从设置面板移除,改为在非全屏点击线路文字或全屏控制条点击线路信息,
  * 弹出独立线路抽屉进行切换。
  * <p>
@@ -29,12 +33,21 @@ import java.util.List;
  */
 final class LiveSettingPanel {
 
+    private static final int GROUP_LIVE_SOURCE = 0;
+    private static final int GROUP_SCALE = 1;
+    private static final int GROUP_PLAYER = 2;
+    private static final int GROUP_TIMEOUT = 3;
+    private static final int GROUP_PREFERENCE = 4;
+    private static final int GROUP_BACKGROUND = 5;
+
     private final LiveSettingHost mHost;
     private final TvRecyclerView mGroupView;
     private final TvRecyclerView mItemView;
     private final LiveSettingGroupAdapter groupAdapter = new LiveSettingGroupAdapter();
     private final LiveSettingItemAdapter itemAdapter = new LiveSettingItemAdapter();
     private final List<LiveSettingGroup> groups = new ArrayList<>();
+    /** 「直播源」组的地址(与条目一一对应;下标 0 = 空串 = 跟随订阅) */
+    private final List<String> liveSourceUrls = new ArrayList<>();
 
     LiveSettingPanel(LiveSettingHost host, TvRecyclerView groupView, TvRecyclerView itemView) {
         mHost = host;
@@ -46,8 +59,8 @@ final class LiveSettingPanel {
     void init() {
         initGroupView();
         initItemView();
-        buildStaticGroups();
-        selectGroup(0);
+        buildGroups();
+        selectGroup(GROUP_LIVE_SOURCE);
     }
 
     private void initGroupView() {
@@ -76,10 +89,12 @@ final class LiveSettingPanel {
         });
     }
 
-    /** 静态分组：画面比例 / 播放解码 / 超时换源 / 偏好设置 / 后台播放 */
-    private void buildStaticGroups() {
-        ArrayList<String> groupNames = new ArrayList<>(Arrays.asList("画面比例", "播放解码", "超时换源", "偏好设置", "后台播放"));
+    /** 分组:直播源(动态) / 画面比例 / 播放解码 / 超时换源 / 偏好设置 / 后台播放 */
+    private void buildGroups() {
+        ArrayList<String> groupNames = new ArrayList<>(Arrays.asList(
+                "直播源", "画面比例", "播放解码", "超时换源", "偏好设置", "后台播放"));
         ArrayList<ArrayList<String>> items = new ArrayList<>();
+        items.add(new ArrayList<>(liveSourceItemNames()));
         items.add(new ArrayList<>(Arrays.asList("默认", "16:9", "4:3", "填充", "原始", "裁剪")));
         items.add(new ArrayList<>(Arrays.asList("系统", "Media3")));
         items.add(new ArrayList<>(Arrays.asList("5s", "10s", "15s", "20s", "25s", "30s")));
@@ -102,12 +117,39 @@ final class LiveSettingPanel {
             groups.add(group);
         }
         // 当前值回读:超时档位与偏好开关
-        groups.get(2).getLiveSettingItems().get(LiveConfig.connectTimeout()).setItemSelected(true);
-        groups.get(3).getLiveSettingItems().get(0).setItemSelected(LiveConfig.showTime());
-        groups.get(3).getLiveSettingItems().get(1).setItemSelected(LiveConfig.showNetSpeed());
-        groups.get(3).getLiveSettingItems().get(2).setItemSelected(LiveConfig.channelReverse());
-        groups.get(3).getLiveSettingItems().get(3).setItemSelected(LiveConfig.crossGroup());
+        groups.get(GROUP_TIMEOUT).getLiveSettingItems().get(LiveConfig.connectTimeout()).setItemSelected(true);
+        groups.get(GROUP_PREFERENCE).getLiveSettingItems().get(0).setItemSelected(LiveConfig.showTime());
+        groups.get(GROUP_PREFERENCE).getLiveSettingItems().get(1).setItemSelected(LiveConfig.showNetSpeed());
+        groups.get(GROUP_PREFERENCE).getLiveSettingItems().get(2).setItemSelected(LiveConfig.channelReverse());
+        groups.get(GROUP_PREFERENCE).getLiveSettingItems().get(3).setItemSelected(LiveConfig.crossGroup());
         groupAdapter.setNewData(groups);
+    }
+
+    // ------------------------------------------------------------------
+    // 「直播源」组(动态条目 + 当前值)
+    // ------------------------------------------------------------------
+
+    /** 「直播源」组条目名:跟随订阅 + 订阅自带 + 用户历史 */
+    private List<String> liveSourceItemNames() {
+        liveSourceUrls.clear();
+        liveSourceUrls.add("");   // 下标 0 = 跟随订阅
+        List<String> names = new ArrayList<>();
+        names.add("跟随订阅");
+        for (LiveSettingHost.LiveSourceChoice choice : mHost.getLiveSourceChoices()) {
+            liveSourceUrls.add(choice.url);
+            names.add(choice.name);
+        }
+        return names;
+    }
+
+    /** 当前生效直播源在组里的下标;空 = 跟随订阅(0);自定义地址不在清单里 = -1 */
+    private int currentLiveSourceIndex() {
+        String current = SystemConfig.getLiveUrl();
+        if (current == null || current.isEmpty()) return 0;
+        for (int i = 0; i < liveSourceUrls.size(); i++) {
+            if (current.equals(liveSourceUrls.get(i))) return i;
+        }
+        return -1;
     }
 
     /** 切换分组：更新选中并让条目列回读该组当前值 */
@@ -118,13 +160,16 @@ final class LiveSettingPanel {
         groupAdapter.setSelectedGroupIndex(position);
         itemAdapter.setNewData(groups.get(position).getLiveSettingItems());
         switch (position) {
-            case 0:
+            case GROUP_LIVE_SOURCE:
+                itemAdapter.selectItem(currentLiveSourceIndex(), true, true);
+                break;
+            case GROUP_SCALE:
                 itemAdapter.selectItem(mHost.getLivePlayerScale(), true, true);
                 break;
-            case 1:
+            case GROUP_PLAYER:
                 itemAdapter.selectItem(mHost.getLivePlayerType(), true, true);
                 break;
-            case 4:
+            case GROUP_BACKGROUND:
                 itemAdapter.selectItem(mHost.getBackgroundPlayType(), true, true);
                 break;
         }
@@ -136,23 +181,28 @@ final class LiveSettingPanel {
     /** 条目点击：动作分发 */
     private void clickItem(int position) {
         int groupIndex = groupAdapter.getSelectedGroupIndex();
-        if (groupIndex < 3) { // 渲染类分组先画选中态（防连点）
+        // 偏好组是多选开关,其余组都是单选:重复点当前项不动作(防连点重载)
+        if (groupIndex != GROUP_PREFERENCE) {
             if (position == itemAdapter.getSelectedItemIndex()) {
                 return;
             }
             itemAdapter.selectItem(position, true, true);
         }
         switch (groupIndex) {
-            case 0: // 画面比例
+            case GROUP_LIVE_SOURCE: // 直播源:切换后由宿主就地重载频道列表
+                String url = position < liveSourceUrls.size() ? liveSourceUrls.get(position) : "";
+                mHost.changeLiveSource(url);
+                break;
+            case GROUP_SCALE: // 画面比例
                 mHost.changeScale(position);
                 break;
-            case 1: // 播放解码
+            case GROUP_PLAYER: // 播放解码
                 mHost.changePlayer(position);
                 break;
-            case 2: // 超时换源
+            case GROUP_TIMEOUT: // 超时换源
                 LiveConfig.setConnectTimeout(position);
                 break;
-            case 3: // 偏好设置
+            case GROUP_PREFERENCE: // 偏好设置
                 boolean select = false;
                 switch (position) {
                     case 0:
@@ -175,7 +225,7 @@ final class LiveSettingPanel {
                 itemAdapter.selectItem(position, select, false);
                 mHost.refreshPreferenceUi(); // 显示时间/显示网速等即时作用于全屏与小窗控制条
                 break;
-            case 4: // 后台播放与另外两种播放场景共用 PlayConfig
+            case GROUP_BACKGROUND: // 后台播放与另外两种播放场景共用 PlayConfig
                 if (position != mHost.getBackgroundPlayType()) {
                     mHost.setBackgroundPlayType(position);
                     itemAdapter.selectItem(position, true, true);

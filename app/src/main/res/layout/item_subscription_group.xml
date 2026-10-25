@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 订阅批次组头(手风琴一行):
+     箭头 + 批次名 + 「使用中」徽标 + 元信息(N 个源 · 导入时间) + 「本地仓」入口。
+     - 箭头 iv_arrow:展开 = 朝下(rotation 0°);收起 = 朝右(rotation 270°,adapter 里转,不做两张图);
+       多选态(导出/删除)整组换成勾选框 cb_group,点组头 = 勾选/取消整批;
+     - 「使用中」徽标:组内含有当前生效订阅时显示,与条目里的勾选语义一致;
+     - 「本地仓」:批次菜单(更新此批/重命名此批/删除整批)的可见入口,长按整行也行;
+       点击传出的锚点是整行(itemView),由页面对 tv_batch_name 做兜底解析;
+     - 按下反馈走 bg_batch_header_press(工程按下色),不用系统 selectableItemBackground——
+       那是平台默认高亮色,不随本主题走;
+     - 排版沿用 item_subscription 的口径:内容区左右间距对称,名称 weight=1 自己省略。
+     - 归属表达:组内条目的左缩进 = 本行 paddingHorizontal(10dp) + 箭头宽(24dp) + 文字间距(8dp)
+       = 42dp,组内条目与组头文字左缘对齐即知归属(不画引导线,用户口径 2026-10-25)。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_batch_header_press"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingHorizontal="10dp"
+    android:paddingVertical="8dp">
+
+    <ImageView
+        android:id="@+id/iv_arrow"
+        android:layout_width="24dp"
+        android:layout_height="24dp"
+        android:contentDescription="展开或收起批次"
+        android:src="@drawable/ic_arrow_down" />
+
+    <!-- 多选态(导出/删除)替代箭头的整批勾选框:与条目 cb 同形同大小;
+         不可点(focusable/clickable false),勾选由整行点击分发到 adapter。
+         尺寸/内边距与箭头严格一致(24dp),gravity=center 让按钮图标在框内居中,
+         否则 CheckBox 默认 minWidth 会撑宽、按钮贴左上,与组头文字中线错位。 -->
+    <CheckBox
+        android:id="@+id/cb_group"
+        android:layout_width="24dp"
+        android:layout_height="24dp"
+        android:button="@drawable/button_checkbox_square"
+        android:clickable="false"
+        android:focusable="false"
+        android:gravity="center"
+        android:minWidth="0dp"
+        android:minHeight="0dp"
+        android:padding="0dp"
+        android:visibility="gone"
+        tools:visibility="visible" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="@dimen/dp_8"
+        android:layout_marginEnd="@dimen/dp_6"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/tv_batch_name"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:singleLine="true"
+                android:textColor="@color/text_foreground"
+                android:textSize="16sp"
+                tools:text="道长多仓" />
+
+            <TextView
+                android:id="@+id/tv_using"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="@dimen/dp_8"
+                android:background="@drawable/bg_small_round_gray"
+                android:paddingHorizontal="6dp"
+                android:paddingVertical="2dp"
+                android:singleLine="true"
+                android:text="使用中"
+                android:textColor="@color/text_highlight"
+                android:textSize="11sp"
+                android:visibility="gone"
+                tools:visibility="visible" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/tv_batch_meta"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:ellipsize="end"
+            android:singleLine="true"
+            android:textColor="@color/text_sub_foreground"
+            android:textSize="12sp"
+            tools:text="3 个源 · 2024-01-15 12:30" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/tv_manage"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:background="@drawable/bg_small_round_gray"
+        android:paddingHorizontal="8dp"
+        android:paddingVertical="4dp"
+        android:singleLine="true"
+        android:text="本地仓"
+        android:textColor="@color/text_highlight"
+        android:textSize="12sp" />
+
+</LinearLayout>

@@ -2,6 +2,7 @@ package com.github.tvbox.osc.util.cache;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Assume;
@@ -179,6 +180,93 @@ public class CacheCatalogTest {
         CacheCatalog.ClearResult result = catalog.clear(new HashSet<>(Arrays.asList(CacheCatalog.TEMP_FILES)));
         assertFalse(stale.exists());
         assertTrue(result.failures.isEmpty());
+    }
+
+    /**
+     * 爬虫 jar 拿到的是 App 的 Context，登录态可能写在 files/ 里而不是 /sdcard。
+     * 这类凭据必须同样能被列出并清理，否则会出现"清完凭据、重启 App，扫码状态还在"。
+     */
+    @Test public void credentialsInAppPrivateFilesAreFoundAndCleared() throws Exception {
+        File internal = temporaryFolder.newFolder("internal");
+        File external = temporaryFolder.newFolder("external");
+        File files = temporaryFolder.newFolder("files");
+        File credential = write(files, "tvfan/Cloud-drive.txt", "cookie=abc", false);
+        CacheCatalog catalog = new CacheCatalog(internal, external, files, () -> {});
+
+        CacheCatalog.Snapshot snapshot = catalog.scan();
+        assertTrue(size(snapshot, CacheCatalog.CLOUD_CREDENTIALS) > 0);
+        String detail = null;
+        for (CacheCatalog.Entry entry : snapshot.entries)
+            if (CacheCatalog.CLOUD_CREDENTIALS.equals(entry.id)) detail = entry.detail;
+        assertNotNull(detail);
+        assertTrue(detail.contains("应用私有"));
+        assertTrue(detail.contains("Cloud-drive.txt"));
+
+        CacheCatalog.ClearResult result =
+                catalog.clear(new HashSet<>(Arrays.asList(CacheCatalog.CLOUD_CREDENTIALS)));
+        assertFalse(credential.exists());
+        assertTrue(result.failures.isEmpty());
+    }
+
+    /**
+     * 爬虫 jar 常把 token 塞在 {@code files/spider/} 这类子目录里，浅层递归要能找到；
+     * 图片缓存目录里的同名文件不参与，避免把缓存框架自己的文件当成凭据删掉。
+     */
+    @Test public void credentialsNestedInUnknownSubdirAreFound() throws Exception {
+        File internal = temporaryFolder.newFolder("internal");
+        File external = temporaryFolder.newFolder("external");
+        File files = temporaryFolder.newFolder("files");
+        File nested = write(files, "spider/quark_cookie.txt", "token=abc", false);
+        File cachedImage = write(internal, "image_http_cache/cookie.txt", "not a credential", false);
+        CacheCatalog catalog = new CacheCatalog(internal, external, files, () -> {});
+
+        CacheCatalog.Snapshot snapshot = catalog.scan();
+        assertTrue(size(snapshot, CacheCatalog.CLOUD_CREDENTIALS) > 0);
+
+        catalog.clear(new HashSet<>(Arrays.asList(CacheCatalog.CLOUD_CREDENTIALS)));
+        assertFalse(nested.exists());
+        assertTrue(cachedImage.exists());
+    }
+
+    /**
+     * 0 字节凭据必须能被看见：登录失败但文件被创建出来时就是空文件，源只看"文件存在"
+     * 就当成已登录 —— 表现正是"既不弹二维码、也没有播放地址"，清掉才能重新扫码。
+     */
+    @Test public void emptyCredentialFileIsFoundAndCleared() throws Exception {
+        File internal = temporaryFolder.newFolder("internal");
+        File external = temporaryFolder.newFolder("external");
+        File files = temporaryFolder.newFolder("files");
+        File empty = write(files, "tvfan/Cloud-drive.txt", "", false);
+        CacheCatalog catalog = new CacheCatalog(internal, external, files, () -> {});
+
+        CacheCatalog.Snapshot snapshot = catalog.scan();
+        String detail = null;
+        for (CacheCatalog.Entry entry : snapshot.entries)
+            if (CacheCatalog.CLOUD_CREDENTIALS.equals(entry.id)) detail = entry.detail;
+        assertNotNull(detail);
+        assertTrue(detail.contains("Cloud-drive.txt"));
+        assertTrue(detail.contains("空文件"));
+
+        catalog.clear(new HashSet<>(Arrays.asList(CacheCatalog.CLOUD_CREDENTIALS)));
+        assertFalse(empty.exists());
+    }
+
+    /**
+     * 本地文件服务会把「约定目录下的凭据文件」放给回环上的爬虫读取；
+     * 同目录的笔记、其他目录的同名文件、不存在的路径都不能被放行。
+     */
+    @Test public void onlyKnownCredentialFilesAreExposedToLocalReaders() throws Exception {
+        File external = temporaryFolder.newFolder("external");
+        File cloudDrive = write(external, "tvfan/Cloud-drive.txt", "cookie=abc", false);
+        File userNote = write(external, "tvfan/note.txt", "my own notes", false);
+        File elsewhere = write(external, "Documents/cookie.txt", "not a spider file", false);
+        File notCreatedYet = new File(external, "tvfan/cookie.txt");
+
+        assertTrue(CacheCatalog.isCloudCredential(cloudDrive, external));
+        assertFalse(CacheCatalog.isCloudCredential(userNote, external));
+        assertFalse(CacheCatalog.isCloudCredential(elsewhere, external));
+        assertFalse(CacheCatalog.isCloudCredential(notCreatedYet, external));
+        assertFalse(CacheCatalog.isCloudCredential(cloudDrive, null));
     }
 
     private static File write(File root, String relative, String contents, boolean stale)

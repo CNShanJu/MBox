@@ -1001,7 +1001,9 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
     }
 
     private fun showSiteSwitch() {
+        // 直播源不进首页换源弹窗(直播页设置抽屉里有独立切换入口)
         val sites = SourceConfigProviders.get().sourceBeanList
+            .filter { !HomeSourceChoices.isLiveLikeSource(it) }
         HomeSourceDialog(requireActivity(),
             sites.map { HomeSourceChoices.Row(it.key, it.name) },
             SourceConfigProviders.get().homeSourceBean?.key,

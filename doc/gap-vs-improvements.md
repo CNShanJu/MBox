@@ -4,6 +4,8 @@
 > 状态图例：✅ 已达标 / ⚠️ 部分 / ❌ 未做。审计日期：见最近提交记录。
 
 > **当前模块（2026-10-03）**：全仓 10 个模块，`:app`、`:common`、`:core-network`、`:core-storage`、`:log`、`:player`、`:spider`、`:download`、`:share`、`:thirdparty`。已撤销的模块名在下文仅用于解释当时的改造路径；当前模块划分以 `settings.gradle` 为准。
+>
+> **本文是历史快照**：文中 Media3 版本、IJK 内核相关判断均按审计当时记录。2026-10 已升级 Media3 1.11.1 + compileSdk 36 并移除 IJK；**当前状态以 `doc/项目状态速查.md` 为准**。
 
 ## 1. 依赖方向（改进.txt §一/§六）— 大体达标
 - ✅ app 内 `getCSP()` 清零；UI 无 `new OkHttpClient.Builder()`。

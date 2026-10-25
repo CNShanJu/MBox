@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 本地文件「打开方式」的过渡页:只显示当前处理状态(读取中 / 还原中),
+     真正的动作在订阅管理页、主题编辑页或还原流程里完成,这里不承载业务内容。
+     根部显式透明:BaseActivity 的页面背景层(PageBackgroundView)插在内容容器最底层,不要盖住用户背景图。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@android:color/transparent"
+    android:gravity="center"
+    android:orientation="vertical"
+    android:padding="24dp">
+
+    <ProgressBar
+        android:id="@+id/progress"
+        android:layout_width="44dp"
+        android:layout_height="44dp"
+        android:indeterminateTint="@color/text_main" />
+
+    <TextView
+        android:id="@+id/tv_hint"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:gravity="center"
+        android:maxWidth="360dp"
+        android:text="@string/local_open_reading"
+        android:textColor="@color/text_sub"
+        android:textSize="14sp" />
+
+</LinearLayout>

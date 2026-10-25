@@ -9,7 +9,7 @@ MBox（原名 TVBoxOS-Mobile / 工程名 TVBoxMobile）是一款 Android 点播 
 | 应用名 / 包名 | MBox / `com.github.tvbox.osc.mbox` |
 | 当前版本 | 3.6.8（versionCode 77） |
 | 上游 | [q215613905/TVBoxOS](https://github.com/q215613905/TVBoxOS) |
-| 语言 / 内核 | Kotlin + Java；IJK、Media3、系统播放器 |
+| 语言 / 内核 | Kotlin + Java；Media3（含 FFmpeg 软解）、系统播放器 |
 | 最低系统 | Android 7.0（minSdk 24） |
 
 > 精力有限，未必会及时维护，仅用于学习。
@@ -18,7 +18,8 @@ MBox（原名 TVBoxOS-Mobile / 工程名 TVBoxMobile）是一款 Android 点播 
 
 **内容与播放**
 - 多源订阅：远程 JSON 配置，兼容 BOM / 注释 / 图片 + base64 / AES 等非标准套路；支持本地 `.txt` / `.json` 文件导入（SAF `content://` 流）
-- 点播 / 直播 / 快捷搜索：内置 IJK、Media3 与系统播放器，多线路选集、EPG、倍速、字幕；历史记录优先用剧集快照起播
+- 订阅批次分组：一次多仓 / 清单 / 本地包导入产生的多个源自动收进可折叠「手风琴」分组，支持整批更新、重命名、整批删除，组头显示源个数与导入时间
+- 点播 / 直播 / 快捷搜索：内置 Media3 与系统播放器，多线路选集、倍速、字幕；历史记录优先用剧集快照起播
 - 播放缓存 / 下一集预载：可配边播边缓存与「下一集」预载（仅 Exo 内核 + 直链源）
 - 直播源基于 [vbskycn/iptv](https://github.com/vbskycn/iptv)
 
@@ -55,7 +56,7 @@ flowchart TD
 
     subgraph IMPL["业务实现"]
         I1["spider: JS / Jar 爬虫 / ApiConfig"]
-        I2["player: IJK / Media3 / 系统"]
+        I2["player: Media3 / 系统"]
         I3["download: 调度 / 断点 / 合并"]
         I4["share: online / lan / local"]
     end
@@ -88,7 +89,7 @@ flowchart TD
 | `:core-network` | 基础设施 | 网络客户端收敛（OkGoHelper / HttpClient / 取流），业务不得自建 OkHttpClient |
 | `:core-storage` | 基础设施 | Room / 缓存 / 配置收口，对外只暴露 Repository 与类型安全 Config |
 | `:log` | 基础设施 | 结构化日志（LogStore 落 Room）+ Logcat 错误流采集 |
-| `:player` | 业务实现 | 播放契约 + 实现同模块：PlayerSession / IJK / Media3 / 系统内核 |
+| `:player` | 业务实现 | 播放契约 + 实现同模块：PlayerSession / Media3 / 系统内核 |
 | `:spider` | 业务实现 | 爬虫契约 + 实现同模块：QuickJS / JarLoader / ApiConfig / 具体 Spider |
 | `:download` | 业务实现 | 只公开 `DownloadFacade`，调度 / 断点 / 归档为内部实现 |
 | `:share` | 业务实现 | 契约 + 实现同模块：在线 / 局域网 / 本地文件传输，平台可插拔 |
@@ -98,8 +99,8 @@ flowchart TD
 
 | 组件 | 版本 / 形态 | 用途 |
 | --- | --- | --- |
-| AndroidX Media3 | 1.4.1（各组件一致） | 播放内核（DASH / HLS / RTSP / RTMP） |
-| IJK | 内置定制内核（FFmpeg 4.0） | 播放内核 |
+| AndroidX Media3 | 1.11.1（各组件一致） | 播放内核（DASH / HLS / RTSP / RTMP） |
+| jellyfin media3-ffmpeg-decoder | 1.9.0+1 | 音频软解（IJK 移除后由 Media3 FFmpeg decoder 提供） |
 | Android MediaPlayer | 随系统提供 | 系统播放内核 |
 | QuickJS | 内置引擎（2021-03-27） | JS 爬虫引擎 |
 | OkHttp | 4.12.0 | 网络请求与媒体取流 |
@@ -108,6 +109,7 @@ flowchart TD
 | Lottie | 6.7.1 | 开屏、加载与界面动画 |
 
 > 旧 ExoPlayer 已迁至 Media3；`EXOmPlayer` 与 `xyz.doikki.videoplayer.exo` 仅为兼容类名，实现只用 `androidx.media3`。
+> 原 IJK 内核（内置 FFmpeg ~12MB）已于 2026-10 移除，软解能力改由 Media3 FFmpeg decoder 提供；设置里的类型 1 作废并按类型 2（Media3）回落。
 
 ## 构建
 
@@ -116,10 +118,10 @@ flowchart TD
 | 项 | 版本 |
 | --- | --- |
 | JDK | 17 |
-| Gradle | 8.4 |
-| Android Gradle Plugin | 8.2.2 |
-| Kotlin | 1.9.22 |
-| compileSdk / targetSdk / minSdk | 34 / 34 / 24 |
+| Gradle | 8.14.2 |
+| Android Gradle Plugin | 8.11.1 |
+| Kotlin | 2.2.21 |
+| compileSdk / targetSdk / minSdk | 36 / 34 / 24 |
 
 `local.properties`（本机 SDK 路径）不入库，首次构建用 Android Studio 打开或自行配置。
 

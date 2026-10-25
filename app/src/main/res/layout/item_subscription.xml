@@ -2,7 +2,7 @@
 <!-- 订阅管理条目(视频源 + 直播源共用同一组件):
      勾选圈 + 名称 + 徽标 + (可选)图钉 + 地址。
      - 勾选圈 cb:普通态 = 当前生效的那条;多选态 = 勾选要删的那条(adapter 各自处理);
-     - 徽标 tv_from:视频源 = 「本地包」,直播源 = 「来自:<订阅名>」,adapter 各自设置文案与显隐;
+     - 徽标 tv_from:视频源 = 「本地」,直播源 = 「来自:<订阅名>」,adapter 各自设置文案与显隐;
      - 图钉 iv_pushpin:仅视频源置顶用,直播源恒 GONE;
      - 地址色走文字主色 50%(用户口径)。
      排版(踩过的坑):名称/徽标同一行 LinearLayout + 名称 weight=1 + ellipsize=end,
@@ -57,7 +57,7 @@
                 android:textSize="16sp"
                 tools:text="Kimentanm"/>
 
-            <!-- 徽标:「本地包」(视频源) / 「来自:<订阅名>」(直播源)。底与字都走主题,不写死色 -->
+            <!-- 徽标:「本地」(视频源) / 「来自:<订阅名>」(直播源)。底与字都走主题,不写死色 -->
             <TextView
                 android:id="@+id/tv_from"
                 android:layout_width="wrap_content"

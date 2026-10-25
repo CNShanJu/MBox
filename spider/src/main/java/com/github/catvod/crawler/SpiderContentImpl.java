@@ -91,6 +91,20 @@ public final class SpiderContentImpl implements SpiderContentApi {
         }
     }
 
+    /** 通用命令（logout 等）：jar 没实现就返回 null，调用方静默跳过。 */
+    @Override
+    public String action(String sourceKey, String action) {
+        try {
+            Spider sp = spiderOf(ApiConfig.get().getSource(sourceKey));
+            if (sp == null) return null;
+            return sp.action(action);
+        } catch (Throwable th) {
+            // jar 可能根本没有 action 方法（旧协议），或实现里抛异常：都按"未实现"处理，绝不外抛
+            android.util.Log.w("SpiderBridge", "SpiderContent action(" + action + ") 调用异常", th);
+            return null;
+        }
+    }
+
     /** 带页码搜索(聚合搜索翻页):JS/JAR 源按 Spider.searchContent(key, quick, pg) 取下一页 */
     @Override
     public String searchContent(String sourceKey, String word, boolean quick, String pg) {

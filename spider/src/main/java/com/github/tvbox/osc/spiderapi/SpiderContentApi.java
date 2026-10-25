@@ -35,4 +35,13 @@ public interface SpiderContentApi {
 
     /** 解析播放地址 */
     String playerContent(String sourceKey, String flag, String id, List<String> vipFlags);
+
+    /**
+     * 对某个源发起一次通用命令（如 {@code logout}）。由清理网盘凭据时调用，
+     * 用于让服务端设备绑定型源真正退出登录。jar 未实现该动作时返回 null，
+     * 调用方据此静默跳过，不把它当成错误。
+     */
+    default String action(String sourceKey, String action) {
+        return null;
+    }
 }

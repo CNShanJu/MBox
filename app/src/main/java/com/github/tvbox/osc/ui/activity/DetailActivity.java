@@ -1923,6 +1923,8 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus) restoreFullscreenBars();
+        // 爬虫的扫码登录框挂在本页：焦点进出就是"登录框开关"的信号，交给播放页决定何时重试
+        if (playFragment != null) playFragment.onHostWindowFocusChanged(hasFocus);
     }
 
     private void restoreFullscreenBars() {

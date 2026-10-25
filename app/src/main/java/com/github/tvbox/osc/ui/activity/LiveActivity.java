@@ -56,6 +56,7 @@ import com.github.tvbox.osc.util.HCallBack;
 import com.github.tvbox.osc.util.HttpClient;
 import com.github.tvbox.osc.util.HeavyTaskUtil;
 import com.github.tvbox.osc.util.LiveConfig;
+import com.github.tvbox.osc.util.LiveSourceEntries;
 import com.github.tvbox.osc.util.live.TxtSubscribe;
 import xyz.doikki.videoplayer.player.PlaybackErrorReporter;
 import com.google.gson.JsonArray;
@@ -378,14 +379,20 @@ public class LiveActivity extends BaseActivity implements LiveLineSelectHost, Li
                 || (changeSource && currentLiveChannelItem.getSourceNum() == 1)) {
             return true;
         }
-        mVideoView.release();
         if (!changeSource) {
+            // 防御：频道列表可能在异步重载窗口期被替换，导致 liveChannelIndex 越界。
+            // 以 getLiveChannels 实际返回的列表为准，越界/为空时静默放弃本次切换，避免 IndexOutOfBoundsException。
+            ArrayList<LiveChannelItem> channels = getLiveChannels(channelGroupIndex);
+            if (channels == null || channels.isEmpty() || liveChannelIndex < 0 || liveChannelIndex >= channels.size()) {
+                return false;
+            }
             currentChannelGroupIndex = channelGroupIndex;
             currentLiveChannelIndex = liveChannelIndex;
-            currentLiveChannelItem = getLiveChannels(currentChannelGroupIndex).get(currentLiveChannelIndex);
+            currentLiveChannelItem = channels.get(currentLiveChannelIndex);
             LiveConfig.setLastChannel(currentLiveChannelItem.getChannelName());
             livePlayerManager.getLiveChannelPlayer(mVideoView, currentLiveChannelItem.getChannelName());
         }
+        mVideoView.release();
 
         channel_Name = currentLiveChannelItem;
         isBack = false;
@@ -986,6 +993,54 @@ public class LiveActivity extends BaseActivity implements LiveLineSelectHost, Li
     public void refreshPreferenceUi() {
         if (mSideControlView != null) mSideControlView.refreshPreferenceUi();
         if (mNormalControlView != null) mNormalControlView.refreshPreferenceUi();
+    }
+
+    /**
+     * 设置抽屉「直播源」组的候选项:订阅自带的直播源 + 用户历史(按地址去重)。
+     * 名字优先取用户命名/订阅分组名,取不到按地址推导(与订阅管理页同一口径)。
+     */
+    @Override
+    public List<LiveSettingHost.LiveSourceChoice> getLiveSourceChoices() {
+        List<LiveSettingHost.LiveSourceChoice> out = new ArrayList<>();
+        java.util.LinkedHashSet<String> seen = new java.util.LinkedHashSet<>();
+        for (com.github.tvbox.osc.spiderapi.LiveChannelConfigApi.SubscribeLiveSource source :
+                com.github.tvbox.osc.spiderapi.LiveChannelConfigProviders.get().getSubscribeLiveSources()) {
+            if (source == null || !source.hasUrl()) continue;
+            if (!seen.add(source.url)) continue;
+            String name = source.name == null ? "" : source.name.trim();
+            out.add(new LiveSettingHost.LiveSourceChoice(
+                    name.isEmpty() ? "订阅直播源" : "订阅: " + name, source.url));
+        }
+        for (String url : LiveConfig.liveHistory()) {
+            if (url == null || url.trim().isEmpty()) continue;
+            String target = url.trim();
+            if (!seen.add(target)) continue;
+            String named = LiveConfig.liveName(target);
+            String name = named.isEmpty() ? LiveSourceEntries.displayName(target) : named;
+            out.add(new LiveSettingHost.LiveSourceChoice(name, target));
+        }
+        return out;
+    }
+
+    /**
+     * 直播页内切换直播源(设置抽屉「直播源」组):写 SystemConfig → 就地重载直播配置 →
+     * 重建频道列表(失败会自动退到订阅自带的直播,见 useFallbackOrFail)。
+     */
+    @Override
+    public void changeLiveSource(String url) {
+        String target = url == null ? "" : url.trim();
+        if (target.equals(SystemConfig.getLiveUrl())) return;
+        SystemConfig.setLiveUrl(target);
+        try {
+            com.github.tvbox.osc.spiderapi.LiveChannelConfigProviders.get().reloadLiveSource();
+        } catch (Throwable th) {
+            com.github.tvbox.osc.log.LogStore.fail(com.github.tvbox.osc.log.Category.OTHER,
+                    "直播: 直播源就地重载失败 (" + th.getClass().getSimpleName() + ")");
+        }
+        initLiveChannelList();
+        AppBubble.toast(target.isEmpty() ? "已改用订阅直播源" : "直播源已切换");
+        com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.OTHER,
+                "直播: 设置抽屉切换直播源 " + (target.isEmpty() ? "订阅自带" : target));
     }
 
     /** 线路入口:全屏用右侧抽屉(与设置抽屉同尺寸),非全屏用底部抽屉 */

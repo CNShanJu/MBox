@@ -12,6 +12,7 @@ import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
 import java.nio.charset.Charset
@@ -31,7 +32,7 @@ object LocalPackageImporter {
 
     class ImportResult(val entries: JsonArray, val error: String?)
 
-    /** 压缩包整体上限(SHA-256 摘要命名,同 URI 重复导入复用已解压目录) */
+    /** 压缩包整体上限(解压目录按包内容 SHA-256 摘要命名,同内容重复导入复用已解压目录) */
     private const val MAX_ZIP_BYTES = 256L * 1024 * 1024
     private const val MAX_ENTRY_BYTES = 128L * 1024 * 1024
     private const val MAX_TOTAL_BYTES = 512L * 1024 * 1024
@@ -86,13 +87,19 @@ object LocalPackageImporter {
 
     /**
      * 已落盘的压缩包导入(本地导入先把 SAF 文件复制成临时文件,清单 ZIP 与本地包共用那一份副本)。
-     * @param digestSeed 目标目录名的摘要种子(传 URI 字符串:同一文件重复导入复用同一目录)
+     *
+     * 解压目录名 = 包名 + **包内容摘要**:同一份包重复导入复用已解压目录;
+     * 包更新(内容变了)会换新目录重新解压 —— 旧目录由订阅删除/整批更新的清理通道回收
+     * (见 [cleanupAfterDelete]),这样「更新此批」才拿得到新内容。
+     *
+     * @param digestSeed 内容摘要算不出时的兜底种子(调用方传 URI 字符串)
      */
     @JvmOverloads
     fun importPackageFile(context: Context, zipFile: File, digestSeed: String,
                           displayName: String, cancelled: () -> Boolean = { false }): ImportResult {
         val root = packageRoot(context) ?: return ImportResult(JsonArray(), "应用存储目录不可用")
-        val target = File(root, sanitizeBaseName(displayName) + "_" + digestOf(digestSeed))
+        val digest = runCatching { fileDigest(zipFile) }.getOrNull() ?: digestOf(digestSeed)
+        val target = File(root, sanitizeBaseName(displayName) + "_" + digest)
         try {
             val existing = SubscriptionImportFiles.runLocked {
                 ImportFileStaging.checkActive(cancelled)
@@ -793,6 +800,23 @@ object LocalPackageImporter {
         val digest = MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
         val sb = StringBuilder(digest.size * 2)
         for (b in digest) sb.append(String.format(Locale.ROOT, "%02x", b))
+        return sb.substring(0, 8)
+    }
+
+    /** 文件内容摘要(解压目录名用:同内容复用目录,内容更新换目录,与 [digestOf] 同格式) */
+    private fun fileDigest(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        FileInputStream(file).use { input ->
+            val buffer = ByteArray(64 * 1024)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                digest.update(buffer, 0, read)
+            }
+        }
+        val bytes = digest.digest()
+        val sb = StringBuilder(bytes.size * 2)
+        for (b in bytes) sb.append(String.format(Locale.ROOT, "%02x", b))
         return sb.substring(0, 8)
     }
 

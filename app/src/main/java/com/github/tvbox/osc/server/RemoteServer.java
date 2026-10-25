@@ -1222,7 +1222,7 @@ public class RemoteServer extends NanoHTTPD {
 
     private static String initialPairingCode() {
         return SystemConfig.isLanServerEnabled() ? SystemConfig.getOrCreateLanPairingCode()
-                : String.format(Locale.ROOT, "%08d", new SecureRandom().nextInt(100000000));
+                : String.format(Locale.ROOT, "%06d", new SecureRandom().nextInt(1000000));
     }
 
     private void restoreSessions() {
@@ -1802,14 +1802,28 @@ public class RemoteServer extends NanoHTTPD {
         }
     }
 
-    /** GET /file/<rel>: 配对设备可读文件和目录；进程令牌仅可在回环读取单个文件。 */
+    /**
+     * GET /file/&lt;rel&gt;: 配对设备可读文件和目录；进程令牌与爬虫凭据读取均只限回环的单个文件。
+     */
     private Response serveFileGet(IHTTPSession session, String rel) {
         try {
+            boolean loopback = isLoopbackRequest(session);
             boolean paired = isAuthorized(session, session.getParms());
             boolean localFileReader = !paired && isLocalFileReader(session);
-            if (!paired && !localFileReader) {
+            // 回环上的 csp 爬虫(第三方 jar)不会带进程令牌，但网盘源启动时要按 ext 里的
+            // 相对路径取 /file/tvfan/Cloud-drive.txt 这类凭据——原版 TVBox 的回环是直通的，
+            // a119192d 收紧后这里变成 403，爬虫只能一直判定「未登录」。
+            // 只放行「约定目录下的凭据类单文件」：目录列表、写接口、其他文件仍要求配对会话。
+            boolean spiderCredential = !paired && !localFileReader && loopback
+                    && isSpiderCredentialRead(rel);
+            if (!paired && !localFileReader && !spiderCredential) {
+                // 探针(纯观察,不改变鉴权):回环上出现未鉴权的 /file 请求,说明有第三方
+                // (爬虫 jar 等)在自己找本机文件。把路径记下来才能确认它到底取哪个目录;
+                // 此前这里是静默 403,线上完全看不到。
+                if (loopback) logFileProbe("回环未鉴权拒绝 " + rel);
                 return createPlainTextResponse(Response.Status.FORBIDDEN, "forbidden");
             }
+            if (loopback && spiderCredential) logFileProbe("回环放行凭据读取 " + rel);
             File root = storageRoot();
             File localFile;
             if (rel == null || rel.trim().isEmpty() || rel.equals(".")) {
@@ -1842,8 +1856,12 @@ public class RemoteServer extends NanoHTTPD {
     private Response serveFilePost(IHTTPSession session, String fileName) {
         // Cookie 属于浏览器自动携带的凭据；写接口必须来自本服务同源页面。
         // 显式且有效的 X-TVBox-Token 客户端、无 Cookie 的本机内部调用不受影响。
-        if (!fileName.equals("/api/pair") && !trustedCookieWriteOrigin(session))
+        if (!fileName.equals("/api/pair") && !trustedCookieWriteOrigin(session)) {
+            // 探针(纯观察):若爬虫 jar 想通过本地服务回写 cookie，会在这里被拦下，
+            // 日志里能看到具体路径，才知道该不该给它开写通道。
+            if (isLoopbackRequest(session)) logFileProbe("回环未鉴权写入拒绝 " + fileName);
             return createPlainTextResponse(Response.Status.FORBIDDEN, "forbidden origin");
+        }
         boolean managed = fileName.equals("/action") || fileName.equals("/upload")
                 || fileName.equals("/newFolder") || fileName.equals("/delFolder") || fileName.equals("/delFile");
         if (managed && !isAuthorized(session, session.getParms())) {
@@ -2074,6 +2092,45 @@ public class RemoteServer extends NanoHTTPD {
     /** 仅由本进程装配根注入 spider 的本地订阅读取器，不写入 URL、日志或持久配置。 */
     public String getLocalReadToken() {
         return localReadToken;
+    }
+
+    /**
+     * 爬虫按 ext 里的相对路径(如 {@code tvfan/Cloud-drive.txt})直接取网盘凭据。
+     * 只认约定凭据目录下的凭据类文件，且必须真实存在；其他路径一律仍走鉴权拒绝。
+     */
+    private boolean isSpiderCredentialRead(String rel) {
+        if (rel == null) return false;
+        String path = rel.trim();
+        if (path.isEmpty() || path.equals(".")) return false;
+        try {
+            File file = resolveUnderRoot(path);
+            if (file == null || !file.isFile()) return false;
+            return com.github.tvbox.osc.util.cache.CacheCatalog.isCloudCredential(file, storageRoot());
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    /** 探针去重：同一行 2 秒内只记一次，避免页面批量取资源时刷库。 */
+    private static volatile String lastFileProbeLine;
+    private static volatile long lastFileProbeAt;
+
+    /**
+     * /file 探针：同时写 logcat 与日志页(系统分类)，没有 adb 也能在应用内看到。
+     * 只记路径与大小，不记文件内容。
+     */
+    private static void logFileProbe(String message) {
+        String line = "[file] " + message;
+        long now = System.currentTimeMillis();
+        if (line.equals(lastFileProbeLine) && now - lastFileProbeAt < 2000L) return;
+        lastFileProbeLine = line;
+        lastFileProbeAt = now;
+        android.util.Log.i("TVBox-Server", line);
+        try {
+            LogStore.log(Category.SYSTEM, line);
+        } catch (Throwable ignored) {
+            // 日志页不可用不影响文件服务
+        }
     }
 
     private Response castPlaylistResponse(LanDevice viewer, String mediaId, CastMedia media,

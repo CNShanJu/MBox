@@ -1,7 +1,9 @@
 package com.github.catvod.crawler;
 
 import android.content.Context;
+import android.os.Environment;
 
+import com.github.catvod.utils.Path;
 import com.github.tvbox.osc.log.Category;
 import com.github.tvbox.osc.log.LogStore;
 import com.github.tvbox.osc.util.HttpClient;
@@ -291,6 +293,7 @@ public class JarLoader {
         boolean success = false;
         try {
             ensureSpiderDb();
+            prepareCredentialDirs();
             File cacheDir = new File(context.getCacheDir().getAbsolutePath() + "/catvod_csp");
             if (!cacheDir.exists())
                 cacheDir.mkdirs();
@@ -359,6 +362,48 @@ public class JarLoader {
             th.printStackTrace();
         }
         return success;
+    }
+
+    /** 凭据目录只需预建一次；失败时也不反复刷日志。 */
+    private static final AtomicBoolean CREDENTIAL_DIRS_DONE = new AtomicBoolean(false);
+
+    /**
+     * 预建第三方 jar 落 cookie 的父目录，以及本 App 自己的根目录 /sdcard/MBox。
+     * <p>玩偶系（以及不少 Csp 源）把扫码拿到的 cookie 直接写到
+     * {@code Path.root()/tvfan/Cloud-drive.txt}，但只 open 文件、不 mkdirs 父目录：
+     * 目录不存在时 FileOutputStream 抛 FileNotFoundException，异常被 jar 自己吞掉——
+     * 表现就是"二维码扫成功、手机上什么都没留下，之后既不弹码也播不了"。
+     * <p>这里只建空目录，不写任何文件，因此不会让源误判成"已登录"（源判断的是文件是否存在）。
+     * <p>目录名见 {@link Path}：{@code tvfan/}、{@code TVBox/} 是第三方源的路径契约，
+     * 必须保持原名；本 App 的数据全部收进 {@code MBox/}。
+     */
+    public static void prepareCredentialDirs() {
+        if (!CREDENTIAL_DIRS_DONE.compareAndSet(false, true)) return;
+        try {
+            File root = Environment.getExternalStorageDirectory();
+            if (root == null) return;
+            StringBuilder failed = new StringBuilder();
+            for (String name : Path.CREDENTIAL_DIRS) {
+                File dir = new File(root, name);
+                if (dir.isDirectory()) continue;
+                if (!dir.mkdirs() && !dir.isDirectory()) {
+                    if (failed.length() > 0) failed.append(',');
+                    failed.append(name);
+                }
+            }
+            // 本 App 根目录下的子目录：备份包放这里，避免再在存储根上多一个 tvbox_backup
+            File backup = Path.backup();
+            if (!backup.isDirectory() && !backup.mkdirs() && !backup.isDirectory()) {
+                if (failed.length() > 0) failed.append(',');
+                failed.append(Path.APP_DIR + "/" + Path.BACKUP_DIR);
+            }
+            if (failed.length() > 0) {
+                LogStore.log(Category.SYSTEM, "凭据目录预建失败(外部存储不可写): " + failed
+                        + " → 扫码得到的 cookie 无法落盘，源会一直判定未登录");
+            }
+        } catch (Throwable ignored) {
+            // 无外部存储/受限环境：预建失败不影响其它功能
+        }
     }
 
     /**
@@ -516,6 +561,9 @@ public class JarLoader {
             markPluginLoading(pluginJarFile(jarKey));
             try {
                 Spider sp = (Spider) classLoader.loadClass("com.github.catvod.spider." + clsKey).newInstance();
+                // siteKey 与代理端口都要在 init 之前就位：jar 常在 init 里就把本地地址拼好
+                sp.siteKey = key;
+                injectProxyPort(classLoader);
                 sp.init(context, ext);
                 spiders.put(key, sp);
                 // 创建成功:清掉该源的失败冷却与故障登记
@@ -545,6 +593,23 @@ public class JarLoader {
     /** 日志用的 jar 标识:main 就是订阅主 jar(files/csp.jar),其余是站点自带 jar 的缓存文件 */
     private static String jarDesc(String jarKey, String jarUrl) {
         return "main".equals(jarKey) ? "main(files/csp.jar)" : jarUrl + " -> files/" + jarKey + ".jar";
+    }
+
+    /**
+     * 把本机服务端口注入给"jar 自带的" {@code com.github.catvod.Proxy}。
+     * <p>
+     * 必须在 {@code sp.init()} 之前:不少 jar 在 init 里就把本机地址拼好存成静态字段。
+     * jar 没有自带这个类时,{@code loadClass} 会落到父加载器找到本模块的同名类,
+     * 设置它同样无害(端口本身是同一份)。
+     */
+    private static void injectProxyPort(ClassLoader loader) {
+        if (loader == null) return;
+        try {
+            Class<?> proxyClass = loader.loadClass("com.github.catvod.Proxy");
+            proxyClass.getMethod("set", int.class).invoke(null, com.github.catvod.Proxy.get());
+        } catch (Throwable ignored) {
+            // jar 里没有 Proxy 属正常情况,不影响其它流程
+        }
     }
 
     public JSONObject jsonExt(String key, LinkedHashMap<String, String> jxs, String url) {

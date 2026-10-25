@@ -1,8 +1,8 @@
 package com.github.tvbox.osc.transfer;
 
 import android.content.Context;
-import android.os.Environment;
 
+import com.github.catvod.utils.Path;
 import com.github.tvbox.osc.log.Category;
 import com.github.tvbox.osc.log.LogStore;
 import com.github.tvbox.osc.share.domain.TransferHook;
@@ -27,29 +27,98 @@ public final class LocalBackupRepository {
         archive = new BackupArchive(this.context);
     }
 
+    /** 手动备份结果：{@link #reused}=true 表示同一份数据已经备份过，没有产生新文件。 */
+    public static final class ManualResult {
+        private final LocalBackupEntry entry;
+        private final boolean reused;
+
+        ManualResult(LocalBackupEntry entry, boolean reused) {
+            this.entry = entry;
+            this.reused = reused;
+        }
+
+        public LocalBackupEntry entry() { return entry; }
+        public boolean isReused() { return reused; }
+    }
+
     public List<LocalBackupEntry> list() throws Exception {
         synchronized (OPERATIONS_LOCK) {
             List<LocalBackupEntry> result = new ArrayList<>();
             File[] manual = manualDirectory().listFiles();
             if (manual != null) for (File file : manual) {
-                if (file.isDirectory() || file.isFile() && file.getName().endsWith(".zip"))
-                    result.add(new LocalBackupEntry("manual/" + file.getName(), file.getName(), false));
+                if (!file.isFile()) continue;
+                if (file.getName().endsWith(BackupNaming.TEMP_SUFFIX)) {
+                    // 未走完 rename 的导出产物：绝不可能是有效备份，顺手清掉（进程被杀会留下）
+                    file.delete();
+                    continue;
+                }
+                if (!BackupNaming.isBackup(file)) continue;
+                result.add(new LocalBackupEntry(file.getName(), BackupNaming.displayName(file),
+                        false, file.lastModified()));
             }
             for (File file : systemBackups().list())
-                result.add(new LocalBackupEntry("system/" + file.getName(), file.getName(), true));
-            result.sort(Comparator.comparing(LocalBackupEntry::name).reversed());
+                result.add(new LocalBackupEntry(file.getName(), file.getName(), true, file.lastModified()));
+            // 按写入时间倒序：改过名的备份不会因此跳到列表别处
+            result.sort(Comparator.comparingLong(LocalBackupEntry::createdAt).reversed());
             return result;
         }
     }
 
-    public File createManual() throws Exception {
+    /**
+     * 新建手动备份。
+     *
+     * <p>文件名取数据内容摘要（见 {@link BackupNaming}），所以<b>同一份数据只会有一个包</b>：
+     * 重复点"立即备份"时目标文件已存在，直接复用并告诉用户数据没变，不再产生重复备份。
+     *
+     * @param requestedName 用户输入的名字；{@code useTimestamp} 为 true 时忽略它，改用系统时间
+     */
+    public ManualResult createManual(String requestedName, boolean useTimestamp) throws Exception {
         synchronized (OPERATIONS_LOCK) {
+            File staged = null;
             try {
-                File saved = archive.create(manualDirectory());
-                LogStore.success(Category.SYSTEM, "本地备份: 创建手动备份成功 " + saved.getName());
-                return saved;
+                long now = System.currentTimeMillis();
+                String name = useTimestamp ? BackupNaming.timeName(now) : BackupNaming.sanitize(requestedName);
+                if (name.isEmpty()) throw new IOException("请先给备份起个名字");
+                File directory = manualDirectory();
+                staged = archive.createStaged(directory);
+                File target = new File(directory, BackupNaming.fileName(BackupContentHash.sha256(staged)));
+                if (target.exists()) {
+                    String existing = BackupNaming.displayName(target);
+                    LogStore.success(Category.SYSTEM, "本地备份: 数据未变化，复用已有备份 " + target.getName()
+                            + "「" + existing + "」");
+                    return new ManualResult(new LocalBackupEntry(target.getName(), existing, false,
+                            target.lastModified()), true);
+                }
+                if (!staged.renameTo(target)) throw new IOException("备份文件落盘失败");
+                staged = null;
+                BackupNaming.writeName(target, name);
+                LogStore.success(Category.SYSTEM, "本地备份: 创建手动备份成功 " + target.getName() + "「" + name + "」");
+                return new ManualResult(new LocalBackupEntry(target.getName(), name, false,
+                        target.lastModified()), false);
             } catch (Exception failure) {
                 LogStore.fail(Category.SYSTEM, "本地备份: 创建手动备份失败，原因=" + failureMessage(failure));
+                throw failure;
+            } finally {
+                if (staged != null) staged.delete();
+                flushOperationLogs();
+            }
+        }
+    }
+
+    /** 只改展示名：文件与内容都不动，还原链路不受影响。 */
+    public String rename(LocalBackupEntry entry, String requestedName) throws Exception {
+        synchronized (OPERATIONS_LOCK) {
+            try {
+                if (entry == null || entry.isSystem()) throw new IOException("系统临时备份不能改名");
+                String name = BackupNaming.sanitize(requestedName);
+                if (name.isEmpty()) throw new IOException("备份名称不能为空");
+                File file = selected(entry);
+                BackupNaming.writeName(file, name);
+                LogStore.success(Category.SYSTEM, "本地备份: 修改备份名称成功 " + file.getName() + "「" + name + "」");
+                return name;
+            } catch (Exception failure) {
+                LogStore.fail(Category.SYSTEM, "本地备份: 修改备份名称失败 "
+                        + (entry == null ? "" : entry.fileName()) + "，原因=" + failureMessage(failure));
                 throw failure;
             } finally { flushOperationLogs(); }
         }
@@ -62,70 +131,117 @@ public final class LocalBackupRepository {
         }
     }
 
+    /**
+     * 用系统文件管理里选中的外部 ZIP 还原（用户自己挑的备份包,可能来自 U 盘/下载目录/别的机器）。
+     *
+     * <p>与本地备份的差别只有"它不在本机备份目录里":没有系统临时备份的身份,所以不做租约、
+     * 也不在还原成功后删除它;"还原前先做保护快照 + 失败自动回滚"这套保护完全一致。
+     */
+    public String restoreExternal(android.net.Uri source) throws Exception {
+        synchronized (OPERATIONS_LOCK) {
+            String label = displayName(source);
+            try {
+                String result = restoreProtected(hook -> archive.restore(source, hook));
+                LogStore.success(Category.SYSTEM, "本地备份: 外部备份还原成功 " + label);
+                return result;
+            } catch (Exception failure) {
+                LogStore.fail(Category.SYSTEM, "本地备份: 外部备份还原失败 " + label
+                        + "，原因=" + failureMessage(failure));
+                throw failure;
+            } finally { flushOperationLogs(); }
+        }
+    }
+
     private String restoreLocked(LocalBackupEntry entry) throws Exception {
         File selected = selected(entry);
         SystemBackupStore store = systemBackups();
         // A selected system backup must remain readable while a new safety snapshot is made.
         try (SystemBackupStore.Lease selectedLease = entry.isSystem() ? store.acquire(selected) : null) {
-            RestoreProtection protection = new RestoreProtection();
-            try {
-                // 定制化钩子：通用还原流程前先做 1 小时保护快照。整机一点可备份数据都没有时不做
-                // (空壳无需保护,否则还原永远被"临时备份"卡住);只要有任何数据(设置/历史/收藏/
-                // 搜索记录/订阅/背景配置等)就必须先保护再还原。
-                TransferHook protect = new TransferHook() {
-                    @Override public void before(TransferSession session) throws IOException {
-                        if (!BackupModules.INSTANCE.anyHasData(context)) {
-                            // 空机:无任何可备份数据,无需保护快照
-                            return;
-                        }
-                        try {
-                            File snapshot = preserveCurrent();
-                            protection.snapshot = snapshot;
-                            protection.lease = store.acquire(snapshot);
-                        } catch (IOException snapshotFailure) {
-                            // 保护快照创建失败(非空机):与"空机无快照"区分开,避免排查误导
-                            LogStore.fail(Category.SYSTEM, "本地备份: 保护快照创建失败，还原中止 "
-                                    + failureMessage(snapshotFailure));
-                            throw snapshotFailure;
-                        }
-                    }
-                };
-                String result;
+            String result = restoreProtected(hook -> archive.restore(selected, hook));
+            if (entry.isSystem()) {
                 try {
-                    result = archive.restore(selected, protect);
-                } catch (Exception failure) {
-                    if (protection.snapshot == null) {
-                        LogStore.fail(Category.SYSTEM, "本地备份: 还原失败(空机无保护快照) "
-                                + failureMessage(failure));
-                        throw new IOException("还原失败：" + failure.getMessage(), failure);
-                    }
-                    // 边界:若当前数据与所选系统备份内容一致,保护快照=待还原文件本身,回滚落空(内容不变,可接受)
-                    boolean rolledBack = false;
-                    try {
-                        archive.restore(protection.snapshot, null);
-                        rolledBack = true;
-                    } catch (Exception recoveryFailure) { failure.addSuppressed(recoveryFailure); }
-                    LogStore.fail(Category.SYSTEM, rolledBack ? "本地备份: 还原失败，已回滚当前数据"
-                            : "本地备份: 还原失败，自动回滚未完成，保留临时备份 " + protection.snapshot.getName());
-                    throw new IOException(rolledBack ? "还原失败，已恢复还原前的数据：" + failure.getMessage()
-                            : "还原失败，自动回滚未完成；请使用临时备份回滚：" + failure.getMessage(), failure);
+                    if (!store.deleteConsumed(selected))
+                        LogStore.fail(Category.SYSTEM, "本地备份: 使用后的临时备份未能删除 " + selected.getName());
+                } catch (IOException cleanupFailure) {
+                    // Restoration has committed; cleanup must not turn it into a failed restore.
+                    LogStore.fail(Category.SYSTEM, "本地备份: 使用后的临时备份清理失败 " + selected.getName());
                 }
-                if (entry.isSystem()) {
-                    try {
-                        if (!store.deleteConsumed(selected))
-                            LogStore.fail(Category.SYSTEM, "本地备份: 使用后的临时备份未能删除 " + selected.getName());
-                    } catch (IOException cleanupFailure) {
-                        // Restoration has committed; cleanup must not turn it into a failed restore.
-                        LogStore.fail(Category.SYSTEM, "本地备份: 使用后的临时备份清理失败 " + selected.getName());
-                    }
-                }
-                LogStore.success(Category.SYSTEM, "本地备份: 还原成功 " + entry.name());
-                return result;
-            } finally {
-                // 保护快照的租约覆盖整个还原(含失败回滚)：过期清理不能在还原途中删掉它。
-                if (protection.lease != null) protection.lease.close();
             }
+            LogStore.success(Category.SYSTEM, "本地备份: 还原成功 " + entry.name());
+            return result;
         }
+    }
+
+    /** 一次"归档还原"动作；本地条目与外部 ZIP 共用同一套保护/回滚流程,只是数据来源不同。 */
+    private interface ArchiveRestore {
+        String restore(TransferHook hook) throws Exception;
+    }
+
+    /**
+     * 还原前先做 1 小时保护快照,失败自动回滚。
+     *
+     * <p>整机一点可备份数据都没有时不做快照(空壳无需保护,否则还原永远被"临时备份"卡住);
+     * 只要有任何数据(设置/历史/收藏/搜索记录/订阅/背景配置等)就必须先保护再还原。
+     */
+    private String restoreProtected(ArchiveRestore action) throws Exception {
+        RestoreProtection protection = new RestoreProtection();
+        SystemBackupStore store = systemBackups();
+        try {
+            TransferHook protect = new TransferHook() {
+                @Override public void before(TransferSession session) throws IOException {
+                    if (!BackupModules.INSTANCE.anyHasData(context)) {
+                        // 空机:无任何可备份数据,无需保护快照
+                        return;
+                    }
+                    try {
+                        File snapshot = preserveCurrent();
+                        protection.snapshot = snapshot;
+                        protection.lease = store.acquire(snapshot);
+                    } catch (IOException snapshotFailure) {
+                        // 保护快照创建失败(非空机):与"空机无快照"区分开,避免排查误导
+                        LogStore.fail(Category.SYSTEM, "本地备份: 保护快照创建失败，还原中止 "
+                                + failureMessage(snapshotFailure));
+                        throw snapshotFailure;
+                    }
+                }
+            };
+            try {
+                return action.restore(protect);
+            } catch (Exception failure) {
+                if (protection.snapshot == null) {
+                    LogStore.fail(Category.SYSTEM, "本地备份: 还原失败(空机无保护快照) "
+                            + failureMessage(failure));
+                    throw new IOException("还原失败：" + failure.getMessage(), failure);
+                }
+                // 边界:若当前数据与所选系统备份内容一致,保护快照=待还原文件本身,回滚落空(内容不变,可接受)
+                boolean rolledBack = false;
+                try {
+                    archive.restore(protection.snapshot, null);
+                    rolledBack = true;
+                } catch (Exception recoveryFailure) { failure.addSuppressed(recoveryFailure); }
+                LogStore.fail(Category.SYSTEM, rolledBack ? "本地备份: 还原失败，已回滚当前数据"
+                        : "本地备份: 还原失败，自动回滚未完成，保留临时备份 " + protection.snapshot.getName());
+                throw new IOException(rolledBack ? "还原失败，已恢复还原前的数据：" + failure.getMessage()
+                        : "还原失败，自动回滚未完成；请使用临时备份回滚：" + failure.getMessage(), failure);
+            }
+        } finally {
+            // 保护快照的租约覆盖整个还原(含失败回滚)：过期清理不能在还原途中删掉它。
+            if (protection.lease != null) protection.lease.close();
+        }
+    }
+
+    /** 只用于日志与提示：文件管理里显示的名字,取不到就退回 uri 末段。 */
+    private String displayName(android.net.Uri source) {
+        if (source == null) return "所选文件";
+        try (android.database.Cursor cursor = context.getContentResolver().query(source,
+                new String[]{android.provider.OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                String name = cursor.getString(0);
+                if (name != null && !name.trim().isEmpty()) return name.trim();
+            }
+        } catch (Exception ignored) { /* 名称只是展示信息,取不到不影响还原 */ }
+        String fallback = source.getLastPathSegment();
+        return fallback == null || fallback.trim().isEmpty() ? "所选文件" : fallback;
     }
 
     /** 还原前的保护快照句柄：由 TransferHook.before 创建，失败回滚与租约释放都要用到。 */
@@ -152,6 +268,8 @@ public final class LocalBackupRepository {
             try {
                 if (entry == null || entry.isSystem()) throw new IOException("系统临时备份不能手动删除");
                 File file = selected(entry);
+                // 名字侧车跟着备份一起走：留下它只会变成永远对不上号的孤儿文件
+                BackupNaming.deleteName(file);
                 deleteTree(file, file);
                 LogStore.success(Category.SYSTEM, "本地备份: 删除手动备份成功 " + entry.name());
             } catch (Exception failure) {
@@ -181,14 +299,16 @@ public final class LocalBackupRepository {
     }
 
     private File selected(LocalBackupEntry entry) throws IOException {
-        if (entry == null || entry.name() == null || entry.name().isEmpty()
-                || entry.name().contains("/") || entry.name().contains("\\")
-                || ".".equals(entry.name()) || "..".equals(entry.name())) throw new IOException("备份名称无效");
+        // 路径只认真实文件名（展示名是用户随手改的，不能进路径）
+        String fileName = entry == null ? null : entry.fileName();
+        if (fileName == null || fileName.isEmpty()
+                || fileName.contains("/") || fileName.contains("\\")
+                || ".".equals(fileName) || "..".equals(fileName)) throw new IOException("备份名称无效");
         String prefix = entry.isSystem() ? "system/" : "manual/";
-        if (!(prefix + entry.name()).equals(entry.key())) throw new IOException("备份标识无效");
+        if (!(prefix + fileName).equals(entry.key())) throw new IOException("备份标识无效");
         File directory = (entry.isSystem() ? new File(context.getFilesDir(), SYSTEM_DIRECTORY)
                 : manualDirectory()).getCanonicalFile();
-        File file = new File(directory, entry.name()).getCanonicalFile();
+        File file = new File(directory, fileName).getCanonicalFile();
         if (!directory.equals(file.getParentFile()) || !file.exists()) throw new IOException("备份不存在或路径无效");
         if (entry.isSystem() && !systemBackups().isProtected(file)) throw new IOException("系统临时备份校验失败");
         return file;
@@ -236,8 +356,13 @@ public final class LocalBackupRepository {
         } catch (Throwable ignored) { /* Logging failure must not change an already committed restore. */ }
     }
 
+    /**
+     * 手动备份目录：{@code /sdcard/MBox/backup}。
+     * <p>以前直接放在存储根的 {@code tvbox_backup/}，和 App 的其它数据（MBox/、TVBox/）平铺在一起；
+     * 现在统一收进 App 根目录下。创建交给 {@code BackupArchive.create} 里的 ensureDirectory。
+     */
     private static File manualDirectory() {
-        return new File(Environment.getExternalStorageDirectory(), "tvbox_backup");
+        return Path.backup();
     }
 
     private static void deleteTree(File root, File file) throws IOException {

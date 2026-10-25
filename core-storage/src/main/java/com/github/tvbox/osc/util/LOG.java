@@ -13,7 +13,8 @@ import android.util.Log;
  * @date :2020/12/18
  */
 public class LOG {
-    private static String TAG = "TVBox";
+    /** Logcat 标签：与 App 名统一为 MBox（原来叫 TVBox）。 */
+    private static String TAG = "MBox";
 
     public static void e(Throwable t) {
         Log.e(TAG, t.getMessage(), t);

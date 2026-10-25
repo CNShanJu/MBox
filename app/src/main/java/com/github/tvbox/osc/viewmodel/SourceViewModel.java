@@ -55,6 +55,8 @@ import java.util.function.Consumer;
  * @description:
  */
 public class SourceViewModel extends ViewModel {
+    /** “我的→播放链接”输入框投递用的虚拟源 key(本地构造详情,不查订阅) */
+    public static final String PUSH_AGENT_KEY = "push_agent";
     public MutableLiveData<AbsSortXml> sortResult;
     public MutableLiveData<AbsXml> listResult;
     public MutableLiveData<AbsXml> quickSearchResult;
@@ -564,6 +566,13 @@ public class SourceViewModel extends ViewModel {
     public void getDetail(String sourceKey, String id) {
         final int epoch = detailGate.begin();
         if (!detailGate.isCurrent(epoch)) return;
+        if (PUSH_AGENT_KEY.equals(sourceKey)) {
+            // “我的→播放链接”入口(历史遗留 push 通道):本地构造单集详情,不依赖订阅里
+            // 存在名为 push_agent 的爬虫源——默认订阅没有该源,原实现 getSource 返回 null
+            // 后直接发布空结果,详情页永远空态(用户口径“输入磁力识别不了”)。
+            publishPushAgentDetail(epoch, id);
+            return;
+        }
         SourceBean sourceBean = sourceConfig.getSource(sourceKey);
         if (sourceBean == null) {
             // 源不存在(订阅变更/失效等),通知空结果,避免崩溃
@@ -950,7 +959,32 @@ public class SourceViewModel extends ViewModel {
     }
 
     public void getPlay(String sourceKey, String playFlag, String progressKey, String url, String subtitleKey) {
+        if (PUSH_AGENT_KEY.equals(sourceKey)) {
+            // push_agent 直链播放:无爬虫可解析,视频格式直接播,其余走默认解析嗅探。
+            JSONObject result = new JSONObject();
+            try {
+                result.put("key", url);
+                result.put("parse", DefaultConfig.isVideoFormat(url) ? 0 : 1);
+                result.put("url", url);
+                result.put("proKey", progressKey);
+                result.put("subtKey", subtitleKey);
+                result.put("playUrl", "");
+                result.put("flag", playFlag);
+                playResult.postValue(result);
+            } catch (Throwable th) {
+                th.printStackTrace();
+                postPlayFailure(progressKey, url);
+            }
+            return;
+        }
         SourceBean sourceBean = sourceConfig.getSource(sourceKey);
+        if (sourceBean == null) {
+            // 源不存在(订阅变更/push 通道失效):投递失败而非 NPE——
+            // NPE 会甩到 PlayFragment.play() 同步段,加载圈永不解除且无任何提示。
+            android.util.Log.e("SpiderBridge", "getPlay 源不存在,投递失败: key=" + sourceKey + " url=" + url);
+            postPlayFailure(progressKey, url);
+            return;
+        }
         int type = sourceBean.getType();
         if (type == 3) {
             spExecute(sourceBean.getKey(), new Runnable() {
@@ -1050,7 +1084,13 @@ public class SourceViewModel extends ViewModel {
 
     private void checkThunder(AbsXml data, int index, int epoch) {
         if (!detailGate.isCurrent(epoch) || data == null) return;
-        if (!SystemConfig.isThunderP2pEnabled()) return;
+        if (!SystemConfig.isThunderP2pEnabled()) {
+            // 迅雷通道关闭:跳过解析,但详情结果必须照常发布——本方法是详情成功路径的
+            // 唯一发布点(typed 与 legacy 两条路都经此),直接 return 会让 detailResult
+            // 永不触发、详情页永远停在 loading(2733df2c 引入的回归:开关默认关即全量触发)。
+            if (index == 0) publishDetailResult(epoch, data);
+            return;
+        }
         boolean thunderParse = false;
         if (data.movie != null && data.movie.videoList != null && data.movie.videoList.size() == 1) {
             Movie.Video video = data.movie.videoList.get(0);
@@ -1118,6 +1158,43 @@ public class SourceViewModel extends ViewModel {
         if (!thunderParse && index==0) {
             publishDetailResult(epoch, data);
         }
+    }
+
+    /**
+     * push_agent(“播放链接”输入框)本地详情:把用户手工输入的地址包成单集影片。
+     * 磁力/迅雷/荐片经 checkThunder 走迅雷通道解析(受 isThunderP2pEnabled 开关控制,
+     * 关闭时原样发布,PlayFragment.play 会给出去设置的提示);http/https 直链
+     * thunderParse=false,原样发布,点播放即起播。
+     */
+    private void publishPushAgentDetail(int epoch, String url) {
+        if (!detailGate.isCurrent(epoch) || TextUtils.isEmpty(url)) {
+            publishDetailResult(epoch, null);
+            return;
+        }
+        url = url.trim();
+        Movie.Video.UrlBean.UrlInfo.InfoBean infoBean =
+                new Movie.Video.UrlBean.UrlInfo.InfoBean("播放", url);
+        Movie.Video.UrlBean.UrlInfo urlInfo = new Movie.Video.UrlBean.UrlInfo();
+        urlInfo.flag = "直链";
+        urlInfo.urls = "播放$" + url;
+        urlInfo.beanList = new ArrayList<>();
+        urlInfo.beanList.add(infoBean);
+        Movie.Video.UrlBean urlBean = new Movie.Video.UrlBean();
+        urlBean.infoList = new ArrayList<>();
+        urlBean.infoList.add(urlInfo);
+        Movie.Video video = new Movie.Video();
+        video.id = url;
+        video.name = "直链播放";
+        video.type = "直链";
+        video.sourceKey = PUSH_AGENT_KEY;
+        video.urlBean = urlBean;
+        Movie movie = new Movie();
+        movie.videoList = new ArrayList<>();
+        movie.videoList.add(video);
+        AbsXml data = new AbsXml();
+        data.movie = movie;
+        absXml(data, PUSH_AGENT_KEY);
+        checkThunder(data, 0, epoch);
     }
 
 
