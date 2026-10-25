@@ -1,12 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- 备份条目与「使用外部备份数据」动作行共用：
+     左侧无图标；备份行右侧是删除/说明键，动作行隐藏该键、文字居中。
+     踩过的坑：子 View 不要设 clickable/focusable，点击/长按统一走整行
+     (setOnItemClickListener / setOnItemLongClickListener)，否则子 View 抢焦点会吞掉长按。 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/llRow"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:minHeight="48dp"
+    android:minHeight="36dp"
     android:orientation="horizontal"
-    android:paddingHorizontal="10dp"
+    android:gravity="center_vertical"
+    android:paddingStart="14dp"
+    android:paddingEnd="6dp"
     android:background="@drawable/bg_r_25_stroke_primary">
 
     <TextView
@@ -14,22 +21,19 @@
         android:layout_width="0dp"
         android:layout_weight="1"
         android:layout_height="wrap_content"
-        android:clickable="true"
+        android:gravity="center_vertical"
         android:ellipsize="middle"
-        android:focusable="true"
-        android:padding="@dimen/dp_10"
+        android:paddingVertical="8dp"
         android:singleLine="true"
         android:textColor="@color/text_foreground"
         tools:text="备份 2026-10-05" />
 
     <ImageView
         android:id="@+id/ivAction"
-        android:layout_width="50dp"
-        android:layout_height="match_parent"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
         android:layout_marginStart="4dp"
-        android:clickable="true"
-        android:focusable="true"
-        android:padding="12dp"
+        android:padding="8dp"
         android:src="@drawable/ic_delete"
         app:tint="@color/text_danger" />
 </LinearLayout>

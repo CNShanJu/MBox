@@ -25,7 +25,7 @@ public final class HistoryEntryNavigator {
             if (hasPlayableSnapshot(info)) intent.putExtra("historySnapshot", info);
             context.startActivity(intent);
         } else if (!TextUtils.isEmpty(info.name)) {
-            AppBubble.toast("原来源未启用，正在当前订阅中搜索同名影片");
+            //AppBubble.toast("原来源未启用，正在当前订阅中搜索同名影片");
             context.startActivity(new Intent(context, FastSearchActivity.class)
                     .putExtra("title", info.name));
         } else {

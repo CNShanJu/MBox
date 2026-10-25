@@ -53,6 +53,8 @@ public class FolderAdapter extends BaseQuickAdapter<VideoFolder, BaseViewHolder>
             }
             // 占位/失败态走统一入口的背景层(不塞 src:占位塞 src 会被 scaleType 放大裁剪,小卡片上会溢出)
             PicassoLoad.showLoadingPlaceholder(iv);
+            // 复用列表项:先取消上一张还在途的请求,避免旧请求失败回调作用到复用后的 view
+            Picasso.get().cancelRequest(iv);
             Picasso.get()
                     .load(firstPath == null ? "" : firstPath)
                     .into(iv, new Callback() {

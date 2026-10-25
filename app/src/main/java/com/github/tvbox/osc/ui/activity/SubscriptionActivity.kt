@@ -2,6 +2,7 @@ package com.github.tvbox.osc.ui.activity
 
 import android.content.Intent
 import android.graphics.Typeface
+import android.net.Uri
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
@@ -27,13 +28,13 @@ import com.github.tvbox.osc.ui.dialog.ConfirmDialog
 import com.github.tvbox.osc.ui.dialog.DialogCoordinator
 import com.github.tvbox.osc.ui.dialog.JsonImportDialog
 import com.github.tvbox.osc.ui.dialog.LiveApiDialog
+import com.github.tvbox.osc.ui.dialog.RenameBatchDialog
 import com.github.tvbox.osc.ui.dialog.SubsTipDialog
 import com.github.tvbox.osc.ui.dialog.SubsciptionDialog
 import com.github.tvbox.osc.ui.dialog.SubsciptionDialog.OnSubsciptionListener
 import com.github.tvbox.osc.ui.kit.SelectActionBar
 import com.github.tvbox.osc.ui.kit.TabPageAnimator
 import com.github.tvbox.osc.ui.kit.TabSwipeHelper
-import com.github.tvbox.osc.ui.startup.AppStartupCoordinator
 import com.github.tvbox.osc.ui.state.SubscriptionPageState
 import com.github.tvbox.osc.util.AppBubble
 import com.github.tvbox.osc.util.FastClickCheckUtil
@@ -50,6 +51,7 @@ import com.github.tvbox.osc.util.subscription.SubscriptionExportHost
 import com.github.tvbox.osc.util.subscription.SubscriptionImportCoordinator
 import com.github.tvbox.osc.util.subscription.SubscriptionImportHost
 import com.github.tvbox.osc.util.subscription.SubscriptionLiveHost
+import com.github.tvbox.osc.util.subscription.SubscriptionRow
 import com.lxj.xpopup.XPopup
 import java.io.File
 
@@ -116,7 +118,7 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>(),
         }
         setupSelectActionBar()
 
-        mSubscriptionAdapter.setNewData(state.subscriptions)
+        mSubscriptionAdapter.setSubscriptions(state.subscriptions)
         updateEmptyState()
         renderLiveSources()
         mBinding.tvLivePreviewState.setOnClickListener {
@@ -199,67 +201,86 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>(),
         }
 
         mSubscriptionAdapter.setOnItemClickListener { _: BaseQuickAdapter<*, *>?, _: View?, position: Int ->
-            if (mSubscriptionAdapter.inSelectMode()) { //多选态(导出/删除):点条目=勾选,不切换当前订阅
-                if (position < state.subscriptions.size) {
-                    mSubscriptionAdapter.toggleSelection(state.subscriptions[position].url)
-                    if (mSubscriptionAdapter.isExportMode) updateExportCount()
-                }
-                return@setOnItemClickListener
-            }
-            //选择订阅
-            for (i in state.subscriptions.indices) {
-                val subscription = state.subscriptions[i]
-                if (i == position) {
-                    subscription.setChecked(true)
+            when (val row = mSubscriptionAdapter.rowAt(position)) {
+                // 批次组头:普通态点一下展开/收起(手风琴);多选态点一下勾选/取消整批
+                is SubscriptionRow.GroupHeader ->
+                    if (mSubscriptionAdapter.inSelectMode()) {
+                        mSubscriptionAdapter.toggleGroupSelection(row.batchKey)
+                        if (mSubscriptionAdapter.isExportMode) updateExportCount()
+                    } else {
+                        mSubscriptionAdapter.toggleGroup(row.batchKey)
+                    }
+                is SubscriptionRow.Item -> {
+                    val subscription = row.subscription
+                    if (mSubscriptionAdapter.inSelectMode()) { //多选态(导出/删除):点条目=勾选,不切换当前订阅
+                        mSubscriptionAdapter.toggleSelection(subscription.url)
+                        if (mSubscriptionAdapter.isExportMode) updateExportCount()
+                        return@setOnItemClickListener
+                    }
+                    //选择订阅
+                    for (s in state.subscriptions) s.setChecked(s === subscription)
                     state.selectedUrl = subscription.url
-                } else {
-                    subscription.setChecked(false)
+                    LogStore.log(Category.SUBSCRIPTION, "订阅: 切换当前配置")
+                    //删除/选择只刷新,不触发重新排序
+                    mSubscriptionAdapter.notifyDataSetChanged()
+                    renderLiveSources()
                 }
+                null -> {}
             }
-            LogStore.log(Category.SUBSCRIPTION, "订阅: 切换当前配置")
-            //删除/选择只刷新,不触发重新排序
-            mSubscriptionAdapter.notifyDataSetChanged()
-            renderLiveSources()
+        }
+
+        // 批次组头上的「管理」:与长按同一份菜单
+        mSubscriptionAdapter.onGroupManageListener = { batchKey: String, anchor: View ->
+            val header = mSubscriptionAdapter.rows()
+                .filterIsInstance<SubscriptionRow.GroupHeader>()
+                .firstOrNull { it.batchKey == batchKey }
+            if (header != null) showBatchMenu(anchor, header)
         }
 
         mSubscriptionAdapter.onItemLongClickListener =
             BaseQuickAdapter.OnItemLongClickListener { adapter: BaseQuickAdapter<*, *>?, view: View, position: Int ->
                 if (mSubscriptionAdapter.inSelectMode()) return@OnItemLongClickListener true //多选/导出态不弹长按菜单
-                val item = state.subscriptions[position]
-                // 长按气泡统一走 AttachActionDialog(主题悬浮面 + text_main 文字色):
-                // XPopup 的 asAttachList 用库内固定样式,不吃主题文件,自定义主题下会是一块"外来"的底
-                AttachActionDialog.show(
-                    view.findViewById(R.id.tv_name),
-                    arrayOf(
-                        if (item.isTop) "取消置顶" else "置顶",
-                        "编辑订阅",
-                        "复制地址",
-                        "多选"
-                    ),
-                    intArrayOf(
-                        AttachActionDialog.NORMAL,
-                        AttachActionDialog.NORMAL,
-                        AttachActionDialog.NORMAL,
-                        AttachActionDialog.NORMAL
-                    )
-                ) { index: Int ->
-                    when (index) {
-                        0 -> {
-                            item.isTop = !item.isTop
-                            state.subscriptions[position] = item
-                            mSubscriptionAdapter.setNewData(state.subscriptions)
-                            LogStore.log(
-                                Category.SUBSCRIPTION,
-                                "订阅: " + (if (item.isTop) "置顶配置" else "取消置顶配置")
+                when (val row = mSubscriptionAdapter.rowAt(position)) {
+                    is SubscriptionRow.Item -> {
+                        val item = row.subscription
+                        // 长按气泡统一走 AttachActionDialog(主题悬浮面 + text_main 文字色):
+                        // XPopup 的 asAttachList 用库内固定样式,不吃主题文件,自定义主题下会是一块"外来"的底
+                        AttachActionDialog.show(
+                            view.findViewById(R.id.tv_name),
+                            arrayOf(
+                                if (item.isTop) "取消置顶" else "置顶",
+                                "编辑订阅",
+                                "复制地址",
+                                "多选"
+                            ),
+                            intArrayOf(
+                                AttachActionDialog.NORMAL,
+                                AttachActionDialog.NORMAL,
+                                AttachActionDialog.NORMAL,
+                                AttachActionDialog.NORMAL
                             )
+                        ) { index: Int ->
+                            when (index) {
+                                0 -> {
+                                    item.isTop = !item.isTop
+                                    mSubscriptionAdapter.setSubscriptions(state.subscriptions)
+                                    LogStore.log(
+                                        Category.SUBSCRIPTION,
+                                        "订阅: " + (if (item.isTop) "置顶配置" else "取消置顶配置")
+                                    )
+                                }
+                                1 -> showEditSubscription(item)
+                                2 -> {
+                                    ClipboardUtils.copyText(item.url)
+                                    AppBubble.toast("已复制")
+                                }
+                                3 -> enterSelectMode(false) //多选:批量删除订阅
+                            }
                         }
-                        1 -> showEditSubscription(position)
-                        2 -> {
-                            ClipboardUtils.copyText(state.subscriptions[position].url)
-                            AppBubble.toast("已复制")
-                        }
-                        3 -> enterSelectMode(false) //多选:批量删除订阅
                     }
+                    // 批次组头长按:整批操作(更新此批/重命名此批/删除整批)
+                    is SubscriptionRow.GroupHeader -> showBatchMenu(view, row)
+                    null -> {}
                 }
                 true
             }
@@ -285,6 +306,28 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>(),
                 }
                 true
             }
+
+        importPendingFile()
+    }
+
+    /**
+     * 系统「打开方式」进来(txt/json/zip):页面就绪后走与"订阅 → 本地导入"完全同一条链路。
+     * 传进来的是应用缓存里的副本路径(见 LocalFileOpenActivity):内容 URI 的读权限只在入口页有效。
+     */
+    private fun importPendingFile() {
+        val path = intent?.getStringExtra(LocalFileOpenActivity.EXTRA_PENDING_FILE) ?: return
+        val file = File(path)
+        if (!file.isFile) {
+            AppBubble.toast("文件已失效，请重新选择")
+            return
+        }
+        val name = intent?.getStringExtra(LocalFileOpenActivity.EXTRA_PENDING_NAME)
+        // 首个订阅(列表为空)时忽略勾选,直接启用 —— 与弹窗里"本地导入"同一个口径
+        val checked = state.subscriptions.isEmpty()
+        mBinding.root.post {
+            if (isFinishing || isDestroyed) return@post
+            importCoordinator.importLocalDoc(Uri.fromFile(file), checked, displayName = name)
+        }
     }
 
     // ------------------------------------------------------------------
@@ -588,19 +631,7 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>(),
                 AppBubble.toast("请先勾选要删除的订阅")
                 return
             }
-            val remainingUrls = state.subscriptions
-                .filterNot { s -> targets.any { it === s } }.map { it.url }
-            val pkgExtra = if (targets.any {
-                    LocalPackageImporter.cleanupNote(this, it.url, remainingUrls) != null
-                }) " 所选订阅的本地包文件将一并删除。" else ""
-            val msg = if (targets.any { it.isChecked }) {
-                "所选包含当前正在使用的订阅,删除后将自动切换到其它订阅,确定删除吗？$pkgExtra"
-            } else {
-                "确定删除所选的 " + targets.size + " 个订阅吗？$pkgExtra"
-            }
-            ConfirmDialog.showDanger(this, "删除订阅", msg, "删除") {
-                deleteSelectedSubscriptions(targets)
-            }
+            confirmDeleteSubscriptions(targets)
         }
     }
 
@@ -613,6 +644,15 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>(),
         for (sub in removed) removeSubscription(sub)
         persistSubscriptions()
         exitSelectMode()
+        cleanupDeletedFilesAsync(deletedUrls, "已删除 " + deletedUrls.size + " 个订阅")
+    }
+
+    /**
+     * 删除订阅后异步清理本地文件(内部库副本 + 本地包目录),删除入口与整批更新共用。
+     * @param doneMessage 清理成功的提示(空串 = 调用方已提示,不再弹)
+     */
+    private fun cleanupDeletedFilesAsync(deletedUrls: List<String>, doneMessage: String) {
+        if (deletedUrls.isEmpty()) return
         subscriptionCleanupInProgress = true
         showLoading("正在清理本地订阅文件…", null)
         val app = applicationContext
@@ -633,15 +673,14 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>(),
             } catch (_: Exception) {
                 cleanupFailed = true
             }
-            val message = if (cleanupFailed) "订阅已删除，部分本地文件未能清理"
-                else "已删除 " + deletedUrls.size + " 个订阅"
+            val message = if (cleanupFailed) "订阅已删除，部分本地文件未能清理" else doneMessage
             LogStore.log(Category.SUBSCRIPTION, "订阅: $message")
             main.post {
                 val activity = page.get() ?: return@post
                 activity.subscriptionCleanupInProgress = false
                 if (!activity.isPageActive()) return@post
                 activity.dismissLoading()
-                AppBubble.toast(message)
+                if (message.isNotEmpty()) AppBubble.toast(message)
             }
         }
     }
@@ -653,13 +692,33 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>(),
         AppBubble.toast(toast)
     }
 
-    private fun removeSubscription(deleted: Subscription) {
+    /**
+     * 整批更新后清理失效条目(新导入的清单里已经没有的旧条目):
+     * 走既有删除通道(直播源清理 + 当前订阅被删时自动切换),
+     * 当前订阅恰好在被清之列时优先切到本批新加入/采用的条目。
+     */
+    override fun onStaleSubscriptionsRemoved(stale: List<Subscription>, freshUrls: List<String>) {
+        if (stale.isEmpty()) return
+        val prefer = freshUrls.firstOrNull()?.let { url ->
+            state.subscriptions.firstOrNull { it.url == url }
+        }
+        for (sub in stale) removeSubscription(sub, prefer)
+        persistSubscriptions()
+        // 失效条目可能带着本地包目录/内部文件,一并清掉(更新换目录后旧目录不再被引用)
+        cleanupDeletedFilesAsync(stale.map { it.url }.distinct(), "")
+        LogStore.log(Category.SUBSCRIPTION, "订阅: 整批更新清理失效条目 " + stale.size + " 个")
+        AppBubble.toast("已清理 " + stale.size + " 个失效条目")
+    }
+
+    private fun removeSubscription(deleted: Subscription, prefer: Subscription? = null) {
         liveCoordinator.onSubscriptionRemoved(deleted.url)
         state.subscriptions.remove(deleted)
         LogStore.log(Category.SUBSCRIPTION, "订阅: 删除配置")
         if (deleted.isChecked) {
             state.liveSourceChanged = true
-            val next = state.subscriptions.firstOrNull { it.isTop } ?: state.subscriptions.firstOrNull()
+            val next = prefer?.takeIf { state.subscriptions.contains(it) }
+                ?: state.subscriptions.firstOrNull { it.isTop }
+                ?: state.subscriptions.firstOrNull()
             for (s in state.subscriptions) s.setChecked(false)
             if (next != null) {
                 next.setChecked(true)
@@ -733,12 +792,8 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>(),
             return
         }
         if (state.liveSourceChanged) {
-            // 直播源变了:回首页让配置重载 —— 直播页用的"待拉取直播源"是加载配置时定下的
-            // (与设置页改直播源同一个处理:不带 CACHE_CONFIG_CHANGED 回首页重新加载)
-            if (state.beforeUrl == state.selectedUrl) {
-                if (!AppStartupCoordinator.launchInternalReload(this, false)) return
-                overridePendingTransition(R.anim.fade_in, R.anim.fade_out)
-            }
+            // 直播源已就地重载(LiveSourceCoordinator 切完即 reloadLiveSource),无需软重启回首页;
+            // 订阅源切换(beforeUrl != selectedUrl)仍走 finish() 里的整进程重启(后续 M2 再免重启)。
             finish()
             return
         }
@@ -749,9 +804,7 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>(),
      * 编辑已有订阅(名称 + 地址就地修改,不再只能"删了重加"):
      * 复用添加弹窗(预填当前名称/地址),保存后按需重载当前订阅。
      */
-    private fun showEditSubscription(position: Int) {
-        if (position >= state.subscriptions.size) return
-        val item = state.subscriptions[position]
+    private fun showEditSubscription(item: Subscription) {
         XPopup.Builder(this)
             .autoFocusEditText(false)
             .asCustom(SubsciptionDialog(
@@ -761,7 +814,7 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>(),
                 true,
                 object : OnSubsciptionListener {
                     override fun onConfirm(name: String, url: String, checked: Boolean) {
-                        applySubscriptionEdit(position, name, url, checked)
+                        applySubscriptionEdit(item, name, url, checked)
                     }
 
                     // 编辑模式下这两个入口已隐藏,不会被触发
@@ -772,9 +825,7 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>(),
     }
 
     /** 落地编辑结果:条目就地更新(isChecked/top 保持);改的若是当前订阅地址则立刻重载配置 */
-    private fun applySubscriptionEdit(position: Int, name: String, url: String, checked: Boolean) {
-        if (position >= state.subscriptions.size) return
-        val item = state.subscriptions[position]
+    private fun applySubscriptionEdit(item: Subscription, name: String, url: String, checked: Boolean) {
         val oldUrl = item.url
         if (url != oldUrl) {
             val dup = state.subscriptions.firstOrNull { it !== item && it.url == url }
@@ -791,7 +842,8 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>(),
             item.setChecked(true)
             state.selectedUrl = url
         }
-        mSubscriptionAdapter.notifyItemChanged(position)
+        // 行模型按订阅寻址(地址变了批次归属也可能变),整表重建
+        mSubscriptionAdapter.setSubscriptions(state.subscriptions)
         updateEmptyState()
         SubscriptionConfig.setSubscriptions(state.subscriptions)
         LogStore.log(Category.SUBSCRIPTION, "订阅: 编辑配置 (" + logSource(url) + ")")
@@ -802,6 +854,102 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>(),
             finish()
         } else if (state.liveTabActive || checked && !wasChecked) {
             renderLiveSources()
+        }
+    }
+
+    /**
+     * 批次组头菜单(「本地仓」/长按组头):更新 / 重命名 / 多选 / 删除。
+     * 展开收起不给菜单项——点组头本身就是展开收起,菜单里再放一份是冗余(用户口径 2026-10-25)。
+     * 「多选」与条目长按同一入口:进多选删除态,组头变成勾选框,点一下可整批勾选。
+     */
+    private fun showBatchMenu(anchor: View, header: SubscriptionRow.GroupHeader) {
+        val members = mSubscriptionAdapter.batchMembers(header.batchKey)
+        if (members.isEmpty()) return
+        val labels = arrayOf("更新", "重命名", "多选", "删除")
+        AttachActionDialog.show(
+            resolveBubbleAnchor(anchor),
+            labels,
+            intArrayOf(
+                AttachActionDialog.NORMAL,
+                AttachActionDialog.NORMAL,
+                AttachActionDialog.NORMAL,
+                AttachActionDialog.DANGER
+            )
+        ) { index: Int ->
+            when (index) {
+                0 -> startBatchUpdate(header.batchKey)
+                1 -> renameBatch(header.batchKey)
+                2 -> enterSelectMode(false) //多选:批量删除订阅
+                3 -> confirmDeleteSubscriptions(members)
+            }
+        }
+    }
+
+    /**
+     * 气泡锚点解析:优先用组头名称 [R.id.tv_batch_name](菜单与标题左对齐),
+     * 传入的若是组头内部的按钮(「本地仓」= tv_manage),它是名称的**兄弟节点**,
+     * 直接 findViewById 取不到 → 逐级向上找。
+     * 曾因这里取到 null,AttachActionDialog.show 首行 `anchor == null` 直接 return,
+     * 整条批次菜单被静默吞掉(点「本地仓」没反应,长按正常)。
+     */
+    private fun resolveBubbleAnchor(anchor: View): View {
+        var current: View? = anchor
+        while (true) {
+            val view = current ?: return anchor
+            view.findViewById<View>(R.id.tv_batch_name)?.let { return it }
+            current = view.parent as? View
+        }
+    }
+
+    /**
+     * 批次重命名:组内所有成员的 batchName 一并改写(组头显示名取自成员),
+     * 落盘 + 重建行模型。组键(batchId/包目录键)不动,只改展示名。
+     */
+    private fun renameBatch(batchKey: String) {
+        val members = mSubscriptionAdapter.batchMembers(batchKey)
+        if (members.isEmpty()) return
+        val current = members.firstOrNull { !it.batchName.isNullOrBlank() }?.batchName ?: ""
+        XPopup.Builder(this)
+            .autoFocusEditText(false)
+            .asCustom(RenameBatchDialog(this, current) { newName: String ->
+                for (m in members) m.batchName = newName
+                persistSubscriptions()
+                LogStore.log(Category.SUBSCRIPTION, "订阅: 批次重命名")
+            })
+            .show()
+    }
+
+    /**
+     * 批次「更新此批」:选新的包/清单文件后按原批次导入 ——
+     * 同地址条目采用(刷新批次归属),清单里没有的旧条目自动清理,不用先删再导。
+     * checked=false:不强行切启用;批内原启用条目地址没变的保持不变,变了的自动切到新条目。
+     */
+    private fun startBatchUpdate(batchKey: String) {
+        mPendingUpdateBatchId = batchKey
+        pickFile(false)
+    }
+
+    /**
+     * 删除订阅的共用确认(多选勾选的 / 批次整批的):提示条数、是否含当前订阅、
+     * 本地包文件是否连带删除,确认后走同一套删除 + 清理通道。
+     */
+    private fun confirmDeleteSubscriptions(targets: List<Subscription>) {
+        if (targets.isEmpty()) {
+            AppBubble.toast("请先勾选要删除的订阅")
+            return
+        }
+        val remainingUrls = state.subscriptions
+            .filterNot { s -> targets.any { it === s } }.map { it.url }
+        val pkgExtra = if (targets.any {
+                LocalPackageImporter.cleanupNote(this, it.url, remainingUrls) != null
+            }) " 所选订阅的本地包文件将一并删除。" else ""
+        val msg = if (targets.any { it.isChecked }) {
+            "所选包含当前正在使用的订阅,删除后将自动切换到其它订阅,确定删除吗？$pkgExtra"
+        } else {
+            "确定删除所选的 " + targets.size + " 个订阅吗？$pkgExtra"
+        }
+        ConfirmDialog.showDanger(this, "删除订阅", msg, "删除") {
+            deleteSelectedSubscriptions(targets)
         }
     }
 
@@ -844,8 +992,12 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>(),
     }
 
     private var mPendingChecked = true
+    /** 批次「更新此批」:选中文件后按这个批次导入(用完清空) */
+    private var mPendingUpdateBatchId: String? = null
     private val pickLocalDoc = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        uri?.let { importCoordinator.importLocalDoc(it, mPendingChecked) }
+        val updateBatchId = mPendingUpdateBatchId
+        mPendingUpdateBatchId = null
+        uri?.let { importCoordinator.importLocalDoc(it, mPendingChecked, updateBatchId) }
     }
 
     /**
@@ -939,12 +1091,13 @@ class SubscriptionActivity : BaseVbActivity<ActivitySubscriptionBinding>(),
     }
 
     override fun onSubscriptionListChanged() {
-        mSubscriptionAdapter.setNewData(state.subscriptions)
+        mSubscriptionAdapter.setSubscriptions(state.subscriptions)
         updateEmptyState()
     }
 
     override fun persistSubscriptions() {
-        mSubscriptionAdapter.notifyDataSetChanged()   //删除/选择只刷新,不触发重新排序
+        // 行模型与 state.subscriptions 已脱钩(组头/收起态),必须重建而不能只 notify
+        mSubscriptionAdapter.setSubscriptions(state.subscriptions)
         updateEmptyState()
         SubscriptionConfig.setApiUrl(state.selectedUrl)
         SubscriptionConfig.setSubscriptions(state.subscriptions)

@@ -146,9 +146,6 @@ public final class SubscriptionExporter {
     /** 一条订阅 → 描述对象(纯本地信息;type 派生、origin 取记录、本地文件内嵌内容) */
     /** 局域网同步复用同一份订阅描述清单，保留本地订阅的内嵌内容。 */
     public static JsonObject describeForTransfer(Subscription item) {
-        if (Subscription.ORIGIN_PACKAGE.equals(item.getOrigin())) {
-            throw new IllegalStateException("本地包订阅含关联文件，请分享原始压缩包或使用完整备份");
-        }
         JsonObject o = new JsonObject();
         String url = item.getUrl() == null ? "" : item.getUrl().trim();
         boolean local = url.startsWith("clan://");
@@ -156,6 +153,19 @@ public final class SubscriptionExporter {
         o.addProperty("type", local ? "clan" : "cms");
         o.addProperty("origin", item.getOrigin());
         o.addProperty("url", url);
+        // 批次信息(一次多仓/批量导入的分组):随多签导出,重导入时按 batchId 归回同一手风琴
+        if (item.getBatchId() != null && !item.getBatchId().isEmpty()) {
+            o.addProperty("batchId", item.getBatchId());
+            if (item.getBatchName() != null && !item.getBatchName().isEmpty()) {
+                o.addProperty("batchName", item.getBatchName());
+            }
+            if (item.getBatchTime() > 0) o.addProperty("batchTime", item.getBatchTime());
+        }
+        if (Subscription.ORIGIN_PACKAGE.equals(item.getOrigin())) {
+            // 本地包订阅：关联文件(广联文件/jar/js 等)随 local_packages 目录整体打包传输，
+            // 这里只保留指向包内配置的 clan:// 地址；导入侧还原目录后按原地址加入即可。
+            return o;
+        }
         if (local) {
             File f = resolveClanFile(url);
             if (f == null || !f.isFile() || f.length() > MAX_CONFIG_BYTES)

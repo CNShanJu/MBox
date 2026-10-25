@@ -54,6 +54,7 @@ import com.github.tvbox.osc.util.DefaultConfig
 import com.github.tvbox.osc.util.HeavyTaskUtil
 import com.github.tvbox.osc.util.SubscriptionConfig
 import com.github.tvbox.osc.config.SystemConfig
+import com.github.tvbox.osc.viewmodel.HistoryViewModel
 import com.github.tvbox.osc.viewmodel.SourceViewModel
 import com.lxj.xpopup.XPopup
 import kotlinx.coroutines.Dispatchers
@@ -62,6 +63,10 @@ import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicBoolean
 
 class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
+
+    private val historyViewModel: HistoryViewModel by lazy {
+        ViewModelProvider(this, HistoryViewModel.Factory()).get(HistoryViewModel::class.java)
+    }
 
     /**
      * 提供给主页返回操作
@@ -147,6 +152,8 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
     }
     /** 历史查询可能晚于更新检查返回，届时不能再把气泡盖到更新弹窗上。 */
     private var autoCheckStarted = false
+    /** 自动检查被门禁拦下时是否已记录过日志(避免 onResume 反复补排时刷屏) */
+    private var autoCheckSkipLogged = false
 
     /** 排队的自动检查任务(重复排队时先撤掉,只保留最后一次) */
     private val pendingAutoCheck = Runnable { runAutoUpdateCheck() }
@@ -994,7 +1001,9 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
     }
 
     private fun showSiteSwitch() {
+        // 直播源不进首页换源弹窗(直播页设置抽屉里有独立切换入口)
         val sites = SourceConfigProviders.get().sourceBeanList
+            .filter { !HomeSourceChoices.isLiveLikeSource(it) }
         HomeSourceDialog(requireActivity(),
             sites.map { HomeSourceChoices.Row(it.key, it.name) },
             SourceConfigProviders.get().homeSourceBean?.key,
@@ -1023,7 +1032,7 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
         lifecycleScope.launch {
             val vodInfoList = withContext(Dispatchers.IO) {
                 // 上次观看保留旧订阅的记录；点击不可用来源时进入当前订阅同名搜索。
-                val allVodRecord = com.github.tvbox.osc.repo.HistoryRepositories.history().query(
+                val allVodRecord = historyViewModel.history().query(
                     100,
                     null,
                     com.github.tvbox.osc.util.HistoryHelper.getHisNum(
@@ -1115,7 +1124,14 @@ class HomeFragment : BaseVbFragment<FragmentHomeBinding>() {
     private fun scheduleAutoUpdateCheck() {
         mHandler.removeCallbacks(pendingAutoCheck)
         val host = activity as? MainActivity
-        if (host?.isUserInitiatedLaunch() != true || !SystemConfig.isAutoCheckUpdate()) return
+        if (host?.isUserInitiatedLaunch() != true || !SystemConfig.isAutoCheckUpdate()) {
+            if (!autoCheckSkipLogged) {
+                autoCheckSkipLogged = true
+                val reason = if (host?.isUserInitiatedLaunch() != true) "非用户主动启动" else "自动检查开关已关"
+                LogStore.log(Category.SYSTEM, "更新: 跳过自动检查($reason)")
+            }
+            return
+        }
         if (host?.isStartupSplashVisible() == true) {
             val expectedView = view
             host.runAfterStartupSplash(Runnable {

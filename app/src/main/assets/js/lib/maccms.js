@@ -81,6 +81,22 @@ function abs(u) {
 }
 
 /**
+ * 海报地址:绝对化后附加"防盗链"所需请求头(App 侧 MyOkhttpDownLoader 会解析 @Referer= / @User-Agent=
+ * 这类私有后缀并注入到图片请求)。很多苹果CMS 站的图片做了防盗链/UA 校验:浏览器打开自动带 Referer 能显示,
+ * App 里 OkHttp 不带就 403/超时"加载不出"——这正是"网页正常、App 加载不出"的根因。
+ * 这里把页面根(HOST)作为 Referer、抓页同款移动 UA 一起带上,让图片请求过防盗链。
+ * 注意:不能无差别给所有 URL 加 referer(播放/详情链接是给 App 解析用的,带了私有后缀会干扰),
+ * 所以只在海报字段(vod_pic/pic)上调用本函数。
+ */
+function picUrl(pic) {
+    let v = abs(pic);
+    if (!v) return '';
+    if (v.indexOf('@Referer=') >= 0 || v.indexOf('@Headers=') >= 0) return v; // 已带私有后缀,不重复附加
+    const ua = HEADERS && HEADERS['User-Agent'] ? HEADERS['User-Agent'] : DEFAULT_UA;
+    return v + '@Referer=' + (HOST || '') + '/@User-Agent=' + ua;
+}
+
+/**
  * ext 里的路径模板(相对站点根)绝对化:站点挂在子目录(如 /jiejie)时自动补上前缀,
  * 免得模板写成 /index.php/... 时漏掉子目录而抓到 404 页。
  */
@@ -176,6 +192,27 @@ function pickPic(block) {
     return best;
 }
 
+/**
+ * 同 {@link #pickPic},但取「最后一张」符合的图(而非第一张)。
+ * 用于"只扫详情链接之前片段"的场景:苹果CMS 海报在详情链接之前,多条目紧邻时,
+ * 片段里可能含上一个条目的海报;取最后一张(最靠近详情链接)才是当前条目的海报。
+ */
+function pickPicLast(block) {
+    const re = /<(?:img|a|div|source|li)\b[^>]*>/gi;
+    let m;
+    let last = '';
+    while ((m = re.exec(block))) {
+        const tag = m[0];
+        const v = pickAttr(tag, ['data-original', 'data-src', 'data-echo', 'data-url', 'src']);
+        if (!v || /^data:/i.test(v)) continue;
+        if (!/\.(jpe?g|png|webp|gif|avif|bmp)(\?|$)/i.test(v) && v.indexOf('/upload/') < 0) continue;
+        if (/(?:pi|loading|blank|spacer|placeholder|grey|none)\.(?:png|gif|jpe?g)/i.test(v)) continue;
+        if (/\/statics\/img\//i.test(v)) continue;
+        last = v;   // 持续覆盖,取最后一个
+    }
+    return last;
+}
+
 function pageTitle(html) {
     const m = firstMatch(html, /<title[^>]*>([\s\S]{0,200}?)<\/title>/i);
     return m ? stripTags(m[1]) : '';
@@ -198,6 +235,8 @@ function parseList(html, limit) {
         seen[id] = 1;
         const from = Math.max(0, m.index - 1500);
         const block = html.substring(from, m.index + 1500);
+        // 详情链接在 block 内的偏移(block 起点 = m.index-1500,故链接相对偏移 = 1500 附近)
+        const anchorPos = block.indexOf(href);
 
         let name = '';
         const anchorRe = new RegExp('href\\s*=\\s*["\'][^"\']*' + href.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '["\'][^>]*>', 'i');
@@ -211,7 +250,14 @@ function parseList(html, limit) {
             const t = firstMatch(block, /class\s*=\s*["'][^"']*(?:title|name)[^"']*["'][^>]*>([\s\S]{0,200}?)</i);
             if (t) name = stripTags(t[1]);
         }
-        let pic = pickPic(block);
+        // 海报只从「详情链接之前」的片段里找,并取「最靠近详情链接」的那张(即当前条目的海报),
+        // 而不是从 block 头部无脑扫第一个 —— 否则窗口向前延伸会把「上一个条目」的海报错抓成当前条目,
+        // 表现为"第一张图给了两个 item、后面整列依次下移错位"。
+        let pic = '';
+        if (anchorPos > 0) {
+            pic = pickPicLast(block.substring(0, anchorPos));
+        }
+        if (!pic) pic = pickPic(block);
         if (!name) {
             const img = firstMatch(block, /<img\b[^>]*>/i);
             if (img) name = pickAttr(img[0], ['alt']);
@@ -224,7 +270,7 @@ function parseList(html, limit) {
         out.push({
             vod_id: abs(href),
             vod_name: name,
-            vod_pic: pic ? abs(pic) : '',
+            vod_pic: pic ? picUrl(pic) : '',
             vod_remarks: remarks
         });
         if (limit > 0 && out.length >= limit) break;
@@ -364,7 +410,7 @@ function parseDetail(html, id) {
     const data = firstMatch(html, /class\s*=\s*["']data["'][^>]*>([\s\S]{0,300}?)<\/(?:p|div)>/i);
     return {
         name: name ? name : ('影片 ' + id),
-        pic: pic ? abs(pic) : '',
+        pic: pic ? picUrl(pic) : '',
         content: desc ? stripTags(desc[1]) : stripTags(data ? data[1] : '')
     };
 }

@@ -35,6 +35,7 @@ public final class SystemConfig {
     private static final String KEY_LIVE_URL = "live_url";
     private static final String KEY_PRIVATE_BROWSING = "private_browsing";
     private static final String KEY_INTERNAL_DOWNLOAD_ENABLED = "internal_download_enabled";
+    private static final String KEY_THUNDER_P2P_ENABLED = "thunder_p2p_enabled";
     // UI/功能偏好（同样沿用旧应用 key，历史设置兼容）
     private static final String KEY_SHOW_PREVIEW = "show_preview";
     private static final String KEY_FAST_SEARCH_MODE = "fast_search_mode";
@@ -194,6 +195,11 @@ public final class SystemConfig {
         return PrefsDataStore.getBoolean(KEY_INTERNAL_DOWNLOAD_ENABLED, false);
     }
 
+    /** 磁力/迅雷下载与荐片 P2P 特化播放通道；默认关闭（涉及伪造设备标识/硬编码凭证/仅 ARM so，合规与兼容风险） */
+    public static boolean isThunderP2pEnabled() {
+        return PrefsDataStore.getBoolean(KEY_THUNDER_P2P_ENABLED, false);
+    }
+
     /** 详情页缩略预览，默认开 */
     public static boolean isShowPreview() {
         return PrefsDataStore.getBoolean(KEY_SHOW_PREVIEW, true);
@@ -222,7 +228,7 @@ public final class SystemConfig {
     /** 配对码在一次开启周期内保持不变，服务或进程重建时复用。 */
     public static synchronized String getOrCreateLanPairingCode() {
         String code = PrefsDataStore.getString(KEY_LAN_PAIRING_CODE, "");
-        if (code.matches("[0-9]{8}")) return code;
+        if (code.matches("[0-9]{6}")) return code;
         return regenerateLanPairingCode();
     }
 
@@ -232,7 +238,7 @@ public final class SystemConfig {
         SecureRandom random = new SecureRandom();
         String code;
         do {
-            code = String.format(Locale.ROOT, "%08d", random.nextInt(100000000));
+            code = String.format(Locale.ROOT, "%06d", random.nextInt(1000000));
         } while (code.equals(previous));
         LanSessionConfig.clear();
         PrefsDataStore.put(KEY_LAN_PAIRING_CODE, code);
@@ -580,9 +586,9 @@ public final class SystemConfig {
         fireChanged();
     }
 
-    public static void setShowPreview(boolean on) {
-        if (isShowPreview() == on) return;
-        PrefsDataStore.put(KEY_SHOW_PREVIEW, on);
+    public static void setThunderP2pEnabled(boolean on) {
+        if (isThunderP2pEnabled() == on) return;
+        PrefsDataStore.put(KEY_THUNDER_P2P_ENABLED, on);
         fireChanged();
     }
 
@@ -740,6 +746,7 @@ public final class SystemConfig {
         cfg.put(KEY_LIVE_URL, getLiveUrl());
         cfg.put(KEY_PRIVATE_BROWSING, isPrivateBrowsing());
         cfg.put(KEY_INTERNAL_DOWNLOAD_ENABLED, isInternalDownloadEnabled());
+        cfg.put(KEY_THUNDER_P2P_ENABLED, isThunderP2pEnabled());
         cfg.put(KEY_AUTO_CHECK_UPDATE, isAutoCheckUpdate());
         return cfg;
     }
@@ -758,6 +765,7 @@ public final class SystemConfig {
         if ((v = cfg.get(KEY_LIVE_URL)) instanceof String) setLiveUrl((String) v);
         if ((v = cfg.get(KEY_PRIVATE_BROWSING)) instanceof Boolean) setPrivateBrowsing((Boolean) v);
         if ((v = cfg.get(KEY_INTERNAL_DOWNLOAD_ENABLED)) instanceof Boolean) setInternalDownloadEnabled((Boolean) v);
+        if ((v = cfg.get(KEY_THUNDER_P2P_ENABLED)) instanceof Boolean) setThunderP2pEnabled((Boolean) v);
         if ((v = cfg.get(KEY_AUTO_CHECK_UPDATE)) instanceof Boolean) setAutoCheckUpdate((Boolean) v);
     }
 }

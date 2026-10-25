@@ -38,6 +38,7 @@ import com.github.tvbox.osc.util.HeavyTaskUtil
 import com.github.tvbox.osc.util.PicassoLoad
 import com.blankj.utilcode.util.ClipboardUtils
 import com.squareup.picasso.Picasso
+import android.os.Bundle
 import java.io.File
 import java.util.LinkedHashMap
 
@@ -77,6 +78,9 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
 
         /** 页面背景色:在颜色列表里不重复列,归下面的「背景」块(纯色就是它) */
         private const val BG_BODY_KEY = "bg_body"
+
+        /** 进程回收时保存导出文件路径的 Bundle 键 */
+        private const val KEY_EXPORTED_FILE = "exported_file_path"
     }
 
     /** 编辑草稿(点保存前不落盘) */
@@ -90,6 +94,19 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
 
     /** 导出到缓存里的文件(用户选好位置后复制过去) */
     private var exportedFile: File? = null
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        exportedFile?.let { outState.putString(KEY_EXPORTED_FILE, it.absolutePath) }
+    }
+
+    override fun onRestoreInstanceState(savedInstanceState: Bundle) {
+        super.onRestoreInstanceState(savedInstanceState)
+        savedInstanceState.getString(KEY_EXPORTED_FILE)?.let { path ->
+            val f = File(path)
+            if (f.isFile) exportedFile = f
+        }
+    }
 
     private class Row(
         val key: ThemeKey,
@@ -127,6 +144,24 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
         bindActions()
         refreshHeader()
         refreshAllValues()
+        importPendingFile()
+    }
+
+    /**
+     * 系统「打开方式」进来(主题 .json / 主题包 .zip):直接落到草稿,
+     * 后面仍是页内「导入主题」那套语义 —— 用户能先检查/改名,再决定保存。
+     */
+    private fun importPendingFile() {
+        val path = intent?.getStringExtra(LocalFileOpenActivity.EXTRA_PENDING_FILE) ?: return
+        val file = File(path)
+        if (!file.isFile) {
+            AppBubble.toast("文件已失效，请重新选择")
+            return
+        }
+        mBinding.root.post {
+            if (isFinishing || isDestroyed) return@post
+            importFromFile(Uri.fromFile(file))
+        }
     }
 
     /** schema 3 形状项:数值统一为 dp,输入框不带 dp 后缀。 */
@@ -806,19 +841,20 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
         }
         val d = draft ?: return
         if (d.name.isEmpty()) {
-            askName()
+            askName(saveAfter = true)
         } else {
             saveThenFinish()
         }
     }
 
-    /** 命名(保存时还没名字 / 点标题改名都走这里);重名不放过、可取消 */
-    private fun askName() {
+    /** 命名/改名(保存时还没名字走 saveAfter=true 自动续存;点标题改名走 saveAfter=false 只改草稿) */
+    private fun askName(saveAfter: Boolean = false) {
         val d = draft ?: return
         ThemeNameDialog.show(this, d.name, if (isNew) "" else d.id, object : ThemeNameDialog.Listener {
             override fun onConfirm(name: String): Boolean {
                 d.name = name
                 refreshHeader()
+                if (saveAfter) saveThenFinish()
                 return true
             }
 
@@ -917,7 +953,11 @@ class ThemeEditorActivity : BaseVbActivity<ActivityThemeEditorBinding>() {
     }
 
     private fun copyExportTo(uri: Uri) {
-        val src = exportedFile ?: return
+        val src = exportedFile
+        if (src == null) {
+            AppBubble.toast("导出文件已失效，请重新导出")
+            return
+        }
         HeavyTaskUtil.getSerialExecutorService().execute {
             var ok = false
             try {

@@ -1,10 +1,13 @@
 package com.github.tvbox.osc.ui.dialog;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 import org.junit.Test;
+
+import com.github.tvbox.osc.bean.SourceBean;
 
 import java.util.Arrays;
 import java.util.List;
@@ -55,5 +58,35 @@ public class HomeSourceChoicesTest {
         } finally {
             Locale.setDefault(original);
         }
+    }
+
+    private static SourceBean source(String name, String api) {
+        SourceBean bean = new SourceBean();
+        bean.setName(name);
+        bean.setApi(api);
+        return bean;
+    }
+
+    @Test public void channelListApisAreTreatedAsLiveSources() {
+        assertTrue(HomeSourceChoices.isLiveLikeSource(source("直播", "https://example.com/live.txt")));
+        assertTrue(HomeSourceChoices.isLiveLikeSource(source("IPTV", "https://example.com/iptv.m3u")));
+        assertTrue(HomeSourceChoices.isLiveLikeSource(source("电视", "https://example.com/tv.m3u8")));
+        // 大小写/空白不影响判定
+        assertTrue(HomeSourceChoices.isLiveLikeSource(source("直播", "  https://example.com/LIVE.TXT ")));
+    }
+
+    @Test public void liveNamedSourcesWithoutApiAreTreatedAsLiveSources() {
+        assertTrue(HomeSourceChoices.isLiveLikeSource(source("直播", "")));
+        assertTrue(HomeSourceChoices.isLiveLikeSource(source("Live TV", null)));
+        assertTrue(HomeSourceChoices.isLiveLikeSource(source("我的IPTV", "   ")));
+    }
+
+    @Test public void ordinaryVodSourcesStayInTheDialog() {
+        assertFalse(HomeSourceChoices.isLiveLikeSource(source("饭太硬", "https://www.饭太硬.net/tv")));
+        assertFalse(HomeSourceChoices.isLiveLikeSource(source("4K影院", "https://example.com/api.json")));
+        assertFalse(HomeSourceChoices.isLiveLikeSource(source("糯米", "csp_XPath")));
+        // 名字像直播但 api 是正经点播接口:保留
+        assertFalse(HomeSourceChoices.isLiveLikeSource(source("直播盒子", "https://example.com/api.json")));
+        assertFalse(HomeSourceChoices.isLiveLikeSource(null));
     }
 }

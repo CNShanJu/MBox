@@ -10,14 +10,13 @@ import android.view.View;
 import android.view.WindowManager;
 
 import com.blankj.utilcode.util.GsonUtils;
-import com.blankj.utilcode.util.SPUtils;
 import com.github.tvbox.osc.util.AppBubble;
+import com.github.tvbox.osc.util.LocalVideoConfig;
 import com.github.tvbox.osc.base.BaseVbActivity;
 import com.github.tvbox.osc.bean.ParseBean;
 import com.github.tvbox.osc.bean.VideoInfo;
 import com.github.tvbox.osc.bean.VodInfo;
 import com.github.tvbox.osc.bean.CastVideo;
-import com.github.tvbox.osc.constant.CacheConst;
 import com.github.tvbox.osc.databinding.ActivityLocalPlayBinding;
 import com.github.tvbox.osc.player.MyVideoView;
 import com.github.tvbox.osc.player.PlayerSession;
@@ -67,10 +66,18 @@ public class LocalPlayActivity extends BaseVbActivity<ActivityLocalPlayBinding> 
     protected void init() {
         mVideoView = mBinding.player;
         mVideoView.startFullScreen();
-        Bundle bundle = getIntent().getExtras();
-        String videoListJson =  bundle.getString("videoList");
-        mVideoList = GsonUtils.fromJson(videoListJson, new TypeToken<List<VideoInfo>>(){}.getType());
-        mPosition = bundle.getInt("position", 0);
+        Intent incoming = getIntent();
+        Uri external = incoming == null ? null : incoming.getData();
+        if (external != null) {
+            // 外部「本地视频 - 打开方式」:Intent 只带一个内容 URI,页面自己建单条播放列表
+            mVideoList = buildExternalVideoList(external);
+            mPosition = 0;
+        } else {
+            Bundle bundle = incoming.getExtras();
+            String videoListJson =  bundle.getString("videoList");
+            mVideoList = GsonUtils.fromJson(videoListJson, new TypeToken<List<VideoInfo>>(){}.getType());
+            mPosition = bundle.getInt("position", 0);
+        }
 
         initController();
         initPipHelper();
@@ -110,6 +117,47 @@ public class LocalPlayActivity extends BaseVbActivity<ActivityLocalPlayBinding> 
 
 
     /**
+     * 外部「打开方式」可在冷进程里直接建页:此时没有首页/启动流程,
+     * 由 BaseActivity 把 isNormalStart 标成正常启动,避免被转去开屏重启而丢掉这个文件。
+     */
+    @Override
+    protected boolean allowDirectColdStart() {
+        Intent intent = getIntent();
+        return intent != null && intent.getData() != null;
+    }
+
+    /** 外部打开的单文件播放项:路径保留原始 URI(content:// 由播放器内核直接读) */
+    private List<VideoInfo> buildExternalVideoList(Uri data) {
+        String name = resolveExternalDisplayName(data);
+        VideoInfo info = new VideoInfo();
+        info.setDisplayName(name);
+        info.setTitle(name);
+        info.setPath(data.toString());
+        if ("file".equals(data.getScheme()) && data.getPath() != null) {
+            File file = new File(data.getPath());
+            if (file.exists()) info.setSize(file.length());
+        }
+        List<VideoInfo> list = new ArrayList<>();
+        list.add(info);
+        return list;
+    }
+
+    /** 内容 URI 的显示名:先问 Provider,取不到用路径末段,再取不到给通用名(标题栏不能空) */
+    private String resolveExternalDisplayName(Uri data) {
+        String name = null;
+        if ("content".equals(data.getScheme())) {
+            try (android.database.Cursor cursor = getContentResolver().query(
+                    data, new String[]{android.provider.OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+                if (cursor != null && cursor.moveToFirst()) name = cursor.getString(0);
+            } catch (Throwable ignored) {
+            }
+        }
+        if (name == null || name.trim().isEmpty()) name = data.getLastPathSegment();
+        if (name == null || name.trim().isEmpty()) name = "本地视频";
+        return name;
+    }
+
+    /**
      * 跳转到上/下一集,需重新播放
      */
     private void play(boolean fromSkip) {
@@ -126,9 +174,14 @@ public class LocalPlayActivity extends BaseVbActivity<ActivityLocalPlayBinding> 
         if (mController != null) mController.setPlayerConfig(mVodPlayerCfg);
 
         String uri = "";
-        File file = new File(path);
-        if(file.exists()){
-            uri = Uri.parse("file://"+file.getAbsolutePath()).toString();
+        if (path != null && (path.startsWith("content://") || path.startsWith("file://"))) {
+            // 外部「打开方式」给的就是 URI 本身(Media3 的内容通道能直接读 content://)
+            uri = path;
+        } else if (path != null) {
+            File file = new File(path);
+            if(file.exists()){
+                uri = Uri.parse("file://"+file.getAbsolutePath()).toString();
+            }
         }
         mController.setTitle(videoInfo.getDisplayName());
         mVideoView.setUrl(uri); //设置视频地址
@@ -137,13 +190,13 @@ public class LocalPlayActivity extends BaseVbActivity<ActivityLocalPlayBinding> 
             @Override
             public void saveProgress(String url, long progress) {// 就本地视频页面用sp,其余用Hawk
                 //有点本地文件确实总时长,设置下总时长,为什么用path,因为电影列表要通过媒体文件的path获取缓存的时长/进度,存取报纸缓存的key一直
-                SPUtils.getInstance(CacheConst.VIDEO_DURATION_SP).put(path, mVideoView.getDuration());
-                SPUtils.getInstance(CacheConst.VIDEO_PROGRESS_SP).put(path, progress);
+                LocalVideoConfig.saveDuration(path, mVideoView.getDuration());
+                LocalVideoConfig.saveProgress(path, progress);
             }
 
             @Override
             public long getSavedProgress(String url) {
-                long saved = SPUtils.getInstance(CacheConst.VIDEO_PROGRESS_SP).getLong(path);
+                long saved = LocalVideoConfig.getProgress(path, -1L);
                 // "跳过片头":与在线播放一致,起播位置取 保存进度 与 st(片头跳过秒数) 的较大者
                 int st = 0;
                 try {
@@ -165,9 +218,6 @@ public class LocalPlayActivity extends BaseVbActivity<ActivityLocalPlayBinding> 
         }
     }
 
-    /** 本地文件播放设置持久化:SP 文件名固定,key=文件绝对路径 */
-    private static final String LOCAL_CFG_SP = "video_local_player_cfg";
-
     /** 当前正在播放的文件路径 */
     private String currentPath() {
         if (mVideoList == null || mPosition < 0 || mPosition >= mVideoList.size()) return null;
@@ -179,7 +229,7 @@ public class LocalPlayActivity extends BaseVbActivity<ActivityLocalPlayBinding> 
     private void loadSavedCfgForPath(String path) {
         try {
             if (path == null || mVodPlayerCfg == null) return;
-            String saved = SPUtils.getInstance(LOCAL_CFG_SP).getString(path, null);
+            String saved = LocalVideoConfig.getPlayerCfg(path);
             if (saved == null || saved.isEmpty()) return;
             JSONObject jo = new JSONObject(saved);
             java.util.Iterator<String> it = jo.keys();
@@ -234,7 +284,7 @@ public class LocalPlayActivity extends BaseVbActivity<ActivityLocalPlayBinding> 
                 // 下次播放同一文件自动恢复(片头片尾调节/重置因此生效)
                 String path = currentPath();
                 if (path != null && mVodPlayerCfg != null) {
-                    SPUtils.getInstance(LOCAL_CFG_SP).put(path, mVodPlayerCfg.toString());
+                    LocalVideoConfig.savePlayerCfg(path, mVodPlayerCfg.toString());
                 }
             }
 
@@ -246,7 +296,7 @@ public class LocalPlayActivity extends BaseVbActivity<ActivityLocalPlayBinding> 
                 if (replay) {
                     String path = currentPath();
                     if (path != null) {
-                        SPUtils.getInstance(CacheConst.VIDEO_PROGRESS_SP).remove(path);
+                        LocalVideoConfig.removeProgress(path);
                     }
                 }
                 play(replay);

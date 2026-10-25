@@ -75,6 +75,13 @@ import fi.iki.elonen.NanoHTTPD;
 import okhttp3.Request;
 import org.brotli.dec.BrotliInputStream;
 
+import com.github.tvbox.osc.share.ShareException;
+import com.github.tvbox.osc.share.SharePackage;
+import com.github.tvbox.osc.share.transport.lan.LanImportReceiver;
+import com.github.tvbox.osc.share.transport.lan.LanShareEndpoints;
+import com.github.tvbox.osc.share.transport.lan.LanShareOptions;
+import com.github.tvbox.osc.share.transport.lan.LanShareSession;
+
 /**
  * @author pj567
  * @date :2021/1/5
@@ -107,6 +114,12 @@ public class RemoteServer extends NanoHTTPD {
     /** 最近一次成功发布的浏览器投屏，不随详情页面生命周期结束。 */
     private volatile String activeBrowserId;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+
+    /** 局域网分享会话(令牌 → 会话);由 AppLanShareHost 桥接驱动 */
+    private final Map<String, ShareSession> shareSessions = new ConcurrentHashMap<>();
+    /** 上传接收口(长期存在,由 LanShareHost.setImportReceiver 设置/清除) */
+    private volatile LanImportReceiver shareImportReceiver;
+    private volatile String shareImportToken;
 
     public interface NextEpisodeHandler {
         boolean playNext();
@@ -1209,7 +1222,7 @@ public class RemoteServer extends NanoHTTPD {
 
     private static String initialPairingCode() {
         return SystemConfig.isLanServerEnabled() ? SystemConfig.getOrCreateLanPairingCode()
-                : String.format(Locale.ROOT, "%08d", new SecureRandom().nextInt(100000000));
+                : String.format(Locale.ROOT, "%06d", new SecureRandom().nextInt(1000000));
     }
 
     private void restoreSessions() {
@@ -1549,24 +1562,268 @@ public class RemoteServer extends NanoHTTPD {
                 // 名单是全局单槽(每次起播覆盖):禁止播放器缓存,避免 seek/重试拿到上一条清单
                 purify.addHeader("Cache-Control", "no-store");
                 return purify;
+            } else if (fileName.startsWith(LanShareEndpoints.DOWNLOAD_PREFIX)) {
+                return serveShareDownload(fileName.substring(LanShareEndpoints.DOWNLOAD_PREFIX.length()));
+            } else if (fileName.startsWith(LanShareEndpoints.IMPORT_PREFIX)) {
+                return serveShareImportGet(fileName.substring(LanShareEndpoints.IMPORT_PREFIX.length()));
             } else if (fileName.startsWith("/file/")) {
                 return serveFileGet(session, fileName.substring(6));
             }
         } else if (session.getMethod() == Method.POST) {
+            if (fileName.startsWith(LanShareEndpoints.IMPORT_PREFIX)) {
+                return serveShareImportPost(session, fileName.substring(LanShareEndpoints.IMPORT_PREFIX.length()));
+            }
             return serveFilePost(session, fileName);
         }
         //default page: index.html
         return getRequestList.get(0).doResponse(session, "", null, null);
     }
 
-    /** GET /file/<rel>: 配对设备可读文件和目录；进程令牌仅可在回环读取单个文件。 */
+    // ------------------------------------------------------------------
+    // 局域网分享桥(服务端侧:会话 + 下载 + 上传接收口,供 AppLanShareHost 复用)
+    // ------------------------------------------------------------------
+
+    private static final class ShareSession {
+        final File file;
+        final String fileName;
+        final long sizeBytes;
+        final long expiresAtMillis;
+        final boolean allowImport;
+        final int maxDownloads;
+        final java.util.concurrent.atomic.AtomicInteger downloads = new java.util.concurrent.atomic.AtomicInteger();
+
+        ShareSession(File file, String fileName, long sizeBytes, long expiresAtMillis,
+                     boolean allowImport, int maxDownloads) {
+            this.file = file;
+            this.fileName = fileName;
+            this.sizeBytes = sizeBytes;
+            this.expiresAtMillis = expiresAtMillis;
+            this.allowImport = allowImport;
+            this.maxDownloads = maxDownloads;
+        }
+
+        boolean expired() {
+            return expiresAtMillis > 0 && System.currentTimeMillis() >= expiresAtMillis;
+        }
+    }
+
+    /** 挂出分享会话(令牌 = 会话 id);返回含对端访问地址的快照。 */
+    public LanShareSession publishShare(SharePackage pkg, LanShareOptions opts) throws ShareException {
+        if (pkg == null || !pkg.isUsable()) {
+            throw ShareException.invalid("要导出的归档文件不可用");
+        }
+        if (!isStarted) {
+            throw ShareException.unavailable("局域网服务未启动");
+        }
+        purgeExpiredShares();
+        if (shareSessions.size() >= 32) {
+            throw ShareException.unavailable("分享会话数已达上限");
+        }
+        String token = generateToken();
+        long ttl = opts == null ? LanShareOptions.DEFAULT_TTL_MILLIS : opts.sessionTtlMillis();
+        long expiresAt = System.currentTimeMillis() + ttl;
+        boolean allowImport = opts != null && opts.allowImport();
+        int maxDownloads = opts == null ? LanShareOptions.DEFAULT_MAX_DOWNLOADS : opts.maxDownloads();
+        ShareSession s = new ShareSession(pkg.file(), pkg.fileName(), pkg.sizeBytes(),
+                expiresAt, allowImport, maxDownloads);
+        shareSessions.put(token, s);
+        String base = firstLanBaseUrl();
+        return new LanShareSession(token, token, s.fileName, s.sizeBytes,
+                LanShareEndpoints.downloadUrl(base, token),
+                allowImport ? LanShareEndpoints.importUrl(base, token) : "",
+                expiresAt, allowImport, maxDownloads);
+    }
+
+    /** 撤销会话(幂等);清理该会话的上传残留目录。 */
+    public void retractShare(String sessionId) {
+        if (sessionId == null || sessionId.isEmpty()) return;
+        if (shareSessions.remove(sessionId) == null) return;
+        deleteQuietly(uploadDir(sessionId));
+    }
+
+    /** 设置(或清除)上传接收口;清除时立刻失效 /share/u/<token> 并通知旧 receiver。 */
+    public void setShareImportReceiver(LanImportReceiver receiver) {
+        LanImportReceiver previous = shareImportReceiver;
+        shareImportReceiver = receiver;
+        if (receiver == null) {
+            String oldToken = shareImportToken;
+            shareImportToken = null;
+            if (oldToken != null) deleteQuietly(uploadDir(oldToken));
+            if (previous != null) previous.onSessionClosed(null);
+        } else if (shareImportToken == null) {
+            // 重设 receiver 不换令牌(地址不变),只换回调
+            shareImportToken = generateToken();
+        }
+    }
+
+    /** 当前上传接收口地址(没设接收口或取不到局域网地址返回空串)。 */
+    public String getShareImportUrl() {
+        if (shareImportReceiver == null || shareImportToken == null) return "";
+        String base = firstLanBaseUrl();
+        if (base.isEmpty()) return "";
+        return LanShareEndpoints.importUrl(base, shareImportToken);
+    }
+
+    private String firstLanBaseUrl() {
+        try {
+            java.util.List<String> urls = ControlManager.get().getLanAccessUrls();
+            if (urls != null && !urls.isEmpty()) {
+                String u = urls.get(0);
+                while (u.endsWith("/")) u = u.substring(0, u.length() - 1);
+                return u;
+            }
+        } catch (Throwable ignored) {
+        }
+        return "";
+    }
+
+    private File uploadDir(String token) {
+        File base = mContext == null ? null : mContext.getCacheDir();
+        return new File(base, "lan_share_upload_" + token);
+    }
+
+    private void purgeExpiredShares() {
+        for (Map.Entry<String, ShareSession> e : shareSessions.entrySet()) {
+            if (e.getValue().expired()) {
+                shareSessions.remove(e.getKey());
+                deleteQuietly(uploadDir(e.getKey()));
+            }
+        }
+    }
+
+    private ShareSession resolveShareToken(String token) {
+        if (token == null || token.isEmpty()) return null;
+        purgeExpiredShares();
+        ShareSession s = shareSessions.get(token);
+        return (s != null && !s.expired()) ? s : null;
+    }
+
+    /** 下载:GET /share/d/<token> */
+    private Response serveShareDownload(String token) {
+        ShareSession s = resolveShareToken(token);
+        if (s == null) return createPlainTextResponse(Response.Status.FORBIDDEN, "forbidden");
+        if (s.maxDownloads > 0 && s.downloads.incrementAndGet() > s.maxDownloads) {
+            return createPlainTextResponse(Response.Status.FORBIDDEN, "forbidden");
+        }
+        try {
+            InputStream input = new FileInputStream(s.file);
+            Response resp = newFixedLengthResponse(Response.Status.OK, "application/zip", input, s.file.length());
+            resp.addHeader("Cache-Control", "no-store");
+            resp.addHeader("Content-Disposition", "attachment; filename=\"" + s.fileName + "\"");
+            return resp;
+        } catch (IOException e) {
+            return createPlainTextResponse(Response.Status.INTERNAL_ERROR, "file unavailable");
+        }
+    }
+
+    /** 上传页:GET /share/u/<token> */
+    private Response serveShareImportGet(String token) {
+        if (shareImportReceiver == null || shareImportToken == null
+                || !constantTimeEquals(shareImportToken, token)) {
+            return createPlainTextResponse(Response.Status.FORBIDDEN, "forbidden");
+        }
+        String html = "<!DOCTYPE html><html><head><meta charset='utf-8'/></head><body>"
+                + "<form method='post' enctype='multipart/form-data'>"
+                + "<input type='file' name='" + LanShareEndpoints.UPLOAD_FIELD + "'/>"
+                + "<button type='submit'>上传</button></form></body></html>";
+        return newFixedLengthResponse(Response.Status.OK, "text/html; charset=utf-8", html);
+    }
+
+    /** 上传:POST /share/u/<token> */
+    private Response serveShareImportPost(IHTTPSession session, String token) {
+        if (shareImportReceiver == null || shareImportToken == null
+                || !constantTimeEquals(shareImportToken, token)) {
+            return createPlainTextResponse(Response.Status.FORBIDDEN, "forbidden");
+        }
+        long maxBytes = LanShareOptions.DEFAULT_MAX_UPLOAD_BYTES;
+        String length = session.getHeaders().get("content-length");
+        try {
+            if (length != null) {
+                long len = Long.parseLong(length);
+                if (len > maxBytes + 1024 * 1024) { // 留 multipart 边界与头部开销
+                    shareImportReceiver.onUploadRejected("上传内容过大");
+                    return createPlainTextResponse(Response.Status.BAD_REQUEST, "request too large");
+                }
+            }
+        } catch (NumberFormatException ignored) {
+        }
+        Map<String, String> files = new HashMap<>();
+        try {
+            session.parseBody(files);
+        } catch (IOException e) {
+            shareImportReceiver.onUploadRejected("上传读取失败");
+            return createPlainTextResponse(Response.Status.INTERNAL_ERROR, "upload failed");
+        } catch (NanoHTTPD.ResponseException e) {
+            shareImportReceiver.onUploadRejected(e.getMessage());
+            return createPlainTextResponse(e.getStatus(), e.getMessage());
+        }
+        String tmpPath = files.get(LanShareEndpoints.UPLOAD_FIELD);
+        if (tmpPath == null) {
+            shareImportReceiver.onUploadRejected("缺少上传文件");
+            return createPlainTextResponse(Response.Status.BAD_REQUEST, "missing file");
+        }
+        File received = new File(tmpPath);
+        if (!received.isFile() || received.length() <= 0) {
+            deleteQuietly(received);
+            shareImportReceiver.onUploadRejected("上传内容为空");
+            return createPlainTextResponse(Response.Status.BAD_REQUEST, "empty file");
+        }
+        if (received.length() > maxBytes) {
+            deleteQuietly(received);
+            shareImportReceiver.onUploadRejected("上传内容过大");
+            return createPlainTextResponse(Response.Status.BAD_REQUEST, "request too large");
+        }
+        // 接收口可能在处理期间被撤:再核对一次
+        LanImportReceiver receiver = shareImportReceiver;
+        if (receiver == null || shareImportToken == null) {
+            deleteQuietly(received);
+            return createPlainTextResponse(Response.Status.FORBIDDEN, "forbidden");
+        }
+        String msg = receiver.onUploadReceived(null, received);
+        return createPlainTextResponse(Response.Status.OK, msg);
+    }
+
+    private boolean constantTimeEquals(String a, String b) {
+        if (a == null || b == null) return false;
+        return MessageDigest.isEqual(a.getBytes(StandardCharsets.US_ASCII),
+                b.getBytes(StandardCharsets.US_ASCII));
+    }
+
+    private void deleteQuietly(File f) {
+        if (f == null) return;
+        try {
+            if (f.isDirectory()) {
+                File[] children = f.listFiles();
+                if (children != null) for (File c : children) deleteQuietly(c);
+            }
+            //noinspection ResultOfMethodCallIgnored
+            f.delete();
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /**
+     * GET /file/&lt;rel&gt;: 配对设备可读文件和目录；进程令牌与爬虫凭据读取均只限回环的单个文件。
+     */
     private Response serveFileGet(IHTTPSession session, String rel) {
         try {
+            boolean loopback = isLoopbackRequest(session);
             boolean paired = isAuthorized(session, session.getParms());
             boolean localFileReader = !paired && isLocalFileReader(session);
-            if (!paired && !localFileReader) {
+            // 回环上的 csp 爬虫(第三方 jar)不会带进程令牌，但网盘源启动时要按 ext 里的
+            // 相对路径取 /file/tvfan/Cloud-drive.txt 这类凭据——原版 TVBox 的回环是直通的，
+            // a119192d 收紧后这里变成 403，爬虫只能一直判定「未登录」。
+            // 只放行「约定目录下的凭据类单文件」：目录列表、写接口、其他文件仍要求配对会话。
+            boolean spiderCredential = !paired && !localFileReader && loopback
+                    && isSpiderCredentialRead(rel);
+            if (!paired && !localFileReader && !spiderCredential) {
+                // 探针(纯观察,不改变鉴权):回环上出现未鉴权的 /file 请求,说明有第三方
+                // (爬虫 jar 等)在自己找本机文件。把路径记下来才能确认它到底取哪个目录;
+                // 此前这里是静默 403,线上完全看不到。
+                if (loopback) logFileProbe("回环未鉴权拒绝 " + rel);
                 return createPlainTextResponse(Response.Status.FORBIDDEN, "forbidden");
             }
+            if (loopback && spiderCredential) logFileProbe("回环放行凭据读取 " + rel);
             File root = storageRoot();
             File localFile;
             if (rel == null || rel.trim().isEmpty() || rel.equals(".")) {
@@ -1599,8 +1856,12 @@ public class RemoteServer extends NanoHTTPD {
     private Response serveFilePost(IHTTPSession session, String fileName) {
         // Cookie 属于浏览器自动携带的凭据；写接口必须来自本服务同源页面。
         // 显式且有效的 X-TVBox-Token 客户端、无 Cookie 的本机内部调用不受影响。
-        if (!fileName.equals("/api/pair") && !trustedCookieWriteOrigin(session))
+        if (!fileName.equals("/api/pair") && !trustedCookieWriteOrigin(session)) {
+            // 探针(纯观察):若爬虫 jar 想通过本地服务回写 cookie，会在这里被拦下，
+            // 日志里能看到具体路径，才知道该不该给它开写通道。
+            if (isLoopbackRequest(session)) logFileProbe("回环未鉴权写入拒绝 " + fileName);
             return createPlainTextResponse(Response.Status.FORBIDDEN, "forbidden origin");
+        }
         boolean managed = fileName.equals("/action") || fileName.equals("/upload")
                 || fileName.equals("/newFolder") || fileName.equals("/delFolder") || fileName.equals("/delFile");
         if (managed && !isAuthorized(session, session.getParms())) {
@@ -1831,6 +2092,45 @@ public class RemoteServer extends NanoHTTPD {
     /** 仅由本进程装配根注入 spider 的本地订阅读取器，不写入 URL、日志或持久配置。 */
     public String getLocalReadToken() {
         return localReadToken;
+    }
+
+    /**
+     * 爬虫按 ext 里的相对路径(如 {@code tvfan/Cloud-drive.txt})直接取网盘凭据。
+     * 只认约定凭据目录下的凭据类文件，且必须真实存在；其他路径一律仍走鉴权拒绝。
+     */
+    private boolean isSpiderCredentialRead(String rel) {
+        if (rel == null) return false;
+        String path = rel.trim();
+        if (path.isEmpty() || path.equals(".")) return false;
+        try {
+            File file = resolveUnderRoot(path);
+            if (file == null || !file.isFile()) return false;
+            return com.github.tvbox.osc.util.cache.CacheCatalog.isCloudCredential(file, storageRoot());
+        } catch (Throwable ignored) {
+            return false;
+        }
+    }
+
+    /** 探针去重：同一行 2 秒内只记一次，避免页面批量取资源时刷库。 */
+    private static volatile String lastFileProbeLine;
+    private static volatile long lastFileProbeAt;
+
+    /**
+     * /file 探针：同时写 logcat 与日志页(系统分类)，没有 adb 也能在应用内看到。
+     * 只记路径与大小，不记文件内容。
+     */
+    private static void logFileProbe(String message) {
+        String line = "[file] " + message;
+        long now = System.currentTimeMillis();
+        if (line.equals(lastFileProbeLine) && now - lastFileProbeAt < 2000L) return;
+        lastFileProbeLine = line;
+        lastFileProbeAt = now;
+        android.util.Log.i("TVBox-Server", line);
+        try {
+            LogStore.log(Category.SYSTEM, line);
+        } catch (Throwable ignored) {
+            // 日志页不可用不影响文件服务
+        }
     }
 
     private Response castPlaylistResponse(LanDevice viewer, String mediaId, CastMedia media,

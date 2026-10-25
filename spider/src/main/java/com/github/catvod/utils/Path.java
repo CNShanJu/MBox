@@ -24,9 +24,41 @@ public class Path {
 
     private static final String TAG = Path.class.getSimpleName();
 
+    /**
+     * 主存储({@code /sdcard})下与本 App 相关的目录布局。
+     *
+     * <p>属于本 App 自己的数据只有<b>一个根目录</b>：{@link #APP_DIR}，备份等自有数据都在它
+     * 下面，不再散落到存储根。
+     *
+     * <p>仍留在存储根上的 {@link #SOURCE_CREDENTIAL_DIRS} 是<b>第三方爬虫源的路径契约</b>，
+     * 不是本 App 的目录：源配置写的是相对 {@link #root()} 的路径（如
+     * {@code tvfan/Cloud-drive.txt}、{@code TVBox/xunlei.txt}），改名或搬走会让源直接判定
+     * 「未登录」并拒绝播放，因此必须保持原名。
+     */
+    public static final String APP_DIR = "MBox";
+
+    /** {@link #APP_DIR} 下的本地备份子目录：{@code /sdcard/MBox/backup}。 */
+    public static final String BACKUP_DIR = "backup";
+
+    /** 第三方源约定的凭据目录（相对 {@link #root()}，改动会让已有登录态失效）。 */
+    public static final String[] SOURCE_CREDENTIAL_DIRS = {"tvfan", "TVBox"};
+
+    /** {@link #SOURCE_CREDENTIAL_DIRS} 加上本 App 根目录（源也可能把凭据写进 MBox/）。 */
+    public static final String[] CREDENTIAL_DIRS = {"tvfan", "TVBox", APP_DIR};
+
     private static File check(File file) {
         if (!file.exists()) file.mkdirs();
         return file;
+    }
+
+    /** 本 App 在主存储下的根目录：{@code /sdcard/MBox}。 */
+    public static File app() {
+        return check(root(APP_DIR));
+    }
+
+    /** 本 App 的备份目录：{@code /sdcard/MBox/backup}（不创建，创建交给写入方）。 */
+    public static File backup() {
+        return new File(root(APP_DIR), BACKUP_DIR);
     }
 
     public static boolean exists(String path) {

@@ -90,6 +90,26 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
     /** 局域网地址前缀注入（app 侧 ControlManager.get().getAddress(true) 设置） */
     public static void setLanBase(String base) {
         lanBase = base == null ? "" : base;
+        // 顺手把端口同步给 catvod.Proxy：第三方爬虫 jar 普遍用它拼
+        // http://127.0.0.1:<port>/file/... 这类本机地址（读自己写下的 cookie、套本地代理）。
+        // 此前 MBox 完全没有注入点，这类 jar 拿到的是自己写死的兜底端口，拼出来的地址无效，
+        // 于是一步都不发出去、直接返回空字符串。AVBox 一直有这一步，这里补齐。
+        int port = parseLocalPort(lanBase);
+        if (port > 0) com.github.catvod.Proxy.set(port);
+    }
+
+    /** 从 {@code http://host:port/} 里取端口；解析不出来返回 0（调用方据此跳过注入）。 */
+    private static int parseLocalPort(String base) {
+        if (base == null || base.isEmpty()) return 0;
+        try {
+            String trimmed = base.endsWith("/") ? base.substring(0, base.length() - 1) : base;
+            int idx = trimmed.lastIndexOf(':');
+            if (idx < 0 || idx + 1 >= trimmed.length()) return 0;
+            int value = Integer.parseInt(trimmed.substring(idx + 1));
+            return value > 0 && value <= 65535 ? value : 0;
+        } catch (Throwable ignored) {
+            return 0;
+        }
     }
 
     /** 局域网地址前缀（util.js 等用） */
@@ -202,14 +222,12 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
         final ConfigSnapshot snapshot;
         final VideoParseRuler.RuleSet rules;
         final AdBlocker.SourceHosts ads;
-        final String epg;
 
         PreparedConfig(ConfigBuilder builder, VideoParseRuler.RuleSet rules,
-                       AdBlocker.SourceHosts ads, String epg) {
+                       AdBlocker.SourceHosts ads) {
             snapshot = new ConfigSnapshot(builder);
             this.rules = rules;
             this.ads = ads;
-            this.epg = epg;
         }
     }
 
@@ -462,9 +480,6 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
             if (parse != null && current.defaultParse != null
                     && parse.getName().equals(current.defaultParse.getName())) {
                 putChangedPreference(HawkConfig.DEFAULT_PARSE, parse.getName());
-            }
-            if (configLoadEpoch.get() == epoch && prepared.epg != null) {
-                putChangedPreference(HawkConfig.EPG_URL, prepared.epg);
             }
         });
     }
@@ -885,7 +900,6 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
         List<LiveChannelGroup> subscribeLiveGroupList = builder.fallbackLives;
         List<com.github.tvbox.osc.spiderapi.LiveChannelConfigApi.SubscribeLiveSource> subscribeLiveSources = builder.liveSources;
         VideoParseRuler.Builder rules = new VideoParseRuler.Builder();
-        String epgUrl = null;
         // 远端站点源
         SourceBean firstSite = null;
         LinkedHashMap<String, SourceBean> parsedSources = new LinkedHashMap<>();
@@ -990,12 +1004,6 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
                         addSubscribeLiveSource(subscribeLiveSources, "", extUrlFix);
                     }
 
-                    // takagen99 : Getting EPG URL from File Config & put into Settings
-                    if (livesOBJ.has("epg")) {
-                        String epg = livesOBJ.get("epg").getAsString();
-                        epgUrl = epg;
-                    }
-
                 } else {
 
                     // if FongMi Live URL Formatting exists
@@ -1010,11 +1018,6 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
                                 : SubscriptionLiveSourceParser.parseTypedSources(infoJson.get("lives").getAsJsonArray())) {
                             addSubscribeLiveSource(subscribeLiveSources, source.name, source.url);
                             if (subscribeLiveUrl == null && source.hasUrl()) subscribeLiveUrl = source.url;
-                        }
-                        if (livesOBJ.has("type") && !livesOBJ.get("type").isJsonNull()
-                                && "0".equals(livesOBJ.get("type").getAsString()) && livesOBJ.has("epg")) {
-                            String epg = livesOBJ.get("epg").getAsString();
-                            epgUrl = epg;
                         }
                     }
                 }
@@ -1105,7 +1108,7 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
         }
         AdBlocker.SourceHosts ads = AdBlocker.prepareSourceHosts(sourceAds);
         builder.subscriptionUrl = apiUrl;
-        return new PreparedConfig(builder, rules.build(), ads, epgUrl);
+        return new PreparedConfig(builder, rules.build(), ads);
     }
 
     /** 记一条"订阅源自带的直播源"(订阅管理页「直播源」标签用;跟着订阅走,页面不允许删除) */
@@ -1138,15 +1141,6 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
         }
     }
 
-    /** 用直播源 json(lives 数组)重建<b>主</b>频道分组(直播页拉完直播源后调用) */
-    public void loadLives(JsonArray livesArray) {
-        List<LiveChannelGroup> groups = new ArrayList<>();
-        loadLivesInto(livesArray, groups);
-        ConfigBuilder update = new ConfigBuilder(config);
-        update.lives = groups;
-        config = new ConfigSnapshot(update);
-    }
-
     public void loadLivesAsync(JsonArray livesArray,
             com.github.tvbox.osc.spiderapi.LiveChannelConfigApi.LoadCallback callback) {
         CONFIG_EXECUTOR.execute(() -> {
@@ -1168,6 +1162,32 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
                 if (callback != null) callback.onResult(parsed);
             });
         });
+    }
+
+    /**
+     * 就地重载主直播分组(直播源切换免重启入口):按当前 {@link SystemConfig#getLiveUrl()} 重建
+     * {@code config.lives},为空则回落到订阅源自带的直播(与 {@code loadConfig} 里同一套分支语义)。
+     * 纯内存操作、无 IO,同步在主线程原子替换引用;不重拉订阅配置、不碰 csp.jar/native。
+     */
+    public void reloadLiveSource() {
+        ConfigSnapshot current = config;
+        String liveURL = SystemConfig.getLiveUrl();
+        List<LiveChannelGroup> newLives = new ArrayList<>();
+        List<LiveChannelGroup> newFallback;
+        if (!StringUtils.isBlank(liveURL)) {
+            // 用户配了直播源:主列表 = 该直播源包成的"待拉取"代理分组;订阅自带直播仍作兜底
+            LiveChannelGroup group = proxyLiveGroup(liveURL);
+            if (group != null) newLives.add(group);
+            newFallback = current.fallbackLives;
+        } else {
+            // 取消指定 → 回落到订阅自带直播;已在用订阅直播,清掉兜底避免失败后拿同一份重试
+            newLives.addAll(current.fallbackLives);
+            newFallback = new ArrayList<>();
+        }
+        ConfigBuilder update = new ConfigBuilder(current);
+        update.lives = newLives;
+        update.fallbackLives = newFallback;
+        config = new ConfigSnapshot(update);
     }
 
     /**

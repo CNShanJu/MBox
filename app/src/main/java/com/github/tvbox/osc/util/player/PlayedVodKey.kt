@@ -2,7 +2,7 @@ package com.github.tvbox.osc.util.player
 
 /**
  * "已播放剧集"持久化键纯逻辑(自 PlayFragment/DownloadFragment 抽取,等价搬移;Java→Kotlin 化,改进.txt §八):
- * 播放记录(SP CacheConst.VIDEO_PLAYED_SP)以 sourceKey|vodId 为键、值为已播放集索引集合。
+ * 播放记录(经 LocalVideoConfig 门面持久化)以 sourceKey|vodId 为键、值为已播放集索引集合。
  * - [of] 由 sourceKey/vodId 构造(PlayFragment.recordPlayedEpisode 用)
  * - [fromEpisodeId] 由统一剧集标识 episodeId(sourceKey|vodId|flag|index)截取前两段(DownloadFragment 用)
  */

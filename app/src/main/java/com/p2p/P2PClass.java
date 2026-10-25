@@ -1,7 +1,6 @@
 package com.p2p;
 
 import java.io.File;
-import java.util.concurrent.Executors;
 
 
 public class P2PClass {
@@ -10,25 +9,6 @@ public class P2PClass {
     public static int port = 8087;
 
     public String path = null;
-
-    class init extends Thread {
-
-        final String CardPath;
-
-        init(String str) {
-            this.CardPath = str;
-        }
-
-        public void run() {
-            P2PClass p2PClass = P2PClass.this;
-            p2PClass.path = this.CardPath + "/jpali";
-            File file = new File(P2PClass.this.path);
-            if (!file.exists()) {
-                file.mkdirs();
-            }
-            P2PClass.port = P2PClass.this.doxstarthttpd("TEST3E63BAAECDAA79BEAA91853490A69F08".getBytes(), this.CardPath.getBytes());
-        }
-    }
 
     static {
         System.loadLibrary("p2p");
@@ -41,7 +21,6 @@ public class P2PClass {
             file.mkdirs();
         }
         port = doxstarthttpd("TEST3E63BAAECDAA79BEAA91853490A69F08".getBytes(), str.getBytes());
-        //Executors.newCachedThreadPool().execute(new init(str));
     }
 
 

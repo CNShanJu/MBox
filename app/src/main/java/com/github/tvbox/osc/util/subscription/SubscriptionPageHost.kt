@@ -34,6 +34,13 @@ interface SubscriptionImportHost : SubscriptionPageHost {
     /** 订阅列表数据变了:适配器整表刷新 + 空态更新(不落库) */
     fun onSubscriptionListChanged()
 
+    /**
+     * 整批更新后应清理的过期条目(新导入的清单里已经没有的旧条目):
+     * 宿主走既有删除通道(直播源清理 + 当前订阅被删时自动切换),
+     * [freshUrls] = 本次导入新加入/采用的地址,当前订阅被清时优先切到其中第一个。
+     */
+    fun onStaleSubscriptionsRemoved(stale: List<Subscription>, freshUrls: List<String>)
+
     /** 订阅增删改后统一刷新 + 立即落库(避免 onPause 前被强杀导致改动丢失) */
     fun persistSubscriptions()
 

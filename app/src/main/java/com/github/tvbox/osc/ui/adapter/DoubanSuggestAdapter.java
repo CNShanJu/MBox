@@ -33,6 +33,8 @@ public class DoubanSuggestAdapter extends BaseQuickAdapter<DoubanSuggestBean, Ba
         // 但要沿用它的背景层占位/失败态(灰底+居中图标按宿主尺寸自适应,失败态带"图片加载失败"文字)
         ImageView ivThumb = helper.getView(R.id.ivThumb);
         PicassoLoad.showLoadingPlaceholder(ivThumb);
+        // 复用列表项:先取消上一张还在途的请求,避免旧请求失败回调作用到复用后的 view
+        Picasso.get().cancelRequest(ivThumb);
         Picasso.get()
                 .load(item.getImg())
                 .transform(new RoundTransformation(MD5.string2MD5(item.getImg() + "position=" + helper.getLayoutPosition()))

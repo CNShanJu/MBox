@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 新建备份命名弹窗:标题 + 说明 + 名称输入 + 「使用系统时间做名称」勾选 + 取消/开始备份。
+     名称为空且未勾选时间时**不关闭弹窗**,就地提示(与主题命名弹窗同一口径)。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="320dp"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_dialog"
+    android:orientation="vertical"
+    android:padding="@dimen/dp_20">
+
+    <TextView
+        android:id="@+id/tv_title"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="新建备份"
+        android:textColor="@color/text_foreground"
+        android:textSize="16sp"
+        android:textStyle="bold" />
+
+    <com.google.android.material.textfield.TextInputLayout
+        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.Dense"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/dp_10"
+        app:boxStrokeColor="@color/text_main_half"
+        app:hintTextColor="@color/text_main_half"
+        app:placeholderTextColor="@color/text_main_half">
+
+        <EditText
+            android:id="@+id/et_name"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@null"
+            android:hint="例如：升级前备份"
+            android:inputType="text"
+            android:maxLength="40"
+            android:maxLines="1"
+            android:textColor="@color/text_foreground"
+            android:textColorHint="@color/text_main_half"
+            android:textSize="14sp"
+            tools:ignore="Autofill,LabelFor" />
+    </com.google.android.material.textfield.TextInputLayout>
+
+    <CheckBox
+        android:id="@+id/cb_timestamp"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/dp_5"
+        android:button="@drawable/button_checkbox_square"
+        android:checked="false"
+        android:text="使用系统时间"
+        android:textColor="@color/text_foreground"
+        android:textSize="13sp" />
+
+    <TextView
+        android:id="@+id/tv_error"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:textColor="@color/text_danger"
+        android:textSize="12sp"
+        android:visibility="gone"
+        tools:text="请输入备份名称，或勾选使用系统时间"
+        tools:visibility="visible" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/dp_15"
+        android:orientation="horizontal">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_cancel"
+            style="@style/BtnSecondary"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_weight="1"
+            android:text="取消" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_ok"
+            style="@style/BtnPrimary"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_marginStart="@dimen/dp_10"
+            android:layout_weight="1"
+            android:text="开始备份" />
+    </LinearLayout>
+</LinearLayout>

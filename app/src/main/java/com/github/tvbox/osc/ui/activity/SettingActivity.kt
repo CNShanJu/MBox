@@ -6,6 +6,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.view.View
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.recyclerview.widget.DiffUtil
 import com.github.tvbox.osc.log.LogConfig
 import com.github.tvbox.osc.player.PlayerTrackHelper
@@ -63,12 +64,33 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
     /** 进过主题编辑页并保存/删除过:弹窗关闭时要提交并重启生效(见 showThemePicker) */
     private var themeEditedWhileOpen = false
 
+    /** 等着接收外部备份 ZIP 的备份弹窗(弹窗自己拉不了 ActivityResult,由本页代选并回传) */
+    private var pendingExternalBackup: BackupDialog? = null
+
+    /**
+     * 外部备份包只可能是 ZIP:按压缩包过滤,并带上 octet-stream ——
+     * 不少 ROM / 网盘下载下来的 zip 会被报成未知二进制,漏了它文件管理里就"什么都没有"。
+     */
+    private val externalBackupMimeTypes = arrayOf(
+        "application/zip", "application/x-zip-compressed", "application/octet-stream"
+    )
+
+    private val pickExternalBackup =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            val dialog = pendingExternalBackup
+            pendingExternalBackup = null
+            // 取消选择:什么都不做,不能顺手拿别的备份顶替
+            if (uri == null) return@registerForActivityResult
+            if (dialog == null) {
+                AppBubble.toast("备份弹窗已关闭，请重新打开后再选择")
+                return@registerForActivityResult
+            }
+            dialog.onExternalBackupPicked(uri)
+        }
+
     private companion object {
         /** 主题编辑页请求码 */
         const val REQ_THEME_EDITOR = 0x0E10
-
-        /** 调试包的主题自检提示:整个进程只弹一次(见 showThemeProbeOnce) */
-        private var themeProbeShown = false
     }
 
     override fun init() {
@@ -164,16 +186,14 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
         mBinding.llBackup.setOnClickListener { v: View? ->
             FastClickCheckUtil.check(v)
             if (XXPermissions.isGranted(this@SettingActivity, Permission.MANAGE_EXTERNAL_STORAGE)) {
-                val dialog = BackupDialog(this@SettingActivity)
-                dialog.show()
+                showBackupDialog()
             } else {
                 XXPermissions.with(this@SettingActivity)
                     .permission(Permission.MANAGE_EXTERNAL_STORAGE)
                     .request(object : OnPermissionCallback {
                         override fun onGranted(permissions: List<String>, all: Boolean) {
                             if (all) {
-                                val dialog = BackupDialog(this@SettingActivity)
-                                dialog.show()
+                                showBackupDialog()
                             }
                         }
 
@@ -454,6 +474,15 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
             mBinding.switchInternalDownload.setChecked(enabled)
             refreshInternalDownloadSettingsVisibility()
         }
+        // 磁力/荐片通道开关(默认关闭:涉及伪造设备标识/硬编码凭证/仅 ARM so)
+        mBinding.switchThunderP2p.setChecked(SystemConfig.isThunderP2pEnabled())
+        mBinding.llThunderP2p.setOnClickListener { view: View ->
+            FastClickCheckUtil.check(view)
+            val enabled = !SystemConfig.isThunderP2pEnabled()
+            SystemConfig.setThunderP2pEnabled(enabled)
+            mBinding.switchThunderP2p.setChecked(enabled)
+            AppBubble.toast("磁力/荐片通道已" + if (enabled) "开启" else "关闭")
+        }
         // 仅 Wi-Fi 下载开关
         mBinding.switchDlWifiOnly.setChecked(DownloadFacade.get().isWifiOnly())
         mBinding.llDlWifiOnly.setOnClickListener {
@@ -697,17 +726,6 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
         mBinding.llVideoPurify.contentDescription = "广告过滤，$label"
     }
 
-    /**
-     * 调试包专用(每次进程一次):把"这次到底解析成了什么配色"直接摆出来,省去翻日志 ——
-     * 内容包括生效主题名、面的实际 ARGB、浮层的实际 ARGB,以及**面/浮层 drawable 能否按主题重建**。
-     * 有了这三项就能立刻分清:"没选中自定义主题" / "派生出的透明度不对" / "drawable 重建通道没通"。
-     */
-    private fun showThemeProbeOnce() {
-        // 用户口径:"主题自检先移除" —— 自检提示已停用(保留空实现,免得 removed 掉调用点后
-        // 有人又照旧文档去找这个弹窗)。要临时再开,把下面这段恢复即可:
-        //   按 debuggable 判断 → 打印 主题名 / 面 / 浮层 / 重建 / 包装 / 文本 / 圆角 / 主题文件里的值
-    }
-
     /** 背景图取值:默认(跟随主题) / 自定义(用户自己设过,含显式纯色) */
     private fun updatePageBackgroundValue() {
         mBinding.tvPageBackground.text =
@@ -761,6 +779,15 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
         XPopup.Builder(this)
             .asCustom(TextTipDialog(this, title, getString(contentRes)))
             .show()
+    }
+
+    /** 数据备份还原弹窗:带上"选外部 ZIP"的入口(弹窗不能自己拉 ActivityResult,由本页代选回传) */
+    private fun showBackupDialog() {
+        val dialog = BackupDialog(this, BackupDialog.ExternalBackupHost { target ->
+            pendingExternalBackup = target
+            pickExternalBackup.launch(externalBackupMimeTypes)
+        })
+        dialog.show()
     }
 
     private fun openLanServicePage() {

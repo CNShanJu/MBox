@@ -105,7 +105,7 @@ public final class ThemeDrawableFactory {
             // 缓存 ConstantState 再 state.newDrawable(resources) 复用,框架会按密度重缩放圆角,
             // 而且只缩前四个槽:[16×8] 变成 [47,47,47,47,16,16,16,16] —— 同一份 drawable 的
             // 上两角被放大、下两角保持原值,画出来就是"上面很圆、下面很方"。
-            // 真机对照实测(见 RadiusCheck):
+            // 真机对照实测:
             //   setCornerRadii(16×8) 现造          → 原始 [16×8]      几何 11/11/11/11 ✓
             //   setCornerRadii(16×8) 后走 state 复用 → 原始 [47,47,47,47,16,16,16,16] 几何 38/38/11/11 ✗
             // 生成 drawable 只在 inflate/上底时创建,现造的开销可接受;换正确性。

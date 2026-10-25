@@ -1,6 +1,7 @@
 package com.github.tvbox.osc.transfer
 
 import android.content.Context
+import android.net.Uri
 import com.github.tvbox.osc.config.PrefsDataStore
 import com.github.tvbox.osc.data.AppDataManager
 import com.github.tvbox.osc.share.ShareArchives
@@ -50,21 +51,43 @@ class BackupArchive(private val context: Context) {
 
     private val hub = ConfigDomains.hub()
 
-    fun create(backupDirectory: File): File {
+    /**
+     * 导出归档字节到备份目录内的临时文件。
+     *
+     * <p>文件名要等算出内容摘要才能定（见 {@link BackupNaming}），所以这一步只产出字节：
+     * 调用方改名成最终文件，或在"同一份数据已经备份过"时把它删掉。失败会自行清理。
+     */
+    fun createStaged(backupDirectory: File): File {
         BackupArchiveFiles.ensureDirectory(backupDirectory)
-        val temporary = File(backupDirectory, "mbox_backup_" + UUID.randomUUID() + ".tmp")
+        val temporary = File(backupDirectory, "mbox_backup_" + UUID.randomUUID() + BackupNaming.TEMP_SUFFIX)
         var archive: File? = null
         try {
             // 导出期间占住 Room 线程 + 订阅文件锁，与配置导入互斥（原 withDataLock 语义）。
             archive = BackupDataLock.withDataLock { hub.exportArchive(BACKUP_DOMAINS, FILE_NAME, true) }
             copyBounded(archive, temporary)
             if (temporary.length() > BackupLimits.ARCHIVE) throw IOException("备份 ZIP 过大")
-            val saved = File(backupDirectory, uniqueName(backupDirectory))
-            if (!temporary.renameTo(saved)) throw IOException("备份文件落盘失败")
-            return saved
+            return temporary
+        } catch (error: Throwable) {
+            temporary.delete()
+            throw error
         } finally {
             archive?.delete()
-            temporary.delete()
+        }
+    }
+
+    /**
+     * 按时间命名落盘的归档：系统临时快照（[SystemBackupStore]）用，
+     * 手动备份走 [createStaged] + 内容摘要命名。
+     */
+    fun create(backupDirectory: File): File {
+        val staged = createStaged(backupDirectory)
+        try {
+            val saved = File(backupDirectory, uniqueName(backupDirectory))
+            if (!staged.renameTo(saved)) throw IOException("备份文件落盘失败")
+            return saved
+        } catch (error: Throwable) {
+            staged.delete()
+            throw error
         }
     }
 
@@ -75,6 +98,27 @@ class BackupArchive(private val context: Context) {
      */
     fun restore(backupZip: File, hook: TransferHook?): String {
         BackupArchiveFiles.requireArchive(backupZip)
+        return dispatch(backupZip, hook)
+    }
+
+    /**
+     * 还原系统文件管理里选中的**外部** ZIP（content:// 等），校验与分发与本地备份完全一致。
+     *
+     * <p>为什么要先落盘：还原链路用 {@link ZipFile} 读文件路径，content:// 读不了；落盘这一步
+     * 顺带把"非空 + 不超过 {@link BackupLimits#ARCHIVE}"卡在拷贝过程中，超大文件不会被整个读进内存。
+     */
+    fun restore(source: Uri, hook: TransferHook?): String {
+        val staged = File(context.cacheDir, "external_" + UUID.randomUUID() + ".zip")
+        try {
+            copyBounded(source, staged)
+            BackupArchiveFiles.requireArchive(staged)
+            return dispatch(staged, hook)
+        } finally {
+            staged.delete()
+        }
+    }
+
+    private fun dispatch(backupZip: File, hook: TransferHook?): String {
         val work = File(context.cacheDir, "restore_" + UUID.randomUUID())
         if (!work.mkdir()) throw IOException("无法准备还原临时目录")
         try {
@@ -139,6 +183,22 @@ class BackupArchive(private val context: Context) {
         source.inputStream().use { input ->
             target.outputStream().use { output ->
                 BackupContentHash.consume(input, BackupLimits.ARCHIVE, source.length()) { buffer, count ->
+                    output.write(buffer, 0, count)
+                }
+            }
+        }
+    }
+
+    /** 外部来源只有流，声明尺寸未知（-1）：上限靠 {@link BackupContentHash#consume} 边读边卡。 */
+    private fun copyBounded(source: Uri, target: File) {
+        val input = try {
+            context.contentResolver.openInputStream(source)
+        } catch (error: Exception) {
+            throw IOException("无法读取所选文件", error)
+        } ?: throw IOException("无法读取所选文件")
+        input.use { stream ->
+            target.outputStream().use { output ->
+                BackupContentHash.consume(stream, BackupLimits.ARCHIVE) { buffer, count ->
                     output.write(buffer, 0, count)
                 }
             }

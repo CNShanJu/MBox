@@ -127,13 +127,16 @@ public class App extends MultiDexApplication {
         clearSplashNightModeOverride();
         initParams();
         LogStore.get().installCrashHandler();
+        // 第三方爬虫把扫码 cookie 直接写到 /sdcard/tvfan/xxx.txt,只 open 文件不建父目录;
+        // 父目录不存在时写入抛异常被 jar 自己吞掉,表现是"扫码成功却什么都没留下"。
+        // 放在启动期(而不是等 jar 加载)是为了让目录在任何一次爬虫写入之前就已经存在。
+        com.github.catvod.crawler.JarLoader.prepareCredentialDirs();
         StartupGuard.scheduleHealthyMark(this);
         // OKGo: 全局 OkHttpClient 初始化(:core-network, context 注入); Exo/Picasso 初始化拆回 app 侧
         OkGoHelper.init(this);
         initPicasso();
         // 安全 DNS 变更订阅:本模块的播放客户端与 Picasso 都要跟着换(必须在 initPicasso 之后注册)
         registerDohChangeListener();
-        // EPG JSON 解析从启动主线程移除:首次直播取 EPG 信息时懒加载(EpgUtil.getEpgInfo 内自触发)
         // 初始化Web服务器
         ControlManager.init(this);
         // ApiConfig(:spider 模块) context + 局域网地址注入(替代直接依赖)
@@ -168,8 +171,6 @@ public class App extends MultiDexApplication {
         Utils.initTheme();
         // 业务日志(系统类目):应用启动(旧 AppLog 文件通道已退役,统一走 LogStore 结构化日志)
         LogStore.log(Category.SYSTEM, "应用启动(Android " + android.os.Build.VERSION.RELEASE + ")");
-        // 暂停启动时的圆角资源自检日志，需要排障时恢复调用。
-        // com.github.tvbox.osc.theme.RadiusCheck.report(this);
         // 全局系统状态监控(网络/前后台/横竖屏/电量/磁盘, 基座层)必须先于下载模块初始化:
         // 下载模块在构造时会订阅网络事件(仅WiFi暂停/恢复),若监控未就绪订阅被跳过 → 切流量不停、恢复无法继续
         SystemStateMonitor.init(this);
@@ -291,7 +292,7 @@ public class App extends MultiDexApplication {
         putDefault(HawkConfig.PLAY_TYPE, 2);                 //播放器: 0=系统, 2=Media3
         putDefault(HawkConfig.PLAY_RENDER, 1);               //渲染视图: 0=TextureView, 1=SurfaceView
         putDefault(HawkConfig.BACKGROUND_PLAY_TYPE, 0);          //后台播放:默认关闭;0 关闭,1 开启,2 画中画
-        putDefault(HawkConfig.DOH_URL, 0);                   //安全DNS: 0=关闭, 1=腾讯, 2=阿里, 3=360, 4=Google, 5=AdGuard, 6=Quad9
+        putDefault(HawkConfig.DOH_URL, 0);                   //安全DNS: 0=关闭, 1=腾讯, 2=阿里, 3=360
         putDefault(HawkConfig.PLAY_SCALE, 0);                //画面缩放: 0=默认, 1=16:9, 2=4:3, 3=填充, 4=原始, 5=裁剪
         putDefault(HawkConfig.HISTORY_NUM, 2);                //历史记录数量: 0=30, 1=50, 2=70
         putDefault(HawkConfig.APP_LOG, false);                //运行日志:默认关闭,排查问题时开启

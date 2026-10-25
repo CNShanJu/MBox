@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 批次重命名弹窗(比 dialog_input_subsription 少地址/勾选,只改批次名):
+     标题 + 名称输入 + 取消/保存。根背景 bg_dialog 与其它居中弹窗同档
+     (AppCenterPopupView.onCreate 还会统一 apply 一次,幂等)。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_dialog"
+    android:orientation="vertical"
+    android:paddingHorizontal="30dp"
+    android:paddingVertical="20dp">
+
+    <TextView
+        android:id="@+id/tv_title"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="重命名批次"
+        android:textColor="@color/text_foreground"
+        android:textSize="16sp" />
+
+    <com.google.android.material.textfield.TextInputLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.Dense"
+        app:boxStrokeColor="@color/text_main_half"
+        app:hintTextColor="@color/text_main_half"
+        app:placeholderTextColor="@color/text_main_half">
+
+        <EditText
+            android:id="@+id/et_name"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@null"
+            android:hint="批次名称"
+            android:inputType="text"
+            android:maxLength="20"
+            android:singleLine="true"
+            android:textColor="@color/text_foreground"
+            android:textColorHint="@color/text_main_half"
+            android:textSize="14sp" />
+
+    </com.google.android.material.textfield.TextInputLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_cancel"
+            style="@style/BtnSecondary"
+            android:layout_width="0dp"
+            android:layout_height="33dp"
+            android:layout_marginRight="20dp"
+            android:layout_weight="1"
+            android:insetBottom="0dp"
+            android:insetTop="0dp"
+            android:text="取 消" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_confirm"
+            style="@style/BtnPrimary"
+            android:layout_width="0dp"
+            android:layout_height="33dp"
+            android:layout_weight="1"
+            android:insetBottom="0dp"
+            android:insetTop="0dp"
+            android:text="保 存" />
+
+    </LinearLayout>
+
+</LinearLayout>

@@ -13,13 +13,12 @@ import android.widget.TextView;
 
 import androidx.core.content.ContextCompat;
 
-import com.blankj.utilcode.util.SPUtils;
 import com.chad.library.adapter.base.BaseQuickAdapter;
 import com.chad.library.adapter.base.BaseViewHolder;
 import com.github.tvbox.osc.R;
 import com.github.tvbox.osc.bean.VideoInfo;
-import com.github.tvbox.osc.constant.CacheConst;
 import com.github.tvbox.osc.util.HeavyTaskUtil;
+import com.github.tvbox.osc.util.LocalVideoConfig;
 import com.github.tvbox.osc.util.PicassoLoad;
 import com.github.tvbox.osc.util.Utils;
 
@@ -120,10 +119,10 @@ public class LocalVideoAdapter extends BaseQuickAdapter<VideoInfo, BaseViewHolde
         TextView tvDuration = helper.getView(R.id.tv_duration);
         long duration = item.getDuration();
         if (duration <= 0) {
-            long cache = SPUtils.getInstance(CacheConst.VIDEO_DURATION_SP).getLong(item.getPath(), -1);
+            long cache = LocalVideoConfig.getDuration(item.getPath(), -1L);
             if (cache > 0) duration = cache;
         }
-        long progressPlayed = SPUtils.getInstance(CacheConst.VIDEO_PROGRESS_SP).getLong(item.getPath(), -1);
+        long progressPlayed = LocalVideoConfig.getProgress(item.getPath(), -1L);
         if (duration > 0) {
             progressBar.setVisibility(View.VISIBLE);
             progressBar.setMax((int) duration);
@@ -209,12 +208,12 @@ public class LocalVideoAdapter extends BaseQuickAdapter<VideoInfo, BaseViewHolde
                 }
                 // 时长补写 SP + 刷新该行时长文本/进度条
                 if (fdur > 0) {
-                    SPUtils.getInstance(CacheConst.VIDEO_DURATION_SP).put(path, fdur);
+                    LocalVideoConfig.saveDuration(path, fdur);
                     Object[] views = (Object[]) iv.getTag(TAG_KEY_VIEWS);
                     if (views != null && views[0] instanceof TextView) {
                         TextView tvDuration = (TextView) views[0];
                         ProgressBar pb = (ProgressBar) views[1];
-                        long played = SPUtils.getInstance(CacheConst.VIDEO_PROGRESS_SP).getLong(path, -1);
+                        long played = LocalVideoConfig.getProgress(path, -1L);
                         if (pb != null) {
                             pb.setVisibility(View.VISIBLE);
                             pb.setMax((int) fdur);

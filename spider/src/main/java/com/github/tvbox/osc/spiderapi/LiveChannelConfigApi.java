@@ -70,8 +70,12 @@ public interface LiveChannelConfigApi {
         }
     }
 
-    /** 用直播源 json(lives 数组)重建频道分组 */
-    void loadLives(JsonArray livesArray);
+    /**
+     * 就地重载「用户在设置里配置的直播源」对应的主直播分组（不重拉订阅配置、不重启进程）：
+     * 按当前 {@code SystemConfig.getLiveUrl()} 重建主列表，为空则回落到订阅源自带的直播。
+     * 直播源切换后免重启生效的入口；同步原子发布新快照，无网络 IO。
+     */
+    void reloadLiveSource();
 
     /** 在模块共享执行器上构建频道模型，主线程整体发布后回调。 */
     void loadLivesAsync(JsonArray livesArray, LoadCallback callback);

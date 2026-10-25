@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 批次组头按下反馈。
+     不用系统 ?android:attr/selectableItemBackground:它取平台/AppCompat 默认的 colorControlHighlight
+     (浅色主题下是系统蓝灰、深色下是纯黑 12%),不跟本项目主题走 —— 在自定义主色/自定义背景上
+     按下时会闪一块"外来"的颜色,与「颜色一律走主题资源」的口径不一致。
+     这里用工程既有的 gray_darker_press_alpha(50% 中性灰,深浅主题都成立,与 item_source、下载列表同源)。
+     形状只给矩形、不加圆角:组头是卡片内的一行,外侧圆角由 RecyclerView 容器 clipToOutline 负责,
+     这里再圆一次会在左右边缘出现缺口(双圆角)。 -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="@color/gray_darker_press_alpha">
+    <item android:id="@android:id/mask">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/white" />
+        </shape>
+    </item>
+</ripple>

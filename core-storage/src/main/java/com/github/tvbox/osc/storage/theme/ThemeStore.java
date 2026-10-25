@@ -80,6 +80,13 @@ public final class ThemeStore {
     public static final int NAME_MAX_LEN = 6;
 
     private static final Object LOCK = new Object();
+    /** 后台清理执行器(gc 的文件扫描+删除放后台,避免主线程卡顿) */
+    private static final java.util.concurrent.ExecutorService GC_EXECUTOR =
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "ThemeStore-gc");
+                t.setDaemon(true);
+                return t;
+            });
 
     private static volatile Context appContext;
     /** 用户主题缓存(按 createdAt 升序);{@code null} = 尚未加载 */
@@ -929,15 +936,18 @@ public final class ThemeStore {
     }
 
     /**
-     * 回收背景图:删掉没有被任何主题引用的文件。
+     * 回收背景图:删掉没有被任何主题引用的文件(异步,文件扫描+删除放后台,避免主线程卡顿)。
      * <p>引用集合由<b>所有用户主题</b>汇总 —— 包括没被选中的那些(它们随时可能被切回来)。
      *
-     * @return 删掉的文件数
+     * @return 立即返回 0,实际清理在后台完成(调用方本就不依赖返回值)
      */
     public static int gc() {
-        synchronized (LOCK) {
-            return gcLocked();
-        }
+        GC_EXECUTOR.execute(() -> {
+            synchronized (LOCK) {
+                gcLocked();
+            }
+        });
+        return 0;
     }
 
     private static int gcLocked() {

@@ -59,7 +59,8 @@
             android:layout_weight="1"
             android:orientation="vertical"
             android:layout_marginHorizontal="20dp"
-            android:background="@drawable/bg_large_round_float">
+            android:background="@drawable/bg_large_round_float"
+            android:clipToOutline="true">
 
         <!-- 选项行超出时在卡片内部滚动;拖到顶/底可越界跟手回弹(iOS 橡皮筋,见 RubberBandScrollView)。
              保留上下内边距并关闭裁剪，让首末行滚动时仍与圆角卡片边缘留空。 -->

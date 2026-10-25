@@ -68,6 +68,8 @@ public class FastSearchAdapter extends BaseQuickAdapter<Movie.Video, BaseViewHol
     private static final int TAG_LAST_IMAGE_KEY = 0x3D000001;
     /** "延迟启动扫光"Runnable tag(加载结果到来时取消) */
     private static final int TAG_SHIMMER_RUN = 0x3D000002;
+    /** Target 强引用 tag:复用 view 时先清理旧 Target,防止回调错乱/被 GC */
+    private static final int TAG_TARGET = 0x3D000004;
     /** 扫光延迟(ms):加载在此内完成(缓存/较快网络)则不启动骨架屏,只有真正慢(>1s)才扫光 */
     private static final long SHIMMER_DELAY_MS = 1000L;
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
@@ -234,10 +236,18 @@ public class FastSearchAdapter extends BaseQuickAdapter<Movie.Video, BaseViewHol
         }
         boolean banner = mode == MODE_BANNER;
         String imageKey = url + (banner ? "_search_banner_300x200" : "_search_poster_200x267");
-        // 恢复为正常占位(上一张可能是"加载失败");此处不动 src,下面同图去重命中要保留已显示的图
+        // 恢复为正常占位(上一张可能是"加载失败");占位走背景层,不动 src。
         com.github.tvbox.osc.util.PicassoLoad.setLoadingPlaceholder(ivThumb);
-        // 同一张图已显示(滑回/复用相同项):不重载、不闪
-        if (imageKey.equals(ivThumb.getTag(TAG_LAST_IMAGE_KEY))) return;
+        // 换绑新图前:先取消上一张还在途的 Picasso 请求(含旧 Target),再撤掉延迟扫光任务 + 停掉扫光,
+        // 并清空 src 露出占位(否则复用瞬间会残留上一张不同 item 的旧图,直到新图加载完成)。
+        // 带 Callback 的 into() 不会自动 cancel 上一个 target 的请求;不复用就取消,上一张图加载成功/失败
+        // 的回调会在 view 复用给新 item 之后触发,把旧图错画到新 item 上,正是"一张图同时渲染给两张卡、
+        // 后面整体下移错位"的根因。
+        Object oldTarget = ivThumb.getTag(TAG_TARGET);
+        if (oldTarget instanceof com.squareup.picasso.Target) {
+            Picasso.get().cancelRequest((com.squareup.picasso.Target) oldTarget);
+        }
+        Picasso.get().cancelRequest(ivThumb);
         ivThumb.setTag(TAG_LAST_IMAGE_KEY, imageKey);
         ivThumb.setImageDrawable(null);
         int w = AutoSizeUtils.dp2px(mContext, banner ? 300 : 200);
@@ -255,7 +265,7 @@ public class FastSearchAdapter extends BaseQuickAdapter<Movie.Video, BaseViewHol
             cancelShimmer(ivThumb);
             final String tagImageKey = imageKey;
             Runnable run = () -> {
-                // 双保险:view 已经复用到别的图、或实图已经出图(src 已被 Picasso 填上)就不启动
+                // 双保险:view 已经复用到别的图、或实图已经出图(src 已被填上)就不启动
                 if (!tagImageKey.equals(ivThumb.getTag(TAG_LAST_IMAGE_KEY))) return;
                 if (ivThumb.getDrawable() != null) return;
                 com.github.tvbox.osc.ui.kit.PicassoShimmer.start(ivThumb);
@@ -263,29 +273,42 @@ public class FastSearchAdapter extends BaseQuickAdapter<Movie.Video, BaseViewHol
             ivThumb.setTag(TAG_SHIMMER_RUN, run);
             MAIN.postDelayed(run, SHIMMER_DELAY_MS);
         }
+        // 关键:不用 into(iv, callback) —— 其内部 ImageViewAction.complete() 会无条件把下载结果
+        // setImageDrawable 到 view 上,即使该 view 已复用给别的 item(weak reference 还活着时),
+        // 正是图片错位根源。改用自定义 Target,onBitmapLoaded 里自己校验"view 当前绑定的 key
+        // 仍是本 key"后才 setImageBitmap,彻底杜绝旧请求把图错画到复用后的 view。
+        final com.squareup.picasso.Target target = new com.squareup.picasso.Target() {
+            @Override
+            public void onBitmapLoaded(android.graphics.Bitmap bitmap, Picasso.LoadedFrom from) {
+                if (!imageKey.equals(ivThumb.getTag(TAG_LAST_IMAGE_KEY))) return; // view 已复用,丢弃
+                loadedImages.add(imageKey);
+                failedUrls.remove(url);
+                cancelShimmer(ivThumb);
+                com.github.tvbox.osc.ui.kit.PicassoShimmer.stop(ivThumb);
+                ivThumb.setImageDrawable(new android.graphics.drawable.BitmapDrawable(ivThumb.getResources(), bitmap));
+            }
+
+            @Override
+            public void onBitmapFailed(Exception e, android.graphics.drawable.Drawable errorDrawable) {
+                if (!imageKey.equals(ivThumb.getTag(TAG_LAST_IMAGE_KEY))) return; // view 已复用,不处理
+                failedUrls.put(url, System.currentTimeMillis());
+                ivThumb.setTag(TAG_LAST_IMAGE_KEY, null);
+                com.github.tvbox.osc.util.PicassoLoad.showFailedPlaceholder(ivThumb);
+            }
+
+            @Override
+            public void onPrepareLoad(android.graphics.drawable.Drawable placeHolderDrawable) {
+                // 占位走背景层,不塞 src
+            }
+        };
+        ivThumb.setTag(TAG_TARGET, target); // 强引用 Target,防止被 GC(复用前先清理旧 Target)
         Picasso.get()
                 .load(url)
                 .transform(new RoundTransformation(cacheKey)
                         .centerCorp(true)
                         .override(w, h)
                         .roundRadius(radius, RoundTransformation.RoundType.ALL))
-                .into(ivThumb, new com.squareup.picasso.Callback() {
-                    @Override
-                    public void onSuccess() {
-                        loadedImages.add(imageKey);
-                        failedUrls.remove(url); // 重试成功:清掉失败记录
-                        cancelShimmer(ivThumb);
-                        com.github.tvbox.osc.ui.kit.PicassoShimmer.stop(ivThumb);
-                    }
-
-                    @Override
-                    public void onError(Exception e) {
-                        // 加载失败:记入失败窗口(窗口内滑回不再重试)并切到带"图片加载失败"文字的占位
-                        failedUrls.put(url, System.currentTimeMillis());
-                        ivThumb.setTag(TAG_LAST_IMAGE_KEY, null);
-                        com.github.tvbox.osc.util.PicassoLoad.showFailedPlaceholder(ivThumb);
-                    }
-                });
+                .into(target);
     }
 
     private void cancelShimmer(ImageView iv) {

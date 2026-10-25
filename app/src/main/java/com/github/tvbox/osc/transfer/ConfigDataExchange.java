@@ -210,11 +210,24 @@ public final class ConfigDataExchange {
             if (name.isEmpty()) continue;
             String url = string(item, "url").trim();
             String content = string(item, "content");
+            String origin = string(item, "origin");
+            // 本地包订阅(origin=package)：关联文件已随 local_packages 目录整体传输并还原，
+            // url 指向的包内配置在还原后即存在，这里按原地址直接加入，不需要内嵌 content。
+            if (Subscription.ORIGIN_PACKAGE.equals(origin)) {
+                if (!url.startsWith("clan://") || url.isEmpty() || !urls.add(url)) continue;
+                Subscription sub = new Subscription(name, url, Subscription.ORIGIN_PACKAGE);
+                applyBatch(sub, item);
+                merged.add(sub);
+                added++;
+                continue;
+            }
             if (content.isEmpty() && url.startsWith("clan://")) continue;
             if (!content.isEmpty()) url = storeLocalSubscription(content, string(item, "file"));
             if (url.isEmpty() || !validSubscriptionUrl(url) || !urls.add(url)) continue;
-            String origin = string(item, "origin");
-            merged.add(new Subscription(name, url, origin.isEmpty() ? Subscription.ORIGIN_DIRECT : origin));
+            String itemOrigin = origin.isEmpty() ? Subscription.ORIGIN_DIRECT : origin;
+            Subscription sub = new Subscription(name, url, itemOrigin);
+            applyBatch(sub, item);
+            merged.add(sub);
             added++;
         }
         if (added > 0) {
@@ -231,6 +244,32 @@ public final class ConfigDataExchange {
 
     private static boolean validSubscriptionUrl(String url) {
         return url.startsWith("https://") || url.startsWith("http://") || url.startsWith("clan://localhost/");
+    }
+
+    /**
+     * 订阅批次字段随传输还原：导出侧 {@link SubscriptionExporter#describeForTransfer} 带出的
+     * {@code batchId}/{@code batchName}/{@code batchTime}，这里按同名字段补回，
+     * 保证局域网/在线配置分享导入后批次分组（手风琴）不丢失、与订阅清单导入链路行为一致。
+     */
+    private static void applyBatch(Subscription sub, JsonObject item) {
+        String batchId = string(item, "batchId").trim();
+        if (batchId.isEmpty()) return;
+        sub.setBatchId(batchId);
+        String batchName = string(item, "batchName").trim();
+        if (!batchName.isEmpty()) sub.setBatchName(batchName);
+        long batchTime = item.has("batchTime") && !item.get("batchTime").isJsonNull()
+                && item.get("batchTime").isJsonPrimitive()
+                ? runBatchTime(item.get("batchTime")) : 0L;
+        if (batchTime > 0L) sub.setBatchTime(batchTime);
+    }
+
+    /** 批次时间戳容错解析：数字原样取 long，非数字（外部/旧格式脏数据）返回 0，避免导入中断。 */
+    private static long runBatchTime(JsonElement element) {
+        try {
+            return element.getAsLong();
+        } catch (Throwable ignored) {
+            return 0L;
+        }
     }
 
     private String storeLocalSubscription(String content, String suggested) throws Exception {

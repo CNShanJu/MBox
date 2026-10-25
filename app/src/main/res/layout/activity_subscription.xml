@@ -132,15 +132,16 @@
         android:background="@drawable/bg_large_round_float"
         android:clipToOutline="true">
 
-        <!-- 列表内边距 + clipToPadding=true(与「我的」页卡片内部滚动一致):
+        <!-- 列表内边距 + clipToPadding=false(全站统一口径:内容不贴卡片上下边/圆角滚动,
+             见 AGENTS §六.7;与 rv_live/观看历史/收藏/快搜/「我的」页一致):
              首末条目离卡片上下边各留 10dp,滚动过程中内容也不越过内边距去贴卡片边缘/圆角;
-             条目自身还有 10dp 左右内边距,合计离卡片边 20dp,与「我的」页观感一致 -->
+             条目自身还有 10dp 左右内边距,合计离卡片边 20dp -->
         <com.github.tvbox.osc.ui.kit.RubberBandRecyclerView
             android:id="@+id/rv"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:background="@android:color/transparent"
-            android:clipToPadding="true"
+            android:clipToPadding="false"
             android:paddingVertical="10dp"
             tools:listitem="@layout/item_subscription"
             app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"/>

@@ -39,4 +39,12 @@ public final class ShareArchives {
 
     public static void check(@NonNull File archive, @Nullable ShareManifest manifest)
             throws ShareException { ShareArchive.check(archive, manifest); }
+
+    /** 导出侧:计算待打包条目(不含清单)的合并摘要,供写入清单 */
+    @NonNull public static ShareArchiveSummary summarizeEntries(@NonNull Map<String, File> entries)
+            throws IOException { return ShareArchive.summarizeEntries(entries); }
+
+    /** 导入侧:计算归档内数据条目(不含清单)的合并摘要,供校验 */
+    @NonNull public static ShareArchiveSummary summarizeArchive(@NonNull File archive)
+            throws IOException { return ShareArchive.summarizeArchive(archive); }
 }

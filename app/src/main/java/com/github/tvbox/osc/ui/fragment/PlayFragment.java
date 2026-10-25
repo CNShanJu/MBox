@@ -17,16 +17,15 @@ import com.blankj.utilcode.util.ColorUtils;
 import com.blankj.utilcode.util.LogUtils;
 import com.blankj.utilcode.util.RegexUtils;
 import com.blankj.utilcode.util.ScreenUtils;
-import com.blankj.utilcode.util.SPUtils;
 import com.blankj.utilcode.util.SpanUtils;
 import com.github.tvbox.osc.util.AppBubble;
+import com.github.tvbox.osc.util.LocalVideoConfig;
 import com.github.tvbox.osc.R;
 import com.github.tvbox.osc.base.App;
 import com.github.tvbox.osc.base.BaseLazyFragment;
 import com.github.tvbox.osc.bean.ParseBean;
 import com.github.tvbox.osc.bean.SourceBean;
 import com.github.tvbox.osc.bean.VodInfo;
-import com.github.tvbox.osc.constant.CacheConst;
 import com.github.tvbox.osc.player.MyVideoView;
 import com.github.tvbox.osc.player.api.PlayConfig;
 import com.github.tvbox.osc.player.controller.VodController;
@@ -72,6 +71,13 @@ import xyz.doikki.videoplayer.player.PlaybackErrorReporter;
 public class PlayFragment extends BaseLazyFragment {
     private static final String PLAYBACK_FAILURE_TIP = "播放失败，请更换线路重试";
     private static final String CONNECTION_FAILURE_TIP = "播放失败，请检查网络或更换线路";
+    private static final String LOADING_TIMEOUT_TIP = "加载超时，请稍后重试";
+    /**
+     * 加载看门狗时限:起播链(取播放信息→解析/嗅探→连接预检→清单→起播)任一环节静默断链时,
+     * 转圈不允许无限持续。各环节自身均有更短超时(嗅探 20s/预检 8s/清单 6s),
+     * 看门狗只兜底"回调被代数/令牌守卫静默丢弃"这类断链;起播/失败/切集/销毁都会解除。
+     */
+    private static final long LOADING_WATCHDOG_MS = 60_000L;
     /** 宿主同步接口(详情预览页选集高亮/播放配置回写;屏内直调,替代历史 EventBus TYPE_REFRESH 屏内事件) */
     public interface PlaySyncHost {
         void onEpisodeSelected(int index);
@@ -559,9 +565,12 @@ public class PlayFragment extends BaseLazyFragment {
             }
             if (loading) {
                 logPlaybackProgress(msg);
+                mLoadingStage = msg;
                 showPlaybackLoading();
                 return;
             }
+            // 非加载态:加载链已收尾(成功/失败/外部播放器)，看门狗解除
+            disarmLoadingWatchdog();
             String tip = err ? playbackErrorTip(msg) : msg;
             mPlayLoadTip.setText(tip);
             mPlayLoadTip.setVisibility(TextUtils.isEmpty(tip) ? View.GONE : View.VISIBLE);
@@ -588,7 +597,64 @@ public class PlayFragment extends BaseLazyFragment {
             mPlayLoadTip.setVisibility(View.GONE);
             mPlayLoading.setVisibility(View.VISIBLE);
             mPlayLoadErr.setVisibility(View.GONE);
+            armLoadingWatchdog();
         });
+    }
+
+    // ================= 加载看门狗(转圈不允许无限持续) =================
+
+    private final android.os.Handler mMainHandler =
+            new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable mLoadingWatchdog = this::onLoadingWatchdog;
+    /** 看门狗武装时的播放代次;晚到的旧代次看门狗不得误伤新请求。 */
+    private long mWatchdogGeneration = -1;
+    /** 最近一个加载阶段文案(超时提示与日志用)。 */
+    private String mLoadingStage = "";
+
+    private void armLoadingWatchdog() {
+        mMainHandler.removeCallbacks(mLoadingWatchdog);
+        mWatchdogGeneration = mPlaybackGeneration.get();
+        mMainHandler.postDelayed(mLoadingWatchdog, LOADING_WATCHDOG_MS);
+    }
+
+    private void disarmLoadingWatchdog() {
+        mMainHandler.removeCallbacks(mLoadingWatchdog);
+        mWatchdogGeneration = -1;
+    }
+
+    /**
+     * 看门狗到点:仍在转圈且内核未就绪 → 判定起播链断链。
+     * 按代次作废所有在途回调(预检/清单/解析/嗅探)，释放会话，给出可重试的超时提示。
+     */
+    private void onLoadingWatchdog() {
+        if (!isAdded() || mPlayLoadTip == null || mPlayLoading == null) return;
+        // 已经起播或已出提示:看门狗无需干预(正常情况下 hideTip/非加载 setTip 已解除)
+        if (mPlayLoading.getVisibility() != View.VISIBLE) return;
+        // 内核已就绪时转圈只是陈旧显示，不放超时错误
+        if (mPlaySession != null && mPlaySession.hasPreparedPlayback()) return;
+        long armed = mWatchdogGeneration;
+        if (armed < 0 || !isCurrentPlayback(armed)) return;
+        // 断链:新代次使所有在途回调失效
+        mPlaybackGeneration.incrementAndGet();
+        disarmLoadingWatchdog();
+        cancelAddressProbe();
+        HttpClient.cancel("m3u8-1");
+        HttpClient.cancel("m3u8-2");
+        if (mParseEngine != null) mParseEngine.stopParse();
+        if (mPlaySession != null) mPlaySession.release();
+        String detail = "播放加载超时(看门狗 " + (LOADING_WATCHDOG_MS / 1000) + "s): 阶段="
+                + (TextUtils.isEmpty(mLoadingStage) ? "未知" : mLoadingStage)
+                + "，地址=" + PlaybackErrorReporter.source(mRequestedPlayUrl);
+        com.github.tvbox.osc.log.LogStore.fail(com.github.tvbox.osc.log.Category.PLAYER, detail);
+        android.util.Log.e("MBoxPlayer", detail);
+        showFinalPlaybackError(LOADING_TIMEOUT_TIP, false, false);
+        if (mPlayLoadTip != null) {
+            mPlayLoadTip.setOnClickListener(view -> {
+                if (mVodInfo == null) return;
+                hideTip();
+                play(false);
+            });
+        }
     }
 
     private void logPlaybackProgress(String message) {
@@ -596,6 +662,278 @@ public class PlayFragment extends BaseLazyFragment {
         String detail = "播放过程: " + PlaybackErrorReporter.safeDiagnosticText(message);
         com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.PLAYER, detail);
         android.util.Log.i("MBoxPlayer", detail);
+    }
+
+    /**
+     * 诊断:只把 ext 里"凭据路径/URL 类"的值打出来(以 .txt 结尾或 http 开头的),
+     * 其余值一律打成 &lt;省略&gt;,避免把真正的 token 写进日志。
+     * <p>对相对路径额外做一次<b>磁盘探针</b>:爬虫框架的 {@code Path.root()} 固定在外部存储根,
+     * {@code Path.read()} 读不到时返回空串而不是 null,{@code Path.write()} 失败还静默返回。
+     * 也就是说"这个文件在不在"直接决定源把自己当已登录还是未登录,而它在界面上很难确认——
+     * 所以每行起播日志都带上,一次日志就能定论。
+     */
+    private static String describeExtCredentialPaths(String ext) {
+        if (TextUtils.isEmpty(ext)) return " ext=空";
+        try {
+            JSONObject o = new JSONObject(ext);
+            StringBuilder sb = new StringBuilder(" ext={");
+            StringBuilder probes = new StringBuilder();
+            boolean first = true;
+            Iterator<String> it = o.keys();
+            while (it.hasNext()) {
+                String k = it.next();
+                String v = o.optString(k, "");
+                boolean pathLike = v.endsWith(".txt") || v.startsWith("http");
+                if (!first) sb.append(',');
+                first = false;
+                sb.append(k).append('=').append(pathLike ? v : "<省略>");
+                if (pathLike && !v.startsWith("http")) {
+                    probes.append(" 文件[").append(v).append("]=").append(probeRelativeFile(v));
+                }
+            }
+            return sb.append('}').append(probes).toString();
+        } catch (Throwable t) {
+            return " ext=<非 JSON>";
+        }
+    }
+
+    /**
+     * 把相对路径在"爬虫可能读取的四个根"上各探一次:外部存储根、files/、cache/、外部私有目录。
+     * 只报存在性/大小/修改时间,<b>绝不读取内容</b>(里面是 cookie)。
+     */
+    private static String probeRelativeFile(String relative) {
+        java.io.File storage = externalStorageRoot();
+        StringBuilder hit = new StringBuilder();
+        probeOneFile(hit, "sdcard", storage, relative);
+        App app = App.getInstance();
+        if (app != null) {
+            probeOneFile(hit, "files", app.getFilesDir(), relative);
+            probeOneFile(hit, "cache", app.getCacheDir(), relative);
+            probeOneFile(hit, "extFiles", app.getExternalFilesDir(null), relative);
+        }
+        if (hit.length() > 0) return hit.toString();
+        // 四个根都没有:再报一次父目录是否存在,用来区分"目录没建"和"建了但没写文件"
+        boolean parentExists = false;
+        if (storage != null) {
+            java.io.File parent = new java.io.File(storage, relative).getParentFile();
+            parentExists = parent != null && parent.isDirectory();
+        }
+        return "全无(父目录:" + (parentExists ? "有" : "无")
+                + " /sdcard顶层:" + sdcardTopLevel() + ")";
+    }
+
+    /** 只算一次并缓存：同一次起播里多行日志重复输出整份目录名没有意义。 */
+    private static String sdcardTopLevel;
+
+    private static String sdcardTopLevel() {
+        if (sdcardTopLevel != null) return sdcardTopLevel;
+        StringBuilder sb = new StringBuilder();
+        try {
+            java.io.File storage = externalStorageRoot();
+            java.io.File[] children = storage == null ? null : storage.listFiles();
+            if (children != null) {
+                int shown = 0;
+                for (java.io.File child : children) {
+                    if (child == null || !child.isDirectory() || shown >= 20) continue;
+                    if (shown > 0) sb.append(',');
+                    sb.append(child.getName());
+                    shown++;
+                }
+            }
+        } catch (Throwable ignored) {
+            // 探针失败不影响播放链路
+        }
+        sdcardTopLevel = sb.length() == 0 ? "?" : sb.toString();
+        return sdcardTopLevel;
+    }
+
+    private static void probeOneFile(StringBuilder out, String label, java.io.File root, String relative) {
+        if (root == null) return;
+        try {
+            java.io.File file = new java.io.File(root, relative);
+            if (!file.isFile()) return;
+            if (out.length() > 0) out.append(' ');
+            out.append('[').append(label).append("]√").append(file.length()).append('B');
+            java.text.SimpleDateFormat fmt =
+                    new java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.US);
+            out.append('@').append(fmt.format(new java.util.Date(file.lastModified())));
+        } catch (Throwable ignored) {
+            // 探针失败不影响播放链路
+        }
+    }
+
+    private static java.io.File externalStorageRoot() {
+        try {
+            return android.os.Environment.getExternalStorageDirectory();
+        } catch (Throwable error) {
+            return null;
+        }
+    }
+
+    /**
+     * 最近 15 分钟被改写的小文件（≤256KB）：扫码那一下把"已登录"状态写到了哪，这一行直接给答案。
+     * <p>只报目录/文件名/时间，<b>不读内容</b>（里面是 cookie）。扫过 {@code files/}、{@code cache/}、
+     * {@code databases/}、{@code shared_prefs/}、{@code app_webview/}——磁盘扫描和界面截图都拿不到
+     * 这些位置，而它们恰好是爬虫 jar 唯一能写的地方。全空同样是一个结论：状态不在本机。
+     */
+    private static String describeRecentTouched() {
+        // 窗口给 30 分钟：扫码到"再点一次起播"之间用户可能要操作一会儿，窗口太短会把证据漏掉
+        long since = System.currentTimeMillis() - 30L * 60L * 1000L;
+        java.util.List<java.io.File> roots = new java.util.ArrayList<>();
+        java.io.File storage = externalStorageRoot();
+        if (storage != null) roots.add(storage);
+        App app = App.getInstance();
+        if (app != null) {
+            addRecentRoot(roots, app.getFilesDir());
+            addRecentRoot(roots, app.getCacheDir());
+            addRecentRoot(roots, app.getExternalFilesDir(null));
+            try {
+                java.io.File dataDir = new java.io.File(app.getApplicationInfo().dataDir);
+                addRecentRoot(roots, new java.io.File(dataDir, "databases"));
+                addRecentRoot(roots, new java.io.File(dataDir, "shared_prefs"));
+                addRecentRoot(roots, new java.io.File(dataDir, "app_webview"));
+            } catch (Throwable ignored) {
+                // dataDir 拿不到时不影响播放链路
+            }
+        }
+        java.util.List<java.io.File> hits = new java.util.ArrayList<>();
+        int[] budget = {500};
+        for (java.io.File root : roots) {
+            collectRecentFiles(root, 0, 2, since, hits, budget);
+        }
+        boolean fallback = false;
+        if (hits.isEmpty()) {
+            // 窗口内没动静时退化成"最近改过的几个文件":否则这行日志等于什么都没说,
+            // 而"确实一条都没有"本身也是要能看见的结论。
+            fallback = true;
+            budget[0] = 500;
+            for (java.io.File root : roots) {
+                collectRecentFiles(root, 0, 2, 0L, hits, budget);
+            }
+        }
+        if (hits.isEmpty()) return " 最近30分钟:无文件改动";
+        hits.sort((left, right) -> Long.compare(right.lastModified(), left.lastModified()));
+        java.text.SimpleDateFormat fmt = new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US);
+        StringBuilder sb = new StringBuilder(fallback ? " 最近改动(超30分钟):" : " 最近30分钟:");
+        int shown = 0;
+        for (java.io.File file : hits) {
+            if (shown >= 6) break;
+            java.io.File parent = file.getParentFile();
+            if (shown > 0) sb.append(',');
+            if (parent != null) sb.append(parent.getName()).append('/');
+            sb.append(file.getName()).append('@')
+                    .append(fmt.format(new java.util.Date(file.lastModified())));
+            shown++;
+        }
+        return sb.toString();
+    }
+
+    private static void addRecentRoot(java.util.List<java.io.File> roots, java.io.File dir) {
+        if (dir == null) return;
+        for (java.io.File root : roots) {
+            if (root.equals(dir)) return;
+        }
+        roots.add(dir);
+    }
+
+    private static void collectRecentFiles(java.io.File dir, int level, int maxDepth, long since,
+                                           java.util.List<java.io.File> out, int[] budget) {
+        if (dir == null || budget[0] <= 0) return;
+        java.io.File[] children;
+        try {
+            if (!dir.isDirectory()) return;
+            children = dir.listFiles();
+        } catch (Throwable error) {
+            return;
+        }
+        if (children == null) return;
+        for (java.io.File child : children) {
+            if (child == null || budget[0] <= 0) continue;
+            budget[0]--;
+            try {
+                if (child.isDirectory()) {
+                    if (level + 1 >= maxDepth) continue;
+                    String name = child.getName();
+                    if (name == null || name.startsWith(".")) continue;
+                    // 跳过媒体/系统目录：它们的写入与登录状态无关，只会把预算烧光
+                    String lower = name.toLowerCase(java.util.Locale.ROOT);
+                    if ("android".equals(lower) || "dcim".equals(lower) || "movies".equals(lower)
+                            || "music".equals(lower) || "pictures".equals(lower)
+                            || "download".equals(lower)) continue;
+                    collectRecentFiles(child, level + 1, maxDepth, since, out, budget);
+                } else if (child.length() <= 256L * 1024L && child.lastModified() >= since) {
+                    out.add(child);
+                }
+            } catch (Throwable ignored) {
+                // 单个条目不可读不影响其余条目
+            }
+        }
+    }
+
+    /**
+     * 诊断:网盘源凭据在磁盘上的状态(目录/文件名/大小,不输出内容)。
+     * 只在"解析结果无地址"时拼一行,用于区分两种情况:
+     * 目录为空(爬虫该弹扫码)→ 弹了没弹;有文件却仍取不到直链 → 凭据过期或没被读到。
+     */
+    /**
+     * 起播日志里的凭据快照。
+     * <p>爬虫 jar 拿的是 App 的 Context，"登录成功"可能落在外部存储，也可能落在
+     * {@code files/}、{@code cache/} 或 {@code /sdcard/Android/data/<包名>/files}——
+     * 只报外部存储会得出"根本没落盘"的错误结论。
+     */
+    private static String describeNetDiskCredentials() {
+        StringBuilder sb = new StringBuilder();
+        String[] dirs = com.github.catvod.utils.Path.CREDENTIAL_DIRS;
+        java.util.LinkedHashMap<String, java.io.File> roots = new java.util.LinkedHashMap<>();
+        try {
+            roots.put("sdcard", android.os.Environment.getExternalStorageDirectory());
+        } catch (Throwable ignored) {
+        }
+        try {
+            android.content.Context ctx = com.github.tvbox.osc.base.App.getInstance();
+            if (ctx != null) {
+                roots.put("files", ctx.getFilesDir());
+                roots.put("cache", ctx.getCacheDir());
+                roots.put("extFiles", ctx.getExternalFilesDir(null));
+                roots.put("extCache", ctx.getExternalCacheDir());
+            }
+        } catch (Throwable ignored) {
+        }
+        for (java.util.Map.Entry<String, java.io.File> e : roots.entrySet()) {
+            java.io.File root = e.getValue();
+            if (root == null) continue;
+            for (String dir : dirs) {
+                java.io.File d = new java.io.File(root, dir);
+                java.io.File[] files;
+                try {
+                    if (!d.isDirectory()) continue;
+                    files = d.listFiles();
+                } catch (Throwable ignored) {
+                    continue;
+                }
+                if (files == null || files.length == 0) continue;
+                sb.append(' ').append(e.getKey()).append('/').append(dir).append("={");
+                int shown = 0;
+                for (java.io.File f : files) {
+                    if (f == null || !f.isFile() || shown >= 8) continue;
+                    if (shown > 0) sb.append(',');
+                    sb.append(f.getName()).append(':').append(f.length()).append('B');
+                    shown++;
+                }
+                sb.append('}');
+            }
+        }
+        return sb.length() == 0 ? " 凭据目录=无" : sb.toString();
+    }
+
+    /** 起播画像:协议+主机(去查询串),用于日志快速识别磁力/迅雷/荐片/普通 http */
+    private static String describePlayUrl(String url) {
+        if (TextUtils.isEmpty(url)) return "空地址";
+        String s = url.trim();
+        int q = s.indexOf('?');
+        if (q > 0) s = s.substring(0, q);
+        if (s.length() > 80) s = s.substring(0, 80) + "…";
+        return s;
     }
 
     private static String playbackErrorTip(String message) {
@@ -620,6 +958,7 @@ public class PlayFragment extends BaseLazyFragment {
     void hideTip() {
         browserCastStatusVisible = false;
         dlnaCastStatusVisible = false;
+        disarmLoadingWatchdog();
         mPlayLoadTip.setOnClickListener(null);
         mPlayLoadTip.setVisibility(View.GONE);
         mPlayLoading.setVisibility(View.GONE);
@@ -822,6 +1161,10 @@ public class PlayFragment extends BaseLazyFragment {
 
     void playUrl(String url, HashMap<String, String> headers) {
         if (mVodInfo == null) return;
+        if (!TextUtils.isEmpty(url)) {
+            mWaitingMissingAddress = false;
+            mSawLoginDialog = false;
+        }
         final long generation = mPlaybackGeneration.incrementAndGet();
         cancelAddressProbe();
         mResolvedPlayback = null;
@@ -1101,12 +1444,11 @@ public class PlayFragment extends BaseLazyFragment {
         final int index = mVodInfo.playIndex;
         com.github.tvbox.osc.util.HeavyTaskUtil.getSerialExecutorService().execute(() -> {
             try {
-                SPUtils sp = SPUtils.getInstance(CacheConst.VIDEO_PLAYED_SP);
-                Set<String> set = sp.getStringSet(videoId, null);
+                Set<String> set = LocalVideoConfig.getPlayed(videoId);
                 if (set == null)
                     set = new HashSet<>();
                 if (set.add(String.valueOf(index))) {
-                    sp.put(videoId, set);
+                    LocalVideoConfig.savePlayed(videoId, set);
                 }
             } catch (Throwable ignored) {
             }
@@ -1487,7 +1829,14 @@ public class PlayFragment extends BaseLazyFragment {
             if (info != null) {
                 // ViewModel 的旧集结果可能晚到；它携带请求键，先校验再进入解析链。
                 if (!TextUtils.equals(mPlayResultToken, info.optString("proKey"))
-                        || !TextUtils.equals(mRequestedPlayUrl, info.optString("key"))) return;
+                        || !TextUtils.equals(mRequestedPlayUrl, info.optString("key"))) {
+                    // 过期回包丢弃(换集/重试的旧响应属正常)。同集地址但令牌不匹配=当前请求的
+                    // 回包被丢,加载态会一直转圈,必须留痕排查(看门狗会兜底收尾)。
+                    android.util.Log.w("MBoxPlayer", "丢弃播放回包: 当前令牌=" + mPlayResultToken
+                            + "，回包令牌=" + info.optString("proKey")
+                            + "，同集地址=" + TextUtils.equals(mRequestedPlayUrl, info.optString("key")));
+                    return;
+                }
                 if (info.optBoolean("playError")) {
                     errorWithRetry("获取播放信息错误", true);
                     return;
@@ -1531,7 +1880,22 @@ public class PlayFragment extends BaseLazyFragment {
                         mParseEngine.initParse(flag, userJxList, playUrl, url);
                     } else {
                         mController.showParse(false);
-                        playUrl(playUrl + url, headers);
+                        String resolvedUrl = (playUrl + url).trim();
+                        // 网盘源(playerContent 走 sId/sToken)取不到直链时返回空地址是常态:
+                        // 扫码/登录刚完成时爬虫内部才拿得到 cookie,这一轮注定为空。
+                        // 以前把空地址直接交给内核 ⇒ 播放器报"地址为空"后停在失败页,
+                        // 用户只能退出播放页重进(重进才会再请求一次)。现在留在本页自动重试。
+                        if (TextUtils.isEmpty(resolvedUrl)) {
+                            logPlaybackProgress("解析结果无地址 parse=" + parse
+                                    + " jx=" + jx + " flag=" + flag
+                                    + " playUrl长度=" + playUrl.length()
+                                    + " url长度=" + (url == null ? -1 : url.length())
+                                    + describeNetDiskCredentials()
+                                    + describeRecentTouched());
+                            onPlayAddressMissing();
+                            return;
+                        }
+                        playUrl(resolvedUrl, headers);
                     }
                 } catch (Throwable th) {
                     LogUtils.e(th.toString());
@@ -1580,8 +1944,9 @@ public class PlayFragment extends BaseLazyFragment {
         }
         try {
             if (!mVodPlayerCfg.has("pl")) {
-                mVodPlayerCfg.put("pl", (sourceBean.getPlayerType() == -1) ? (int) PlayConfig.getPlayType()
-                        : sourceBean.getPlayerType());
+                // sourceBean 可为 null(push_agent 直链播放:订阅里没有该虚拟源),不能裸取
+                mVodPlayerCfg.put("pl", (sourceBean == null || sourceBean.getPlayerType() == -1)
+                        ? (int) PlayConfig.getPlayType() : sourceBean.getPlayerType());
             }
             if (!mVodPlayerCfg.has("pr")) {
                 mVodPlayerCfg.put("pr", PlayConfig.getRenderType());
@@ -1626,6 +1991,7 @@ public class PlayFragment extends BaseLazyFragment {
         super.onResume();
         if (!browserCastActive && mPlaySession != null)
             mPlaySession.resume();
+        retryMissingAddressOnResume();
     }
 
     @Override
@@ -1646,6 +2012,10 @@ public class PlayFragment extends BaseLazyFragment {
         playbackReady = false;
         browserCastActive = false;
         pendingReadyAction = null;
+        disarmLoadingWatchdog();
+        mMainHandler.removeCallbacks(mMissingAddressRetryTask);
+        mWaitingMissingAddress = false;
+        mSawLoginDialog = false;
         mPlaybackGeneration.incrementAndGet();
         mParseLifetimeGeneration.incrementAndGet();
         cancelAddressProbe();
@@ -1763,25 +2133,44 @@ public class PlayFragment extends BaseLazyFragment {
 
     public void play(boolean reset) {
         if (!canChangeBrowserEpisode()) return;
-        if (mVodInfo == null)
+        if (mVodInfo == null) {
+            logPlaybackProgress("放弃起播: mVodInfo 为空(详情数据未就绪)");
             return;
+        }
         browserCastStatusVisible = false;
         dlnaCastStatusVisible = false;
         if (mPlayLoadTip != null) mPlayLoadTip.setOnClickListener(null);
         if (mSubtitleCoordinator != null) mSubtitleCoordinator.invalidateForPlaybackChange();
         long requestGeneration = mPlaybackGeneration.incrementAndGet();
         if (mNextEpisodePreloader != null) mNextEpisodePreloader.cancel();
+        // 新一轮起播接管重试节奏，旧的延迟重试作废(否则会在新请求上再打一发)
+        mMainHandler.removeCallbacks(mMissingAddressRetryTask);
         cancelAddressProbe();
         HttpClient.cancel("m3u8-1");
         HttpClient.cancel("m3u8-2");
         mResolvedPlayback = null;
         mRequestedPlayUrl = null;
         mPlayResultToken = null;
-        VodInfo.VodSeries vs = mVodInfo.seriesMap.get(mVodInfo.playFlag).get(mVodInfo.playIndex);
+        List<VodInfo.VodSeries> playEpisodes = mVodInfo.seriesMap == null ? null
+                : mVodInfo.seriesMap.get(mVodInfo.playFlag);
+        if (playEpisodes == null || mVodInfo.playIndex < 0 || mVodInfo.playIndex >= playEpisodes.size()) {
+            // 原实现裸取 seriesMap.get(flag).get(index):越界即抛,调用方无感知、加载态不再收尾
+            logPlaybackProgress("放弃起播: 剧集索引无效 flag=" + mVodInfo.playFlag
+                    + " index=" + mVodInfo.playIndex
+                    + " 集数=" + (playEpisodes == null ? "flag不存在" : playEpisodes.size()));
+            errorWithRetry("获取播放信息错误", true);
+            return;
+        }
+        VodInfo.VodSeries vs = playEpisodes.get(mVodInfo.playIndex);
         if (mSyncHost != null)
             mSyncHost.onEpisodeSelected(mVodInfo.playIndex);
         com.github.tvbox.osc.service.PlayService.onPlaybackNotify(mVodInfo.name + "&&" + vs.name);
         String playTitleInfo = mVodInfo.name + " " + vs.name;
+        logPlaybackProgress("起播请求: 源=" + (sourceBean == null ? "?" : sourceBean.getName())
+                + " type=" + (sourceBean == null ? "?" : sourceBean.getType())
+                + " 集=" + vs.name + " 地址=" + describePlayUrl(vs.url)
+                + describeExtCredentialPaths(sourceBean == null ? null : sourceBean.getExt())
+                + describeRecentTouched());
         setTip("正在获取播放信息", true, false);
         mController.setTitle(playTitleInfo);
 
@@ -1798,6 +2187,9 @@ public class PlayFragment extends BaseLazyFragment {
         if (!TextUtils.equals(autoRetryEpisodeKey, progressKey)) {
             autoRetryEpisodeKey = progressKey;
             autoRetryCount = 0;
+            mMissingAddressRetryCount = 0;
+            mWaitingMissingAddress = false;
+            mSawLoginDialog = false;
             mProxyDirectFallbackAttempted = false;
             mProxyDirectOverrideSource = null;
             mProxyDirectOverride = null;
@@ -1811,44 +2203,214 @@ public class PlayFragment extends BaseLazyFragment {
             mPlayHistory.delete(progressKey);
             mPlayHistory.delete(subtitleCacheKey);
         }
-        if (Jianpian.isJpUrl(vs.url)) {// 荐片地址特殊判断
-            String jp_url = vs.url;
-            mController.showParse(false);
-            if (vs.url.startsWith("tvbox-xg:")) {
-                playUrl(Jianpian.JPUrlDec(jp_url.substring(9)), null);
-            } else {
-                playUrl(Jianpian.JPUrlDec(jp_url), null);
-            }
-            return;
-        }
-        if (Thunder.play(vs.url, new Thunder.ThunderCallback() {
-            @Override
-            public void status(int code, String info) {
-                if (!isCurrentPlayback(requestGeneration)) return;
-                if (code < 0) {
-                    PlaybackErrorReporter.failure("磁力播放", "失败",
-                            PlaybackErrorReporter.source(vs.url), info);
-                    setTip(info, false, true);
+        if (com.github.tvbox.osc.config.SystemConfig.isThunderP2pEnabled()) {
+            if (Jianpian.isJpUrl(vs.url)) {// 荐片地址特殊判断
+                String jp_url = vs.url;
+                mController.showParse(false);
+                if (vs.url.startsWith("tvbox-xg:")) {
+                    playUrl(Jianpian.JPUrlDec(jp_url.substring(9)), null);
                 } else {
-                    setTip(info, true, false);
+                    playUrl(Jianpian.JPUrlDec(jp_url), null);
                 }
+                return;
             }
+            if (Thunder.play(vs.url, new Thunder.ThunderCallback() {
+                @Override
+                public void status(int code, String info) {
+                    if (!isCurrentPlayback(requestGeneration)) return;
+                    if (code < 0) {
+                        PlaybackErrorReporter.failure("磁力播放", "失败",
+                                PlaybackErrorReporter.source(vs.url), info);
+                        setTip(info, false, true);
+                    } else {
+                        setTip(info, true, false);
+                    }
+                }
 
-            @Override
-            public void list(Map<Integer, String> urlMap) {
-            }
+                @Override
+                public void list(Map<Integer, String> urlMap) {
+                }
 
-            @Override
-            public void play(String url) {
-                if (!isCurrentPlayback(requestGeneration)) return;
-                playUrl(url, null);
+                @Override
+                public void play(String url) {
+                    if (!isCurrentPlayback(requestGeneration)) return;
+                    playUrl(url, null);
+                }
+            })) {
+                mController.showParse(false);
+                return;
             }
-        })) {
-            mController.showParse(false);
+        } else if (Jianpian.isJpUrl(vs.url) || Thunder.isSupportUrl(vs.url)) {
+            // 磁力/迅雷/荐片地址在通道关闭时既无法被 spider 解析、也无法被播放器加载:
+            // 明确提示引导开启,避免静默走空解析而永远转圈(2026-10-25 回归修复)。
+            showThunderChannelTip(vs.url, requestGeneration);
             return;
         }
         sourceViewModel.getPlay(playRequest.sourceKey(), mVodInfo.playFlag,
                 mPlayResultToken, playRequest.url(), playRequest.subtitleCacheKey());
+    }
+
+    /**
+     * 磁力/迅雷/荐片片源需要「迅雷P2P播放」通道(默认关闭,涉及仅 ARM so 与硬编码凭证)。
+     * 通道关闭时起播这类地址只会永远转圈,这里给出可点击跳转设置的明确提示。
+     */
+    private void showThunderChannelTip(String url, long generation) {
+        if (!isAdded()) return;
+        PlaybackErrorReporter.failure("迅雷通道", "未开启",
+                PlaybackErrorReporter.source(url), "片源为磁力/迅雷/荐片地址,通道已关闭");
+        requireActivity().runOnUiThread(() -> {
+            if (!isCurrentPlayback(generation) || !isAdded() || mPlayLoadTip == null) return;
+            disarmLoadingWatchdog();
+            mLoadingStage = "等待开启迅雷P2P播放通道";
+            logPlaybackProgress(mLoadingStage);
+            mPlayLoading.setVisibility(View.GONE);
+            mPlayLoadErr.setVisibility(View.VISIBLE);
+            SpanUtils.with(mPlayLoadTip)
+                    .append("该片源需要开启「迅雷P2P播放」通道，")
+                    .append("去开启")
+                    .setClickSpan(ColorUtils.getColor(R.color.orange), false, view -> {
+                        try {
+                            requireActivity().startActivity(new android.content.Intent(
+                                    requireActivity(),
+                                    com.github.tvbox.osc.ui.activity.SettingActivity.class));
+                        } catch (Throwable ignored) {
+                        }
+                    }).create();
+            mPlayLoadTip.setVisibility(View.VISIBLE);
+        });
+    }
+
+    // ============ 网盘源取不到直链:留在播放页自动重试 ============
+
+    /**
+     * 重试退避(毫秒)。扫码/授权通常要十几秒到一分钟，间隔太短只会把爬虫打满；
+     * 超过次数后仍保留"立即重试"，不再自动打。
+     */
+    private static final long[] MISSING_ADDRESS_RETRY_MS = {20_000L, 15_000L, 30_000L, 60_000L};
+    private int mMissingAddressRetryCount = 0;
+    /** 当前停在"网盘没给地址"的状态：返回播放页(登录完成)时据此再请求一次。 */
+    private volatile boolean mWaitingMissingAddress = false;
+    private long mLastMissingAddressRetryAt = 0L;
+    /**
+     * 本轮等待期内是否出现过登录框(播放页失焦)。
+     * jar 弹出的扫码框挂在当前 Activity 上，一出现就说明"它在等用户登录"：
+     * 这时候任何自动重试都会把二维码刷掉，必须停；等框关掉再重新拉一次。
+     */
+    private boolean mSawLoginDialog = false;
+    private final Runnable mMissingAddressRetryTask = () -> {
+        if (!isAdded() || mVodInfo == null || !mWaitingMissingAddress) return;
+        mLastMissingAddressRetryAt = System.currentTimeMillis();
+        logPlaybackProgress("网盘地址仍为空，自动重新获取(第" + mMissingAddressRetryCount + "次)");
+        play(false);
+    };
+
+    /**
+     * playerContent 返回空地址 = 爬虫这一轮没有直链(网盘未登录/登录态还没落到它能读到的位置)。
+     * 不把空地址交给内核(内核只会报"播放地址为空"并停在失败页)，而是留在本页按退避节奏再请求，
+     * 同时给出可点的"立即重试"——这样扫码完成后不必退出播放页重进。
+     */
+    private void onPlayAddressMissing() {
+        if (!isAdded()) return;
+        mWaitingMissingAddress = true;
+        mLastMissingAddressRetryAt = System.currentTimeMillis();
+        long generation = mPlaybackGeneration.get();
+        // 登录框是在 playerContent 内部弹的，可能比"空地址"回调更早出现：
+        // 那种情况下失焦事件进来时我们还没进入等待状态，会漏掉。这里补查一次当前焦点。
+        if (!mSawLoginDialog && !hasHostWindowFocus()) {
+            mSawLoginDialog = true;
+            mMainHandler.removeCallbacks(mMissingAddressRetryTask);
+            logPlaybackProgress("网盘地址为空且登录框已在本页，等登录框关闭后重试");
+            showMissingAddressTip(generation);
+            return;
+        }
+        if (mMissingAddressRetryCount < MISSING_ADDRESS_RETRY_MS.length) {
+            long delay = MISSING_ADDRESS_RETRY_MS[mMissingAddressRetryCount++];
+            mMainHandler.removeCallbacks(mMissingAddressRetryTask);
+            mMainHandler.postDelayed(mMissingAddressRetryTask, delay);
+            logPlaybackProgress("网盘地址为空，将在 " + (delay / 1000) + "s 后自动重新获取(第"
+                    + mMissingAddressRetryCount + "次)");
+        }
+        showMissingAddressTip(generation);
+    }
+
+    private void showMissingAddressTip(long generation) {
+        if (!isAdded()) return;
+        final boolean autoRetryExhausted = mMissingAddressRetryCount >= MISSING_ADDRESS_RETRY_MS.length;
+        requireActivity().runOnUiThread(() -> {
+            if (!isCurrentPlayback(generation) || !isAdded() || mPlayLoadTip == null) return;
+            disarmLoadingWatchdog();
+            mPlayLoading.setVisibility(View.GONE);
+            mPlayLoadErr.setVisibility(View.VISIBLE);
+            mPlayLoadTip.setOnClickListener(null);
+            SpanUtils.with(mPlayLoadTip)
+                    .append(autoRetryExhausted ? "网盘未返回播放地址"
+                            : "网盘未返回播放地址，完成登录并关闭登录框后自动继续")
+                    .append("  ")
+                    .append("立即重试")
+                    .setClickSpan(ColorUtils.getColor(R.color.orange), false,
+                            view -> retryMissingAddressNow())
+                    .create();
+            mPlayLoadTip.setVisibility(View.VISIBLE);
+        });
+    }
+
+    private void retryMissingAddressNow() {
+        if (!isAdded() || mVodInfo == null) return;
+        mMainHandler.removeCallbacks(mMissingAddressRetryTask);
+        mMissingAddressRetryCount = 0;
+        mSawLoginDialog = false;
+        mLastMissingAddressRetryAt = System.currentTimeMillis();
+        logPlaybackProgress("手动重新获取播放地址");
+        play(false);
+    }
+
+    /**
+     * 用户离开播放页(去别处完成扫码/授权)再回来时补一次请求：
+     * 否则页面会一直停在"没拿到地址"，只有退出重进才会重新请求。
+     */
+    private void retryMissingAddressOnResume() {
+        if (!mWaitingMissingAddress || mVodInfo == null || !isAdded()) return;
+        if (System.currentTimeMillis() - mLastMissingAddressRetryAt < 2_000L) return;
+        mLastMissingAddressRetryAt = System.currentTimeMillis();
+        logPlaybackProgress("返回播放页且地址仍为空，重新获取");
+        mMainHandler.removeCallbacks(mMissingAddressRetryTask);
+        mMainHandler.postDelayed(mMissingAddressRetryTask, 300L);
+    }
+
+    /** 播放页所在窗口当前是否持有焦点：false 通常意味着有弹窗(登录框/系统框)盖在上面。 */
+    private boolean hasHostWindowFocus() {
+        android.app.Activity activity = getActivity();
+        if (activity == null) return true;
+        android.view.Window window = activity.getWindow();
+        View decor = window == null ? null : window.getDecorView();
+        return decor == null || decor.hasWindowFocus();
+    }
+
+    /**
+     * 宿主 Activity 的窗口焦点变化。扫码登录框是爬虫 jar 自己弹在本页上的 Dialog：
+     * <ul>
+     *   <li>框弹出 → 本页失焦：说明它在等用户登录，此时任何自动重试都会刷新二维码、把用户手里那个扫废，
+     *       所以立刻停掉定时重试，只等框关闭；</li>
+     *   <li>框关闭 → 本页重新得焦：登录动作刚结束，这是离"能拿到直链"最近的时刻，立即重新请求一次。</li>
+     * </ul>
+     * 不依赖固定秒数猜扫码耗时，也避免了"扫码中途被重试打断"。
+     */
+    public void onHostWindowFocusChanged(boolean hasFocus) {
+        if (!hasFocus) {
+            if (!mWaitingMissingAddress) return;
+            if (mSawLoginDialog) return;
+            mSawLoginDialog = true;
+            mMainHandler.removeCallbacks(mMissingAddressRetryTask);
+            logPlaybackProgress("播放页失焦(登录框打开)，暂停自动重试");
+            return;
+        }
+        if (!mWaitingMissingAddress || !mSawLoginDialog || mVodInfo == null || !isAdded()) return;
+        mSawLoginDialog = false;
+        if (System.currentTimeMillis() - mLastMissingAddressRetryAt < 1_500L) return;
+        mLastMissingAddressRetryAt = System.currentTimeMillis();
+        logPlaybackProgress("登录框已关闭，立即重新获取播放地址");
+        mMainHandler.removeCallbacks(mMissingAddressRetryTask);
+        mMainHandler.postDelayed(mMissingAddressRetryTask, 350L);
     }
 
     private String playSubtitle;

@@ -53,6 +53,13 @@ class SubscriptionImportCoordinator(
     private var batchCancelAction: (() -> Unit)? = null
     /** 当前这次"添加订阅"的来源,三条路径最后都汇到 addSub2List 与 addLocalFileSubscription */
     private var addOrigin: String = Subscription.ORIGIN_DIRECT
+    /**
+     * 正在处理的导入批次(一次多仓/清单/本地包导入 = 一个批次):
+     * 批次内新增与已存在的条目都打上同一批次号,列表里归进同一手风琴;
+     * 嵌套展开(清单里再套清单/多线路)沿用外层批次,不另起;
+     * 取消/页面销毁时清空(见 [invalidateImport])。
+     */
+    private var currentBatch: BatchContext? = null
     private val session = ImportSession()
     private val importEpoch: Long get() = session.current
     private var expansion = ImportExpansionGuard()
@@ -73,6 +80,7 @@ class SubscriptionImportCoordinator(
         expansion = ImportExpansionGuard()
         batchImportInProgress = false
         batchCancelAction = null
+        currentBatch = null
     }
 
     private fun beginImport(origin: String): Long {
@@ -141,12 +149,20 @@ class SubscriptionImportCoordinator(
      * txt/json 先探一次是不是本地包清单(用户自己解压好的包,直接选包里的清单即可)。
      * @param checked 是否在导入成功后默认启用该订阅(导入菜单勾选状态,先记录后使用)
      */
-    fun importLocalDoc(uri: Uri, checked: Boolean) {
+    /**
+     * 本地文件导入(文件选择器的统一入口)。
+     * @param updateBatchId 非空 = 批次「更新此批」:导入结果归入该批次,清单里没有的旧条目清理
+     * @param displayName 调用方已知的文件名(系统「打开方式」进来时是应用缓存里的副本:file:// URI
+     *                    查不到 DISPLAY_NAME,不传就只剩路径末段甚至判不出 txt/json/zip)
+     */
+    fun importLocalDoc(uri: Uri, checked: Boolean, updateBatchId: String? = null,
+                       displayName: String? = null) {
         val epoch = beginImport(Subscription.ORIGIN_LOCAL)
         showCancelableLoading("正在读取文件…") { cancelImport(epoch) }
         HeavyTaskUtil.getBigTaskExecutorService().execute {
             if (!session.isCurrent(epoch)) return@execute
-            val name = runCatching { SubscriptionLibrary.queryDisplayName(context, uri)?.trim() }.getOrNull()
+            val name = displayName?.trim()?.takeIf { it.isNotEmpty() }
+                ?: runCatching { SubscriptionLibrary.queryDisplayName(context, uri)?.trim() }.getOrNull()
             main.post {
                 if (!isCurrent(epoch)) return@post
                 if (name.isNullOrEmpty() ||
@@ -156,9 +172,9 @@ class SubscriptionImportCoordinator(
                     dismissImportLoading()
                     host.showToast("请选择 txt/json 订阅文件、订阅清单 ZIP 或本地包")
                 } else if (name.lowercase().endsWith(".zip")) {
-                    importArchive(uri, name, checked)
+                    importArchive(uri, name, checked, updateBatchId)
                 } else {
-                    probeExtractedPackage(uri, name, checked)
+                    probeExtractedPackage(uri, name, checked, updateBatchId)
                 }
             }
         }
@@ -170,7 +186,7 @@ class SubscriptionImportCoordinator(
      *  - 配置(带 ./jar、./js 同目录依赖):就地以 clan:// 引用,不复制(复制会让依赖全废);
      * 两者都不是(普通订阅文件/网络多线路清单)再走本地文件复制与内容识别，仍由共享执行器读取。
      */
-    private fun probeExtractedPackage(uri: Uri, name: String, checked: Boolean) {
+    private fun probeExtractedPackage(uri: Uri, name: String, checked: Boolean, updateBatchId: String? = null) {
         val epoch = importEpoch
         HeavyTaskUtil.getBigTaskExecutorService().execute {
             if (!session.isCurrent(epoch)) return@execute
@@ -183,12 +199,16 @@ class SubscriptionImportCoordinator(
             main.post {
                 if (!isCurrent(epoch)) return@post
                 if (entries == null || entries.size() == 0) {
-                    importLocalDocument(uri, name, checked)
+                    importLocalDocument(uri, name, checked, updateBatchId)
                     return@post
                 }
                 dismissImportLoading()
                 addOrigin = Subscription.ORIGIN_PACKAGE
-                if (!importSubscriptionEntries(entries, checked, name, Subscription.ORIGIN_PACKAGE)) {
+                // 批次名用文件名去扩展名(本地包/清单的展示名不带 .zip/.txt)
+                val label = name.substringBeforeLast('.', name)
+                if (!importSubscriptionEntries(entries, checked, label, Subscription.ORIGIN_PACKAGE,
+                        updateBatchId = updateBatchId)
+                ) {
                     showImportToast("本地包中没有可用的订阅")
                 }
             }
@@ -196,7 +216,7 @@ class SubscriptionImportCoordinator(
     }
 
     /** 本地订阅文件导入(复制进应用内部目录后按内容识别;识别规则见各分支注释) */
-    private fun importLocalDocument(uri: Uri, name: String, checked: Boolean) {
+    private fun importLocalDocument(uri: Uri, name: String, checked: Boolean, updateBatchId: String? = null) {
         val epoch = importEpoch
         addOrigin = Subscription.ORIGIN_LOCAL
         HeavyTaskUtil.getBigTaskExecutorService().execute {
@@ -228,7 +248,9 @@ class SubscriptionImportCoordinator(
                         return@post
                     }
                     dismissImportLoading()
-                    if (list != null && importSubscriptionEntries(list, checked, name, Subscription.ORIGIN_LOCAL) ||
+                    val label = name.substringBeforeLast('.', name)
+                    if (list != null && importSubscriptionEntries(list, checked, label,
+                            Subscription.ORIGIN_LOCAL, updateBatchId = updateBatchId) ||
                         root != null && importJsonEntries(root, checked, "文件", Subscription.ORIGIN_LOCAL)) {
                         SubscriptionConfig.setLastImportDir(file.parent)
                     } else if (bookSource) {
@@ -310,7 +332,7 @@ class SubscriptionImportCoordinator(
      *    local_packages/ 后,把包内清单指向的配置逐条按 clan:// 地址加入,没有清单时扫描包内完整配置兜底。
      * 判定只看归档清单(不解压);复制/解压/识别都在共享执行器,完成后仍逐条验证订阅。
      */
-    private fun importArchive(uri: Uri, name: String, checked: Boolean) {
+    private fun importArchive(uri: Uri, name: String, checked: Boolean, updateBatchId: String? = null) {
         val app = context
         val epoch = importEpoch
         showCancelableLoading("正在读取压缩包…") { cancelImport(epoch) }
@@ -355,7 +377,10 @@ class SubscriptionImportCoordinator(
                     host.showToast(failure)
                 } else if (imported != null) {
                     addOrigin = importedOrigin
-                    if (!importSubscriptionEntries(imported, checked, name, importedOrigin, embeddedPrepared = true))
+                    // 批次名用压缩包名去扩展名(TVBoxOSC.zip → TVBoxOSC)
+                    val label = name.substringBeforeLast('.', name)
+                    if (!importSubscriptionEntries(imported, checked, label, importedOrigin,
+                            embeddedPrepared = true, updateBatchId = updateBatchId))
                         host.showToast("压缩包中无有效订阅")
                 }
             }
@@ -469,11 +494,13 @@ class SubscriptionImportCoordinator(
      * 换机导入、原文件已删都能还原;远端地址不论单条或多条都在线识别后再加入。
      * 与本机已有订阅按地址去重。
      * @param origin 条目自身没写 origin 时的兜底来源(本地文件导入=local / JSON 粘贴=json)
+     * @param updateBatchId 非空 = 批次「更新此批」:本次导入归入该批次,清单里没有的旧条目清理
      * @return true=已按清单处理(可能 0 条新增);false=无有效条目(调用方回落)
      */
     private fun importSubscriptionEntries(entries: JsonArray, checked: Boolean, label: String,
                                           origin: String, onComplete: (() -> Unit)? = null,
-                                          embeddedPrepared: Boolean = false): Boolean {
+                                          embeddedPrepared: Boolean = false,
+                                          updateBatchId: String? = null): Boolean {
         val epoch = importEpoch
         if (!isCurrent(epoch)) return true
         if (!embeddedPrepared && entries.any { it.isJsonObject && SubscriptionImportRules.mayBeListEntry(it.asJsonObject) &&
@@ -487,7 +514,8 @@ class SubscriptionImportCoordinator(
                     if (!isCurrent(epoch)) return@post
                     dismissImportLoading()
                     val restored = prepared.getOrNull()
-                    if (restored == null || !importSubscriptionEntries(restored, checked, label, origin, onComplete, embeddedPrepared = true)) {
+                    if (restored == null || !importSubscriptionEntries(restored, checked, label, origin, onComplete,
+                            embeddedPrepared = true, updateBatchId = updateBatchId)) {
                         showImportToast("清单中无有效订阅")
                         onComplete?.invoke()
                     }
@@ -514,7 +542,15 @@ class SubscriptionImportCoordinator(
                 continue
             }
             if (name.isNotEmpty() && SubscriptionImportRules.isSupportedAddress(url)) {
-                parsed.add(Subscription(name, url, itemOrigin))
+                val sub = Subscription(name, url, itemOrigin)
+                // 导出清单回导:条目自带批次信息(多签导出 → 重导入归回原手风琴)
+                val carriedId = obj.stringValue("batchId").trim()
+                if (carriedId.isNotEmpty()) {
+                    sub.batchId = carriedId
+                    sub.batchName = obj.stringValue("batchName").trim().ifEmpty { null }
+                    sub.batchTime = runCatching { obj.get("batchTime")?.asLong }.getOrNull() ?: 0L
+                }
+                parsed.add(sub)
             } else {
                 invalid++
                 LogStore.fail(Category.SUBSCRIPTION, "订阅: 清单条目无效，名称或地址不符合格式")
@@ -536,12 +572,17 @@ class SubscriptionImportCoordinator(
         }
         val pending = parsed.distinctBy { it.url }
         var added = 0
+        var updated = 0
         var failed = invalid
         var duplicates = parsed.size - pending.size
         var index = 0
         var processed = 0
         val parentBatch = batchImportInProgress
         val parentProgress = batchProgress
+        // 本次导入的批次:条目自带 batchId 的按自带归组,其余统一进这个批次
+        // (嵌套展开时沿用外层批次,不另起;顶层收尾时清空)
+        val importBatch = resolveImportBatch(updateBatchId, pending, origin, label)
+        currentBatch = importBatch
         if (!parentBatch) {
             batchImportInProgress = true
             val initialSize = state.subscriptions.size
@@ -571,12 +612,22 @@ class SubscriptionImportCoordinator(
                     batchImportInProgress = false
                     batchCancelAction = null
                     host.dismissLoading()
+                    // 整批收尾:清理本批在新清单里已经没有了的旧条目(更新=换掉失效条目)
+                    currentBatch = null
+                    val incoming = pending.map { it.url }.toSet()
+                    val stale = collectStaleEntries(pending, importBatch, incoming)
+                    if (stale.isNotEmpty()) {
+                        LogStore.log(Category.SUBSCRIPTION,
+                            "订阅: 整批更新清理失效条目 " + stale.size + " 个")
+                        host.onStaleSubscriptionsRemoved(stale, pending.map { it.url })
+                    }
                 }
                 host.onSubscriptionListChanged()
                 if (!parentBatch) host.persistSubscriptions()
                 LogStore.log(Category.SUBSCRIPTION,
-                    "订阅: 清单校验完成 成功=" + added + " 失败=" + failed + " 重复=" + duplicates)
+                    "订阅: 清单校验完成 成功=" + added + " 更新=" + updated + " 失败=" + failed + " 重复=" + duplicates)
                 if (!parentBatch) host.showToast("已导入 $added 条" +
+                    (if (updated > 0) "，更新 $updated 条" else "") +
                     (if (failed > 0) "，跳过 $failed 条无效或不可用地址" else "") +
                     (if (duplicates > 0) "，重复 $duplicates 条" else ""))
                 onComplete?.invoke()
@@ -585,8 +636,14 @@ class SubscriptionImportCoordinator(
             val item = pending[index++]
             batchProgress = "正在校验订阅 $index/${pending.size}：${item.name}（已导入 $added，失败 $failed，重复 $duplicates）"
             updateImportHint(item.url)
-            if (state.subscriptions.any { it.url == item.url }) {
-                duplicates++
+            val existing = state.subscriptions.firstOrNull { it.url == item.url }
+            if (existing != null) {
+                // 已存在:采用进本次批次(整批更新时同地址条目刷新批次归属与导入时间)
+                val batch = batchOf(item, importBatch)
+                existing.batchId = batch.id
+                existing.batchName = batch.name
+                existing.batchTime = batch.time
+                updated++
                 processed++
                 host.post { next() }
                 return
@@ -612,6 +669,77 @@ class SubscriptionImportCoordinator(
         }
         next()
         return true
+    }
+
+    // ------------------------------------------------------------------
+    // 批次(一次多仓/清单/本地包导入 = 一个手风琴分组)
+    // ------------------------------------------------------------------
+
+    /** 导入批次上下文:同批新增/采用的条目共享,列表里归进同一组 */
+    private class BatchContext(val id: String, val name: String, val time: Long)
+
+    /**
+     * 解析本次导入的批次(条目自带 batchId 的导出清单不走这里,按 [batchOf] 逐条归组):
+     * ① 嵌套展开(清单里再套清单/多线路)→ 沿用外层批次,不另起;
+     * ② 批次菜单「更新此批」显式指定 → 沿用原批次;
+     * ③ 本地包 → 用解压目录键;同基名的老批次(内容更新后目录名变了)对批沿用,
+     *    只有一个老目录时才认(多个同基名目录分不清是谁,保守起新批);
+     * ④ 其它多条目导入 → 新批次。
+     */
+    private fun resolveImportBatch(updateBatchId: String?, pending: List<Subscription>,
+                                   origin: String, label: String): BatchContext {
+        val now = System.currentTimeMillis()
+        // ① 嵌套展开沿用外层批次
+        currentBatch?.let { return it }
+        // ② 显式更新:批次身份不变,名字沿用原批次(用户认的是这个组)
+        if (updateBatchId != null) {
+            val existing = SubscriptionBatches.membersOf(state.subscriptions, updateBatchId)
+                .firstOrNull { !it.batchName.isNullOrBlank() }
+            return BatchContext(updateBatchId, existing?.batchName ?: label, now)
+        }
+        // ③ 本地包:解压目录键(同包重导入对上批);老数据没有 batchId,按目录基名认
+        if (origin == Subscription.ORIGIN_PACKAGE) {
+            val pkgUrl = pending.firstOrNull { SubscriptionBatches.batchKeyOf(it.url) != null }?.url
+            if (pkgUrl != null) {
+                val derived = SubscriptionBatches.batchKeyOf(pkgUrl)!!
+                if (state.subscriptions.any { it.batchId == derived }) {
+                    return BatchContext(derived, label, now)
+                }
+                val base = SubscriptionBatches.packageBaseNameOf(pkgUrl)
+                val legacyDirs = state.subscriptions
+                    .mapNotNull { SubscriptionBatches.packageDirNameOf(it.url) }
+                    .filter { SubscriptionBatches.stripDirDigest(it) == base }
+                    .distinct()
+                if (legacyDirs.size == 1) {
+                    // 老数据条目没有 batchId:沿用旧目录键,采用时补上;过期清扫按目录精确匹配
+                    val dir = legacyDirs.first()
+                    val adopted = state.subscriptions.firstOrNull {
+                        SubscriptionBatches.packageDirNameOf(it.url) == dir && !it.batchId.isNullOrEmpty()
+                    }?.batchId
+                    return BatchContext(adopted ?: SubscriptionBatches.batchKeyOfDir(dir), label, now)
+                }
+                return BatchContext(derived, label, now)
+            }
+        }
+        // ④ 新批次
+        return BatchContext(SubscriptionBatches.newBatchId(now), label, now)
+    }
+
+    /** 条目的有效批次:自带 batchId(导出回导)优先,否则本次导入的统一批次 */
+    private fun batchOf(item: Subscription, importBatch: BatchContext): BatchContext {
+        val carried = item.batchId?.takeIf { it.isNotEmpty() } ?: return importBatch
+        val name = item.batchName?.takeIf { it.isNotBlank() } ?: importBatch.name
+        return BatchContext(carried, name, importBatch.time)
+    }
+
+    /**
+     * 收尾清扫:本次导入涉及的每个批次里,地址不在新清单中的旧条目。
+     * 包批次 additionally 按解压目录精确清扫(兼容没有 batchId 的老数据成员)。
+     */
+    private fun collectStaleEntries(pending: List<Subscription>, importBatch: BatchContext,
+                                    incoming: Set<String>): List<Subscription> {
+        val batchIds = pending.map { batchOf(it, importBatch).id }.distinct()
+        return SubscriptionBatches.staleEntriesOf(state.subscriptions, batchIds, incoming)
     }
 
     /**
@@ -1269,6 +1397,13 @@ class SubscriptionImportCoordinator(
      * 仅当选中本地文件和添加的为单线路时,使用此订阅生效。多线路会直接解析全部并添加,多仓会展开并选择,最后也按多线路处理,直接添加
      */
     private fun addSub2List(name: String, url: String, checkNewest: Boolean) {
+        val added = Subscription(name, url, addOrigin)
+        // 批次导入中的条目打上批次号(列表里归进同一手风琴);单条普通添加不分组
+        currentBatch?.let {
+            added.batchId = it.id
+            added.batchName = it.name
+            added.batchTime = it.time
+        }
         if (checkNewest) { //选中最新的,清除以前的选中订阅
             for (subscription in state.subscriptions) {
                 if (subscription.isChecked) {
@@ -1276,10 +1411,11 @@ class SubscriptionImportCoordinator(
                 }
             }
             state.selectedUrl = url
-            state.subscriptions.add(Subscription(name, url, addOrigin).setChecked(true))
+            added.setChecked(true)
         } else {
-            state.subscriptions.add(Subscription(name, url, addOrigin).setChecked(false))
+            added.setChecked(false)
         }
+        state.subscriptions.add(added)
         LogStore.success(Category.SUBSCRIPTION, "订阅: 导入成功 (" + logSource(url) + ")")
         if (checkNewest && state.liveTabActive) host.refreshLiveSources()
     }

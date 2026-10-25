@@ -44,7 +44,6 @@ import com.github.tvbox.osc.bean.CastVideo;
 import com.github.tvbox.osc.bean.Movie;
 import com.github.tvbox.osc.bean.SourceBean;
 import com.github.tvbox.osc.bean.VodInfo;
-import com.github.tvbox.osc.repo.HistoryRepositories;
 import com.github.tvbox.osc.log.Category;
 import com.github.tvbox.osc.log.LogStore;
 import com.github.tvbox.osc.databinding.ActivityDetailBinding;
@@ -84,6 +83,7 @@ import com.github.tvbox.osc.util.ScreenShotListenManager;
 import com.github.tvbox.osc.util.SubtitleHelper;
 import com.github.tvbox.osc.config.SystemConfig;
 import com.github.tvbox.osc.util.Utils;
+import com.github.tvbox.osc.viewmodel.HistoryViewModel;
 import com.github.tvbox.osc.viewmodel.SourceViewModel;
 import com.gyf.immersionbar.ImmersionBar;
 import com.gyf.immersionbar.BarHide;
@@ -113,6 +113,7 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     private static final String EXTERNAL_DOWNLOADER_ACTIVITY = "idm.internet.download.manager.Downloader";
     private PlayFragment playFragment = null;
     private SourceViewModel sourceViewModel;
+    private HistoryViewModel historyViewModel;
     /** 详情页"快速搜索"请求编排(共享线程池 + epoch 去重/暂停;UI 只负责弹窗展示与直喂数据) */
     private DetailQuickSearchHelper quickSearchHelper;
     /** 快速搜索弹窗(当前打开的实例;宿主直调喂数据/收回调,不再经 EventBus) */
@@ -848,7 +849,6 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
             //更新播放地址
             Bundle bundle = new Bundle();
             bundle.putString("sourceKey", sourceKey);
-//            bundle.putSerializable("VodInfo", vodInfo);
             if (previewVodInfo == null) {
                 try {
                     ByteArrayOutputStream bos = new ByteArrayOutputStream();
@@ -873,7 +873,6 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
                 previewVodInfo.seriesMap = vodInfo.seriesMap;
                 previewVodInfo.seriesFlags = vodInfo.seriesFlags;
                 previewVodInfo.reverseSort = vodInfo.reverseSort;
-//                    bundle.putSerializable("VodInfo", previewVodInfo);
                 App.getInstance().setVodInfo(previewVodInfo);
             }
             // setData→play 会同步回调 onEpisodeSelected，那里按本次选集异步保存历史。
@@ -902,6 +901,7 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
 
     private void initViewModel() {
         sourceViewModel = new ViewModelProvider(this).get(SourceViewModel.class);
+        historyViewModel = new ViewModelProvider(this, new HistoryViewModel.Factory()).get(HistoryViewModel.class);
         quickSearchHelper = new DetailQuickSearchHelper(sourceViewModel);
         // quick 搜索批次结果直调(替代历史 EventBus 快搜批次通道;回调线程不保证主线程,切主线程喂快搜聚合)
         sourceViewModel.setQuickSearchBatchListener(data ->
@@ -1211,8 +1211,8 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
                 VodInfo loadedRecord = snapshot;
                 boolean saved = false;
                 try {
-                    if (snapshot == null) loadedRecord = HistoryRepositories.history().get(key, vid);
-                    saved = HistoryRepositories.collect().isSaved(key, vid);
+                    if (snapshot == null) loadedRecord = historyViewModel.history().get(key, vid);
+                    saved = historyViewModel.collect().isSaved(key, vid);
                 } catch (Throwable th) {
                     android.util.Log.w("DetailActivity", "读取历史/收藏状态失败", th);
                 }
@@ -1320,7 +1320,7 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
         final String id = vodId;
         HeavyTaskUtil.executeNewTask(() -> {
             try {
-                boolean saved = HistoryRepositories.collect().isSaved(key, id);
+                boolean saved = historyViewModel.collect().isSaved(key, id);
                 runOnUiThread(() -> {
                     if (detailEpoch != detailRequestEpoch || queryEpoch != collectionQueryEpoch
                             || collectionBusy || isFinishing() || isDestroyed()) return;
@@ -1363,8 +1363,8 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
         HeavyTaskUtil.executeNewTask(() -> {
             String failure = null;
             try {
-                if (save) HistoryRepositories.collect().save(key, record);
-                else HistoryRepositories.collect().delete(key, record.id);
+                if (save) historyViewModel.collect().save(key, record);
+                else historyViewModel.collect().delete(key, record.id);
                 com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.SYSTEM,
                         (save ? "收藏: " : "取消收藏: ") + (record.name == null ? "?" : record.name));
             } catch (Throwable th) {
@@ -1489,7 +1489,7 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
         } catch (Throwable th) {
             vodInfo.playNote = "";
         }
-        com.github.tvbox.osc.repo.HistoryRepositories.history().saveAsync(sourceKey, vodInfo);
+        historyViewModel.history().saveAsync(sourceKey, vodInfo);
     }
 
     /** 详情页不再注册 EventBus:选集/配置经 PlayFragment.PlaySyncHost 屏内直调,快搜批次经监听直调 */
@@ -1923,6 +1923,8 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus) restoreFullscreenBars();
+        // 爬虫的扫码登录框挂在本页：焦点进出就是"登录框开关"的信号，交给播放页决定何时重试
+        if (playFragment != null) playFragment.onHostWindowFocusChanged(hasFocus);
     }
 
     private void restoreFullscreenBars() {
@@ -2012,7 +2014,8 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
             }
             screenShotListenManager.setListener(imagePath -> {
 
-                if (playFragment.getPlayer().isInPlaybackState())return;
+                if (playFragment == null || playFragment.getPlayer() == null
+                        || playFragment.getPlayer().isInPlaybackState()) return;
 
                 // 截图后弹"跳转到哪个 App":统一走公共选择弹窗(SelectDialog)。
                 // 原来用 XPopup 内置的 asCenterList —— 它的面板底/文字色与**圆角(库内固定 15dp)**都来自

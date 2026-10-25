@@ -19,8 +19,8 @@ import androidx.recyclerview.widget.LinearLayoutManager;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.blankj.utilcode.util.GsonUtils;
-import com.blankj.utilcode.util.SPUtils;
 import com.github.tvbox.osc.util.AppBubble;
+import com.github.tvbox.osc.util.LocalVideoConfig;
 import com.chad.library.adapter.base.BaseQuickAdapter;
 import com.chad.library.adapter.base.BaseViewHolder;
 import com.github.tvbox.osc.R;
@@ -28,7 +28,6 @@ import com.github.tvbox.osc.base.BaseVbFragment;
 import com.github.tvbox.osc.bean.DownloadTask;
 import com.github.tvbox.osc.bean.VideoInfo;
 import com.github.tvbox.osc.databinding.FragmentDownloadBinding;
-import com.github.tvbox.osc.constant.CacheConst;
 import com.github.tvbox.osc.download.DownloadFacade;
 import com.github.tvbox.osc.state.StorageSpace;
 import com.github.tvbox.osc.util.DownloadDisplay;
@@ -42,7 +41,9 @@ import com.github.tvbox.osc.ui.dialog.DialogCoordinator;
 import com.github.tvbox.osc.ui.kit.SelectActionBar;
 import com.github.tvbox.osc.ui.kit.TabPageAnimator;
 import com.github.tvbox.osc.util.Utils;
+import com.github.tvbox.osc.viewmodel.HistoryViewModel;
 
+import androidx.lifecycle.ViewModelProvider;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -67,6 +68,17 @@ import java.util.Set;
  * 路径展示(顶部):仅剧集详情状态页显示,只展示 片名 · 来源。
  */
 public class DownloadFragment extends BaseVbFragment<FragmentDownloadBinding> {
+
+    /** 历史/收藏/缓存仓储访问入口(经 ViewModel,不直调 HistoryRepositories 静态单例) */
+    private HistoryViewModel historyViewModel;
+
+    private HistoryViewModel historyViewModel() {
+        if (historyViewModel == null) {
+            historyViewModel = new ViewModelProvider(this,
+                    new HistoryViewModel.Factory()).get(HistoryViewModel.class);
+        }
+        return historyViewModel;
+    }
 
     private static final int TAB_DOWNLOADING = 0;
     private static final int TAB_DONE = 1;
@@ -1000,13 +1012,13 @@ public class DownloadFragment extends BaseVbFragment<FragmentDownloadBinding> {
         if (videoId == null) return null;
         Set<String> cached = playedCache.get(videoId);
         if (cached != null) return cached;
-        Set<String> set = SPUtils.getInstance(CacheConst.VIDEO_PLAYED_SP).getStringSet(videoId, null);
+        Set<String> set = LocalVideoConfig.getPlayed(videoId);
         if (set == null) set = new LinkedHashSet<>();
         // 历史回填:观看记录里"上次看到"的集也算播放过(功能上线前的老数据)
         try {
             int first = episodeId.indexOf('|');
             int second = episodeId.indexOf('|', first + 1);
-            com.github.tvbox.osc.bean.VodInfo rec = com.github.tvbox.osc.repo.HistoryRepositories.history().get(
+            com.github.tvbox.osc.bean.VodInfo rec = historyViewModel().history().get(
                     episodeId.substring(0, first), episodeId.substring(first + 1, second));
             if (rec != null && rec.playIndex >= 0) set.add(String.valueOf(rec.playIndex));
         } catch (Throwable ignored) {

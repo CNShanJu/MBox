@@ -141,6 +141,17 @@ public class ControlManager {
         return out;
     }
 
+    /** 当前运行的 HTTP 服务实例是否真的绑定了局域网网卡(而非仅 127.0.0.1) */
+    public boolean isLanBound() {
+        RemoteServer s = mServer;
+        return s != null && s.isStarting() && lanBound;
+    }
+
+    /** 当前 HTTP 服务实例(可能为 null);局域网分享桥复用同一服务端 */
+    public RemoteServer getServer() {
+        return mServer;
+    }
+
     /** 只在手机端展示的配对码；服务重建后仍沿用本次开启时生成的值。 */
     public String getPairingCode() {
         RemoteServer server = mServer;

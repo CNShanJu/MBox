@@ -88,7 +88,7 @@ public final class LanPairQr {
 
     @Nullable
     private static Pair validPair(String address, String code) {
-        if (address == null || code == null || address.length() > 512 || !code.matches("[0-9]{8}")) return null;
+        if (address == null || code == null || address.length() > 512 || !code.matches("[0-9]{6}")) return null;
         try {
             URI uri = new URI(address.trim());
             if (!("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme()))

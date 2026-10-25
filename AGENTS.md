@@ -43,7 +43,7 @@ app / feature
 | `:spider` | 爬虫**契约 + 实现同模块**(原 `:spider-api` 已并入):契约(SourcePage/Category/Detail/Search/Play 与 SourceConfigProviders/ParseConfigProviders/LiveChannelConfigApi/SourceLoaderApi/PlayUrlResolverProviders/SpiderFaultProviders)、QuickJS/JarLoader/ApiConfig/具体 Spider;**app/UI 一律经契约,禁止直连 `ApiConfig`/`JsLoader`/`PlayUrlResolver`**(`checkModuleDependencies` 已加该红线,白名单只剩组合根/启动注入点) |
 | `:player` | 播放**契约 + 实现同模块**(原 `:player-api` 已并入):契约(PlayerSession/PlayerState/PlayerOptions/PlayerEvent/PlayerFactory)与 MyVideoView/Media3 同模块;UI 不得直接依赖具体内核 |
 | `:thirdparty` | 纯第三方归堆,不依赖任何本仓模块:TabLayout(`com.angcyo.tablayout`)、CustomActivityOnCrash(`cat.ereza.customactivityoncrash`,原 `:crash`)、QuickJS(`com.whl.quickjs.*` + `src/main/jniLibs`,原 `:quickjs`) |
-| `:download` | 只公开 DownloadFacade.enqueue/pause/resume/delete/observe;Manager/Scheduler/Executor/Archive 等为模块内部实现 |
+| `:download` | 只公开 DownloadFacade(enqueue/pause/resume/delete/observe 与 pauseAll/startAll/moveToFront/setPriority 等门面转发方法);Manager/Scheduler/Executor/Archive 等为模块内部实现 |
 | `:share` | 分享/导入导出(传输层):契约(`ShareFacade`/`ShareTransport`/`ShareCapability`/`ShareLink`/`SharePackage`/`ShareManifest` 等)+ 实现(`online`=storage.to、`transport.lan`=局域网、`local`=本地文件)同模块;平台**可插拔**(注册顺序即优先级,`availablePlatforms/firstAvailable` 自动选可用平台),在线平台不可用时换实现而不改调用方。局域网 HTTP 服务在 `:app`,经 `transport.lan.LanShareHost` 桥接注入,故本模块**不得依赖 `:app`**;`internal`/`online`/`local` 为内部实现,**app 禁止 import**(门禁已加) |
 | `:log` | 日志(LogStore + 落盘/Logcat 采集),不依赖任何业务模块 |
 | `:app` 的 ui-kit/ui-common | 主题资源(原 `:ui-common`)与通用组件已全部收在 app 内(app 的 `res` + `ui/kit` package);组件成熟后再考虑拆模块 |
@@ -88,11 +88,12 @@ app / feature
 4. 禁止引入/使用 EventBus(已全仓移除,依赖不在 classpath);跨页/模块事件一律直调或经 Facade 订阅接口。
 5. 模块依赖只增公开契约接口;Gradle 依赖默认 `implementation`,谨慎 `api`。
 6. 业务/后台任务必须用模块级共享执行器(如 `HeavyTaskUtil`),且带取消/过期自检语义(epoch),不得每轮 new 线程池后 shutdown 了事。
-7. 所有可滚动组件(RecyclerView/ScrollView/GridView/横向列表等)必须保留**内边距**并配合
+7. **后台动作必须有前台可见反馈**:任何「用户主动触发、后台耗时不可感知」的动作(退出登录/清理/导入导出/扫描/校验等),在前台必须挂可见的状态窗口(如 `DialogCoordinator.loading` 的 `LoadingDialog.setHint(...)`、进度条或结果提示),**禁止让用户干等、界面毫无动静**。示例(2026-10-25 教训):清凭据后调各源 `action("logout")` 后台要十几秒,原实现直接丢后台线程不弹框,用户只见页面无反应、logcat 也因 `System.exit` 提前杀进程而打不出日志;正确做法是「先弹加载框(hint 写明在做什么)→ 后台跑完(带超时)→ 收起加载框 → 弹结果/确认框」。长耗时后台动作若可取消,加载框应挂 `setOnCancel` 给用户退路。
+8. 所有可滚动组件(RecyclerView/ScrollView/GridView/横向列表等)必须保留**内边距**并配合
    `clipToPadding=false` 让首/末内容不贴到屏幕或容器边缘滚动;禁止内容贴边滚动影响视觉效果。
-8. 用户主动触发的删除、清除、清空操作必须先弹确认框;取消后不得改动数据。批量操作应说明影响范围,
+9. 用户主动触发的删除、清除、清空操作必须先弹确认框;取消后不得改动数据。批量操作应说明影响范围,
    删除正在使用的直播源等会改变当前选择的操作应说明后续行为;输入框清字和页面临时状态重置不属于此类。
-9. **新增源码一律用 Kotlin(`.kt`),禁止新建 `.java` 文件**(类/接口/数据类/对象/扩展等全部 .kt)。
+10. **新增源码一律用 Kotlin(`.kt`),禁止新建 `.java` 文件**(类/接口/数据类/对象/扩展等全部 .kt)。
    修改既有 `.java` 文件时,优先就地转为 `.kt`(可用 IDE 转换,转换后须保持公共契约与行为不变,
    不得借转换顺带改逻辑);确需保留 Java 的场景(如必须保持 Java 签名的既有代码、第三方 Jar 反编译产物)
    属例外,须在提交说明中写明原因。转换遵循现有包结构与依赖方向,不改变对外接口与调用方代码。
@@ -248,6 +249,18 @@ app / feature
 - 改进.txt(已纳入版本库跟踪)与 AGENTS.md 保持一致,改动同步更新;release-notes-v3.0.1.md 不入库,其要求以上方章节为准。
 
 ### 代码托管与镜像同步(强制)
+
+0. **分支与发包流程(强制;dev 先行,合到 main 才发包)**:日常开发**只提交并推送到 `dev`**,
+   不在 dev 上打 tag、不在 dev 上发包;等确认 `dev` 的改动没问题后,再**用合并提交(merge)合到 `main`**,
+   最后**在 `main` 的最新提交上打 `vX.Y.Z` tag**,由 CI 用该 tag 发包。流程固定为:
+   `dev 提交/推送 → 验证无问题 → merge 合到 main → 在 main 上打 tag → CI 用 tag 发包`。
+   - **为什么必须走 main**:CI 的 `Build APK` 工作流只在 push 到 `main`/`master` 或推送 `v*` tag 时发包;
+     直接在 dev 的提交上打 tag 等于绕过 main,会让 `main` 长期落后于 `dev`,失去"已确认待发布"这层把关。
+   - **日常不发包时**:只 `git push origin dev`(GitHub 权威,Gitee 经 Pull 镜像自动跟上),**不升版本、不打 tag、不动 main**。
+   - **决定发包时**:先确认 dev 已是最新且验证通过,再 `git checkout main && git merge dev`(生成合并提交),
+     然后按 `app/app_config.properties` 的 versionName 打 tag(如 `v3.6.9`),推 main + tag 触发 CI。
+   - **合并方式固定为 merge(合并提交)**,不用 rebase/squash/fast-forward,保留"这次合入 dev"的可追溯节点。
+   - 例外:用户明确说"这次只提 dev、不合 main"或"直接发 dev 的包"时,以用户当次指令为准,但默认走上面流程。
 
 1. **GitHub 是唯一权威,Gitee 只是镜像**:`origin` = `https://github.com/CNShanJu/MBox.git`(权威:CI、Release 都在这边);
    `gitee` = `https://gitee.com/CnAyo/MBox.git`(国内镜像:**代码** + 发行版附件)。

@@ -158,27 +158,6 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
             com.github.tvbox.osc.theme.ThemeSweep.apply(getWindow() == null ? null : getWindow().getDecorView());
         } catch (Throwable ignored) {
         }
-        // 暂停页面创建时的主题诊断与按需全树采集。
-        /* 临时停用页面主题探针，保留代码供后续排障。
-        try {
-            final View probeRoot = getWindow() == null ? null : getWindow().getDecorView();
-            if (probeRoot != null) {
-                probeRoot.post(() -> com.github.tvbox.osc.theme.RadiusCheck.reportViews(
-                        probeRoot, getClass().getSimpleName(),
-                        new int[]{R.id.search, R.id.tvName, R.id.bottom_nav_surface,
-                                R.id.my_surface_card, R.id.btn_live, R.id.btn_filter,
-                                R.id.update_bubble, R.id.ivThumb, R.id.tvYear}));
-                // 按需全树体检:`adb shell am start -n <pkg>/<Activity> --ez dump_theme true`
-                // 会在 3 秒后把"所有带底的控件 + 真色"打进 logcat —— 换自定义主题后想在某个页面上
-                // 一次性看清"哪些控件没跟上",用它(平时不带这个参数,零开销)。
-                if (getIntent() != null && getIntent().getBooleanExtra("dump_theme", false)) {
-                    probeRoot.postDelayed(() ->
-                            com.github.tvbox.osc.theme.RadiusCheck.dumpAllBackgrounds(probeRoot, getClass().getSimpleName()), 3000);
-                }
-            }
-        } catch (Throwable ignored) {
-        }
-        */
     }
 
     /** 启动器开屏或通知直达页面可在冷进程里直接创建。 */
@@ -325,24 +304,6 @@ public abstract class BaseActivity extends AppCompatActivity implements CustomAd
             if (shouldAttachPageBackground()) attachPageBackground();
         } catch (Throwable ignored) {
         }
-        // 暂停页面恢复时的主题与输入框诊断。
-        /* 临时停用页面恢复时的主题探针，避免定时采集与日志输出。
-        try {
-            final View probeRoot = getWindow() == null ? null : getWindow().getDecorView();
-            if (probeRoot != null) {
-                probeRoot.postDelayed(() -> com.github.tvbox.osc.theme.RadiusCheck.reportViews(
-                        probeRoot, getClass().getSimpleName(),
-                        new int[]{R.id.search, R.id.tvName, R.id.bottom_nav_surface,
-                                R.id.my_surface_card, R.id.btn_live, R.id.btn_filter,
-                                R.id.update_bubble, R.id.ivThumb, R.id.tvYear}), 1200);
-                // 输入框的颜色只能"等它真的弹出来"才测得准(裸 inflate 不经过主题工厂,读到的是编译期值):
-                // 这里延时再采一次**当前窗口里真实的 EditText**,给输入框一族颜色一个可核对的数字。
-                probeRoot.postDelayed(() -> com.github.tvbox.osc.theme.RadiusCheck.reportInputs(
-                        BaseActivity.this), 9000);
-            }
-        } catch (Throwable ignored) {
-        }
-        */
         // 全局更新悬浮圈:下载进行中时,当前页面顶部悬浮圆形进度钮(不依赖系统悬浮窗权限)
         try {
             com.github.tvbox.osc.update.UpdateFloatIndicator.get(this).attach(this);

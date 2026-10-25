@@ -70,6 +70,16 @@ public final class ConfigImportSession {
     public boolean isImporting() { return importing; }
     public JsonObject catalog() { return source == null ? null : source.catalog(); }
 
+    /** 主动断开当前连接（用户手动断开或离开导入页）；停止监测、释放来源。 */
+    public void disconnect() {
+        main.removeCallbacks(monitor);
+        epoch++;
+        source = null;
+        address = "";
+        state = State.DISCONNECTED;
+        emit();
+    }
+
     public void addListener(Listener listener) {
         if (listener != null) listeners.add(listener);
     }

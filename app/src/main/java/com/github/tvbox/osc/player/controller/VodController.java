@@ -59,12 +59,9 @@ public class VodController extends BaseController implements PlaybackSettingsCon
     private AdaptiveVodProgressLayout mAdaptiveProgressLayout;
     /** 用户是否锁定竖屏: 锁定后刷新/重播不得按片源宽高自动转回横屏 */
     private boolean mPortraitLock = false;
-    /** 画圈手势识别(中心画圈刷新) */
-    private final PlayGestureRecognizer mGestureRecognizer;
 
     public VodController(@NonNull @NotNull Context context) {
         super(context);
-        mGestureRecognizer = new PlayGestureRecognizer(context.getResources().getDisplayMetrics().density);
         mHandlerCallback = new HandlerCallback() {
             @Override
             public void callback(Message msg) {
@@ -739,7 +736,6 @@ public class VodController extends BaseController implements PlaybackSettingsCon
             int playerType = mPlayerConfig.getInt("pl");
             mPlayerBtn.setText(PlayerHelper.getPlayerName(playerType));
             mPlayerScaleBtn.setText(PlayerHelper.getScaleName(mPlayerConfig.getInt("sc")));
-            mPlayerScaleBtn.setText(PlayerHelper.getScaleName(mPlayerConfig.getInt("sc")));
             mPlayerSpeedBtn.setText("x" + mPlayerConfig.getDouble("sp"));
             mPlayerTimeStartBtn.setText(PlayerUtils.stringForTime(mPlayerConfig.getInt("st") * 1000));
             mPlayerTimeSkipBtn.setText(PlayerUtils.stringForTime(mPlayerConfig.getInt("et") * 1000));
@@ -1243,79 +1239,11 @@ public class VodController extends BaseController implements PlaybackSettingsCon
     private boolean fromLongPress;
     private float speed_old = 1.0f;
 
-    // ------------------------------------------------------------------
-    // 画圈手势(中心画圈=刷新；切上/下一集改由底部对应 icon 触发)
-    // 接入点在 BaseController 的 onDown/onScroll/ACTION_UP 钩子。
-    // ------------------------------------------------------------------
-
-    private boolean mGestureInterrupted;
-
-    private boolean canRecognizeShapeGesture() {
-        return !browserRemote && !isLock && !isLocked() && isInPlaybackState()
-                && isGestureEnabled() && !fromLongPress && !mGestureInterrupted;
-    }
-
-    @Override
-    protected void onGestureStart(MotionEvent e) {
-        mGestureInterrupted = false;
-        if (canRecognizeShapeGesture() && !PlayerUtils.isEdge(this, e)) {
-            mGestureRecognizer.start(e.getX(), e.getY());
-        } else {
-            onGestureCancel();
-        }
-    }
-
-    @Override
-    protected boolean onGestureMove(MotionEvent e) {
-        if (!canRecognizeShapeGesture()) {
-            onGestureCancel();
-            return false;
-        }
-        mGestureRecognizer.move(e.getX(), e.getY());
-        // 待判定 / 已判定为画手势：接管，跳过滑动调节
-        return mGestureRecognizer.isActive() || mGestureRecognizer.isUndecided();
-    }
-
-    @Override
-    protected void onGestureEnd() {
-        if (!canRecognizeShapeGesture()) {
-            onGestureCancel();
-            return;
-        }
-        PlayGestureRecognizer.Result result = mGestureRecognizer.finish();
-        dispatchGesture(result);
-    }
-
-    @Override
-    protected void onGestureCancel() {
-        mGestureInterrupted = true;
-        // Base 构造期间的开关回调可能早于本类字段初始化。
-        if (mGestureRecognizer != null) mGestureRecognizer.cancel();
-    }
-
-    @Override
-    protected void beginSeeking() {
-        // 普通滑动、进度条或按键 seek 一旦开始，本轮形状识别永久作废。
-        onGestureCancel();
-        super.beginSeeking();
-    }
-
-    /** 画手势识别结果 → 动作：中心画圈刷新（切上/下一集改由底部对应 icon 触发） */
-    private void dispatchGesture(PlayGestureRecognizer.Result result) {
-        if (!canRecognizeShapeGesture() || result == null || listener == null) return;
-        android.util.Log.i("PlayerGesture", "dispatch gesture=" + result.getGesture()
-                + " centerX=" + result.getCenterX() + " width=" + getWidth());
-        if (result.getGesture() == PlayGestureRecognizer.Gesture.CIRCLE) {
-            listener.replay(false);
-            hideBottom();
-        }
-    }
-
     @Override
     public void onLongPress(MotionEvent e) {
-        boolean allowed = canRecognizeShapeGesture();
-        onGestureCancel();
-        if (!allowed) return;
+        // 长按倍速:投屏中/锁屏/非播放态/手势关闭/已在倍速中时不触发
+        if (browserRemote || isLock || isLocked() || !isInPlaybackState()
+                || !isGestureEnabled() || fromLongPress) return;
         if (videoPlayState != VideoView.STATE_PAUSED) {
             fromLongPress = true;
             try {

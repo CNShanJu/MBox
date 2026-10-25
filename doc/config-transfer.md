@@ -5,7 +5,7 @@
 | 入口 | 选择规则 | 文件/传输 | 导入语义 |
 | --- | --- | --- | --- |
 | 设置 → 局域网服务管理 → 局域网配置导入导出 | 连接另一台 MBox 后选类别；另一台通过本机地址和配对码取配置 | 一次 HTTP 下载一个 `mbox-config.zip` | 订阅、直播、主题、历史按现有去重/合并规则；所选设置覆盖对应键 |
-| 设置 → 数据备份还原 | 全量备份/还原 | `tvbox_backup/*.zip` | DataStore 设置与 Room 数据库恢复；旧版目录仍可还原 |
+| 设置 → 数据备份还原 | 全量备份/还原 | `MBox/backup/*.zip` | DataStore 设置与 Room 数据库恢复；目录形式的备份同样可还原 |
 | 订阅管理 | 单条订阅用 JSON；勾选多条用订阅专用 ZIP | 单条 `{schema,category,items}`；多条复用 `mbox-config.zip`，只含 `subscriptions` 域 | 导入后逐条校验订阅，保留原页面的启用和去重流程 |
 | 主题编辑等单项入口 | 由所属功能直接处理 | 主题 JSON 或带背景图的 ZIP | 走该功能原有的校验和命名规则 |
 | 后续在线导入导出 | 平台只负责上传/下载包，不解析配置 | 同一个 `mbox-config.zip` | 下载后交给 `ConfigBundle.importSelected` |
@@ -33,13 +33,13 @@ theme-001.bin
 
 `manifest.json` 使用 `ShareManifest`：`schema=1`、`fileName="mbox-config.zip"`、`createdAt`、`domains`（类别 ID 列表）。包内的 `size` 和 `checksum` 留空，因为归档不能把自己的哈希写进自己；传输层如有外部清单，可对整个 ZIP 另做 SHA-256 校验。ZIP 的条目 CRC 在完整读取时校验。每个类别 JSON 使用 `ConfigDataExchange` 的 `{schema:1,category,createdAt,...}` 结构。主题 `.bin` 按内容识别 JSON 或主题 ZIP，保留主题背景图。
 
-订阅管理导出多条时也使用该格式，但只包含 `subscriptions.json` 和清单，且 JSON 的 `items` 仅有用户勾选的条目。导入时先解压、校验，再把 `items` 交还订阅页面逐条处理，并删除下载的临时 ZIP 与解压目录。内嵌本地订阅文件先在共享执行器落盘，避免批量写文件卡住页面；文件写入使用原子替换。导出一条时保留直接 JSON 文件，同样带 `schema=1`、`category="subscriptions"` 和单条 `items`；旧版 JSON 数组仍可导入。本地订阅文件读不到时导出失败，不能只传原设备的 `clan://` 路径；批量导入也会跳过没有内嵌内容的外来本地路径。分享用的 ZIP 须保留到接收方读取完成，应用外部缓存只保留最近几份。
+订阅管理导出多条时也使用该格式，但只包含 `subscriptions.json` 和清单，且 JSON 的 `items` 仅有用户勾选的条目。导入时先解压、校验，再把 `items` 交还订阅页面逐条处理，并删除下载的临时 ZIP 与解压目录。内嵌本地订阅文件先在共享执行器落盘，避免批量写文件卡住页面；文件写入使用原子替换。导出一条时保留直接 JSON 文件，同样带 `schema=1`、`category="subscriptions"` 和单条 `items`；旧版 JSON 数组仍可导入。**批次字段随条目导出**：属于同一次导入批次的条目会带上 `batchId`/`batchName`/`batchTime`（2026-10 新增），接收端重新导入后仍归回同一「手风琴」分组，不散成平铺条目；不带这三个字段的旧清单按无批次平铺处理。本地订阅文件读不到时导出失败，不能只传原设备的 `clan://` 路径；批量导入也会跳过没有内嵌内容的外来本地路径。分享用的 ZIP 须保留到接收方读取完成，应用外部缓存只保留最近几份。
 
 导入流程：下载至应用缓存 → 校验 ZIP 与清单及选择范围 → 在独立缓存目录解压并核对条目 → 解析所选 JSON → 按领域规则合并 → `finally` 删除下载的临时 ZIP 和解压目录。配置归档压缩后上限 64 MB，解压时单条目上限 64 MB、总量上限 128 MB；全量备份使用独立的较大上限。未选中的类别不写入本机。导入不是跨 DataStore、主题库和历史库的数据库事务；遇到应用层写入失败，应报告中断，重试时现有去重规则防止订阅和直播重复。
 
 ## 全量本地备份
 
-同样使用 ZIP 与 `ShareManifest`，`fileName="mbox-backup.zip"`，`domains` 为 `prefs` 与可选的 `room`。条目是 `manifest.json`、`prefs.json` 和可选的 `room.db`。它与选类别的合并导入语义不同：还原会覆盖本机设置和数据库，因此入口先确认。旧版 `tvbox_backup/<时间>/` 目录仍从原文件名读取，子文件须留在该目录内且设置文件限 32 MB。数据库先复制到同目录临时文件，检查 SQLite 完整性、版本和必要表，随后才替换原数据库；设置保留 JSON 整数与长整数的类型，并在一次 DataStore 更新中写入。新的 ZIP 是用户保留的备份文件，不会在还原后删除；应用内部复制出来的临时 ZIP 和解压目录会删除。
+同样使用 ZIP 与 `ShareManifest`，`fileName="mbox-backup.zip"`，`domains` 为 `prefs` 与可选的 `room`。条目是 `manifest.json`、`prefs.json` 和可选的 `room.db`。它与选类别的合并导入语义不同：还原会覆盖本机设置和数据库，因此入口先确认。本机备份统一放在 `MBox/backup/` 下，兼容目录形式（`MBox/backup/<时间>/`，从原文件名读取，子文件须留在该目录内且设置文件限 32 MB）与 ZIP 两种形态。数据库先复制到同目录临时文件，检查 SQLite 完整性、版本和必要表，随后才替换原数据库；设置保留 JSON 整数与长整数的类型，并在一次 DataStore 更新中写入。新的 ZIP 是用户保留的备份文件，不会在还原后删除；应用内部复制出来的临时 ZIP 和解压目录会删除。
 
 ## 后续扩展
 

@@ -119,6 +119,8 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
 
     private lateinit var sourceViewModel : SourceViewModel
     private var fromHomeSearch = false
+    // 从观看历史/收藏等外部页带片名自动搜索进入:未主动打开过输入页,返回应直接回来源页而非退回站内搜索页
+    private var enteredFromExternalSearch = false
     private var homeSearchOverlay: View? = null
     private var homeSearchBackground: PageBackgroundView? = null
     private var homeSearchRevealed = false
@@ -497,6 +499,13 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
                 closeSourceDrawer()   // 来源列表还展着:先收回结果页(与遥控返回键同一条链)
                 return
             }
+            // 外部页(观看历史/收藏)带片名自动搜索进来的:没有站内搜索页可回,直接结束回来源页
+            if (enteredFromExternalSearch) {
+                cancel()
+                KeyboardUtils.hideSoftInput(this)
+                super.onBackPressed()
+                return
+            }
             backToSearchPage()
             return
         }
@@ -518,7 +527,8 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
     }
 
     /** 遥控适配:左方向键翻到来源列表;来源页展开时右方向键/返回键翻回结果 */
-    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {        if (mBinding.llSearchResult.visibility == View.VISIBLE) {
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        if (mBinding.llSearchResult.visibility == View.VISIBLE) {
             when (keyCode) {
                 KeyEvent.KEYCODE_DPAD_LEFT -> if (!mBinding.llSearchResult.isLeftShown) {
                     openSourceDrawer()
@@ -702,6 +712,7 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
         if (intent != null && intent.hasExtra("title")) {
             val title = intent.getStringExtra("title")
             if (!TextUtils.isEmpty(title)) {
+                if (!fromHomeSearch) enteredFromExternalSearch = true
                 showLoading()
                 search(title)
             }

@@ -78,8 +78,6 @@ public abstract class AppCenterPopupView extends CenterPopupView {
             com.github.tvbox.osc.theme.ThemeDrawables.applyBackground(root, R.drawable.bg_dialog);
             com.github.tvbox.osc.theme.ThemeSweep.watchItems(root);
         }
-        // 暂停弹窗圆角诊断日志，需要排障时恢复调用。
-        // com.github.tvbox.osc.theme.RadiusCheck.reportPopup(getContext(), getClass().getSimpleName());
         // 内容超高且不自带滚动区时,自动包一层 ScrollView:防止被 maxHeight 裁剪(纯文本/按钮弹窗兜底)
         if (!contentSelfScrollable()) {
             wrapContentInScrollIfOverflow();

@@ -259,6 +259,35 @@ public final class ExoMediaSourceHelper {
                 new StandaloneDatabaseProvider(mAppContext));
     }
 
+    /** 播放缓存目录(与 newCache 同源:外部缓存目录,无则退回内部缓存) */
+    private File playbackCacheDir() {
+        File root = mAppContext.getExternalCacheDir();
+        if (root == null) root = mAppContext.getCacheDir();
+        return new File(root, "exo-video-cache");
+    }
+
+    /** 清空播放缓存:释放 SimpleCache 并删目录,下次播放按当前容量设置重建(后台调用) */
+    public synchronized void clearPlaybackCache() {
+        if (mCache != null) {
+            try {
+                mCache.release();
+            } catch (Throwable ignored) {
+            }
+            mCache = null;
+        }
+        deleteDir(playbackCacheDir());
+    }
+
+    private static void deleteDir(File dir) {
+        if (dir == null || !dir.exists()) return;
+        if (dir.isDirectory()) {
+            File[] children = dir.listFiles();
+            if (children != null) for (File f : children) deleteDir(f);
+        }
+        //noinspection ResultOfMethodCallIgnored
+        dir.delete();
+    }
+
     /**
      * Returns a new DataSource factory.
      *

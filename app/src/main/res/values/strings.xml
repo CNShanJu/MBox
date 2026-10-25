@@ -110,4 +110,18 @@
     <string name="home_source_none">暂无可用数据源，可切换订阅</string>
     <string name="subtitle_size_value">字号：%1$d</string>
     <string name="subtitle_delay_value">时间偏移：%1$s 秒</string>
+    <!-- 本地文件「打开方式」过渡页(见 LocalFileOpenActivity):只显示当前处理状态 -->
+    <string name="local_open_reading">正在读取文件…</string>
+    <string name="local_open_staging">正在准备文件…</string>
+    <string name="local_open_choose">请选择要对这个文件执行的操作</string>
+    <string name="local_open_restoring">正在还原备份…</string>
+    <!-- 压缩包动作选择:与用户口径一一对应(zip = 订阅源导入 / 还原备份 / 主题导入);
+         文案尽量压到 4 字以内,避免列表行过长被截断 -->
+    <string name="local_open_action_subscribe">导入源</string>
+    <string name="local_open_action_restore">还原备份</string>
+    <string name="local_open_action_theme">导入主题</string>
+    <string name="local_open_tip_zip">请选择操作</string>
+    <!-- 「打开方式」弹窗里 MBox 候选的主文字(图标下方那行):用具体动作代替应用名,用户一眼看懂能干嘛 -->
+    <string name="local_open_label_play">播放视频</string>
+    <string name="local_open_label_import">导入文件</string>
 </resources>

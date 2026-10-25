@@ -3,6 +3,7 @@ package com.github.tvbox.osc.share.internal;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import com.github.tvbox.osc.share.ShareArchiveSummary;
 import com.github.tvbox.osc.share.ShareErrorCode;
 import com.github.tvbox.osc.share.ShareException;
 import com.github.tvbox.osc.share.ShareManifest;
@@ -17,6 +18,9 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.Charset;
 import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.Enumeration;
 import java.util.HashSet;
 import java.util.Locale;
@@ -117,21 +121,22 @@ public final class ShareArchive {
                 throw new ShareException(ShareErrorCode.PARSE,
                         "归档格式版本(" + manifest.schema() + ")高于当前应用可读范围,请先升级应用");
             }
-            if (manifest.sizeBytes() > 0 && manifest.sizeBytes() != archive.length()) {
-                throw new ShareException(ShareErrorCode.CHECKSUM,
-                        "归档大小与清单不符(可能传输不完整)");
-            }
-            if (!manifest.checksumSha256().isEmpty()) {
-                // sha256Hex 抛的是 IOException(它是通用文件工具),这里转成 ShareException:
-                // "算校验和时读不动文件"对调用方就是一次导入失败,不该多一种异常类型要处理
-                String actual;
+            // 清单记录了"数据条目(不含清单)的摘要";只有导出侧真的算过(非 0/空)才校验。
+            // 旧包/测试包的清单可能没填摘要,此时跳过大小与校验和(兼容语义不变)。
+            if (manifest.sizeBytes() > 0 || !manifest.checksumSha256().isEmpty()) {
+                ShareArchiveSummary actual;
                 try {
-                    actual = sha256Hex(archive);
+                    actual = summarizeArchive(archive);
                 } catch (IOException e) {
                     throw new ShareException(ShareErrorCode.IO,
                             "无法读取归档以校验完整性", e);
                 }
-                if (!actual.equalsIgnoreCase(manifest.checksumSha256())) {
+                if (manifest.sizeBytes() > 0 && manifest.sizeBytes() != actual.sizeBytes) {
+                    throw new ShareException(ShareErrorCode.CHECKSUM,
+                            "归档大小与清单不符(可能传输不完整)");
+                }
+                if (!manifest.checksumSha256().isEmpty()
+                        && !actual.sha256Hex.equalsIgnoreCase(manifest.checksumSha256())) {
                     throw new ShareException(ShareErrorCode.CHECKSUM, "归档校验和不一致");
                 }
             }
@@ -145,18 +150,86 @@ public final class ShareArchive {
     /** 文件 SHA-256(小写十六进制) */
     @NonNull
     public static String sha256Hex(@NonNull File file) throws IOException {
-        MessageDigest md;
-        try {
-            md = MessageDigest.getInstance("SHA-256");
-        } catch (Exception e) {
-            throw new IOException("SHA-256 不可用", e);
-        }
+        MessageDigest md = newSha256();
         try (InputStream in = new BufferedInputStream(new FileInputStream(file))) {
             byte[] buf = new byte[BUF];
             int n;
             while ((n = in.read(buf)) > 0) md.update(buf, 0, n);
         }
-        byte[] d = md.digest();
+        return hex(md.digest());
+    }
+
+    /**
+     * 导出侧:计算「待打包条目」(不含 manifest)的合并摘要。
+     * <p>摘要算法(与 {@link #summarizeArchive} 必须一致):按条目名字典序,对每个条目依次喂入
+     * {@code 条目名(UTF-8) + 0x00 + 文件内容};size 为各文件字节总和。
+     */
+    @NonNull
+    public static ShareArchiveSummary summarizeEntries(@NonNull Map<String, File> entries)
+            throws IOException {
+        MessageDigest md = newSha256();
+        long size = 0L;
+        java.util.List<String> names = new ArrayList<>(entries.keySet());
+        Collections.sort(names);
+        for (String name : names) {
+            File f = entries.get(name);
+            if (f == null || !f.isFile()) continue;
+            size += f.length();
+            md.update(name.getBytes(UTF8));
+            md.update((byte) 0);
+            try (InputStream in = new BufferedInputStream(new FileInputStream(f))) {
+                byte[] buf = new byte[BUF];
+                int n;
+                while ((n = in.read(buf)) > 0) md.update(buf, 0, n);
+            }
+        }
+        return new ShareArchiveSummary(size, hex(md.digest()));
+    }
+
+    /**
+     * 导入侧:计算归档内「数据条目」(不含 manifest)的合并摘要。
+     * <p>与 {@link #summarizeEntries} 同一算法:按条目名字典序,喂入 条目名 + 0x00 + 解压后内容;
+     * size 为实际读到的字节总和(与导出侧的文件长度一致)。
+     */
+    @NonNull
+    public static ShareArchiveSummary summarizeArchive(@NonNull File archive) throws IOException {
+        MessageDigest md = newSha256();
+        long size = 0L;
+        try (ZipFile zip = new ZipFile(archive)) {
+            java.util.List<ZipEntry> entries = new ArrayList<>();
+            Enumeration<? extends ZipEntry> it = zip.entries();
+            while (it.hasMoreElements()) {
+                ZipEntry e = it.nextElement();
+                if (!e.isDirectory() && !ShareManifest.ENTRY_MANIFEST.equals(e.getName())) {
+                    entries.add(e);
+                }
+            }
+            Collections.sort(entries, Comparator.comparing(ZipEntry::getName));
+            for (ZipEntry entry : entries) {
+                md.update(entry.getName().getBytes(UTF8));
+                md.update((byte) 0);
+                try (InputStream in = zip.getInputStream(entry)) {
+                    byte[] buf = new byte[BUF];
+                    int n;
+                    while ((n = in.read(buf)) > 0) {
+                        size += n;
+                        md.update(buf, 0, n);
+                    }
+                }
+            }
+        }
+        return new ShareArchiveSummary(size, hex(md.digest()));
+    }
+
+    private static MessageDigest newSha256() throws IOException {
+        try {
+            return MessageDigest.getInstance("SHA-256");
+        } catch (Exception e) {
+            throw new IOException("SHA-256 不可用", e);
+        }
+    }
+
+    private static String hex(byte[] d) {
         StringBuilder sb = new StringBuilder(d.length * 2);
         for (byte b : d) {
             sb.append(Character.forDigit((b >> 4) & 0xF, 16));
