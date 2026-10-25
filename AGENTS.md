@@ -250,6 +250,18 @@ app / feature
 
 ### 代码托管与镜像同步(强制)
 
+0. **分支与发包流程(强制;dev 先行,合到 main 才发包)**:日常开发**只提交并推送到 `dev`**,
+   不在 dev 上打 tag、不在 dev 上发包;等确认 `dev` 的改动没问题后,再**用合并提交(merge)合到 `main`**,
+   最后**在 `main` 的最新提交上打 `vX.Y.Z` tag**,由 CI 用该 tag 发包。流程固定为:
+   `dev 提交/推送 → 验证无问题 → merge 合到 main → 在 main 上打 tag → CI 用 tag 发包`。
+   - **为什么必须走 main**:CI 的 `Build APK` 工作流只在 push 到 `main`/`master` 或推送 `v*` tag 时发包;
+     直接在 dev 的提交上打 tag 等于绕过 main,会让 `main` 长期落后于 `dev`,失去"已确认待发布"这层把关。
+   - **日常不发包时**:只 `git push origin dev`(GitHub 权威,Gitee 经 Pull 镜像自动跟上),**不升版本、不打 tag、不动 main**。
+   - **决定发包时**:先确认 dev 已是最新且验证通过,再 `git checkout main && git merge dev`(生成合并提交),
+     然后按 `app/app_config.properties` 的 versionName 打 tag(如 `v3.6.9`),推 main + tag 触发 CI。
+   - **合并方式固定为 merge(合并提交)**,不用 rebase/squash/fast-forward,保留"这次合入 dev"的可追溯节点。
+   - 例外:用户明确说"这次只提 dev、不合 main"或"直接发 dev 的包"时,以用户当次指令为准,但默认走上面流程。
+
 1. **GitHub 是唯一权威,Gitee 只是镜像**:`origin` = `https://github.com/CNShanJu/MBox.git`(权威:CI、Release 都在这边);
    `gitee` = `https://gitee.com/CnAyo/MBox.git`(国内镜像:**代码** + 发行版附件)。
    另一远端 `legacy` 指向更名前的旧仓库 `CNShanJu/TVBoxOS-Mobile`,只作历史留档,**不要往它推新提交**。

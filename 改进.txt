@@ -112,6 +112,12 @@ app/UI 不得新增 getCSP()、DownloadManager.get()、Hawk 裸读、具体爬�
    同时把 debugVersionName 设为上一版实际发布的版本号，不能按新版末段减 1 推算（版本可能跳号）；
    打 tag 基于最新 versionName；出正式包基于最新 tag 对应版本；用户有明确说明时以用户说明为准。
 
+5b. 分支与发包流程（dev 先行，合到 main 才发包）：日常只提交并推送 dev，不在 dev 打 tag、不在 dev 发包；
+    确认 dev 没问题后，用合并提交（merge）合到 main，再在 main 最新提交上打 vX.Y.Z tag，由 CI 用 tag 发包。
+    流程固定为「dev 提交/推送 → 验证无问题 → merge 合 main → 在 main 打 tag → CI 发包」。
+    日常不发包时只 push dev，不升版本、不打 tag、不动 main；合并固定用 merge（不用 rebase/squash/fast-forward）。
+    用户明确说“只提 dev”或“直接发 dev 的包”时以当次指令为准，默认走上面流程。
+
 6. debug 构建产物严禁提交（除非用户明确要求并二次确认）。
    发布含中文内容必须显式 UTF-8 写入并以字节发送，发布后抽查是否出现连续 “?” 乱码。
 
