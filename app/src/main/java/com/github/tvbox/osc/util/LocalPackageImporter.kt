@@ -46,6 +46,8 @@ object LocalPackageImporter {
     private const val MAX_MANIFEST_CANDIDATES = 40
     /** 兜底扫描最多读多少个文件 */
     private const val MAX_CONFIG_READS = 200
+    /** 判"是否依赖同目录文件"时最多收集多少个相对引用(够用了,别为判定翻遍整份配置) */
+    private const val MAX_SIBLING_REFS = 200
     /**
      * 不是订阅配置的资源子目录(接口模板/js 片段/直播清单/多 jar/爬虫脚本/规则模板),扫描时跳过。
      * 跳过它们既省 I/O(道长包光 drpy_js 就四百多个文件),也避免把规则模板当成一条条订阅收进列表。
@@ -494,7 +496,9 @@ object LocalPackageImporter {
             // 丢掉开头的包目录名(用户解压到哪儿、那层叫什么都不一定),从里层逐级试
             for (i in 1 until segments.size) {
                 val candidate = File(manifestDir, segments.drop(i).joinToString("/"))
-                if (candidate.isFile) return candidate
+                // 只认主存储里的命中:清单来自应用 cache 的暂存副本时,同目录命中会把 clan://
+                // 指到一个 clan 服务取不到的路径(导入后必然"解析配置失败")
+                if (candidate.isFile && SubscriptionLibrary.isUnderPrimaryStorage(candidate)) return candidate
             }
         }
         return null
@@ -522,6 +526,9 @@ object LocalPackageImporter {
             null
         } ?: return null
         if (!file.isFile || file.length() > MAX_JUDGE_BYTES) return null
+        // 只有主存储里的文件才能就地引用:clan:// 是按 /storage/emulated/0 取文件的,
+        // 系统"打开方式"进来的是应用 cache 下的暂存副本,引用过去等于指向一个取不到的路径。
+        if (!SubscriptionLibrary.isUnderPrimaryStorage(file)) return null
         val text = readText(file) ?: return null
         val shape = CmsApiRules.subscriptionShape(text.trim())
         if (shape != CmsApiRules.SHAPE_CONFIG && shape != CmsApiRules.SHAPE_ENCRYPTED) return null
@@ -534,13 +541,64 @@ object LocalPackageImporter {
         return result
     }
 
-    /** 配置有没有"同目录依赖":写了相对引用,或旁边就放着 jar */
+    /**
+     * 配置有没有"同目录依赖":配置里写的相对引用({@code ./BXS.jar}、{@code ./lib/x.js})或 spider 文件名,
+     * 必须在配置所在目录里能解析到<b>真实文件</b>才算。
+     *
+     * <p>为什么不能只扫文本里有没有 {@code "./"}:网络订阅里 {@code "spider":"./CFlLnSbJ"}、
+     * {@code "api":"./lib/x.js"} 这种相对写法很常见(依赖挂在作者自己的站点/仓库上),
+     * 用户手里只有这一个 json 时旁边根本没有那些文件。按字符串命中就会把它误判成"包里的配置",
+     * 于是跳过复制、就地 {@code clan://} 引用原位置:轻则订阅名变成父目录名,
+     * 重则引用到应用 cache 这类非主存储路径(clan 服务取不到)让应用每次启动都"解析配置失败"。
+     */
     private fun dependsOnSiblings(text: String, file: File): Boolean {
-        if (text.contains("\"./") || text.contains("\"../")) return true
-        val jars = file.parentFile?.listFiles { candidate ->
-            candidate.isFile && candidate.name.lowercase(Locale.ROOT).endsWith(".jar")
+        val dir = file.parentFile ?: return false
+        val root = parseJsonText(text) ?: return false
+        val refs = LinkedHashSet<String>()
+        collectSiblingRefs(root, refs)
+        for (ref in refs) {
+            if (resolveSibling(dir, ref) != null) return true
         }
-        return jars?.isNotEmpty() == true
+        return false
+    }
+
+    /** 收集配置里可能指向同目录文件的引用:相对路径写法,以及不带协议的 spider 文件名 */
+    private fun collectSiblingRefs(element: JsonElement, out: MutableSet<String>) {
+        if (out.size >= MAX_SIBLING_REFS) return
+        when {
+            element.isJsonPrimitive -> {
+                if (!element.asJsonPrimitive.isString) return
+                val value = element.asString.trim()
+                if (value.startsWith("./") || value.startsWith("../")) out.add(value)
+            }
+            element.isJsonObject -> {
+                val obj = element.asJsonObject
+                // "spider":"xxx.jar" / "spider":"xxx.jar;md5;…" 这类不带 ./ 的包内写法同样算
+                val spider = stringValue(obj, "spider").trim()
+                if (spider.isNotEmpty() && !spider.contains("://")) out.add(spider)
+                for (entry in obj.entrySet()) collectSiblingRefs(entry.value, out)
+            }
+            element.isJsonArray -> {
+                for (item in element.asJsonArray) collectSiblingRefs(item, out)
+            }
+        }
+    }
+
+    /** 同目录里真能找到这个文件才算依赖;解析后必须还在配置所在目录内(防目录穿越) */
+    private fun resolveSibling(dir: File, ref: String): File? {
+        val raw = ref.substringBefore(';').trim() // "spider":"a.jar;md5;…" 取文件名那一段
+        if (raw.isEmpty() || raw.contains("://")) return null
+        return try {
+            val base = dir.canonicalFile
+            val candidate = File(base, raw).canonicalFile
+            when {
+                !candidate.path.startsWith(base.path + File.separator) -> null
+                candidate.isFile -> candidate
+                else -> null
+            }
+        } catch (t: Throwable) {
+            null
+        }
     }
 
     /**

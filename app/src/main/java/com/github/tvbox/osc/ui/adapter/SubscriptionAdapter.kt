@@ -54,6 +54,8 @@ class SubscriptionAdapter : BaseQuickAdapter<SubscriptionRow, BaseViewHolder>(R.
 
     /** 收起的批次键(重建行时保留;收起的组只留组头,组内条目不占行、不进勾选) */
     private val collapsedKeys = LinkedHashSet<String>()
+    /** 首次建行是否已按「默认收起」初始化过收起态(用户手动展开/收起后不再自动重算) */
+    private var collapsedInitialized = false
     /** 最近一次 [setSubscriptions] 的源列表(展开收起/管理菜单都按它重建行) */
     private var sourceSubscriptions: List<Subscription> = emptyList()
 
@@ -159,6 +161,17 @@ class SubscriptionAdapter : BaseQuickAdapter<SubscriptionRow, BaseViewHolder>(R.
         }
         list.sortWith(TOP_FIRST)
         sourceSubscriptions = list.toList()
+        // 首次建行:默认收起所有批次组,只展开「当前选中订阅」所在的那个组。
+        // 用户手动展开/收起过后(collapsedInitialized 置位)不再自动重算,保留其操作。
+        if (!collapsedInitialized) {
+            collapsedKeys.clear()
+            val checkedGroup = list.firstOrNull { it.isChecked }?.let { groupKeyOf(it) }
+            for (sub in list) {
+                val key = groupKeyOf(sub) ?: continue
+                if (key != checkedGroup) collapsedKeys.add(key)
+            }
+            collapsedInitialized = true
+        }
         super.setNewData(buildSubscriptionRows(list, collapsedKeys))
     }
 
