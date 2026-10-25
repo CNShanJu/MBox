@@ -357,7 +357,7 @@ class CacheManagementActivity : BaseVbActivity<ActivityCacheManagementBinding>()
     private fun tryLogoutAllSources(): String {
         android.util.Log.i("MBoxCredential", "开始尝试 logout")
         val sources = try {
-            com.github.tvbox.osc.api.ApiConfig.get().sourceBeanList
+            com.github.tvbox.osc.spiderapi.SourceConfigProviders.get().sourceBeanList
         } catch (t: Throwable) {
             android.util.Log.w("MBoxCredential", "读取源列表失败", t)
             return "读取源列表失败，未尝试 logout"
