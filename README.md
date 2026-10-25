@@ -7,7 +7,7 @@ MBox（原名 TVBoxOS-Mobile / 工程名 TVBoxMobile）是一款 Android 点播 
 | 项 | 说明 |
 | --- | --- |
 | 应用名 / 包名 | MBox / `com.github.tvbox.osc.mbox` |
-| 当前版本 | 3.6.8（versionCode 77） |
+| 当前版本 | 3.6.9（versionCode 78） |
 | 上游 | [q215613905/TVBoxOS](https://github.com/q215613905/TVBoxOS) |
 | 语言 / 内核 | Kotlin + Java；Media3（含 FFmpeg 软解）、系统播放器 |
 | 最低系统 | Android 7.0（minSdk 24） |
