@@ -6,6 +6,11 @@
 >
 > 更新前请先做好订阅地址、播放历史的备份(如有需要)。
 
+**下载地址**
+
+- Gitee:https://gitee.com/CnAyo/MBox/releases/download/v3.6.9/MBox_v3.6.9_release.apk
+- GitHub:https://github.com/CNShanJu/MBox/releases/download/v3.6.9/MBox_v3.6.9_release_20261025.apk
+
 ### 新增功能
 
 - 订阅列表改为分组展示:同一批次导入的订阅会归到一组,组头显示来源名称、条数与导入时间,可整组勾选后批量删除或更新。
