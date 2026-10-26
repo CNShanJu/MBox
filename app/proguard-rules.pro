@@ -1,5 +1,18 @@
 #############################################
 #
+# 【注意】本文件已停用(2026-10-26)
+#
+# 背景:release 曾开启 R8 混淆(minifyEnabled true),但导致安装包启动即闪退。
+#   排查结论:R8 混淆 + -repackageclasses 会剥离 ViewBinding/TypeToken 的泛型
+#   Signature,BaseVbActivity 等通过反射读取泛型参数时崩溃;且 keep 规则越补越多、
+#   排查成本远超体积收益,故关闭混淆(minifyEnabled false / shrinkResources false)。
+#
+# 现状:app/build.gradle 的 release 已不再引用本文件。本文件保留作历史参考,
+#   若未来重新评估混淆,需重新验证 ViewBinding 反射 / Gson TypeToken / XStream
+#   / QuickJS 桥接 / P2P JNI 等 keep 规则是否完整,并回归测试启动链路。
+#
+#############################################
+#
 # 对于一些基本指令的添加
 #
 #############################################
@@ -143,6 +156,14 @@
 #-keep class com.google.gson.stream.** { *; }
 # Application classes that will be serialized/deserialized over Gson
 -keep class com.google.gson.examples.android.model.** { <fields>; }
+# Gson 泛型签名保留(R8 兼容模式关键修复):
+# TypeToken 靠反射读取匿名子类继承链上的泛型 Signature 来还原 List<T>/Map<K,V> 这类真实类型。
+# 本工程开了 -repackageclasses(全部类合并进单一包),R8 的 class merging / argument removal
+# 会把 TypeToken 匿名子类的泛型签名剥掉,启动时 new TypeToken<...>(){} 的 <clinit> 抛
+# "TypeToken must be created with a type argument" 的 ExceptionInInitializerError,直接闪退。
+# 单独一条 -keepattributes Signature 不够(见 R8 compatibility-faq「GSON」小节),必须连类一起 keep。
+-keep class com.google.gson.reflect.TypeToken { *; }
+-keep class * extends com.google.gson.reflect.TypeToken
 # Prevent proguard from stripping interface information from TypeAdapter, TypeAdapterFactory,
 # JsonSerializer, JsonDeserializer instances (so they can be used in @JsonAdapter)
 -keep class * extends com.google.gson.TypeAdapter
