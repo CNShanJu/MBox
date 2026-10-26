@@ -44,9 +44,10 @@
     <!--    通用颜色-->
     <color name="white">#FFFFFF</color>
     <color name="black">#000000</color>
-    <!-- 选区背景使用不透明纯色；句柄沿用主题文字主色。 -->
-    <color name="selection_highlight">#6671E5</color>
-    <color name="selection_text">#FFFFFF</color>
+    <!-- 选区背景跟随主题高亮填充色(color_highlight=brand 主题主色);句柄沿用主题文字主色。
+         曾硬编码 #6671E5(靛蓝),长按自动选中链接时先闪这一帧靛蓝、再才跟主题,观感割裂。 -->
+    <color name="selection_highlight">@color/color_highlight</color>
+    <color name="selection_text">@color/btn_confirm_text</color>
     <color name="text_foreground">@color/text_main</color>
     <!-- 文字分级:正常/普通强调=text_main，次要=text_sub，占位=text_hint，禁用=text_disable；
          链接与空心选中高亮=text_highlight。 -->

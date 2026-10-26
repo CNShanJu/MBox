@@ -19,6 +19,8 @@ import com.github.tvbox.osc.databinding.ActivityBackgroundSettingBinding;
 import com.github.tvbox.osc.storage.theme.ThemeStore;
 import com.github.tvbox.osc.ui.kit.AppSlider;
 import com.github.tvbox.osc.ui.kit.BackgroundTuneView;
+import com.github.tvbox.osc.ui.dialog.DialogCoordinator;
+import com.github.tvbox.osc.ui.dialog.SwitchImageDialog;
 import com.github.tvbox.osc.ui.kit.PageBackgroundView;
 import com.github.tvbox.osc.util.AppBubble;
 import com.github.tvbox.osc.util.BgImageImporter;
@@ -63,7 +65,7 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
 
     /** 系统选图请求码 */
     private static final int REQ_PICK_IMAGE = 0x0B01;
-    /** 本地缓存选图请求码(标题栏「本地仓」图标) */
+    /** 本地缓存选图请求码(「切换图片」弹窗的「缓存图片」选项) */
     private static final int REQ_LOCAL_CACHE = 0x0B02;
 
     // ------------------------------------------------------------------
@@ -626,25 +628,14 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
     }
 
     private void initButtons() {
-        // 标题栏右侧图标已在 XML 声明(尺寸/位置见 activity_background_setting.xml 注释),
-        // 这里只接点击;主题模式(改某个主题自己的背景)不提供"本地缓存"入口 —— 走主题图库。
+        // 标题栏右侧「切换图片」:点击弹居中弹窗(本地图片 / 缓存图片),对应原两个图标的动作。
+        // 主题模式(改某个主题自己的背景)不提供该入口 —— 走主题图库。
         if (themeMode) {
-            mBinding.btnBgLocal.setVisibility(View.GONE);
+            mBinding.btnBgSwitch.setVisibility(View.GONE);
         }
-        mBinding.btnBgLocal.setOnClickListener(v -> {
-            FastClickCheckUtil.check(v);
-            // 冻结本次父页草稿，不能只保护尚未更新的已保存配置。
-            importEpoch.incrementAndGet();
-            dismissLoadingDialog();
-            ArrayList<String> protectedPaths = new ArrayList<>();
-            if (draftPath != null && !draftPath.isEmpty()) protectedPaths.add(draftPath);
-            Intent intent = new Intent(this, BackgroundCacheActivity.class);
-            intent.putStringArrayListExtra(BackgroundCacheActivity.EXTRA_PROTECTED_PATHS, protectedPaths);
-            startActivityForResult(intent, REQ_LOCAL_CACHE);
-        });
         mBinding.btnBgSwitch.setOnClickListener(v -> {
             FastClickCheckUtil.check(v);
-            pickImage();
+            showSwitchImageDialog();
         });
         mBinding.btnReset.setOnClickListener(v -> {
             FastClickCheckUtil.check(v);
@@ -677,6 +668,33 @@ public class BackgroundSettingActivity extends BaseVbActivity<ActivityBackground
     }
 
     // ── 选图 / 导入 ──
+
+    /**
+     * 「切换图片」弹窗:居中弹窗,两个<b>纯文字动作项</b>(本地图片 / 缓存图片,无勾选框),
+     * 分别对应原标题栏两个图标的动作;点击即执行动作并关闭。
+     */
+    private void showSwitchImageDialog() {
+        SwitchImageDialog dialog = new SwitchImageDialog(this, index -> {
+            if (index == 0) {
+                pickImage();
+            } else if (index == 1) {
+                openLocalCache();
+            }
+        });
+        DialogCoordinator.centerInHostView(this, dialog).show();
+    }
+
+    /** 打开「本地缓存」选图页(原标题栏文件夹图标动作) */
+    private void openLocalCache() {
+        // 冻结本次父页草稿，不能只保护尚未更新的已保存配置。
+        importEpoch.incrementAndGet();
+        dismissLoadingDialog();
+        ArrayList<String> protectedPaths = new ArrayList<>();
+        if (draftPath != null && !draftPath.isEmpty()) protectedPaths.add(draftPath);
+        Intent intent = new Intent(this, BackgroundCacheActivity.class);
+        intent.putStringArrayListExtra(BackgroundCacheActivity.EXTRA_PROTECTED_PATHS, protectedPaths);
+        startActivityForResult(intent, REQ_LOCAL_CACHE);
+    }
 
     /** 系统选图:SAF(ACTION_OPEN_DOCUMENT),不需要存储权限 */
     private void pickImage() {

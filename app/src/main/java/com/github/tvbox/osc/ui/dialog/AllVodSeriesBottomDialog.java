@@ -83,6 +83,7 @@ public class AllVodSeriesBottomDialog extends SheetResizableBottomPopup {
                         RoundChip chip = helper.getView(R.id.sl);
                         chip.setTitle(item.name);
                         chip.setSelected(item.selected);
+                        chip.setChipTextSize(16f); // 与全屏选集抽屉文字大小一致
                     }
                 };
         mRv.setAdapter(mSeriesAdapter);

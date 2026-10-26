@@ -53,13 +53,17 @@ public final class SpiderSearchImpl implements SpiderSearchApi {
         try {
             String content = SpiderContentImpl.get().searchContent(sourceKey, word, quick);
             if (content == null || content.isEmpty()) {
-                android.util.Log.w("SpiderBridge", "search(typed): 内容为空 key=" + sourceKey
+                // 降噪:聚合搜索时一批 JS 源会因「并发创建 QuickJS 抢不到配额」返回 SpiderNull
+                // 空结果,几十条 warn 刷屏且无价值。这里降为 debug,不再重试——
+                // 同轮内重试只会让搜索线程在 Semaphore(1) 创建队列上二次阻塞 15s(队列仍堵着),
+                // 纯拖慢整轮;真正恢复靠"下次搜索/退出重进命中缓存"(见 onDestroy 的 stopAllSourceTasks)。
+                android.util.Log.d("SpiderBridge", "search(typed): 内容为空 key=" + sourceKey
                         + " word=" + word + " quick=" + quick);
                 return null;
             }
             AbsXml xml = AbsXmlParser.parseJson(content, sourceKey);
             if (xml == null || xml.movie == null || xml.movie.videoList == null) {
-                android.util.Log.w("SpiderBridge", "search(typed): 解析为空/无列表 key=" + sourceKey
+                android.util.Log.d("SpiderBridge", "search(typed): 解析为空/无列表 key=" + sourceKey
                         + " word=" + word + " quick=" + quick);
                 return null;
             }
@@ -82,7 +86,7 @@ public final class SpiderSearchImpl implements SpiderSearchApi {
             }
             String content = HttpClient.getSync(sb.getApi(), params, null);
             if (content == null || content.isEmpty()) {
-                android.util.Log.w("SpiderBridge", "search(typed/http): 内容为空 key=" + sb.getKey()
+                android.util.Log.d("SpiderBridge", "search(typed/http): 内容为空 key=" + sb.getKey()
                         + " word=" + word + " quick=" + quick);
                 return null;
             }
@@ -90,7 +94,7 @@ public final class SpiderSearchImpl implements SpiderSearchApi {
                     ? AbsXmlParser.parseXml(content, sb.getKey())
                     : AbsXmlParser.parseJson(content, sb.getKey());
             if (xml == null || xml.movie == null || xml.movie.videoList == null) {
-                android.util.Log.w("SpiderBridge", "search(typed/http): 解析为空/无列表 key=" + sb.getKey()
+                android.util.Log.d("SpiderBridge", "search(typed/http): 解析为空/无列表 key=" + sb.getKey()
                         + " word=" + word + " quick=" + quick);
                 return null;
             }

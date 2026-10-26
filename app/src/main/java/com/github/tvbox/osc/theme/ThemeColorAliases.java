@@ -75,6 +75,9 @@ public final class ThemeColorAliases {
             put(map, R.color.text_sub_foreground, "text_sub");
             put(map, R.color.disable_text, "text_disable");
             put(map, R.color.bg_gray, "bg_card");
+            // 文字选区:背景随主题高亮色、文字随主题确认钮文字色(长按选中链接/复制时随主题)
+            put(map, R.color.selection_highlight, "color_highlight");
+            put(map, R.color.selection_text, "btn_confirm_text");
 
             put(map, R.color.gray_darker, "text_sub");
             put(map, R.color.fab_stroke, "btn_stroke");

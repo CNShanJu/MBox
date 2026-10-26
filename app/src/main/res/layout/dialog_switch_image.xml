@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 「切换图片」居中弹窗:标题 + 两个纯文字动作项(本地图片 / 缓存图片)。
+     动作项**不带勾选框**(区别于 SelectDialog 的选择列表),文字居中,点击即执行对应动作。
+     卡片底用 bg_small_round_gray(主题卡片面),点击态用 ripple_round_background(胶囊高亮),
+     两者四边内缩 10dp,不与弹窗圆角打架(见 ripple_round_background 的用法约束)。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingHorizontal="20dp"
+    android:paddingTop="16dp"
+    android:paddingBottom="20dp">
+
+    <!-- 标题行:标题 + 关闭键 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="切换图片"
+            android:textColor="@color/text_foreground"
+            android:textStyle="bold"
+            android:textSize="16sp" />
+
+        <ImageView
+            android:id="@+id/iv_close"
+            style="@style/DialogCloseButton"
+            app:tint="@color/text_foreground" />
+    </LinearLayout>
+
+    <!-- 动作项:纯文字、居中、可点,无勾选框 -->
+    <TextView
+        android:id="@+id/btn_local"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:layout_marginTop="16dp"
+        android:background="@drawable/bg_small_round_gray"
+        android:foreground="@drawable/ripple_round_background"
+        android:gravity="center"
+        android:paddingHorizontal="10dp"
+        android:text="本地图片"
+        android:textColor="@color/text_foreground"
+        android:textSize="15sp" />
+
+    <TextView
+        android:id="@+id/btn_cache"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:layout_marginTop="10dp"
+        android:background="@drawable/bg_small_round_gray"
+        android:foreground="@drawable/ripple_round_background"
+        android:gravity="center"
+        android:paddingHorizontal="10dp"
+        android:text="缓存图片"
+        android:textColor="@color/text_foreground"
+        android:textSize="15sp" />
+</LinearLayout>

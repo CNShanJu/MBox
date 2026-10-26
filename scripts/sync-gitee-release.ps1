@@ -165,6 +165,24 @@ if (-not $ApkPath -or -not (Test-Path $ApkPath)) {
 }
 $apkItem = Get-Item $ApkPath
 $apkName = $apkItem.Name
+
+# 文件名归一化(关键):Gitee 附件名必须与 GitHub 资产的 APK 名一致,否则 App 更新逻辑
+# 会用 GitHub 资产名拼 Gitee 镜像直链,名字对不上就是 404,国内用户直接掉到 gh-proxy 代理。
+# 所以这里优先取 GitHub 同 tag 的正式包资产名作为上传名;查不到(GitHub 限流/未发版)才退回本地文件名。
+try {
+  $ghRel = Invoke-RestMethod -Uri "https://api.github.com/repos/CNShanJu/$GiteeRepo/releases/tags/$Tag" `
+    -Headers @{ 'User-Agent' = 'MBox-sync-gitee' } -TimeoutSec 60 -ErrorAction Stop
+  $ghApk = @($ghRel.assets | Where-Object { $_.name -match '\.apk$' } | Select-Object -First 1)
+  if ($ghApk.Count -gt 0) {
+    $ghName = $ghApk[0].name
+    if ($ghName -ne $apkName) {
+      Write-Warn2 "本地文件名($apkName)与 GitHub 资产名($ghName)不一致,改用 GitHub 名上传,保证镜像直链可命中"
+      $apkName = $ghName
+    }
+  }
+} catch {
+  Write-Warn2 "查 GitHub 资产名失败(可能限流/未发版),沿用本地文件名:$apkName"
+}
 Write-Ok "待上传:$apkName($([math]::Round($apkItem.Length / 1MB, 2)) MB)"
 
 $relApi = "$api/repos/$GiteeOwner/$GiteeRepo"

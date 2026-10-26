@@ -33,6 +33,7 @@ import com.thoughtworks.xstream.XStream;
 import com.thoughtworks.xstream.io.xml.DomDriver;
 import com.thoughtworks.xstream.security.NoTypePermission;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.UnsupportedEncodingException;
@@ -993,7 +994,7 @@ public class SourceViewModel extends ViewModel {
                     try {
                         String json = com.github.tvbox.osc.spiderapi.SpiderContentProviders.get()
                                 .playerContent(sourceBean.getKey(), playFlag, url, sourceConfig.getVipParseFlags());
-                        JSONObject result = new JSONObject(json);
+                        JSONObject result = normalizePlayerResult(new JSONObject(json));
                         result.put("key", url);
                         result.put("proKey", progressKey);
                         result.put("subtKey", subtitleKey);
@@ -1038,7 +1039,7 @@ public class SourceViewModel extends ViewModel {
                     public void onSuccess(String json) {
                         LOG.i(json);
                         try {
-                            JSONObject result = new JSONObject(json);
+                            JSONObject result = normalizePlayerResult(new JSONObject(json));
                             result.put("key", url);
                             result.put("proKey", progressKey);
                             result.put("subtKey", subtitleKey);
@@ -1059,6 +1060,59 @@ public class SourceViewModel extends ViewModel {
         }else {
             postPlayFailure(progressKey, url);
         }
+    }
+
+    /**
+     * 播放结果 url 归一化(对齐 AVBox 的 normalizePlayerResult):爬虫/HTTP 接口源返回的 url
+     * 可能带内部协议前缀,或是以 JSON 数组形式给出多条候选,需要在进解析链之前统一处理。
+     * <p>处理项:
+     * <ul>
+     *   <li>{@code proxy://} 前缀 → 替换为本地代理入口({@link DefaultConfig#checkReplaceProxy}),并置 parse=0 直接播;</li>
+     *   <li>{@code video://} 前缀 → 去掉前缀,置 parse=1 走解析;</li>
+     *   <li>url 是 {@code [...]} JSON 数组 → 逐项替换 proxy://video:// 前缀后回写数组,置 parse=0;</li>
+     *   <li>url 本身是直链视频格式(且无 parse/jx 且 playUrl 为空)→ 补 parse=0 直接播。</li>
+     * </ul>
+     * <p>url 为空时原样返回(空地址兜底由 PlayFragment 的 onPlayAddressMissing 负责,这里不越权)。
+     */
+    private static JSONObject normalizePlayerResult(JSONObject result) {
+        if (result == null) return result;
+        try {
+            String playUrl = result.optString("playUrl", "");
+            String url = result.optString("url", "");
+            if (TextUtils.isEmpty(url)) return result;
+            if (url.startsWith("[") && url.endsWith("]")) {
+                JSONArray array = new JSONArray(url);
+                for (int i = 0; i < array.length(); i++) {
+                    Object item = array.opt(i);
+                    if (item instanceof String) {
+                        String str = (String) item;
+                        if (str.startsWith("proxy://")) {
+                            array.put(i, DefaultConfig.checkReplaceProxy(str));
+                        } else if (str.startsWith("video://")) {
+                            array.put(i, str.substring("video://".length()));
+                        }
+                    }
+                }
+                result.put("url", array.toString());
+                result.put("parse", 0);
+                return result;
+            }
+            if (url.startsWith("video://")) {
+                result.put("url", url.substring("video://".length()));
+                result.put("parse", 1);
+            } else if (url.startsWith("proxy://")) {
+                result.put("url", DefaultConfig.checkReplaceProxy(url));
+                result.put("parse", 0);
+            } else if (TextUtils.isEmpty(playUrl)
+                    && DefaultConfig.isVideoFormat(url)
+                    && !result.has("parse")
+                    && !result.has("jx")) {
+                result.put("parse", 0);
+            }
+        } catch (Throwable th) {
+            LOG.e("SourceViewModel normalizePlayerResult: " + th.getMessage());
+        }
+        return result;
     }
 
     private AbsSortXml sortJson(String json) {

@@ -314,6 +314,10 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
         if (!apiUrl.equals(config.subscriptionUrl)) {
             // 切换或删光订阅时，旧主页源和直播源都不再属于当前订阅。
             jarLoader = new JarLoader();
+            // 同步清空 JS 源实例缓存:换订阅后旧订阅的 JS 源 key/脚本已失效,若不清会残留并
+            // 被新订阅的搜索继续命中复用(此前靠搜索页 onDestroy 的 resetSources 暴力兜底,
+            // 现 onDestroy 已改为 stopAllSourceTasks 不再销毁实例,这里必须显式清理)。
+            com.github.catvod.crawler.JsLoader.load();
             ConfigBuilder cleared = new ConfigBuilder();
             String userLiveUrl = SystemConfig.getLiveUrl();
             if (!StringUtils.isBlank(userLiveUrl)) {

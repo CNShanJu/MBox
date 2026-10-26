@@ -52,7 +52,11 @@
          版本号固定在页面底部不参与滚动。
          卡片用 bg_large_round_float(= 卡片与面板底色 bg_surface + bg_float_alpha):与底栏/标题栏/
          各页内容块是**同一个面**,改一处全站同步(见 res/values/colors.xml 里那段说明)。
-         注意别再写成 bg_card —— 那是"卡片底色",给弹窗列表行/海报占位这类小块用的。 -->
+         注意别再写成 bg_card —— 那是"卡片底色",给弹窗列表行/海报占位这类小块用的。
+
+         **上下内边距放在卡片容器上,不放在滚动区上**(同 dialog_playing_control.xml 的 2026-10-01 教训):
+         滚动区带 clipToPadding=false 时,它自己的 padding 只是初始偏移,滚动中内容仍会贴到卡片上下边。
+         把上下内边距放到卡片(背景层)上,滚动区整体内缩,内容永远停在距卡片上下边留空处。 -->
     <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="0dp"
@@ -60,16 +64,18 @@
             android:orientation="vertical"
             android:layout_marginHorizontal="20dp"
             android:background="@drawable/bg_large_round_float"
-            android:clipToOutline="true">
+            android:clipToOutline="true"
+            android:paddingTop="20dp"
+            android:paddingBottom="20dp">
 
         <!-- 选项行超出时在卡片内部滚动;拖到顶/底可越界跟手回弹(iOS 橡皮筋,见 RubberBandScrollView)。
-             保留上下内边距并关闭裁剪，让首末行滚动时仍与圆角卡片边缘留空。 -->
+             clipToPadding=false 让首末行滚动时仍与卡片圆角边缘留空(留空来自卡片容器的上下内边距,
+             滚动区自身不再带上下 padding,否则滚动中会越界贴边)。 -->
         <com.github.tvbox.osc.ui.kit.RubberBandScrollView
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
                 android:scrollbars="none"
-                android:clipToPadding="false"
-                android:paddingVertical="20dp">
+                android:clipToPadding="false">
 
             <LinearLayout
                     android:layout_width="match_parent"
