@@ -76,6 +76,10 @@ public class JarLoader {
     private static final String PLUGIN_MARK_FILE = "spider_plugin_loading";
     /** 已确认"会让 App 闪退"的插件身份(每行一个,见 {@link #pluginId}) */
     private static final String PLUGIN_BLOCKED_FILE = "spider_plugin_blocked";
+    /** 每份插件的"连续崩溃次数"计数(身份 -> 次数)。只有连续崩溃达到 {@link #PLUGIN_BLOCK_AFTER_CRASHES} 次才拉黑 */
+    private static final String PLUGIN_CRASH_COUNT_FILE = "spider_plugin_crash_count";
+    /** 连续崩溃多少次才判定"会让 App 闪退"(对齐 AVBox BootGuard 的 MAX_LOAD_ATTEMPTS=3,避免一次误伤) */
+    private static final int PLUGIN_BLOCK_AFTER_CRASHES = 3;
     private final Set<String> blockedPlugins = ConcurrentHashMap.newKeySet();
     private volatile boolean crashMarkChecked = false;
     /** 主 jar 因"会让 App 闪退"被停用(load() 判定):源取用它时据此给出说法,而不是只显示"暂无数据" */
@@ -106,7 +110,16 @@ public class JarLoader {
         return context == null ? null : new File(context.getFilesDir(), name);
     }
 
-    /** 读一次上次进程留下的标记:还在 → 上个进程死在它上面 → 记进黑名单并停用 */
+    /**
+     * 读上次进程留下的"正在加载"标记:还在 → 上个进程死在这份插件上。
+     * <p>
+     * 但"死在加载阶段"并不等于"是这份插件让 App 崩的"——播放器 OOM、系统杀进程等同样会留下残留标记,
+     * 一次就拉黑会把"播放后搜索不到"误伤成"永久停用"。故这里只累加崩溃计数,
+     * 连续崩溃达 {@link #PLUGIN_BLOCK_AFTER_CRASHES} 次才真正拉黑(对齐 AVBox BootGuard 的 MAX_LOAD_ATTEMPTS)。
+     * <p>
+     * 计数在插件"成功加载/实例化"返回时清零(见 {@link #clearPluginLoading}),因此只有"连续"崩溃才累计;
+     * 一次成功加载就把之前的失败历史清零,不会因为历史旧账误停用。
+     */
     private void checkPluginCrashMark() {
         if (crashMarkChecked) return;
         crashMarkChecked = true;
@@ -116,14 +129,76 @@ public class JarLoader {
             String id = readText(mark).trim();
             //noinspection ResultOfMethodCallIgnored
             mark.delete();
-            if (!id.isEmpty()) {
+            if (id.isEmpty()) return;
+            int count = bumpCrashCount(id);
+            LOG.i("Csp", "上次进程死在这份插件加载阶段: " + id + " (连续崩溃 " + count + "/" + PLUGIN_BLOCK_AFTER_CRASHES + ")");
+            if (count >= PLUGIN_BLOCK_AFTER_CRASHES) {
                 appendLine(pluginStateFile(PLUGIN_BLOCKED_FILE), id);
-                LOG.e("Csp", "上次启动死在这份插件上(native abort),已停用不再加载: " + id);
+                clearCrashCount(id);
+                LOG.e("Csp", "连续崩溃 " + count + " 次,判定会让 App 闪退,已停用不再加载: " + id);
             }
         } catch (Throwable th) {
             th.printStackTrace();
         } finally {
             loadBlockedPlugins();
+        }
+    }
+
+    /** 累加某份插件的连续崩溃次数并返回新值(计数表:每行 "id=次数") */
+    private int bumpCrashCount(String id) {
+        File f = pluginStateFile(PLUGIN_CRASH_COUNT_FILE);
+        if (f == null) return 1;
+        int found = 0;
+        StringBuilder kept = new StringBuilder();
+        for (String line : readText(f).split("\n")) {
+            String s = line.trim();
+            if (s.isEmpty()) continue;
+            int eq = s.indexOf('=');
+            String key = eq < 0 ? s : s.substring(0, eq);
+            if (key.equals(id)) {
+                try {
+                    found = Integer.parseInt(s.substring(eq + 1).trim());
+                } catch (NumberFormatException ignored) {
+                    found = 0;
+                }
+            } else {
+                if (kept.length() > 0) kept.append('\n');
+                kept.append(s);
+            }
+        }
+        int next = found + 1;
+        if (kept.length() > 0) kept.append('\n');
+        kept.append(id).append('=').append(next);
+        try (FileOutputStream out = new FileOutputStream(f)) {
+            out.write(kept.toString().getBytes(StandardCharsets.UTF_8));
+            out.flush();
+            out.getFD().sync();
+        } catch (Throwable th) {
+            th.printStackTrace();
+        }
+        return next;
+    }
+
+    /** 拉黑后清掉该插件的计数,避免黑名单与计数表反复累加 */
+    private void clearCrashCount(String id) {
+        File f = pluginStateFile(PLUGIN_CRASH_COUNT_FILE);
+        if (f == null) return;
+        StringBuilder kept = new StringBuilder();
+        for (String line : readText(f).split("\n")) {
+            String s = line.trim();
+            if (s.isEmpty()) continue;
+            int eq = s.indexOf('=');
+            String key = eq < 0 ? s : s.substring(0, eq);
+            if (key.equals(id)) continue;
+            if (kept.length() > 0) kept.append('\n');
+            kept.append(s);
+        }
+        try (FileOutputStream out = new FileOutputStream(f)) {
+            out.write(kept.toString().getBytes(StandardCharsets.UTF_8));
+            out.flush();
+            out.getFD().sync();
+        } catch (Throwable th) {
+            th.printStackTrace();
         }
     }
 
@@ -159,8 +234,11 @@ public class JarLoader {
     private void clearPluginLoading() {
         File mark = pluginStateFile(PLUGIN_MARK_FILE);
         if (mark == null) return;
+        // 先读身份再删:成功加载一次就把这份插件的"连续崩溃计数"清零,只有真正的连续崩溃才累计
+        String id = readText(mark).trim();
         //noinspection ResultOfMethodCallIgnored
         mark.delete();
+        if (!id.isEmpty()) clearCrashCount(id);
     }
 
     private static String readText(File f) {
@@ -304,11 +382,19 @@ public class JarLoader {
                 jarFile.setReadOnly();
             }
             // 复用同一份 jar 的 classloader(见上方 loaderCache 注释):新建会让插件的原生库被二次 System.load。
-            // 复用时 Init.init 与 Proxy 注册照旧再走一遍 —— 它们是幂等的,而且 proxyMethods 已随 clearSources 清空。
             DexClassLoader classLoader = cachedClassLoader(jarFile);
+            boolean reused = classLoader != null;
             if (classLoader == null) {
                 classLoader = new DexClassLoader(jar, cacheDir.getAbsolutePath(), null, context.getClassLoader());
                 rememberClassLoader(jarFile, classLoader);
+            }
+            // 复用已成功 Init 过的 classloader:Init 是幂等的、且会再拉起一次 WebView(内存尖峰),
+            // 没必要在"播放后返回再搜索"这种热路径上重复 Init + 内存闸门判断(这正是"播放后搜不到"的误伤源)。
+            // 直接补注册 Proxy 后返回成功即可。首次创建才走下面完整的 Init + 内存保护流程。
+            if (reused) {
+                registerProxy(classLoader, key);
+                classLoaders.put(key, classLoader);
+                return true;
             }
             // make force wait here, some device async dex load
             int count = 0;
@@ -329,7 +415,7 @@ public class JarLoader {
                                 break;
                             }
                         }
-                        // 内存保护：Csp 主 jar 的 Init 会拉起 WebView(chromium 含相机/GPU/codec 完整初始化,~250MB)，
+                        // 内存保护(仅首次加载生效):Csp 主 jar 的 Init 会拉起 WebView(chromium 含相机/GPU/codec 完整初始化,~250MB)，
                         // 内存已偏高时跳过，避免叠加 OOM（Csp 源多为采集源，跳过影响小）。
                         long vmRss = MemProbe.vmRssMb();
                         if (vmRss > 320) {
@@ -339,13 +425,7 @@ public class JarLoader {
                         method.invoke(null, context);
                         LOG.i("Csp", "自定义爬虫代码加载成功!");
                         success = true;
-                        try {
-                            Class proxy = classLoader.loadClass("com.github.catvod.spider.Proxy");
-                            Method mth = proxy.getMethod("proxy", Map.class);
-                            proxyMethods.put(key, mth);
-                        } catch (Throwable th) {
-                            // jar 里没有 com.github.catvod.spider.Proxy 属正常(该源不做代理)，不打日志噪音
-                        }
+                        registerProxy(classLoader, key);
                         break;
                     }
                     Thread.sleep(200);
@@ -362,6 +442,17 @@ public class JarLoader {
             th.printStackTrace();
         }
         return success;
+    }
+
+    /** 注册某份 jar 的 Proxy 方法(复用时 classLoaders 已被清空,需重新登记;首次加载也走这里) */
+    private void registerProxy(DexClassLoader classLoader, String key) {
+        try {
+            Class proxy = classLoader.loadClass("com.github.catvod.spider.Proxy");
+            Method mth = proxy.getMethod("proxy", Map.class);
+            proxyMethods.put(key, mth);
+        } catch (Throwable th) {
+            // jar 里没有 com.github.catvod.spider.Proxy 属正常(该源不做代理)，不打日志噪音
+        }
     }
 
     /** 凭据目录只需预建一次；失败时也不反复刷日志。 */

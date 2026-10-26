@@ -374,8 +374,8 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
             mEndTipController = ListEndTipController(tip, object : ListEndTipController.State {
                 override fun list(): RecyclerView? = visibleResultList()
                 override fun hasData(): Boolean = visibleResultAdapter()?.data?.isNotEmpty() == true
-                override fun endReached(): Boolean = searchCompletion.feedbackSettled && !paging.hasMore()
-                override fun busy(): Boolean = !searchCompletion.feedbackSettled || paging.inRound()
+                override fun endReached(): Boolean = searchCompletion.closed && !paging.hasMore()
+                override fun busy(): Boolean = !searchCompletion.closed || paging.inRound()
             }, env)
             mEndTipController!!.attach(mBinding.mGridView)
             mEndTipController!!.attach(mBinding.mGridViewFilter)
@@ -411,7 +411,7 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
      * 请求走 [HeavyTaskUtil] 模块级搜索执行器(JS 源取页是同步网络调用,不能在主线程发起)。
      */
     private fun startPagingIfNeeded() {
-        if (!searchCompletion.feedbackSettled || paging.inRound()) return
+        if (!searchCompletion.closed || paging.inRound()) return
         val keys = paging.keysWithMore()
         if (keys.isEmpty() || !paging.beginRound(keys)) {
             updateEndTip()
@@ -1036,6 +1036,10 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
     /**
      * 用户上拉打断下拉刷新:中止本轮搜索(不再发起新来源),保留已上屏的结果;
      * 容器转圈与回弹由容器自己负责收起。epoch 递增让在途任务自弃。
+     *
+     * 必须走完整收尾(finishSearchRound),而不是只加 epoch:否则 searchCompletion 卡在
+     * RUNNING、paging 记账残留,既会让当前页上拉翻页被 `closed` 守卫拦死(拉不出数据),
+     * 残留的 settle/watchdog Runnable 又会污染下一次进入搜索页(直接返回无数据)。
      */
     private fun cancelQuietRefresh() {
         synchronized(searchLock) {
@@ -1047,6 +1051,11 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
             searchSessionActive = false
             SourceLoaderProviders.get().stopAllSourceTasks()
         }
+        // 复位翻页记账:打断时若有翻页在途,其回包已因 epoch 自弃,残留的 roundKeys/remaining
+        // 若不清理,下一轮 searchResult 的 resetPagingState 之前可能被 onScrolled 误触发翻页。
+        paging.reset()
+        autoPagingChain = 0
+        finishSearchRound()
     }
 
     /** 搜索编排状态:epoch=当前轮次;暂停后未发起的源进 pending,页面回前台续跑(替代页面自建 10 线程池) */
@@ -1270,6 +1279,9 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
             searchSessionActive = false
             SourceLoaderProviders.get().stopAllSourceTasks()
         }
+        // 跳详情/离开搜索页时,必须把"搜索期压住 Csp 主 jar Init"的标志复位,
+        // 否则下次进入 Csp 源会卡在 deferInit 等待(最多 20s)甚至被内存闸门误拦。
+        SourceLoaderProviders.get().setDeferInitForSearch(false)
     }
 
     /** 页面回前台:续跑被暂停未发起的源搜索(旧实现 onResume 重建 10 线程池重放 pauseRunnable) */
@@ -1414,8 +1426,15 @@ class FastSearchActivity : BaseVbActivity<ActivityFastSearchBinding>(), TextWatc
         }
         if (searchSessionActive) {
             searchSessionActive = false
-            SourceLoaderProviders.get().resetSources()
+            // 退出搜索页只取消在跑任务、保留已建好的 JS 源实例(受 MAX_LIVE_SPIDERS 上限约束)。
+            // 原先这里 resetSources() 会把所有源实例彻底销毁,导致重进搜索时几十个源又得
+            // 全量重建、同时挤 Semaphore(1) 创建队列 → 15s 抢不到配额 → 一批源返回 SpiderNull
+            // → 表现为"第一次好好的,退出重进就全空"。改为 stopAllSourceTasks() 后重进命中缓存,
+            // 无需重建;真正需要彻底重建的场景(换订阅、进程退出)才走 resetSources(即 JsLoader.load)。
+            SourceLoaderProviders.get().stopAllSourceTasks()
         }
+        // 兜底:无论搜索是否已完成,销毁搜索页都把"搜索期压 Csp Init"标志复位,防止残留卡住下次加载
+        SourceLoaderProviders.get().setDeferInitForSearch(false)
     }
 
     override fun beforeTextChanged(charSequence: CharSequence, i: Int, i1: Int, i2: Int) {}

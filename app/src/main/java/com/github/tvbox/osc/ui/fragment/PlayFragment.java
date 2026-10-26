@@ -1850,7 +1850,7 @@ public class PlayFragment extends BaseLazyFragment {
                     // progressKey/subtitleCacheKey 由 play() 经 PlayRequest 落字段,不再从 proKey/subtKey 回写
                     String playUrl = info.optString("playUrl", "");
                     String flag = info.optString("flag");
-                    String url = info.getString("url");
+                    String url = info.optString("url", "");
                     HashMap<String, String> headers = null;
                     String resultUserAgent = null;
                     // 播放结果 header 上下文收口到解析引擎(嗅探 WebView 加载/下载回退 UA 用)
@@ -1873,6 +1873,20 @@ public class PlayFragment extends BaseLazyFragment {
                         } catch (Throwable th) {
 
                         }
+                    }
+                    // 网盘源(type=3,playerContent)未登录/登录态未就绪时返回的 JSON 可能只有 parse/jx
+                    // 而没有 url 字段:此前 getString("url") 直接抛 No value for url,且 parse 默认值 "1"
+                    // 会把空地址误送进 initParse 去嗅探,网盘兜底(自动重试+等登录框)永远走不到。
+                    // 这里统一:url 为空即视为"网盘没给地址",走 onPlayAddressMissing 留在本页重试。
+                    if (TextUtils.isEmpty(url) && TextUtils.isEmpty(playUrl)) {
+                        logPlaybackProgress("解析结果无地址 parse=" + parse
+                                + " jx=" + jx + " flag=" + flag
+                                + " playUrl长度=" + playUrl.length()
+                                + " url长度=" + url.length()
+                                + describeNetDiskCredentials()
+                                + describeRecentTouched());
+                        onPlayAddressMissing();
+                        return;
                     }
                     if (parse || jx) {
                         boolean userJxList = (playUrl.isEmpty()
