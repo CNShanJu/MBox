@@ -18,36 +18,38 @@
             android:textColor="@color/text_foreground"
             android:layout_width="wrap_content"
             android:textSize="16sp"
-            android:layout_height="wrap_content"/>
+            android:layout_height="wrap_content"
+            android:layout_alignParentStart="true"
+            android:layout_alignParentTop="true" />
 
         <com.github.tvbox.osc.ui.kit.SizedIconTextView
             android:id="@+id/tv_local"
-            android:text="本地导入"
+            android:text="本地"
             android:textColor="@color/text_foreground"
             android:layout_width="wrap_content"
             android:textSize="12sp"
             android:layout_height="wrap_content"
-            android:layout_centerVertical="true"
+            android:layout_alignBottom="@id/tv_title"
             android:layout_toStartOf="@id/tv_json"
             android:layout_marginEnd="12dp"
             android:drawableLeft="@drawable/ic_import_file_16"
             app:drawableIconSize="16dp"
             android:drawableTint="@color/text_foreground"
-            android:drawablePadding="4dp"/>
+            android:drawablePadding="4dp" />
 
         <com.github.tvbox.osc.ui.kit.SizedIconTextView
             android:id="@+id/tv_json"
-            android:text="JSON导入"
+            android:text="JSON"
             android:textColor="@color/text_foreground"
             android:layout_width="wrap_content"
             android:textSize="12sp"
             android:layout_height="wrap_content"
             android:layout_alignParentRight="true"
-            android:layout_centerVertical="true"
+            android:layout_alignBottom="@id/tv_title"
             android:drawableLeft="@drawable/ic_import_json_16"
             app:drawableIconSize="16dp"
             android:drawableTint="@color/text_foreground"
-            android:drawablePadding="4dp"/>
+            android:drawablePadding="4dp" />
     </RelativeLayout>
 
     <com.google.android.material.textfield.TextInputLayout

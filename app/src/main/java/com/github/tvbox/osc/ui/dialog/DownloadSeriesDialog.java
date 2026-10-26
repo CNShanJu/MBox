@@ -199,6 +199,7 @@ public class DownloadSeriesDialog extends SheetResizableBottomPopup {
             int st = mPanel.stateAt(pos);
             RoundChip chip = helper.getView(R.id.sl);
             chip.setTitle(item.name);
+            chip.setChipTextSize(16f); // 与全屏下载抽屉文字大小一致
             if (st == 1) {
                 // 已下载/本地:绿勾图标 + 置灰不可选
                 chip.setFailed(false);

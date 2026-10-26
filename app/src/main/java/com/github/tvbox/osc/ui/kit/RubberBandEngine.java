@@ -102,6 +102,41 @@ public class RubberBandEngine {
     private float mDownY = 0f;
     private float mLastX = 0f;
     private float mLastY = 0f;
+    /** 上一帧 MOVE 的 y(shouldIntercept 与 onTouchEvent 共用,用于估算单帧速度) */
+    private float mPrevMoveY = 0f;
+    /** 是否已收到过 MOVE(判断 mPrevMoveY 是否有效) */
+    private boolean mHasMove = false;
+
+    /**
+     * 本次手势是否被判定为"快速滑动"(fling 意图)。
+     *
+     * 越界回弹只服务于"慢速、有意识地拖到边界后继续往外拉"的手感;快速甩动(单帧位移
+     * 明显超过 touch slop)时,用户要的是原生 fling/惯性滚动,而非"跟手越界回弹"。若在
+     * 快速滑动时也抢手势做回弹,手指高速移动会让回弹位移(raw)在几帧内从 slop 飙升到
+     * 数百 px,内容"被猛地拉下去一大截再弹回",快速反复滑动即表现为"抽动/震荡"。
+     * 因此一旦确认本次手势是快速滑动,整段手势都禁止越界回弹,交原生处理。
+     */
+    private boolean mFastGesture = false;
+
+    /**
+     * 本次手势 DOWN 瞬间,内容是否已经停在顶部/底部边界。
+     *
+     * 越界回弹只能发生在「手指按下时内容本来就停在边界、然后继续往外拖」这一种情况;
+     * 若 DOWN 时内容在中间(快速滑动/惯性滚动中按下),即使后续 MOVE 里 canScrollUp()
+     * 暂时返回 false,也绝不能接管 —— 那只是惯性滚到边界的瞬间,抢走手势会导致
+     * 「下滑却内容上走 / 原地抖动」的震荡。
+     */
+    private boolean mDownAtTop = false;
+    private boolean mDownAtBottom = false;
+
+    /**
+     * DOWN 瞬间内容是否"不足一屏"(既无法上滚也无法下滚,canUp==false 且 canDown==false)。
+     *
+     * 内容不足一屏时不存在"越界"概念:任何方向的拖动都会同时命中"顶部"和"底部"边界,
+     * 快速来回滑动时回弹方向随 dy 符号反复翻转(+1/-1 高频切换),每次翻转都 nativeEndGesture
+     * + 重设 translationY,表现为"原地抖动/抽动"。因此该场景必须整体禁用越界回弹。
+     */
+    private boolean mDownContentFits = false;
 
     /** 越界原始拖出距离(px,有符号):顶部为正,底部为负 */
     private float mOverscrollRaw = 0f;
@@ -203,15 +238,48 @@ public class RubberBandEngine {
                 if (!mTracking) {
                     float dy = ev.getY() - mDownY;
                     float dx = ev.getX() - mDownX;
+                    // 速度检测(快速甩动判定):
+                    // 1) 有相邻帧时,单帧位移明显超过 slop → 快速;
+                    // 2) 首帧(dy 首次越过 slop)若累计位移已远超 slop → 说明是高速甩动,同样判快速。
+                    //    若不判,快速滑动"第一个 MOVE 就大位移"会漏检,仍被当成慢速拖拽抢走手势。
+                    if (mHasMove) {
+                        float frameDy = Math.abs(ev.getY() - mPrevMoveY);
+                        if (frameDy > mTouchSlop * 1.5f) {
+                            mFastGesture = true;
+                        }
+                    }
+                    if (!mHasMove && Math.abs(dy) > mTouchSlop * 4f) {
+                        mFastGesture = true;
+                    }
+                    mPrevMoveY = ev.getY();
+                    mHasMove = true;
                     if (Math.abs(dy) > mTouchSlop && Math.abs(dy) > Math.abs(dx)) {
-                        // 只在"已到边界且向外拖"时才由引擎接管;区间内滚动一律放行给原生,
-                        // 让 RecyclerView/ScrollView 自己拦截并保持原生惯性与速度跟踪。
+                        // 只在"手指按下时就已在边界、且向外拖"时才由引擎接管;区间内滚动一律放行
+                        // 给原生,让 RecyclerView/ScrollView 自己拦截并保持原生惯性与速度跟踪。
                         // 若这里对所有竖向拖动都拦截,会抢走原生手势、丢掉拦截帧的位移(表现为
                         // 起步"闪现"),并破坏 VelocityTracker(fling 变弱、太跟手)。
-                        boolean atTop = !mHost.canScrollUp();
-                        boolean atBottom = !mHost.canScrollDown();
-                        boolean wantTop = atTop && dy > 0f && mTopEnabled;
-                        boolean wantBottom = atBottom && dy < 0f && mBottomEnabled;
+                        //
+                        // 关键:用 DOWN 瞬间的边界快照(mDownAtTop/mDownAtBottom)判断,而不是每帧
+                        // 动态 canScrollUp/canScrollDown。快速滑动/惯性滚动时,内容会短暂经过边界,
+                        // 动态判断会在"还在滚"的瞬间误判成"已到顶要回弹",抢走手势 → 表现为
+                        // "下滑却内容上走 / 原地抖动"的震荡(见 mDownAtTop 字段说明)。
+                        //
+                        // 拦截阶段只处理"DOWN 时就已在边界"的直接回弹;DOWN 时在中间、慢速拖到
+                        // 顶后再继续拉的回弹,由 onTouchEvent(内容已进入原生滚动后)处理。
+                        boolean wantTop = mDownAtTop && dy > 0f && mTopEnabled;
+                        boolean wantBottom = mDownAtBottom && dy < 0f && mBottomEnabled;
+                        // 内容不足一屏:同时"到顶且到底",任何方向的回弹都是无意义的越界抖动,
+                        // 快速来回滑动时方向反复翻转造成震荡 —— 整体禁用,交原生处理。
+                        if (mDownContentFits) {
+                            wantTop = false;
+                            wantBottom = false;
+                        }
+                        // 快速滑动(fling 意图):禁止越界回弹,交原生惯性滚动处理,
+                        // 避免"跟手回弹位移飙升"导致的抽动/震荡。
+                        if (mFastGesture) {
+                            wantTop = false;
+                            wantBottom = false;
+                        }
                         if (wantTop || wantBottom) {
                             // 与 onTouchEvent 的进入分支保持对称:接管前先无条件结束原生手势。
                             // 原生可能已在 DRAGGING(速度跟踪未回收),不取消就会与引擎的 translationY
@@ -254,6 +322,16 @@ public class RubberBandEngine {
                 float y = ev.getY();
                 float dy = y - mLastY;
 
+                // 速度检测:单帧位移明显超过 slop 即判定为快速甩动(整段手势禁回弹)
+                if (mHasMove && Math.abs(y - mPrevMoveY) > mTouchSlop * 1.5f) {
+                    mFastGesture = true;
+                }
+                if (!mHasMove && Math.abs(y - mDownY) > mTouchSlop * 4f) {
+                    mFastGesture = true;
+                }
+                mPrevMoveY = y;
+                mHasMove = true;
+
                 // 已处于越界回弹:位移 = 相对 intercept 基准的偏移(排除"区间内已滚动"部分,避免起步闪现)
                 if (mBounceDir != 0) {
                     float raw = y - mBounceBaseY;
@@ -283,10 +361,15 @@ public class RubberBandEngine {
                 }
 
                 // 边界 + 对应方向开启时 → 进入自绘回弹
-                boolean atTop = !mHost.canScrollUp();
-                boolean atBottom = !mHost.canScrollDown();
-                boolean pullTop = atTop && dy > 0f && mTopEnabled;
-                boolean pullBottom = atBottom && dy < 0f && mBottomEnabled;
+                // (用 DOWN 快照为主;DOWN 时不在边界但慢速拖到边界后继续拉也允许,避免惯性误判)
+                boolean atTopNow = !mHost.canScrollUp();
+                boolean atBottomNow = !mHost.canScrollDown();
+                // 内容不足一屏:无"越界"概念,禁用回弹(同 shouldIntercept 的口径);
+                // 快速滑动(fling 意图):禁用回弹,交原生惯性滚动,避免跟手位移飙升造成的抽动。
+                boolean pullTop = !mDownContentFits && !mFastGesture && mTopEnabled && dy > 0f
+                        && (mDownAtTop || (atTopNow && slowGesture(dy)));
+                boolean pullBottom = !mDownContentFits && !mFastGesture && mBottomEnabled && dy < 0f
+                        && (mDownAtBottom || (atBottomNow && slowGesture(dy)));
                 if (pullTop || pullBottom) {
                     // 无条件向原生补发 CANCEL:RecyclerView/ScrollView 可能已在原生侧进入拖拽
                     // (此时 mNativeActive 未必为真)。不取消会让它停留在 DRAGGING、速度跟踪不回收,
@@ -347,19 +430,45 @@ public class RubberBandEngine {
 
     // ================= 内部实现 =================
 
-    /** 新手势/复位:停动画、清越界、记录起点 */
+    /** 新手势/复位:停动画、清越界、记录起点与 DOWN 瞬间的边界快照 */
     private void resetGesture(float x, float y) {
-        stopSpring();
+        // 关键:若回弹动画正在进行(上次松手的 springBack),不要打断它、也不要瞬间把
+        // translationY 归零 —— 快速来回滑动时 DOWN 高频触发,瞬间归零会让内容在
+        // "回弹拉伸位"与"0"之间高频跳变,这正是"原地抖动/震荡"的直接来源。
+        // 让上一次的回弹动画自然完成,本次手势从当前位置(可能还在回弹途中)继续。
+        boolean settlingBack = mSpring != null && mSpring.isRunning();
+        if (!settlingBack) {
+            stopSpring();
+            View bounceView = resolveBounceView();
+            if (bounceView != null && bounceView.getTranslationY() != 0f) {
+                // 不在回弹动画中但仍有残留位移:平滑归零而非瞬间跳变
+                springBack(bounceView);
+            }
+        }
         mOverscrollRaw = 0f;
         mBounceDir = 0;
         mBounceBaseY = 0f;
-        View bounceView = resolveBounceView();
-        if (bounceView != null) {
-            bounceView.setTranslationY(0f);
-        }
         mDownX = mLastX = x;
         mDownY = mLastY = y;
+        mPrevMoveY = y;
+        mHasMove = false;
+        mFastGesture = false;
         mNativeActive = false;
+        // 锁定本次手势起点时的边界状态:越界回弹只允许发生在"按下时就已停在边界"的情况下
+        mDownAtTop = !mHost.canScrollUp();
+        mDownAtBottom = !mHost.canScrollDown();
+        mDownContentFits = mDownAtTop && mDownAtBottom;
+    }
+
+    /**
+     * 单帧拖动是否"慢速"(相邻两帧位移不超过 touch slop)。
+     *
+     * 用于区分两类"DOWN 时不在边界"的后续:MOVE 中内容滚到边界后,
+     * - 慢速:是用户有意识地把内容慢慢拖到顶/底后继续拉,应允许进入回弹;
+     * - 快速:是惯性/fling 甩过边界,此时禁止回弹(抢手势会导致反向/震荡)。
+     */
+    private boolean slowGesture(float dy) {
+        return Math.abs(dy) <= mTouchSlop;
     }
 
     /** 按 Target 决定把回弹位移加在哪个 View 上 */
