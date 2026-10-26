@@ -285,10 +285,17 @@ public class ExoMediaPlayer extends AbstractPlayer implements Player.Listener {
     @Override
     public void release() {
         failureKind = PlaybackFailureKind.UNKNOWN;
-        if (mMediaPlayer != null) {
-            mMediaPlayer.removeListener(this);
-            mMediaPlayer.removeAnalyticsListener(playbackProbe);
-            mMediaPlayer.release();
+        final ExoPlayer player = mMediaPlayer;
+        // 先摘监听器并置空引用:晚到的回调(加载/轨道/错误)不能再打到正在释放的内核上。
+        if (player != null) {
+            try {
+                player.removeListener(this);
+            } catch (Throwable ignored) {
+            }
+            try {
+                player.removeAnalyticsListener(playbackProbe);
+            } catch (Throwable ignored) {
+            }
             mMediaPlayer = null;
         }
         lastRxBytes = -1;
@@ -300,6 +307,29 @@ public class ExoMediaPlayer extends AbstractPlayer implements Player.Listener {
         lastRenderedVideoProbe = null;
         lastAvailableTracksProbe = null;
         failedLoadUrl = null;
+        if (player == null) return;
+        // 内核释放必须异步、且不能留在调用线程(播放页 onDestroyView 通常在主线程):
+        // Media3 的 ExoPlayer.release() 会同步等待内部播放/解码线程收尾(join),而"播放某些
+        // 源卡死"时那个内部线程正卡在解码器/native 调用上 —— 同步 release 会把主线程一起卡住,
+        // 页面退出顿死;又因为释放没完成,后续新建播放器也被同一个卡死的内部状态拖住,
+        // 表现为"这次卡死后,再进播放页一直是卡死状态"。与 AndroidMediaPlayer 同口径:
+        // 先 stop + 解绑 Surface(降低收尾等待),再丢进模块级串行释放线程异步 release。
+        try {
+            player.stop();
+        } catch (Throwable ignored) {
+        }
+        try {
+            player.setVideoSurface(null);
+        } catch (Throwable ignored) {
+        }
+        releaseAsync(() -> {
+            try {
+                player.release();
+            } catch (Throwable e) {
+                // 必须兜 Throwable:native 释放失败抛的是 Error,只 catch Exception 会逃到释放线程上
+                PlaybackErrorReporter.failure("Media3", "释放", sourceSummary, e);
+            }
+        });
     }
 
     @Override

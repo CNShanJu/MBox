@@ -285,6 +285,14 @@ public class Thunder {
 
 
     public static boolean play(String url, ThunderCallback callback) {
+        // 原始磁力/迅雷/种子链接(未被 parse 预先转成 tvbox-torrent:N 的情况):
+        // 详情页若未走 checkThunder(如手机推送的 type=3 爬虫源直接进播放页),vs.url 仍是
+        // 原始 magnet:?xt=urn:btih:...。旧实现这里 return false → PlayFragment 漏到 getPlay
+        // → 爬虫嗅探把 magnet 当网页 URL 加载 → "嗅探错误" 永远失败。这里补上"先解析再播"。
+        if (isSupportUrl(url) && !url.startsWith("tvbox-")) {
+            playRawLink(url, callback);
+            return true;
+        }
         if (url.startsWith("tvbox-torrent:")) {
             int idx = Integer.parseInt(url.substring(14));
             final TorrentFileInfo info = torrentFileInfoArrayList.get(idx);
@@ -413,6 +421,131 @@ public class Thunder {
             return true;
         }
         return false;
+    }
+
+    /**
+     * 播放"原始磁力/迅雷/种子链接"(未预先 parse 成 tvbox-torrent:N 的直链)。
+     *
+     * <p>复用 parse() 里的磁力元数据解析逻辑:addMagentTask → 轮询 getTorrentInfo 拿到
+     * torrentFileInfoArrayList → 自动播第一个媒体文件(与详情页选集后播放同一套下载等待)。
+     * 所有 XLTaskHelper native 调用都在后台线程,墙钟超时熔断(MAGNET_PARSE_TIMEOUT_MS)。
+     */
+    private static void playRawLink(final String url, final ThunderCallback callback) {
+        pool().execute(new Runnable() {
+            @Override
+            public void run() {
+                init(App.getInstance());
+                if (!inited) {
+                    Log.w("Thunder", "playRawLink: 迅雷 native 库初始化失败/超时");
+                    callback.status(-1, "迅雷库初始化失败");
+                    return;
+                }
+                if (currentTask > 0) {
+                    XLTaskHelper.instance().stopTask(currentTask);
+                    currentTask = 0L;
+                }
+                // 迅雷链接( thunder:// )先还原成原始地址再走统一磁力逻辑
+                String link = isThunder(url) ? XLDownloadManager.getInstance().parserThunderUrl(url) : url;
+                try {
+                    String fileName = XLTaskHelper.instance().getFileName(link);
+                    File cache = new File(cacheRoot + File.separator + fileName);
+                    torrentFileInfoArrayList = new ArrayList<>();
+                    currentTask = isMagnet(link) || isMagnet(url)
+                            ? XLTaskHelper.instance().addMagentTask(link, cacheRoot, fileName)
+                            : XLTaskHelper.instance().addThunderTask(link, cacheRoot, fileName);
+                    if (currentTask <= 0) {
+                        callback.status(-1, "磁力解析失败");
+                        return;
+                    }
+                    // 解析元数据:墙钟超时熔断(与 parse 同一口径),无种时快速失败而非无限卡死。
+                    long magnetDeadline = System.currentTimeMillis() + MAGNET_PARSE_TIMEOUT_MS;
+                    outerLoop:
+                    while (true) {
+                        if (System.currentTimeMillis() > magnetDeadline) {
+                            break;
+                        }
+                        XLTaskInfo taskInfo = XLTaskHelper.instance().getTaskInfo(currentTask);
+                        if (taskInfo != null) {
+                            switch (taskInfo.mTaskStatus) {
+                                case 2: {
+                                    try {
+                                        TorrentInfo torrentInfo = XLTaskHelper.instance().getTorrentInfo(cache.getAbsolutePath());
+                                        if (torrentInfo != null && !TextUtils.isEmpty(torrentInfo.mInfoHash)) {
+                                            TorrentFileInfo[] mSubFileInfo = torrentInfo.mSubFileInfo;
+                                            if (mSubFileInfo != null) {
+                                                for (TorrentFileInfo sub : mSubFileInfo) {
+                                                    if (isMedia(sub.mFileName) && sub.mFileSize > 1048576L * 30) {
+                                                        sub.torrentPath = cache.getAbsolutePath();
+                                                        torrentFileInfoArrayList.add(sub);
+                                                    }
+                                                }
+                                                break outerLoop;
+                                            }
+                                        }
+                                    } catch (Throwable throwable) {
+                                        throwable.printStackTrace();
+                                    }
+                                }
+                                case 3: {
+                                    break outerLoop;
+                                }
+                                default: {
+                                }
+                            }
+                        }
+                        try {
+                            Thread.sleep(100);
+                        } catch (InterruptedException e) {
+                            e.printStackTrace();
+                            break;
+                        }
+                    }
+                    if (torrentFileInfoArrayList.isEmpty()) {
+                        callback.status(-1, "磁力解析无可用视频文件(可能无种)");
+                        return;
+                    }
+                    // 自动播第一个媒体文件:复用 tvbox-torrent 的下载等待逻辑
+                    final TorrentFileInfo info = torrentFileInfoArrayList.get(0);
+                    String torrentName = new File(info.torrentPath).getName();
+                    String downloadDir = cacheRoot + File.separator + torrentName.substring(0, torrentName.lastIndexOf("."));
+                    currentTask = XLTaskHelper.instance().addTorrentTask(info.torrentPath, downloadDir, info.mFileIndex);
+                    if (currentTask < 0) {
+                        callback.status(-1, "下载出错");
+                        return;
+                    }
+                    long deadline = System.currentTimeMillis() + TORRENT_DOWNLOAD_TIMEOUT_MS;
+                    while (true) {
+                        if (System.currentTimeMillis() > deadline) {
+                            callback.status(-1, "下载超时(可能无种)");
+                            break;
+                        }
+                        XLTaskInfo subTaskInfo = XLTaskHelper.instance().getBtSubTaskInfo(currentTask, info.mFileIndex).mTaskInfo;
+                        switch (subTaskInfo.mTaskStatus) {
+                            case 3: {
+                                callback.status(-1, errorInfo(subTaskInfo.mErrorCode));
+                                return;
+                            }
+                            case 1:
+                            case 4:
+                            case 2: {
+                                String pUrl = XLTaskHelper.instance().getLoclUrl(downloadDir + File.separator + info.mFileName);
+                                callback.play(pUrl);
+                                return;
+                            }
+                        }
+                        try {
+                            Thread.sleep(1000);
+                        } catch (InterruptedException e) {
+                            e.printStackTrace();
+                            break;
+                        }
+                    }
+                } catch (Throwable th) {
+                    th.printStackTrace();
+                    callback.status(-1, "磁力播放异常");
+                }
+            }
+        });
     }
 
 
