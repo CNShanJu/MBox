@@ -24,6 +24,22 @@ public interface Updater {
      */
     void downloadAndInstall(Context context, UpdateInfo info, Callback callback);
 
+    /**
+     * 判断该版本是否允许更新(通用阻断检查)。
+     * <p>
+     * 上层在用户点「立即更新」发起下载前调用本方法:返回 {@code null} 表示允许更新;
+     * 返回非空字符串即作为「不可更新」的提示文案(如当前版本存在风险、已被撤回等)。
+     * <p>
+     * 默认实现读 {@link UpdateInfo#blockReason};各更新源可在实现里按自己的文档字段解析/覆盖,
+     * 从而让「是否允许更新」这一检查流程对上层保持固定,切换更新源无需改动调用方。
+     *
+     * @param info 由 {@link #checkUpdate} 返回的新版本信息
+     * @return null=允许更新;非空=阻断原因文案
+     */
+    default String updateBlockReason(UpdateInfo info) {
+        return info == null ? null : info.blockReason;
+    }
+
     /** 更新流程回调(主线程) */
     interface Callback {
 

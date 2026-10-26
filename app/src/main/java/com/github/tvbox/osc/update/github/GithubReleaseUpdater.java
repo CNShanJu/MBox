@@ -148,8 +148,31 @@ public class GithubReleaseUpdater implements Updater {
                 String.format("https://github.com/%s/%s/releases/download/%s/%s",
                         UpdaterConfig.getGithubOwner(), UpdaterConfig.getGithubRepo(), target.tag, target.apk.name));
         if (candidates.isEmpty()) return null;
+        String blockReason = parseBlockReason(target.body);
         return new UpdateInfo(target.version, target.tag, -1, candidates, target.apk.name, target.apk.size,
-                ReleaseNotes.aggregate(notes, truncated));
+                ReleaseNotes.aggregate(notes, truncated), blockReason);
+    }
+
+    /**
+     * 解析发版正文里的「阻断更新」字段,约定如下(HTML 注释形式,与 {@link ReleaseNotes} 的
+     * dev 围栏一致,网页端渲染时自动隐藏,不影响用户阅读):
+     * <pre>
+     * &lt;!-- update-block: 这里写原因 --&gt;   有原因时,原因作为提示文案
+     * &lt;!-- update-block --&gt;              无原因时,用默认文案
+     * </pre>
+     * 未命中返回 null(=允许更新);命中的原因去首尾空白,为空则用默认文案。
+     */
+    private static String parseBlockReason(String body) {
+        if (body == null) return null;
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("<!--\\s*update-block\\s*(?::\\s*([^\\n]*?))?\\s*-->",
+                        java.util.regex.Pattern.CASE_INSENSITIVE)
+                .matcher(body);
+        if (!m.find()) return null;
+        String reason = m.group(1);
+        if (reason == null) return "当前版本存在风险，暂不可更新";
+        String trimmed = reason.trim();
+        return trimmed.isEmpty() ? "当前版本存在风险，暂不可更新" : trimmed;
     }
 
     /** 从资产里挑要安装的 APK:优先非 debug 包,只有 debug 包时兜底用它 */

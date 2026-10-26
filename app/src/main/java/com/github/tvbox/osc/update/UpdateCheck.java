@@ -197,6 +197,13 @@ public final class UpdateCheck {
                 AppBubble.toast("安装包状态已变化，请重新检查更新");
                 break;
             default:
+                // 通用阻断检查:点「立即更新」发起下载前,先问更新源「这个版本是否允许更新」。
+                // 返回非空即阻断,提示原因后不再发起下载。
+                String blockReason = updater.updateBlockReason(info);
+                if (blockReason != null && !blockReason.trim().isEmpty()) {
+                    AppBubble.toast(blockReason.trim());
+                    break;
+                }
                 startDownload(context, updater, info);
                 break;
         }

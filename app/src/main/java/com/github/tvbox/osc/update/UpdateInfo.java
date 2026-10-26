@@ -36,8 +36,22 @@ public final class UpdateInfo {
     /** 更新说明(可为空) */
     public final String releaseNote;
 
+    /**
+     * 阻断更新的原因(由 {@link Updater} 实现从远端文档解析);为 null 表示可正常更新。
+     * <p>
+     * 上层只通过 {@link Updater#updateBlockReason(UpdateInfo)} 判断是否允许更新,
+     * 不同更新源各自决定如何解析/填充本字段,切换更新源无需改动上层。
+     */
+    public final String blockReason;
+
     public UpdateInfo(String versionName, String versionTag, int versionCode,
                       List<String> downloadUrls, String apkName, long apkSize, String releaseNote) {
+        this(versionName, versionTag, versionCode, downloadUrls, apkName, apkSize, releaseNote, null);
+    }
+
+    public UpdateInfo(String versionName, String versionTag, int versionCode,
+                      List<String> downloadUrls, String apkName, long apkSize, String releaseNote,
+                      String blockReason) {
         this.versionName = versionName;
         this.versionTag = versionTag;
         this.versionCode = versionCode;
@@ -48,6 +62,7 @@ public final class UpdateInfo {
         this.apkName = apkName;
         this.apkSize = apkSize;
         this.releaseNote = releaseNote;
+        this.blockReason = blockReason;
     }
 
     /** 兼容旧构造:单个下载地址(等价于仅一个候选) */
@@ -55,6 +70,6 @@ public final class UpdateInfo {
                       String downloadUrl, String apkName, long apkSize, String releaseNote) {
         this(versionName, versionTag, versionCode,
                 downloadUrl == null ? Collections.<String>emptyList() : Collections.singletonList(downloadUrl),
-                apkName, apkSize, releaseNote);
+                apkName, apkSize, releaseNote, null);
     }
 }
