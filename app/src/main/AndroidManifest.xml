@@ -2,6 +2,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
     <!-- 在 Android 11 中，应用程序需要声明它们要使用的其他应用程序的包名 -->
+    <!--
+        端口占用排查要能点名"同机另一个 MBox"(正式版/调试版的本机服务都默认绑 9978,
+        互相抢占;被抢的那个通常还冻结在后台,既不应答也没法从 procfs 读出 uid)。
+        这里显式声明这两个包,才能用 PackageManager 取到对方的应用名/包名,
+        播放失败提示里把"该关哪个应用"说清楚。只用于诊断展示,不做任何跨应用调用。
+    -->
+    <queries>
+        <package android:name="com.github.tvbox.osc.mbox" />
+        <package android:name="com.github.tvbox.osc.mbox.debug" />
+    </queries>
     <uses-feature
         android:name="android.software.leanback"
         android:required="false" />

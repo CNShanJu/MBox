@@ -50,6 +50,19 @@ public class ControlManager {
      * 不代表这个进程里的服务真的对外可达 —— 设置页要如实区分这两种情形(见 {@link #lanState()})。
      */
     private volatile boolean lanBound = false;
+    /**
+     * 默认端口被占的诊断快照:仅当本进程的服务不是在 {@link #DEFAULT_PORT} 上时才有值。
+     * <p>
+     * 为什么单独记:第三方源(jar/js)里大量写死 {@code http://127.0.0.1:9978/proxy?...},
+     * 一旦本进程回退到 9979,这些源取播放地址就会打到别的进程/无人应答 → 超时 → 表现为
+     * "网盘未返回播放地址""嗅探错误",而界面上看不出是端口问题。
+     */
+    private volatile int portFallbackFrom = -1;
+    private volatile int portFallbackTo = -1;
+    /** 占用者应用名/包名(按需识别,见 {@link #warmPortOccupantAsync()}) */
+    private volatile String portOccupantLabel = "";
+    private volatile String portOccupantPackage = "";
+    private volatile boolean portOccupantProbing = false;
     private int homeHostCount;
     private long homeHostEpoch;
 
@@ -145,6 +158,318 @@ public class ControlManager {
     public boolean isLanBound() {
         RemoteServer s = mServer;
         return s != null && s.isStarting() && lanBound;
+    }
+
+    // ------------------------------------------------------------------
+    // 默认端口(9978)被占:诊断 / 提示 / 自动迁回
+    // ------------------------------------------------------------------
+
+    /** 同机兄弟包(正式版/调试版);与 AndroidManifest 的 <queries> 保持一致 */
+    private static final String[] SIBLING_PACKAGES = {
+            "com.github.tvbox.osc.mbox",
+            "com.github.tvbox.osc.mbox.debug"
+    };
+
+    /** 当前本机服务是否因 {@link #DEFAULT_PORT} 被占而落在了其他端口上 */
+    public boolean isOnFallbackPort() {
+        return portFallbackFrom > 0;
+    }
+
+    /** 被占用、导致回退的默认端口(不在回退状态时为 -1) */
+    public int portFallbackFrom() {
+        return portFallbackFrom;
+    }
+
+    /** 端口回退的一句话说明,只进日志(用户可见的提示在播放失败时给,见 PlayFragment) */
+    public String portFallbackNote() {
+        if (!isOnFallbackPort()) return "";
+        String who = portOccupantLabel.isEmpty() ? "" : "(" + portOccupantLabel + ")";
+        return portFallbackFrom + " 被占用" + who + "，已改用 " + portFallbackTo;
+    }
+
+    /** 已识别到的占用者应用名(还没识别出来时为空串) */
+    public String portOccupantLabel() {
+        return portOccupantLabel;
+    }
+
+    /** 已识别到的占用者包名(认不出来时为空,只能把用户送到系统应用列表) */
+    public String portOccupantPackage() {
+        return portOccupantPackage;
+    }
+
+    /**
+     * 按需识别"谁占着默认端口"。
+     * <p>
+     * 只在真正用得上这个端口的时候调用(起播前迁不回去、或播放已经失败),<b>开屏不做任何探测</b> ——
+     * 没被用到的端口没必要查,查了也没地方提示。识别是 1~2 次本机 HTTP 探测(通常 ~50ms),
+     * 结果缓存在字段里,播放失败的提示直接读。
+     */
+    public void warmPortOccupantAsync() {
+        if (!isOnFallbackPort()) return;
+        if (!portOccupantLabel.isEmpty() || portOccupantProbing) return;
+        final int port = portFallbackFrom;
+        synchronized (this) {
+            if (!portOccupantLabel.isEmpty() || portOccupantProbing) return;
+            portOccupantProbing = true;
+        }
+        com.github.tvbox.osc.util.HeavyTaskUtil.executeNewTask(() -> {
+            try {
+                identifyPortOccupant(port);
+            } finally {
+                portOccupantProbing = false;
+            }
+        });
+    }
+
+    /**
+     * 默认端口空出来后迁回默认端口。
+     * <p>
+     * 只在"服务在跑 + 已回退 + 没有对外监听"时尝试:第三方源里写死的 {@code 127.0.0.1:9978}
+     * 只认这个端口,停在别的端口等于这些源一直取不到地址;而迁端口会断掉正在走的 127.0.0.1
+     * 连接,所以对外监听(投屏/局域网共享)期间不动 —— 调用方保证只在起播前这类没有活跃播放的时机调用。
+     */
+    public synchronized boolean tryReclaimPreferredPort() {
+        if (!isOnFallbackPort()) return false;
+        RemoteServer running = mServer;
+        if (running == null || !running.isStarting()) return false;
+        if (lanBound) return false;
+        if (!isPreferredPortFree()) return false;
+        Log.i("TVBox-Server", "默认端口 " + DEFAULT_PORT + " 已空出，本机服务迁回默认端口");
+        boolean ok = startServerInternal(true) && RemoteServer.serverPort == DEFAULT_PORT;
+        if (ok) clearPortFallback();
+        return ok;
+    }
+
+    /**
+     * 记下"默认端口被占、服务落在 tryPort 上"。
+     * <p>
+     * 只留痕(Logcat + 日志页),<b>不在开屏弹任何提示</b>:端口是给源取流用的,没在播放时占着也无所谓,
+     * 提示要等播放失败、真的用得上它的时候再给(见 PlayFragment 的失败提示)。
+     */
+    private void recordPortFallback(int from, int to, IOException cause) {
+        portFallbackFrom = from;
+        portFallbackTo = to;
+        portOccupantLabel = "";
+        portOccupantPackage = "";
+        String detail = from + " 被占用，本机服务回退到 " + to
+                + "；源里写死 127.0.0.1:" + from + " 的代理地址会取不到地址"
+                + (cause == null || cause.getMessage() == null ? "" : "，原因=" + cause.getMessage());
+        Log.w("TVBox-Server", detail);
+        LogStore.fail(Category.SYSTEM, detail);
+    }
+
+    private void clearPortFallback() {
+        portFallbackFrom = -1;
+        portFallbackTo = -1;
+        portOccupantLabel = "";
+        portOccupantPackage = "";
+    }
+
+    /**
+     * 默认端口此刻能不能被本进程绑上(只做一次瞬时探测,不长期占着)。
+     * <p>
+     * 必须开 SO_REUSEADDR:占用方被强停/崩溃后,它的连接会在内核里留下 TIME_WAIT,
+     * 此时已无监听、但不开复用的 bind 仍会 EADDRINUSE —— 探测就会误判"还占着",
+     * 于是用户按提示关掉另一个应用、回来仍然不迁回端口(2026-11-09 实测踩到)。
+     * 真正的服务端(NanoHTTPD)本来就是 reuse=true,这里要与它一致。
+     */
+    private static boolean isPreferredPortFree() {
+        java.net.ServerSocket probe = null;
+        try {
+            probe = new java.net.ServerSocket();
+            probe.setReuseAddress(true);
+            probe.bind(new java.net.InetSocketAddress("127.0.0.1", DEFAULT_PORT), 1);
+            return true;
+        } catch (Throwable ignored) {
+            return false;
+        } finally {
+            if (probe != null) {
+                try {
+                    probe.close();
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+    }
+
+    /**
+     * 识别端口占用者,依次尝试:
+     * ① procfs(能读 /proc/net/tcp* 的机型可以直接点名包名);
+     * ② 新版本 MBox 的 {@code /api/port-id} 自报包名+应用名;
+     * ③ 认局域网控制台首页标题(旧版本没有 ② 时靠它认出"是 MBox")。
+     * 全程只用于提示,任何一步失败都只是识别不出来,不影响服务。
+     */
+    private void identifyPortOccupant(int port) {
+        String source;
+        String byUid = describePortOwnerByUid(port);
+        if (!byUid.isEmpty()) {
+            portOccupantLabel = byUid;
+            source = "procfs";
+        } else {
+            String[] hello = probePortIdentity(port);
+            if (hello != null) {
+                portOccupantPackage = hello[0];
+                portOccupantLabel = hello[1];
+                source = "自报";
+            } else {
+                String home = probePortHome(port);
+                if (!home.isEmpty()) {
+                    portOccupantLabel = home;
+                    source = "控制台首页";
+                    // 首页只认得出"是 MBox";具体是哪个包,用同机兄弟包补上,
+                    // 提示里的"去关闭"才能直达那个应用的信息页。
+                    String[] siblingForPkg = findSiblingApp();
+                    if (siblingForPkg != null) portOccupantPackage = siblingForPkg[0];
+                } else {
+                    // 前面三条都问不出来:最常见的是占用者已被系统冻结在后台 —— socket 还挂在内核里
+                    // (LISTEN + 三次握手都成功),但进程不运行、不应答,procfs 又读不到 uid。
+                    // 这时按"同机另一个 MBox"给出能操作的名字(见 AndroidManifest 的 <queries>)。
+                    String[] sibling = findSiblingApp();
+                    if (sibling != null) {
+                        portOccupantPackage = sibling[0];
+                        portOccupantLabel = sibling[1];
+                        source = "同机兄弟包(可能已冻结)";
+                    } else {
+                        source = "未识别";
+                    }
+                }
+            }
+        }
+        Log.i("TVBox-Server", "端口占用者识别: port=" + port + "，方式=" + source
+                + "，应用=" + portOccupantLabel + "，包名=" + portOccupantPackage);
+        LogStore.log(Category.SYSTEM, "本机服务端口占用者(" + source + "): "
+                + (portOccupantLabel.isEmpty() ? "<未识别>" : portOccupantLabel + " " + portOccupantPackage));
+    }
+
+    /**
+     * 同机另一个 MBox(正式版/调试版)。两边的本机服务都默认绑 9978,谁先起谁占;
+     * 被抢的那个往往已冻结在后台,既不应答也读不到 uid,只能按"装没装对方"来给名字。
+     */
+    private static String[] findSiblingApp() {
+        if (mContext == null) return null;
+        String self = mContext.getPackageName();
+        android.content.pm.PackageManager pm = mContext.getPackageManager();
+        for (String pkg : SIBLING_PACKAGES) {
+            if (pkg.equals(self)) continue; // 自己不可能占自己的端口
+            try {
+                android.content.pm.PackageInfo info = pm.getPackageInfo(pkg, 0);
+                String label = pkg;
+                try {
+                    if (info.applicationInfo != null)
+                        label = String.valueOf(info.applicationInfo.loadLabel(pm));
+                } catch (Throwable ignored) {
+                }
+                return new String[]{pkg, label};
+            } catch (Throwable ignored) {
+                // 没装/不可见(后者由 AndroidManifest 的 <queries> 兜住):看下一个
+            }
+        }
+        return null;
+    }
+
+    /** 问一句"你是谁":新版本 MBox 的 /api/port-id 会自报 {包名}|{应用名} */
+    private static String[] probePortIdentity(int port) {
+        String body = httpGetLocal(port, "/api/port-id");
+        if (body == null) return null;
+        body = body.trim();
+        // 旧版本没有这个路由时会回退到控制台首页(HTML):必须严格校验格式,
+        // 否则会把首页里 JS 的 "|" 当成身份分隔符,识别出垃圾身份。
+        if (body.isEmpty() || body.length() > 200
+                || body.indexOf('<') >= 0 || body.indexOf('\n') >= 0) return null;
+        int sep = body.indexOf('|');
+        if (sep <= 0) return null;
+        String pkg = body.substring(0, sep).trim();
+        if (!pkg.matches("[A-Za-z0-9_]+(\\.[A-Za-z0-9_]+)+")) return null;
+        String label = body.substring(sep + 1).trim();
+        return new String[]{pkg, label.isEmpty() ? pkg : label};
+    }
+
+    /** 认控制台首页:本仓局域网控制台标题是 "MBox · 局域网",旧版本没有 /api/port-id 时靠它 */
+    private static String probePortHome(int port) {
+        String body = httpGetLocal(port, "/");
+        return body != null && body.contains("MBox") ? "MBox" : "";
+    }
+
+    /** 对 127.0.0.1 发一次极短超时的 GET(只用于端口占用诊断;失败一律返回 null) */
+    private static String httpGetLocal(int port, String path) {
+        java.net.HttpURLConnection conn = null;
+        java.io.InputStream in = null;
+        try {
+            conn = (java.net.HttpURLConnection) new java.net.URL(
+                    "http://127.0.0.1:" + port + path).openConnection();
+            conn.setConnectTimeout(400);
+            conn.setReadTimeout(400);
+            conn.setUseCaches(false);
+            conn.setRequestProperty("Connection", "close");
+            if (conn.getResponseCode() != 200) return null;
+            in = conn.getInputStream();
+            if (in == null) return null;
+            byte[] buf = new byte[2048];
+            int read = in.read(buf);
+            return read <= 0 ? null
+                    : new String(buf, 0, read, java.nio.charset.StandardCharsets.UTF_8);
+        } catch (Throwable ignored) {
+            return null;
+        } finally {
+            if (in != null) {
+                try {
+                    in.close();
+                } catch (Throwable ignored) {
+                }
+            }
+            if (conn != null) conn.disconnect();
+        }
+    }
+
+    /** 读 procfs 的 LISTEN 项拿 uid,再用 PackageManager 反查包名(需要能读 /proc/net/tcp*) */
+    private static String describePortOwnerByUid(int port) {
+        int uid = -1;
+        for (String table : new String[]{"/proc/net/tcp6", "/proc/net/tcp"}) {
+            try (java.io.BufferedReader reader =
+                         new java.io.BufferedReader(new java.io.FileReader(table))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    String[] parts = line.trim().split("\\s+");
+                    // sl local_address rem_address st tx_queue:rx_queue tr:tm->when retrnsmt uid ...
+                    if (parts.length < 8 || !"0A".equalsIgnoreCase(parts[3])) continue;
+                    String local = parts[1];
+                    int colon = local.lastIndexOf(':');
+                    if (colon <= 0) continue;
+                    int listenPort;
+                    try {
+                        listenPort = Integer.parseInt(local.substring(colon + 1), 16);
+                    } catch (Throwable ignored) {
+                        continue;
+                    }
+                    if (listenPort != port) continue;
+                    try {
+                        uid = Integer.parseInt(parts[7]);
+                    } catch (Throwable ignored) {
+                    }
+                    break;
+                }
+            } catch (Throwable ignored) {
+                // Android 10+ 应用侧普遍读不到 procfs:交给自报/首页识别
+            }
+            if (uid >= 0) break;
+        }
+        if (uid < 0) return "";
+        if (uid == android.os.Process.myUid()) return "本进程的遗留监听";
+        StringBuilder packages = new StringBuilder();
+        try {
+            if (mContext != null) {
+                String[] names = mContext.getPackageManager().getPackagesForUid(uid);
+                if (names != null) {
+                    for (String name : names) {
+                        if (name == null || name.isEmpty()) continue;
+                        if (packages.length() > 0) packages.append(", ");
+                        packages.append(name);
+                    }
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        return packages.length() == 0 ? ("uid " + uid) : packages.toString();
     }
 
     /** 当前 HTTP 服务实例(可能为 null);局域网分享桥复用同一服务端 */
@@ -357,6 +682,7 @@ public class ControlManager {
                     && (!retryPreferred || RemoteServer.serverPort == DEFAULT_PORT)) {
                 com.github.tvbox.osc.util.OkGoHelper.setLocalFileReadAccess(
                         RemoteServer.serverPort, running.getLocalReadToken());
+                if (RemoteServer.serverPort == DEFAULT_PORT) clearPortFallback();
                 return true;
             }
             if (running.isStarting() && retryPreferred
@@ -385,6 +711,7 @@ public class ControlManager {
         // 需要局域网文件共享/远程管理(web 控制台)时,显式开启 HawkConfig.LAN_SERVER_ENABLE 后重启生效。
         final int preferredPort = DEFAULT_PORT;
         int preferredAttempts = retryPreferred ? STARTUP_PORT_ATTEMPTS : 1;
+        IOException preferredPortError = null;
         for (int attempt = 0; attempt < preferredAttempts + PORT_LIMIT - DEFAULT_PORT - 1; attempt++) {
             int tryPort = attempt < preferredAttempts
                     ? preferredPort : preferredPort + 1 + attempt - preferredAttempts;
@@ -422,15 +749,16 @@ public class ControlManager {
                 // 127.0.0.1:9978 代理地址(do=js/do=m3u8 等)会因此连不上(ECONNREFUSED);
                 // 应用侧以前不打任何日志,只能靠第三方 adjustPort 日志猜,这里补上实际端口。
                 if (tryPort == preferredPort) {
+                    clearPortFallback();
                     Log.i("TVBox-Server", "本机服务已启动: " + candidate.getLoadAddress());
                 } else {
-                    Log.w("TVBox-Server", preferredPort + " 被占用,本机服务回退到 " + tryPort
-                            + ";源里写死 127.0.0.1:" + preferredPort + " 的代理地址会连不上");
+                    recordPortFallback(preferredPort, tryPort, preferredPortError);
                 }
                 if (lanEnabled) LogStore.success(Category.SYSTEM,
                         "局域网服务已启动 port=" + tryPort);
                 return true;
             } catch (IOException ex) {
+                if (tryPort == preferredPort && preferredPortError == null) preferredPortError = ex;
                 try {
                     candidate.stop();
                 } catch (Throwable stopError) {
@@ -455,6 +783,7 @@ public class ControlManager {
         mServer = null;
         lanBound = false;
         RemoteServer.serverPort = DEFAULT_PORT;
+        clearPortFallback();
         com.github.tvbox.osc.util.OkGoHelper.clearLocalFileReadAccess();
         Log.w("TVBox-Server", "本机服务启动失败:从 " + preferredPort + " 起连续端口都被占用");
         if (lanEnabled) LogStore.fail(Category.SYSTEM,
