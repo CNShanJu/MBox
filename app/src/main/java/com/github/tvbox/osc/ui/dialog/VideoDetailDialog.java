@@ -19,7 +19,6 @@ import com.github.tvbox.osc.bean.VodInfo;
 import com.github.tvbox.osc.databinding.DialogVideoDetailBinding;
 import com.github.tvbox.osc.ui.kit.InlineExpandableText;
 import com.github.tvbox.osc.util.DefaultConfig;
-import com.lxj.xpopup.XPopup;
 
 /**
  * 详情抽屉(底部):头部固定(海报/信息/链接),简介区按内容/抽屉状态展示:
@@ -74,6 +73,17 @@ public class VideoDetailDialog extends SheetResizableBottomPopup {
         DialogVideoDetailBinding binding = DialogVideoDetailBinding.bind(getPopupImplView());
 
         binding.tvName.setText(mVideo.name);
+        // 抽屉里的剧名同样被 maxLines=2 截断:长按看全文并可复制。
+        // 抽屉自己是 view 模式弹窗,再往同一层 decorView 叠一个 view 模式弹窗会出现层级/返回键问题
+        // (见 DialogCoordinator.fullScreen 的注释),故这里用独立窗口弹出。
+        binding.tvName.setOnLongClickListener(view -> {
+            if (TextUtils.isEmpty(mVideo.name)) {
+                AppBubble.toast("暂无剧名");
+                return true;
+            }
+            DialogCoordinator.center(getContext(), new TextCopyDialog(getContext(), "完整剧名", mVideo.name)).show();
+            return true;
+        });
         // 空值/未知的字段整行隐藏:数据不全的源(接口只回空壳)时,不会再列出一串"地区：未知"、
         // 也不会出现只有标签没有值的"年份："把排版撑乱
         bindInfoRow(binding.tvYear, "年份：", mVideo.year == 0 ? "" : String.valueOf(mVideo.year));
@@ -96,13 +106,11 @@ public class VideoDetailDialog extends SheetResizableBottomPopup {
         com.github.tvbox.osc.util.PicassoLoad.into(binding.ivThum, picUrl);
         if (!TextUtils.isEmpty(picUrl)) {
             binding.llThum.setOnClickListener(view -> {
-                // 大图查看器必须传自己的图片加载器:XPopup 自带的 SmartGlideImageLoader 依赖 Glide,
-                // 而 Glide 已从本仓移除 → 点缩略图即 NoClassDefFoundError 崩溃(见 PicassoImageLoader)
-                new XPopup.Builder(getContext())
-                        .isViewMode(true)
-                        .hasNavigationBar(false)
-                        .asImageViewer(binding.ivThum, picUrl, new PicassoImageLoader())
-                        .show();
+                // 大图查看改走 App 自己的全屏查看器(PosterPreviewView):XPopup 的 asImageViewer
+                // 在这条链路上(详情抽屉 view 模式之上再叠 view 模式 + 从缩略图 drawable 复制首帧)
+                // 会直接崩到崩溃页,见 PosterPreviewView 类注释。
+                DialogCoordinator.fullScreen(getContext(),
+                        new PosterPreviewView(getContext(), picUrl)).show();
             });
         }
 

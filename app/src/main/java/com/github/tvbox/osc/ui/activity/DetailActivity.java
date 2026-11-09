@@ -65,6 +65,7 @@ import com.github.tvbox.osc.ui.dialog.DialogCoordinator;
 import com.github.tvbox.osc.ui.dialog.DownloadDialogCoordinator;
 import com.github.tvbox.osc.ui.dialog.QuickSearchDialog;
 import com.github.tvbox.osc.ui.dialog.SelectDialog;
+import com.github.tvbox.osc.ui.dialog.TextCopyDialog;
 import com.github.tvbox.osc.ui.dialog.VideoDetailDialog;
 import com.github.tvbox.osc.ui.fragment.PlayFragment;
 import com.github.tvbox.osc.ui.kit.LinearSpacingItemDecoration;
@@ -426,13 +427,22 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
             getSupportFragmentManager().beginTransaction().show(playFragment).commitAllowingStateLoss();
         }
 
-        findViewById(R.id.ll_title).setOnClickListener(view -> {
-            if (!isCurrentDetail(vodInfo)) return;
-            // VideoDetailDialog 是 SheetResizableBottomPopup(底部可伸缩抽屉):与 AboutDialog/接口历史抽屉
-            // 同属底部抽屉族,统一走 bottom(...) —— 它带的 isViewMode(true) + hasNavigationBar(false)
-            // 才算"和其它抽屉同款"(原来用 center(...) 只做 asCustom,位置虽对但少了这两个参数)
-            DialogCoordinator.bottom(this, new VideoDetailDialog(this, this, vodInfo), 0).show();
+        // 剧名在标题行是 maxLines=2 + ellipsize=end(长剧名被截断):长按看全文并可复制。
+        // 注意:设置了长按后 TextView 会自己吃掉触摸事件,父级 ll_title 的点击就收不到了
+        // (实测点剧名再也打不开详情抽屉),所以这里把点击一并接管,保持"点标题→抽屉"不变。
+        mBinding.tvName.setOnClickListener(view -> showVideoDetailDrawer());
+        mBinding.tvName.setOnLongClickListener(view -> {
+            String fullName = vodInfo == null || TextUtils.isEmpty(vodInfo.name)
+                    ? "" : vodInfo.name;
+            if (TextUtils.isEmpty(fullName)) {
+                // 数据未就绪时布局里的占位文本不能当剧名复制出去
+                AppBubble.toast("暂无剧名");
+                return true;
+            }
+            TextCopyDialog.showInHostView(this, "完整剧名", fullName);
+            return true;
         });
+        findViewById(R.id.ll_title).setOnClickListener(view -> showVideoDetailDrawer());
         findViewById(R.id.tvDownload).setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -1752,6 +1762,19 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     @Override
     public void runOnUi(Runnable action) {
         runOnUiThread(action);
+    }
+
+    /**
+     * 打开详情抽屉(VideoDetailDialog)。标题行与剧名本身都走这里:
+     * 剧名上挂了长按(看全文/复制),长按会让 TextView 自己吃掉触摸事件、父级收不到点击,
+     * 所以点击也必须显式接管,否则"点剧名打开抽屉"会失效。
+     */
+    private void showVideoDetailDrawer() {
+        if (!isCurrentDetail(vodInfo)) return;
+        // VideoDetailDialog 是 SheetResizableBottomPopup(底部可伸缩抽屉):与 AboutDialog/接口历史抽屉
+        // 同属底部抽屉族,统一走 bottom(...) —— 它带的 isViewMode(true) + hasNavigationBar(false)
+        // 才算"和其它抽屉同款"(原来用 center(...) 只做 asCustom,位置虽对但少了这两个参数)
+        DialogCoordinator.bottom(this, new VideoDetailDialog(this, this, vodInfo), 0).show();
     }
 
     /** 下载入口:内置模式选集下载,外部模式把当前集交给 1DM+。 */
