@@ -12,40 +12,66 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
-    <com.airbnb.lottie.LottieAnimationView
-        android:id="@+id/play_loading"
-        android:layout_width="72dp"
-        android:layout_height="72dp"
-        android:layout_gravity="center"
-        android:tag="vod_control_loading"
-        app:lottie_autoPlay="true"
-        android:scaleType="fitCenter"
-        app:lottie_fileName="loading/glowing_fish_loader/glowing_fish_loader.json"
-        app:lottie_speed="1"
-        app:lottie_loop="true"
-        app:lottie_repeatMode="restart"/>
-
-    <ImageView
-        android:id="@+id/play_load_error"
-        android:layout_width="30dp"
-        android:layout_height="30dp"
-        android:layout_gravity="center"
-        android:alpha="0.75"
-        android:focusable="false"
-        android:focusableInTouchMode="false"
-        android:src="@drawable/ic_error"
-        android:visibility="gone"
-        tools:visibility="visible" />
-
-    <TextView
-        android:id="@+id/play_load_tip"
+    <!-- 加载/失败提示竖排:转圈 → 感叹号 → 文案。
+         以前三个视图在 FrameLayout 里各自居中、文案固定 42dp 上边距:两行文案时文字块往上长,
+         会顶到感叹号底下(用户口径"提示文字离感叹号太近");改成一条竖排线性布局后,
+         图标与文字的间距由 margin 决定,文案行数变化不再改变这个距离。 -->
+    <LinearLayout
+        android:id="@+id/play_load_panel"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="center"
-        android:layout_marginTop="42dp"
-        android:textColor="@color/color_FFFFFF"
-        android:textSize="16sp"
-        tools:text="1111111111111"
+        android:gravity="center_horizontal"
+        android:orientation="vertical"
+        android:paddingStart="32dp"
+        android:paddingEnd="32dp">
 
-         />
+        <com.airbnb.lottie.LottieAnimationView
+            android:id="@+id/play_loading"
+            android:layout_width="72dp"
+            android:layout_height="72dp"
+            android:scaleType="fitCenter"
+            android:tag="vod_control_loading"
+            app:lottie_autoPlay="true"
+            app:lottie_fileName="loading/glowing_fish_loader/glowing_fish_loader.json"
+            app:lottie_loop="true"
+            app:lottie_repeatMode="restart"
+            app:lottie_speed="1" />
+
+        <ImageView
+            android:id="@+id/play_load_error"
+            android:layout_width="30dp"
+            android:layout_height="30dp"
+            android:layout_marginTop="4dp"
+            android:alpha="0.75"
+            android:focusable="false"
+            android:focusableInTouchMode="false"
+            android:src="@drawable/ic_error"
+            android:visibility="gone"
+            tools:visibility="visible" />
+
+        <TextView
+            android:id="@+id/play_load_tip"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:gravity="center"
+            android:textColor="@color/color_FFFFFF"
+            android:textSize="16sp"
+            tools:text="播放失败，请更换线路重试" />
+
+        <!-- 端口占用是「环境问题」,与本次失败原因正交:单独一行,不跟主提示抢位置,
+             也不因主提示换成"网盘未返回地址/加载超时"而消失(用户口径 2026-11-09)。 -->
+        <TextView
+            android:id="@+id/play_load_port_tip"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:gravity="center"
+            android:textColor="@color/color_FFFFFF"
+            android:textSize="13sp"
+            android:visibility="gone"
+            tools:text="本机端口 9978 被「MBox」占用，点此去关闭"
+            tools:visibility="visible" />
+    </LinearLayout>
 </FrameLayout>

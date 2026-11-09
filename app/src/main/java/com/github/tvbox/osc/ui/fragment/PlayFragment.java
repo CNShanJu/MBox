@@ -112,6 +112,10 @@ public class PlayFragment extends BaseLazyFragment {
     /** 电池百分比订阅(系统状态经 SystemStateMonitor,替代 EventBus 电量广播) */
     private com.github.tvbox.osc.state.SystemStateMonitor.Listener mBatteryListener;
     private TextView mPlayLoadTip;
+    /** 端口占用提示(独立一行,不随主提示换文案而消失;见 {@link #updatePortTip()}) */
+    private TextView mPortTip;
+    /** 本次起播是否受"本机端口被占"影响(起播时抢不回默认端口):加载态与失败提示据此补那一行 */
+    private boolean mPortHintArmed;
     private boolean browserCastStatusVisible;
     private boolean dlnaCastStatusVisible;
     private boolean browserCastActive;
@@ -282,6 +286,7 @@ public class PlayFragment extends BaseLazyFragment {
     private void initView() {
         mVideoView = findViewById(R.id.mVideoView);
         mPlayLoadTip = findViewById(R.id.play_load_tip);
+        mPortTip = findViewById(R.id.play_load_port_tip);
         mPlayLoading = findViewById(R.id.play_loading);
         // 播放器加载动画跟随设置页"加载动画"选项(默认/Glowing Fish)
         LoadingAnim.apply(mPlayLoading);
@@ -576,6 +581,7 @@ public class PlayFragment extends BaseLazyFragment {
             mPlayLoadTip.setVisibility(TextUtils.isEmpty(tip) ? View.GONE : View.VISIBLE);
             mPlayLoading.setVisibility(View.GONE);
             mPlayLoadErr.setVisibility(err ? View.VISIBLE : View.GONE);
+            if (err) updatePortTip(); else hidePortTip();
 
             if (autoSwitchPlayer) {
                 SpanUtils.with(mPlayLoadTip)
@@ -588,6 +594,63 @@ public class PlayFragment extends BaseLazyFragment {
         });
     }
 
+    /**
+     * 刷新"本机端口被占"那一行(独立视图,只有本次起播真的受影响时才显示)。
+     * <p>
+     * 只说"端口被占用"没用 —— 用户关不掉一个不知道名字的东西。所以带上应用名,并把
+     * 「点此去关闭」做成高亮可点(与播放器其它错误提示里的「切换播放器」「去开启」同一个高亮色),
+     * 点一下直接跳到那个应用的系统设置页去强行停止(见 {@link #openPortOccupant()})。
+     * <p>
+     * 放在独立一行而不是拼进主提示:主提示会随状态在"正在获取播放信息/网盘未返回地址/嗅探错误"之间
+     * 来回换,拼进去那行就跟着没了;而端口占用是本次起播一直存在的前提。
+     */
+    private void updatePortTip() {
+        if (mPortTip == null) return;
+        com.github.tvbox.osc.server.ControlManager cm =
+                com.github.tvbox.osc.server.ControlManager.get();
+        if (!mPortHintArmed || !cm.isOnFallbackPort() || cm.portFallbackFrom() <= 0) {
+            mPortTip.setVisibility(View.GONE);
+            return;
+        }
+        String label = cm.portOccupantLabel();
+        String name = TextUtils.isEmpty(label) ? "其他应用" : label;
+        SpanUtils.with(mPortTip)
+                .append("本机端口 " + cm.portFallbackFrom() + " 被「" + name + "」占用，")
+                .append("点此去关闭")
+                .setClickSpan(ColorUtils.getColor(R.color.orange), false, view -> openPortOccupant())
+                .create();
+        mPortTip.setVisibility(View.VISIBLE);
+    }
+
+    /** 收起端口占用那一行 */
+    private void hidePortTip() {
+        if (mPortTip != null) mPortTip.setVisibility(View.GONE);
+    }
+
+    /** 打开占用端口那个应用的系统设置页(认不出包名时退到应用列表),让用户自己强行停止 */
+    private void openPortOccupant() {
+        if (!isAdded()) return;
+        com.github.tvbox.osc.server.ControlManager cm =
+                com.github.tvbox.osc.server.ControlManager.get();
+        cm.warmPortOccupantAsync(); // 可能还没识别完:顺手再催一次
+        String pkg = cm.portOccupantPackage();
+        try {
+            android.content.Intent intent;
+            if (!TextUtils.isEmpty(pkg)) {
+                intent = new android.content.Intent(
+                        android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        android.net.Uri.parse("package:" + pkg));
+            } else {
+                intent = new android.content.Intent(
+                        android.provider.Settings.ACTION_MANAGE_APPLICATIONS_SETTINGS);
+            }
+            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+            requireContext().startActivity(intent);
+        } catch (Throwable th) {
+            AppBubble.toast("请到系统设置的「应用」里关闭占用端口的那个应用");
+        }
+    }
+
     /** 加载与自动恢复只显示动画，具体步骤进入日志。 */
     private void showPlaybackLoading() {
         if (!isAdded()) return;
@@ -598,6 +661,9 @@ public class PlayFragment extends BaseLazyFragment {
             mPlayLoading.setVisibility(View.VISIBLE);
             mPlayLoadErr.setVisibility(View.GONE);
             armLoadingWatchdog();
+            // 起播就已经知道本机端口抢不回来:别等两轮嗅探超时(20s×2)才提示,
+            // 转圈时就把"端口被谁占着、点哪去关"摆出来(用户口径 2026-11-09)。
+            if (mPortHintArmed) updatePortTip(); else hidePortTip();
         });
     }
 
@@ -963,6 +1029,7 @@ public class PlayFragment extends BaseLazyFragment {
         mPlayLoadTip.setVisibility(View.GONE);
         mPlayLoading.setVisibility(View.GONE);
         mPlayLoadErr.setVisibility(View.GONE);
+        hidePortTip();
     }
 
     /** 浏览器接管播放后，手机解码器不再起播；在黑色播放器上说明当前状态。 */
@@ -1077,6 +1144,9 @@ public class PlayFragment extends BaseLazyFragment {
                 + "，原因=" + PlaybackErrorReporter.safeDiagnosticText(err)
                 + "，失败类型=" + failureKind + "，地址=" + PlaybackErrorReporter.source(failedUrl);
         if (connectionFailure) detail += "，同址重试与自动换内核=跳过";
+        // 本机服务回退到非默认端口时,写死 127.0.0.1:9978 的源注定取不到地址:失败原因里如实带上
+        String portNote = com.github.tvbox.osc.server.ControlManager.get().portFallbackNote();
+        if (!TextUtils.isEmpty(portNote)) detail += "，本机服务=" + portNote;
         if (failedPlayback != null && !TextUtils.equals(failedPlayback.url, failedUrl)) {
             detail += "，播放请求=" + PlaybackErrorReporter.source(failedPlayback.url);
         }
@@ -1088,7 +1158,28 @@ public class PlayFragment extends BaseLazyFragment {
         // 本机代理失败时，原地址可能仍可直接播放。每集只尝试一次，
         // 并保留代理 URL 中的源请求头；直连确认为连接失败时不再重试/换内核。
         if (retryProxyTargetDirectly(failedPlayback)) return;
-        if ((connectionFailure || !autoRetry()) && isAdded()) {
+        boolean willRetry;
+        if (connectionFailure) {
+            willRetry = false;
+        } else if (mPortHintArmed) {
+            // 本机端口还占着:先在失败点上试着抢回 9978 —— 抢回来才值得再试一轮;
+            // 抢不回来就到此为止,不再让加载动画空转第二轮 20s(用户口径 2026-11-09)。
+            com.github.tvbox.osc.server.ControlManager cm =
+                    com.github.tvbox.osc.server.ControlManager.get();
+            if (cm.tryReclaimPreferredPort()) {
+                mPortHintArmed = false; // 端口已回到默认值:这一行提示可以撤了
+                logPlaybackProgress("失败点上抢回默认端口,自动重试一次");
+                AppBubble.toast("本机端口已恢复，重试一次");
+                willRetry = autoRetry();
+            } else {
+                autoRetryCount = 0;
+                logPlaybackProgress("端口仍被占用,不再自动重试,先让用户关掉占用应用");
+                willRetry = false;
+            }
+        } else {
+            willRetry = autoRetry();
+        }
+        if (!willRetry && isAdded()) {
             long failedGeneration = mPlaybackGeneration.get();
             String failedEpisodeUrl = mRequestedPlayUrl;
             requireActivity().runOnUiThread(new Runnable() {
@@ -1782,6 +1873,7 @@ public class PlayFragment extends BaseLazyFragment {
         mParseLifetimeGeneration.incrementAndGet();
         mPlaybackGeneration.incrementAndGet();
         mVodInfo = null;
+        injectedVodInfo = null;
         mVodPlayerCfg = null;
         mRequestedPlayUrl = null;
         mPlayResultToken = null;
@@ -1923,10 +2015,29 @@ public class PlayFragment extends BaseLazyFragment {
         setData(bundle, true);
     }
 
+    /**
+     * 宿主显式注入"本次要播的详情快照"。
+     * <p>
+     * 历史上播放数据只经全局 {@link App#getVodInfo()} 传递(全仓只有 DetailActivity 一处写入),
+     * 一旦某次起播没走那对"先写全局、再 setData"的调用(详情页 singleTask 复用、
+     * 历史/投屏等不同入口),起播就会拿到上一部片的 seriesMap,表现是"换片还是播上一个"。
+     * 这里改成显式注入,{@link #setData(Bundle, boolean)} 优先用它,全局只留作兼容兜底。
+     */
+    public void setPlayVodInfo(VodInfo vodInfo) {
+        this.injectedVodInfo = vodInfo;
+    }
+
     /** 已有浏览器投屏重连时只装配当前剧集与控件，不重新取流或起播。 */
     public void setData(Bundle bundle, boolean startPlayback) {
         // mVodInfo = (VodInfo) bundle.getSerializable("VodInfo");
-        mVodInfo = App.getInstance().getVodInfo();
+        VodInfo injected = injectedVodInfo;
+        injectedVodInfo = null; // 一次性消费:下一次仍由宿主显式注入
+        mVodInfo = injected != null ? injected : App.getInstance().getVodInfo();
+        if (injected == null && mVodInfo != null) {
+            // 走到这里说明有入口还在用全局 vodInfo:留痕,方便把最后几个调用点也改成显式注入
+            logPlaybackProgress("起播数据来自全局 VodInfo(兼容路径): 片名="
+                    + PlaybackErrorReporter.safeDiagnosticText(mVodInfo.name));
+        }
         sourceKey = bundle.getString("sourceKey");
         sourceBean = SourceConfigProviders.get().getSource(sourceKey);
         initParseEngine();
@@ -2006,6 +2117,31 @@ public class PlayFragment extends BaseLazyFragment {
         if (!browserCastActive && mPlaySession != null)
             mPlaySession.resume();
         retryMissingAddressOnResume();
+        retryAfterPortConflictClosedOnResume();
+    }
+
+    /**
+     * 用户按提示去系统设置强行停止占用端口的应用后回到本页:端口抢回来就自动重试一次。
+     * <p>
+     * 否则点完"强行停止"回来还是那张失败图,用户会以为"关了也没用"(用户口径 2026-11-09)。
+     */
+    private void retryAfterPortConflictClosedOnResume() {
+        if (!mPortHintArmed || mVodInfo == null || !isAdded()) return;
+        if (mWaitingMissingAddress) return; // 网盘等登录那条路有它自己的重试节奏
+        final long generation = mPlaybackGeneration.get();
+        mMainHandler.postDelayed(() -> {
+            if (!isAdded() || !mPortHintArmed || generation != mPlaybackGeneration.get()) return;
+            com.github.tvbox.osc.server.ControlManager cm =
+                    com.github.tvbox.osc.server.ControlManager.get();
+            if (!cm.tryReclaimPreferredPort()) return; // 还没关掉:保持提示,别空跑
+            mPortHintArmed = false;
+            hidePortTip();
+            logPlaybackProgress("返回播放页:本机端口已抢回,自动重试一次");
+            // 给一句明确反馈:否则用户关完占用应用回来,画面没变化(或这条线路本就播不了),
+            // 会以为"关了也没用"(用户口径 2026-11-09)
+            AppBubble.toast("本机端口已恢复，正在重试");
+            play(false);
+        }, 300L);
     }
 
     @Override
@@ -2073,6 +2209,8 @@ public class PlayFragment extends BaseLazyFragment {
     }
 
     private VodInfo mVodInfo;
+    /** 宿主经 {@link #setPlayVodInfo(VodInfo)} 显式注入的本次播放快照(一次性,setData 消费即清) */
+    private VodInfo injectedVodInfo;
     private JSONObject mVodPlayerCfg;
     private String sourceKey;
     private SourceBean sourceBean;
@@ -2151,6 +2289,20 @@ public class PlayFragment extends BaseLazyFragment {
             logPlaybackProgress("放弃起播: mVodInfo 为空(详情数据未就绪)");
             return;
         }
+        // 本机服务若因 9978 被占退到了别的端口,先抢回来(第三方源里写死的 127.0.0.1:9978 只认它);
+        // 抢不回来就记住"这次起播会受影响",识别占用者,并让加载态立刻把这事说出来 ——
+        // 别等两轮嗅探超时(20s×2)之后才提示(用户口径 2026-11-09)。
+        com.github.tvbox.osc.server.ControlManager controlManager =
+                com.github.tvbox.osc.server.ControlManager.get();
+        boolean wasArmed = mPortHintArmed;
+        mPortHintArmed = controlManager.isOnFallbackPort() && !controlManager.tryReclaimPreferredPort();
+        if (mPortHintArmed) {
+            logPlaybackProgress("本机服务仍在回退端口,本次起播可能受端口占用影响");
+            controlManager.warmPortOccupantAsync();
+        } else if (wasArmed) {
+            hidePortTip(); // 这次已经抢回默认端口:把上一次留下的那行撤掉
+            logPlaybackProgress("本机服务端口已迁回默认端口,继续取流");
+        }
         browserCastStatusVisible = false;
         dlnaCastStatusVisible = false;
         if (mPlayLoadTip != null) mPlayLoadTip.setOnClickListener(null);
@@ -2180,7 +2332,9 @@ public class PlayFragment extends BaseLazyFragment {
             mSyncHost.onEpisodeSelected(mVodInfo.playIndex);
         com.github.tvbox.osc.service.PlayService.onPlaybackNotify(mVodInfo.name + "&&" + vs.name);
         String playTitleInfo = mVodInfo.name + " " + vs.name;
-        logPlaybackProgress("起播请求: 源=" + (sourceBean == null ? "?" : sourceBean.getName())
+        logPlaybackProgress("起播请求: 片名=" + PlaybackErrorReporter.safeDiagnosticText(mVodInfo.name)
+                + " id=" + PlaybackErrorReporter.safeDiagnosticText(mVodInfo.id)
+                + " 源=" + (sourceBean == null ? "?" : sourceBean.getName())
                 + " type=" + (sourceBean == null ? "?" : sourceBean.getType())
                 + " 集=" + vs.name + " 地址=" + describePlayUrl(vs.url)
                 + describeExtCredentialPaths(sourceBean == null ? null : sourceBean.getExt())
@@ -2365,6 +2519,8 @@ public class PlayFragment extends BaseLazyFragment {
                             view -> retryMissingAddressNow())
                     .create();
             mPlayLoadTip.setVisibility(View.VISIBLE);
+            // 这一屏可能是"端口被占"造成的:端口提示独立一行,不随主提示换文案而消失
+            updatePortTip();
         });
     }
 
