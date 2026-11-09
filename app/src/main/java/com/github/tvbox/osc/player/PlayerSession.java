@@ -25,6 +25,10 @@ public final class PlayerSession {
     /** 起播:绑定进度键 → 设 URL → start(headers 可为空) */
     public void play(String url, String progressKey, Map<String, String> headers) {
         if (video == null || url == null) return;
+        // 必须先回到 idle:doikki 的 VideoView#start() 在 PLAYING/PAUSED 等播放态只做 resume
+        // (startInPlaybackState),不会重新 prepare 新 URL —— 上一次的流会继续播,
+        // 表现就是"换了片/换了集,播的还是上一个"。release() 在已 idle 时是空操作。
+        video.release();
         video.setProgressKey(progressKey);
         if (headers != null && !headers.isEmpty()) {
             video.setUrl(url, headers);
@@ -37,6 +41,7 @@ public final class PlayerSession {
     /** 起播(无进度键/无头) */
     public void play(String url, Map<String, String> headers) {
         if (video == null || url == null) return;
+        video.release();
         if (headers != null && !headers.isEmpty()) {
             video.setUrl(url, headers);
         } else {

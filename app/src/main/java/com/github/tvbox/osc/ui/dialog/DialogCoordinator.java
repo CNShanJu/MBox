@@ -73,6 +73,24 @@ public final class DialogCoordinator {
         return builder.asCustom(content);
     }
 
+    /**
+     * 全屏图片查看（如详情抽屉的海报大图）。
+     * <p>
+     * 必须走<b>独立窗口</b>（{@code isViewMode(false)}）而不是宿主视图：详情抽屉本身是 view 模式
+     * 弹窗（挂在 Activity decorView 上），大图再往同一层 decorView 上叠会出现层级/系统栏不受控、
+     * 点开即崩的老问题。这里给它自己的 dialog window + 铺满尺寸，内容自带黑底。
+     */
+    public static BasePopupView fullScreen(Context ctx, BasePopupView content) {
+        return builder(ctx)
+                .isViewMode(false)
+                .hasStatusBar(false)
+                .hasNavigationBar(false)
+                .hasShadowBg(false)
+                .popupWidth(ScreenUtils.getScreenWidth())
+                .popupHeight(ScreenUtils.getScreenHeight())
+                .asCustom(content);
+    }
+
     /** Gesture Back can reach the Activity instead of XPopup's view-mode key listener. */
     public static boolean dismissSimpleHostPopupOnBack(Activity activity) {
         if (activity == null || activity.getWindow() == null) return false;

@@ -1342,6 +1342,21 @@ public class RemoteServer extends NanoHTTPD {
                         paired ? "{\"paired\":true}" : "{\"paired\":false}");
             }
             if (fileName.equals("/api/theme")) return serveTheme(session);
+            if (fileName.equals("/api/port-id")) {
+                // 端口占用排查专用:同机另一个 MBox 实例占着 9978 时,靠这次"自报身份"把
+                // "到底是谁占的"问清楚(见 ControlManager#identifyPortOccupant)。只对本机回环开放。
+                if (!isLoopbackRequest(session)) {
+                    return createPlainTextResponse(Response.Status.FORBIDDEN, "forbidden");
+                }
+                String label = "";
+                try {
+                    label = String.valueOf(mContext.getApplicationInfo()
+                            .loadLabel(mContext.getPackageManager()));
+                } catch (Throwable ignored) {
+                }
+                return createPlainTextResponse(Response.Status.OK,
+                        mContext.getPackageName() + "|" + label);
+            }
             if (fileName.equals("/api/videos")) {
                 if (!isAuthorized(session, session.getParms())) return createPlainTextResponse(Response.Status.FORBIDDEN, "forbidden");
                 return jsonResponse(Response.Status.OK, LanVideoLibrary.catalog().toString());

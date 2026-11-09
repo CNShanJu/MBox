@@ -65,6 +65,7 @@ import com.github.tvbox.osc.ui.dialog.DialogCoordinator;
 import com.github.tvbox.osc.ui.dialog.DownloadDialogCoordinator;
 import com.github.tvbox.osc.ui.dialog.QuickSearchDialog;
 import com.github.tvbox.osc.ui.dialog.SelectDialog;
+import com.github.tvbox.osc.ui.dialog.TextCopyDialog;
 import com.github.tvbox.osc.ui.dialog.VideoDetailDialog;
 import com.github.tvbox.osc.ui.fragment.PlayFragment;
 import com.github.tvbox.osc.ui.kit.LinearSpacingItemDecoration;
@@ -426,13 +427,22 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
             getSupportFragmentManager().beginTransaction().show(playFragment).commitAllowingStateLoss();
         }
 
-        findViewById(R.id.ll_title).setOnClickListener(view -> {
-            if (!isCurrentDetail(vodInfo)) return;
-            // VideoDetailDialog 是 SheetResizableBottomPopup(底部可伸缩抽屉):与 AboutDialog/接口历史抽屉
-            // 同属底部抽屉族,统一走 bottom(...) —— 它带的 isViewMode(true) + hasNavigationBar(false)
-            // 才算"和其它抽屉同款"(原来用 center(...) 只做 asCustom,位置虽对但少了这两个参数)
-            DialogCoordinator.bottom(this, new VideoDetailDialog(this, this, vodInfo), 0).show();
+        // 剧名在标题行是 maxLines=2 + ellipsize=end(长剧名被截断):长按看全文并可复制。
+        // 注意:设置了长按后 TextView 会自己吃掉触摸事件,父级 ll_title 的点击就收不到了
+        // (实测点剧名再也打不开详情抽屉),所以这里把点击一并接管,保持"点标题→抽屉"不变。
+        mBinding.tvName.setOnClickListener(view -> showVideoDetailDrawer());
+        mBinding.tvName.setOnLongClickListener(view -> {
+            String fullName = vodInfo == null || TextUtils.isEmpty(vodInfo.name)
+                    ? "" : vodInfo.name;
+            if (TextUtils.isEmpty(fullName)) {
+                // 数据未就绪时布局里的占位文本不能当剧名复制出去
+                AppBubble.toast("暂无剧名");
+                return true;
+            }
+            TextCopyDialog.showInHostView(this, "完整剧名", fullName);
+            return true;
         });
+        findViewById(R.id.ll_title).setOnClickListener(view -> showVideoDetailDrawer());
         findViewById(R.id.tvDownload).setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -845,47 +855,67 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     }
 
     private void startPlaybackForCurrentVod() {
-        if (isCurrentDetail(vodInfo) && HistoryEntryNavigator.hasPlayableSnapshot(vodInfo)) {
-            //更新播放地址
-            Bundle bundle = new Bundle();
-            bundle.putString("sourceKey", sourceKey);
-            if (previewVodInfo == null) {
-                try {
-                    ByteArrayOutputStream bos = new ByteArrayOutputStream();
-                    ObjectOutputStream oos = new ObjectOutputStream(bos);
-                    oos.writeObject(vodInfo);
-                    oos.flush();
-                    oos.close();
-                    ObjectInputStream ois = new ObjectInputStream(new ByteArrayInputStream(bos.toByteArray()));
-                    previewVodInfo = (VodInfo) ois.readObject();
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-            }
-            if (previewVodInfo == null) {
-                AppBubble.toast("播放信息准备失败，请重新选择剧集");
-                return;
-            }
-            if (previewVodInfo != null) {
-                previewVodInfo.playerCfg = vodInfo.playerCfg;
-                previewVodInfo.playFlag = vodInfo.playFlag;
-                previewVodInfo.playIndex = vodInfo.playIndex;
-                previewVodInfo.seriesMap = vodInfo.seriesMap;
-                previewVodInfo.seriesFlags = vodInfo.seriesFlags;
-                previewVodInfo.reverseSort = vodInfo.reverseSort;
-                App.getInstance().setVodInfo(previewVodInfo);
-            }
-            // setData→play 会同步回调 onEpisodeSelected，那里按本次选集异步保存历史。
-            startedPlaybackEpoch = playbackSelectionEpoch;
-            if (restoringBrowserCast) {
-                // 回到已有投屏只装配手机控件，保留电脑正在播放的媒体和进度。
-                playFragment.setData(bundle, false);
-                restoreBrowserCastControls();
-            } else playFragment.setData(bundle);
+        if (!isCurrentDetail(vodInfo) || !HistoryEntryNavigator.hasPlayableSnapshot(vodInfo)) {
+            // 以前这里是静默 return:详情还没就绪/没有可播剧集时用户点播放毫无反应,也查不出原因
+            com.github.tvbox.osc.log.LogStore.log(com.github.tvbox.osc.log.Category.PLAYER,
+                    "放弃起播: 详情未就绪或无可播剧集, 当前="
+                            + (vodInfo == null ? "null" : vodInfo.name));
+            return;
+        }
+        //更新播放地址
+        Bundle bundle = new Bundle();
+        bundle.putString("sourceKey", sourceKey);
+        // previewVodInfo 只在"同一部片"内复用(它会被 PlayFragment 长期持有,用于保留解码会话);
+        // 换片必须重新拍快照,否则起播拿到的是上一部片的剧集表 —— 用户口径"换片还是播上一个"。
+        if (previewVodInfo == null || !isSameVod(previewVodInfo, vodInfo)) {
+            previewVodInfo = copyVodInfo(vodInfo);
+        }
+        if (previewVodInfo == null) {
+            AppBubble.toast("播放信息准备失败，请重新选择剧集");
+            return;
+        }
+        previewVodInfo.playerCfg = vodInfo.playerCfg;
+        previewVodInfo.playFlag = vodInfo.playFlag;
+        previewVodInfo.playIndex = vodInfo.playIndex;
+        previewVodInfo.seriesMap = vodInfo.seriesMap;
+        previewVodInfo.seriesFlags = vodInfo.seriesFlags;
+        previewVodInfo.reverseSort = vodInfo.reverseSort;
+        App.getInstance().setVodInfo(previewVodInfo);
+        // 显式注入本次播放快照:不再依赖"全局 vodInfo 恰好是这部片"(见 PlayFragment#setPlayVodInfo)
+        playFragment.setPlayVodInfo(previewVodInfo);
+        // setData→play 会同步回调 onEpisodeSelected，那里按本次选集异步保存历史。
+        startedPlaybackEpoch = playbackSelectionEpoch;
+        if (restoringBrowserCast) {
+            // 回到已有投屏只装配手机控件，保留电脑正在播放的媒体和进度。
+            playFragment.setData(bundle, false);
+            restoreBrowserCastControls();
+        } else playFragment.setData(bundle);
 
-            //定位选集
-            if (TextUtils.equals(episodeSelection.displayedFlag(vodInfo), vodInfo.playFlag))
-                mBinding.mGridView.scrollToPosition(vodInfo.playIndex);
+        //定位选集
+        if (TextUtils.equals(episodeSelection.displayedFlag(vodInfo), vodInfo.playFlag))
+            mBinding.mGridView.scrollToPosition(vodInfo.playIndex);
+    }
+
+    /** 两部详情是否指向同一部片(同一源的同一个 id) */
+    private static boolean isSameVod(VodInfo a, VodInfo b) {
+        return a != null && b != null && TextUtils.equals(a.id, b.id)
+                && TextUtils.equals(a.sourceKey, b.sourceKey);
+    }
+
+    /** 深拷贝一份详情快照(播放页持有它,不随详情刷新原地变化) */
+    private static VodInfo copyVodInfo(VodInfo src) {
+        if (src == null) return null;
+        try {
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            ObjectOutputStream oos = new ObjectOutputStream(bos);
+            oos.writeObject(src);
+            oos.flush();
+            oos.close();
+            ObjectInputStream ois = new ObjectInputStream(new ByteArrayInputStream(bos.toByteArray()));
+            return (VodInfo) ois.readObject();
+        } catch (Exception e) {
+            android.util.Log.w("DetailActivity", "详情快照复制失败", e);
+            return null;
         }
     }
 
@@ -1732,6 +1762,19 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     @Override
     public void runOnUi(Runnable action) {
         runOnUiThread(action);
+    }
+
+    /**
+     * 打开详情抽屉(VideoDetailDialog)。标题行与剧名本身都走这里:
+     * 剧名上挂了长按(看全文/复制),长按会让 TextView 自己吃掉触摸事件、父级收不到点击,
+     * 所以点击也必须显式接管,否则"点剧名打开抽屉"会失效。
+     */
+    private void showVideoDetailDrawer() {
+        if (!isCurrentDetail(vodInfo)) return;
+        // VideoDetailDialog 是 SheetResizableBottomPopup(底部可伸缩抽屉):与 AboutDialog/接口历史抽屉
+        // 同属底部抽屉族,统一走 bottom(...) —— 它带的 isViewMode(true) + hasNavigationBar(false)
+        // 才算"和其它抽屉同款"(原来用 center(...) 只做 asCustom,位置虽对但少了这两个参数)
+        DialogCoordinator.bottom(this, new VideoDetailDialog(this, this, vodInfo), 0).show();
     }
 
     /** 下载入口:内置模式选集下载,外部模式把当前集交给 1DM+。 */

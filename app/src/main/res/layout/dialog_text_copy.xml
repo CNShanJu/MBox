@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 文本查看/复制弹窗(标题 + 可选正文 + 「关闭」「复制」):
+     详情页/详情抽屉的剧名在列表里被 maxLines + ellipsize 截断,长按弹出这里看全文。
+     正文 textIsSelectable:除了整段复制,也允许用户自己拖选一段(比如只取主角名前缀)。 -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_dialog"
+    android:orientation="vertical"
+    android:paddingHorizontal="20dp"
+    android:paddingTop="20dp"
+    android:paddingBottom="20dp">
+
+    <TextView
+        android:id="@+id/tv_copy_title"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textColor="@color/text_foreground"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        tools:text="完整剧名" />
+
+    <TextView
+        android:id="@+id/tv_copy_content"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:lineSpacingExtra="6dp"
+        android:textColor="@color/text_foreground"
+        android:textIsSelectable="true"
+        android:textSize="15sp"
+        tools:text="鬼灭之刃鬼灭之刃鬼灭之刃鬼灭之刃鬼灭之刃" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="18dp"
+        android:orientation="horizontal">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_close"
+            style="@style/BtnSecondary"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_marginRight="10dp"
+            android:layout_weight="1"
+            android:insetBottom="0dp"
+            android:insetTop="0dp"
+            android:text="关闭" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_copy"
+            style="@style/BtnPrimary"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_weight="1"
+            android:insetBottom="0dp"
+            android:insetTop="0dp"
+            android:text="复制" />
+    </LinearLayout>
+</LinearLayout>
