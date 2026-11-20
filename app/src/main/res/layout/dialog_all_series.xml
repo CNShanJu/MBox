@@ -73,6 +73,26 @@
             android:paddingHorizontal="16dp"
             android:paddingVertical="4dp"
             tools:listitem="@layout/item_series" />
+
+        <!-- 数据就绪前的占位(与下载抽屉一致):抽屉先弹出来,集数在后台算好再填。
+             集数多时旧实现把整表交给 RecyclerView 后才 show,首帧要 inflate 全部条目,点击像没反应。 -->
+        <FrameLayout
+            android:id="@+id/fl_loading"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone">
+
+            <com.airbnb.lottie.LottieAnimationView
+                android:id="@+id/lottie_loading"
+                android:layout_width="72dp"
+                android:layout_height="72dp"
+                android:layout_gravity="center"
+                android:scaleType="fitCenter"
+                app:lottie_autoPlay="true"
+                app:lottie_loop="true"
+                app:lottie_repeatMode="restart"
+                app:lottie_speed="1" />
+        </FrameLayout>
     </FrameLayout>
 
 </LinearLayout>

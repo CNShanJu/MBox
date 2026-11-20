@@ -75,7 +75,7 @@ public class VideoDetailDialog extends SheetResizableBottomPopup {
         binding.tvName.setText(mVideo.name);
         // 抽屉里的剧名同样被 maxLines=2 截断:长按看全文并可复制。
         // 抽屉自己是 view 模式弹窗,再往同一层 decorView 叠一个 view 模式弹窗会出现层级/返回键问题
-        // (见 DialogCoordinator.fullScreen 的注释),故这里用独立窗口弹出。
+        // (见 PosterPreviewDialog 的类注释),故这里用独立窗口弹出。
         binding.tvName.setOnLongClickListener(view -> {
             if (TextUtils.isEmpty(mVideo.name)) {
                 AppBubble.toast("暂无剧名");
@@ -106,11 +106,10 @@ public class VideoDetailDialog extends SheetResizableBottomPopup {
         com.github.tvbox.osc.util.PicassoLoad.into(binding.ivThum, picUrl);
         if (!TextUtils.isEmpty(picUrl)) {
             binding.llThum.setOnClickListener(view -> {
-                // 大图查看改走 App 自己的全屏查看器(PosterPreviewView):XPopup 的 asImageViewer
+                // 大图查看走 App 自己的全屏查看器(PosterPreviewDialog):XPopup 的 asImageViewer
                 // 在这条链路上(详情抽屉 view 模式之上再叠 view 模式 + 从缩略图 drawable 复制首帧)
-                // 会直接崩到崩溃页,见 PosterPreviewView 类注释。
-                DialogCoordinator.fullScreen(getContext(),
-                        new PosterPreviewView(getContext(), picUrl)).show();
+                // 会直接崩到崩溃页,见 PosterPreviewDialog 类注释。
+                new PosterPreviewDialog(getContext(), picUrl).show();
             });
         }
 

@@ -709,6 +709,11 @@ public class LocalVideoController extends BaseController implements PlaybackSett
         hideBottom();
     }
 
+    /** 本地文件播放没有网络下载,中心网速文字无意义,一律不显示。 */
+    @Override protected boolean showsNetSpeed() {
+        return false;
+    }
+
     @Override
     protected int getLayoutId() {
         return R.layout.player_vod_control_view;

@@ -445,7 +445,7 @@ public class LiveActivity extends BaseActivity implements LiveLineSelectHost, Li
 
     private void initVideoView() {
         LiveNewController controller = new LiveNewController(this);
-        // 单条右缘垂直居中控制栏(返回/台名/时间/播放暂停/刷新/投屏/换台/设置)
+        // 单条右缘垂直居中控制栏(返回/台名/时间/刷新/投屏/换台/设置)
         mSideControlView = new LiveSideControlView(this);
         mSideControlView.setOnLiveSideListener(new LiveSideControlView.OnLiveSideListener() {
             @Override
@@ -484,7 +484,7 @@ public class LiveActivity extends BaseActivity implements LiveLineSelectHost, Li
             }
         });
         controller.addControlComponent(mSideControlView);
-        // 非全屏小窗横向控制条(频道名/时间/暂停/刷新/全屏)
+        // 非全屏小窗横向控制条(频道名/时间/刷新/全屏);直播不提供暂停
         LiveNormalControlView normalControlView = new LiveNormalControlView(this);
         normalControlView.setOnNormalListener(new LiveNormalControlView.OnNormalListener() {
             @Override

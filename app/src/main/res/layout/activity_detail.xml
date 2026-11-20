@@ -5,10 +5,13 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
+    <!-- llLayout 是 LoadSir 的注册宿主:LoadSir 会把它的 LayoutParams 原样套给状态容器,
+         这里必须是 match_parent —— 写成 wrap_content 时空态容器只有内容那么高,
+         view_empty 的 gravity=center 只是在那一小条里居中,图标看着像没在屏幕正中。 -->
     <LinearLayout
         android:id="@+id/llLayout"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="match_parent"
         android:orientation="vertical">
 
         <LinearLayout
@@ -22,6 +25,7 @@
         </LinearLayout>
 
         <ScrollView
+            android:id="@+id/svDetail"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:paddingTop="8dp"

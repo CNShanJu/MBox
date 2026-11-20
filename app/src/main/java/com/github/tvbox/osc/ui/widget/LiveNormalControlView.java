@@ -8,7 +8,6 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.animation.Animation;
 import android.widget.FrameLayout;
-import android.widget.ImageView;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
@@ -24,7 +23,8 @@ import xyz.doikki.videoplayer.player.VideoView;
 import xyz.doikki.videoplayer.util.PlayerUtils;
 
 /**
- * 直播小窗(非全屏)横向控制条:频道名左上/时间右上,暂停刷新左下,全屏右下。
+ * 直播小窗(非全屏)横向控制条:频道名左上/时间右上,刷新左下,全屏右下。
+ * 直播不提供暂停(暂停后画面停住、恢复要重新拉流),故无播放/暂停按钮。
  * 仅在非全屏状态显示;进入全屏后隐藏(由 {@link LiveSideControlView} 接管)。
  */
 public class LiveNormalControlView extends FrameLayout implements IControlComponent {
@@ -39,7 +39,6 @@ public class LiveNormalControlView extends FrameLayout implements IControlCompon
     private TextView mTitle;
     private TextView mTime;
     private TextView mSpeed;
-    private ImageView mPlayPause;
 
     public LiveNormalControlView(@NonNull Context context) {
         super(context);
@@ -59,11 +58,7 @@ public class LiveNormalControlView extends FrameLayout implements IControlCompon
         mTitle = findViewById(R.id.tv_title);
         mTime = findViewById(R.id.tv_time);
         mSpeed = findViewById(R.id.tv_speed);
-        mPlayPause = findViewById(R.id.iv_play_pause);
 
-        findViewById(R.id.iv_play_pause).setOnClickListener(v -> {
-            if (mControlWrapper != null) mControlWrapper.togglePlay();
-        });
         findViewById(R.id.iv_fullscreen).setOnClickListener(v -> {
             // doikki 全屏不切方向:进入全屏前先切横屏
             Activity activity = PlayerUtils.scanForActivity(getContext());
@@ -125,10 +120,7 @@ public class LiveNormalControlView extends FrameLayout implements IControlCompon
 
     @Override
     public void onPlayStateChanged(int playState) {
-        if (mPlayPause != null) {
-            mPlayPause.setImageResource(playState == VideoView.STATE_PLAYING
-                    ? R.drawable.ic_pause : R.drawable.ic_play);
-        }
+        // 直播无播放/暂停按钮,状态变化不需要切换图标
     }
 
     @Override

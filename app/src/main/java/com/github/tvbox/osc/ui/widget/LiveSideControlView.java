@@ -24,8 +24,9 @@ import xyz.doikki.videoplayer.player.VideoView;
 import xyz.doikki.videoplayer.util.PlayerUtils;
 
 /**
- * 直播全屏控制:四角横排(返回+台名 左上 / 时间 右上 / 暂停+刷新 左下 / 全屏 右下)
+ * 直播全屏控制:四角横排(返回+台名 左上 / 时间 右上 / 刷新 左下 / 全屏 右下)
  * + 右缘垂直居中窄菜单(投屏/换台/设置)。仅全屏显示,控件统一 30dp 固定边距、不随翻转漂移。
+ * 直播不提供暂停(暂停后画面停住、恢复要重新拉流),故无播放/暂停按钮。
  * 非全屏由 {@link LiveNormalControlView} 的小窗横向控制条接管。
  */
 public class LiveSideControlView extends FrameLayout implements IControlComponent {
@@ -46,7 +47,6 @@ public class LiveSideControlView extends FrameLayout implements IControlComponen
     private TextView mTime;
     private TextView mLine;
     private TextView mSpeed;
-    private ImageView mPlayPause;
     private ImageView mFullscreen;
 
     public LiveSideControlView(@NonNull Context context) {
@@ -68,7 +68,6 @@ public class LiveSideControlView extends FrameLayout implements IControlComponen
         mTime = findViewById(R.id.tv_time);
         mLine = findViewById(R.id.tv_line);
         mSpeed = findViewById(R.id.tv_speed);
-        mPlayPause = findViewById(R.id.iv_play_pause);
         mFullscreen = findViewById(R.id.iv_fullscreen);
 
         findViewById(R.id.iv_back).setOnClickListener(v -> {
@@ -82,9 +81,6 @@ public class LiveSideControlView extends FrameLayout implements IControlComponen
             } else if (mOnLiveSideListener != null) {
                 mOnLiveSideListener.onBack();
             }
-        });
-        findViewById(R.id.iv_play_pause).setOnClickListener(v -> {
-            if (mControlWrapper != null) mControlWrapper.togglePlay();
         });
         findViewById(R.id.iv_refresh).setOnClickListener(v -> {
             if (mOnLiveSideListener != null) mOnLiveSideListener.onRefresh();
@@ -170,10 +166,6 @@ public class LiveSideControlView extends FrameLayout implements IControlComponen
 
     @Override
     public void onPlayStateChanged(int playState) {
-        if (mPlayPause != null) {
-            mPlayPause.setImageResource(playState == VideoView.STATE_PLAYING
-                    ? R.drawable.ic_pause : R.drawable.ic_play);
-        }
         if (playState == VideoView.STATE_IDLE
                 || playState == VideoView.STATE_START_ABORT
                 || playState == VideoView.STATE_PREPARING
