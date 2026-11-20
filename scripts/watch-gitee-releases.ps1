@@ -65,6 +65,7 @@ try {
 } catch { }
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot 'lib-release-notes.ps1')
 if (-not $LogFile) { $LogFile = Join-Path ([System.IO.Path]::GetTempPath()) 'MBox-gitee-watch.log' }
 $downloadDir = Join-Path $repoRoot '.tmp-gitee-upload'
 
@@ -185,12 +186,12 @@ foreach ($t in $Tag) {
   if ($rel.Count -eq 0) {
     if ($DryRun) { Write-Skip "Gitee 还没有该发行版(正式执行时会创建)"; $script:failed++; continue }
     Write-Host '    Gitee 缺该发行版,创建中...' -ForegroundColor DarkGray
-    $notes = Join-Path $repoRoot "doc/release-notes-$t.md"
+    $notes = Get-ReleaseNotesFile -RepoRoot $repoRoot -Tag $t
     # 中文正文一律走 curl.exe --data-urlencode(PS 5.1 的表单编码会把中文发成 ?)
     $curlArgs = @('-sS', '--max-time', '120', '-X', 'POST', "$relApi/releases",
       '-d', "access_token=$token", '-d', "tag_name=$t", '-d', "name=MBox $t",
       '-d', 'target_commitish=main')
-    if (Test-Path $notes) { $curlArgs += @('--data-urlencode', "body@$notes") }
+    if ($notes -and (Test-Path $notes)) { $curlArgs += @('--data-urlencode', "body@$notes") }
     $created = & curl.exe @curlArgs 2>&1
     try { $relId = ($created | ConvertFrom-Json).id } catch { $relId = $null }
     if (-not $relId) {

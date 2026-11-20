@@ -4,6 +4,7 @@
  * 按 AGENTS.md「发布与版本纪律」第 2 条,拦截"写进用户可见正文的开发者内容"。
  *
  * 用法:
+ *   node scripts/check-release-notes.js --tag v3.6.11    # 从 doc/release/release-notes.md 取该版自检(推荐)
  *   node scripts/check-release-notes.js <发布正文文件.md>
  *   node scripts/check-release-notes.js --stdin < 正文.md
  *
@@ -11,10 +12,14 @@
  *   - 只检查 <!-- dev --> … <!-- /dev --> 围栏之外的内容(围栏内是留给开发者看的,不检查);
  *   - 命中禁止字样 → 非零退出,并指出行号与命中项,提示挪进围栏或删除;
  *   - 同时检查 commit 短号形态(7~40 位十六进制,且整段像一个号)。
+ *
+ * 注意:更新说明已汇总到 doc/release/release-notes.md 一个文件里,**不要**把整个汇总文件喂进来
+ * (那是十几个版本叠加,不是某一版的正文),用 --tag 取单节自检。
  */
 'use strict';
 
 const fs = require('fs');
+const releaseNotes = require('./release-notes.js');
 
 // 禁止出现在用户可见正文里的字样(与 AGENTS.md 自检清单保持一致)
 const FORBIDDEN = [
@@ -52,10 +57,27 @@ function main() {
   let text;
   if (args[0] === '--stdin') {
     text = fs.readFileSync(0, 'utf8');
+  } else if (args[0] === '--tag') {
+    const tag = args[1];
+    if (!tag) {
+      console.error('用法: node scripts/check-release-notes.js --tag <tag>');
+      process.exit(2);
+    }
+    const hit = releaseNotes.resolveBody(tag);
+    if (!hit) {
+      console.error('未找到 ' + releaseNotes.normTag(tag) + ' 的更新说明:请在 doc/release/release-notes.md 里新增一节 `## v' + releaseNotes.normTag(tag) + '`');
+      process.exit(2);
+    }
+    text = hit.body;
   } else if (args[0]) {
+    // 汇总文件是十几个版本叠加,不是某一版的正文:要求用 --tag 取单节
+    if (args[0].replace(/\\/g, '/').endsWith('doc/release/release-notes.md')) {
+      console.error('FAIL: 这是全版本汇总文件,请改用 --tag <tag> 只检查某一版');
+      process.exit(2);
+    }
     text = fs.readFileSync(args[0], 'utf8');
   } else {
-    console.error('用法: node scripts/check-release-notes.js <正文.md> | --stdin');
+    console.error('用法: node scripts/check-release-notes.js --tag <tag> | <正文.md> | --stdin');
     process.exit(2);
   }
 
