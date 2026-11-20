@@ -6,7 +6,7 @@
 > **当前模块（2026-10-03）**：全仓 10 个模块，`:app`、`:common`、`:core-network`、`:core-storage`、`:log`、`:player`、`:spider`、`:download`、`:share`、`:thirdparty`。下文按修复发生时的顺序记录，涉及当时的模块名时以 `settings.gradle` 的当前划分为准。
 >
 > **本文是历史快照（2026-10-05 截止）**：文中"Media3 1.4.1 / compileSdk 34 / IJK 内核"均为当时口径。
-> 2026-10 已升级 Media3 1.11.1 + compileSdk 36，并移除 IJK。**当前口径以 `doc/项目状态速查.md` 为准**，本文只用于回查历史决策。
+> 2026-10 已升级 Media3 1.11.1 + compileSdk 36，并移除 IJK。**当前口径以 `doc/status/项目状态速查.md` 为准**，本文只用于回查历史决策。
 
 ## 0. 近期进展补充（2026-09-25）
 
@@ -152,7 +152,7 @@
   - **排查盲区一并修掉**：原实现只 `printStackTrace()`（写 `System.err`，Android 默认丢进 `/dev/null`，logcat 也看不到），且 `InvocationTargetException.getMessage()` 常为 null；改为 `Log.e("QuickJSBridge", 方法名(实参类型), 真实 cause)` → 会被 `LogcatCapture` 的 `*:E` 收进 `app_logs/logcat-*.log`、错误日志页可见（也是下次定位"哪个源、哪个函数、哪种传参"的入口）。
   - **debug/release 表现不同（重要口径）**：debuggable 应用默认开 CheckJNI → 直接 abort；release 默认不开 → 同一异常在 native `call` 返回 Java 时抛进 `Async.call`、future 异常完成 → 被爬虫层 catch 吞掉，表现为"该源静默没数据"（release 侧很可能一直在静默踩而未被发现）。
   - 验证：`assembleDebug/assembleRelease/testDebugUnitTest/checkModuleDependencies` 全绿（379 任务）。**未加 JVM 单测**：`adaptArgs` 纯逻辑可测，`toJsSafe` 的降级分支调 `android.util.Log`（JVM 侧未开 `returnDefaultValues`），需先定日志注入口径再补。**待人工验证**：原订阅启动不再整体退出；`QuickJSBridge` 日志能定位到出错的源与函数。
-  - 文件：`thirdparty/.../wrapper/{JSObject,JSUtils,QuickJSContext}.java`、`spider/.../util/js/{JsSpider,Global}.java`。相关排期见 `doc/后续改造评估.md` §K7/§M（原生 abort/ANR 的进程退出原因回收：崩溃页与结构化日志对 native 死亡双双盲区）。
+  - 文件：`thirdparty/.../wrapper/{JSObject,JSUtils,QuickJSContext}.java`、`spider/.../util/js/{JsSpider,Global}.java`。相关排期见 `doc/status/后续改造评估.md` §K7/§M（原生 abort/ANR 的进程退出原因回收：崩溃页与结构化日志对 native 死亡双双盲区）。
 
 - **断网被误判成"域名/DNS 故障"的教训 + 无网络处理（2026-09-26，与上一条同一轮排查）**：手机 Wi-Fi 断开时，App 里所有请求的报错都是 `java.net.UnknownHostException: Unable to resolve host "xxx": No address associated with hostname` —— 与"域名被 DNS 拦截 / 解析器有问题"长得一模一样，排查因此先怀疑安全 DNS、再怀疑域名被拦（同一 Wi-Fi 的 PC 用系统 DNS 与阿里/腾讯/360 的 DoH 都能解析该域名，反而"坐实"了这个错误方向），直到开启安全 DNS 后**连 `doh.pub` 自己都解析不到**（DoH 初始化固定走系统 DNS，见 `OkGoHelper.newDohClientBuilder()`）才反过来怀疑"App 的解析整体失效"，最终确认为断网。根因不是解析，而是**信号没有被接到用户和日志看得见的地方**：`SystemStateMonitor` 一直在监听 `TYPE_NETWORK`（`registerDefaultNetworkCallback` + 300ms 去抖，`App` 启动即 init），但**全仓只有 `:download` 订阅**（`DownloadPolicy`/`DownloadScheduler`），UI/内容链路/网络层一个都没订阅，`strings.xml` 里也没有任何"无网络"文案。本轮补齐三处：
   - **网络层快速失败**：`:core-network` 公共 Builder 最前面加 `NetworkGuardInterceptor`（爬虫/API/下载/图片/播放客户端全部受益），无网络时直接抛 `当前无网络,请检查网络连接`，不再发出去白等一次超时。判定口径**故意宽松**（有任何带 `NET_CAPABILITY_INTERNET` 的网络即算有网，不要求"已验证联网"）+ 切换抖动 150ms 复检 + 回环地址放行（本机代理播放不受影响）+ 自身异常一律放行（`OkGoHelper.hasNetwork()` 读不到就当作"有网"）—— 宁可漏拦，不可错杀。
@@ -287,7 +287,7 @@
 - 新增 `:core-storage`（android-library）：迁入 data/cache 包(Entity/DAO/AppDataManager/RoomDataManger/CacheManager)，
   已去除对 App 单例、spider ApiConfig、HistoryHelper/SystemConfig/Hawk 的依赖；Room schema 统一导出。
 - 原 `:common` 已更名挂接为 `:core-network`（projectDir=common，FQN 不变）；裁剪计划见
-  `doc/phase2-core-modules-plan.md`。
+  `doc/architecture/phase2-core-modules-plan.md`。
   现状：`:common` 与 `:core-network` 为两个并存模块——`:common` 承接纯模型/算法工具(AES/MD5/AdBlocker)/
   系统状态(`.state.*`)，`:core-network` 只留网络职责；上述“更名挂接”是当时的一次性历史动作。
 
@@ -545,7 +545,7 @@
 - HLS 通过 PlaylistSnapshot 分离布局与短时 URL；401/403 即时续期、404/410 最多两次短重试后刷新一次，安全映射后只替换请求上下文并保留完整分片。登录失效或布局/密钥/init 改变时暂停。
 - 新增“重启后自动继续下载”开关（默认关闭，保留手动暂停）；恢复前刷新地址。超星域/原课程页范围内并发上限为 2，其它站点保留全局设置。
 - DownloadExecutor 已拆为 DirectDownloader、HlsDownloader、HlsMerger、MediaRemuxer；下载页显示具体失败/暂停原因并提供任务日志入口。
-- 本机验证与人工回归分开记录，详情见 `doc/download-auth-renewal.md`。学习通登录续期、长视频、杀进程恢复尚待人工真机验证。
+- 本机验证与人工回归分开记录，详情见 `doc/features/download-auth-renewal.md`。学习通登录续期、长视频、杀进程恢复尚待人工真机验证。
 
 ## 2026-10-01 首页数据源选择弹窗
 

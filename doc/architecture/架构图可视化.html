@@ -75,7 +75,7 @@ flowchart TD
     end
     subgraph L3["业务实现层"]
         C1["spider: QuickJS / JarLoader / ApiConfig / 具体 Spider"]
-        C2["player: IJK / Media3 / 系统内核 / MyVideoView"]
+        C2["player: Media3 / 系统内核 / MyVideoView(FFmpeg 软解)"]
         C3["download: Scheduler / Executor / Archive"]
         C4["share: online / transport.lan / local"]
     end
@@ -227,7 +227,6 @@ mindmap
       player 播放
         PlayerFactory
         PlayerSession
-        IJK 内核
         Media3 内核
         系统内核
       download 下载

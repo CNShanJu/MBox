@@ -5,7 +5,7 @@
 
 > **当前模块（2026-10-03）**：全仓 10 个模块，`:app`、`:common`、`:core-network`、`:core-storage`、`:log`、`:player`、`:spider`、`:download`、`:share`、`:thirdparty`。已撤销的模块名在下文仅用于解释当时的改造路径；当前模块划分以 `settings.gradle` 为准。
 >
-> **本文是历史快照**：文中 Media3 版本、IJK 内核相关判断均按审计当时记录。2026-10 已升级 Media3 1.11.1 + compileSdk 36 并移除 IJK；**当前状态以 `doc/项目状态速查.md` 为准**。
+> **本文是历史快照**：文中 Media3 版本、IJK 内核相关判断均按审计当时记录。2026-10 已升级 Media3 1.11.1 + compileSdk 36 并移除 IJK；**当前状态以 `doc/status/项目状态速查.md` 为准**。
 
 ## 1. 依赖方向（改进.txt §一/§六）— 大体达标
 - ✅ app 内 `getCSP()` 清零；UI 无 `new OkHttpClient.Builder()`。
@@ -451,14 +451,14 @@ Exo→Media3 1.4.1 已完成代码迁移(2026-10-01，待播放器人工回归)�
    本轮触及文件内告警已清零(HomeFragment/SettingActivity/SubscriptionActivity 等告警属并行批改动范围)。
    (307073a1)
 - ✅ 新增《后续改造评估》(hawk 退役 / 播放器主线收口 / 杂项袋与死代码):代码级证据评估产出
-   `doc/后续改造评估.md`——hawk 现仅 core-storage KeyValueStore 持有且已退化为"读一次旧键即删"的
+   `doc/status/后续改造评估.md`——hawk 现仅 core-storage KeyValueStore 持有且已退化为"读一次旧键即删"的
    一次性迁移通道,退役须与旧版升级数据回归同批(建议先无 hawk 化灰度再删);播放器收口按
    P1 原型回归→P2 会话唯一指令→P3 默认开启→P4 基建收口 四阶段推进;杂项袋/死代码/EventBus 直调
    列小步清单。待并行批合流与真机回归后按序执行。
 - ✅ hawk 退役版 N(无 hawk 化灰度)已实施:KeyValueStore 摘除 Hawk 后端(init 占位、legacy 读取默认值、
    put/delete 空操作),core-storage 移除 hawk 依赖,App 装配去掉 KeyValueStore.init,proguard keep 删除。
    各域 legacy 分支保留但自然失效;版 N+1(旧版升级数据回归通过后)再删本类与分支。详见
-   `doc/后续改造评估.md` A.3。(4b775b18/3d9d9dcc)
+   `doc/status/后续改造评估.md` A.3。(4b775b18/3d9d9dcc)
 - ✅ 死代码清理:删除零引用 `util/AppBizLog`(业务日志门面,已被 :log LogStore/CategoryLogger 取代;
    目录文档未收录,无需同步)。TLSSocketFactory 仍待并行目录文档合流后删除。(6dad955a)
 - ✅ 疑似缺陷记录(不贸然改):FormatASS 样式段解析缺陷复现并登记(评估文档 §E)——外层循环
@@ -507,14 +507,14 @@ Exo→Media3 1.4.1 已完成代码迁移(2026-10-01，待播放器人工回归)�
   857db402、type4 play 拼参 8c7b5b9b、category(list) 724f7514——filterSelect 序列化在 :spider
   android 环境内用与 VM legacy **同 API 的 org.json+Base64**(同实例→键序/结果一致),typed 优先 →
   fetch*HttpLegacy 逐字兜底;真机冒烟主页/热播分类正常、无崩溃,逐源分页回归待设备批;Home sort
-  (getSort)受 homeRec 富化耦合仍待设备批。(登记见 doc/后续改造评估.md §J/K,门禁全绿)
+  (getSort)受 homeRec 富化耦合仍待设备批。(登记见 doc/status/后续改造评估.md §J/K,门禁全绿)
 - ✅ 工作区卫生(无提交):删除 194 个运行残留——`app/hs_err_pid*.log`×187 + `app/replay_pid*.log`×2
   (此前 Gradle 测试执行器 OOM 崩溃转储)+ 根 `hs_err_pid*.log`×2 + 根 `build-release.log`/
   `build_gates_last.log`/`build_gates_appbubble.log`×3。均未跟踪且早被 .gitignore `*.log` 忽略,
   git 树零变化;按文件名精确删除(未用 git clean),并行 wave 文件原样保留。
 
 ## 9. 待真机回归后继续(播放器主线尾段,当前挂起)
-> 集中回归清单见 `doc/device-regression-checklist.md`(按功能域分组,门禁绿后逐项过)。
+> 集中回归清单见 `doc/guides/device-regression-checklist.md`(按功能域分组,门禁绿后逐项过)。
 
 - PlayerApi 会话内核**实验选项**:设置页加"播放器内核:PlayerApi 会话(实验)"开关(默认关);
   开启时点播走 PlayerFactory 创建的内核并驱动基础播放 + PlaybackSessions 会话观察,与 doikki 路径并行对比。
@@ -526,7 +526,7 @@ Exo→Media3 1.4.1 已完成代码迁移(2026-10-01，待播放器人工回归)�
 
 > 代码级可安全批次已基本收口(Hawk 退役、EventBus 全仓移除、死代码清理、Gson 复用、
 > 解析/词表/字幕纯函数化与单测等)。以下为仍未完成的项及前置条件,均可在本文件 §9/§10、
-> doc/后续改造评估.md F 表与 doc/device-regression-checklist.md 找到登记。
+> doc/status/后续改造评估.md F 表与 doc/guides/device-regression-checklist.md 找到登记。
 
 ### A. 模块与依赖边界(改进.txt §一/§二)
 | 项 | 状态 | 前置/说明 |
@@ -554,7 +554,7 @@ EventBus 已全仓移除；多源搜索结果经直调/明确监听接口分发�
 ❌ Hilt(组合根复杂化后再评估);✅ 依赖方向门禁 + JVM 测试。
 
 ### E. 待修缺陷 / 待放行(已登记)
-- FormatASS 样式段解析缺陷 + Style 颜色十六进制错位(doc/后续改造评估.md §E):需真实 .ass 语料+真机渲染比对;
+- FormatASS 样式段解析缺陷 + Style 颜色十六进制错位(doc/status/后续改造评估.md §E):需真实 .ass 语料+真机渲染比对;
 - 播放器收口 P1–P4(清单 G 组)、hawk 版 N+1 发布放行(清单 H 组):均需设备回归。
   - 2026-09-06 **K4 设备回归已完成**(MEIZU 21/Android 16):G 组双内核(IJK/Exo)起播+
     观感项(播放控制/切集/完成/出错/断点/后台通知)人工实测全部通过;会话复用无泄漏;

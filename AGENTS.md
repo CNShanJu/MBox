@@ -244,9 +244,16 @@ app / feature
 ## 九、开发与提交纪律
 
 - 全量门禁:改动后必须跑 `:app:assembleDebug :app:assembleRelease :app:testDebugUnitTest checkModuleDependencies` 全绿再提交。
-- 提交信息遵循 `doc/Git提交规范.md`(type[scope]: 描述 ≤50 字;一次提交一件事;提交前 git status 确认无多余文件)。
+- 提交信息遵循 `doc/guides/Git提交规范.md`(type[scope]: 描述 ≤50 字;一次提交一件事;提交前 git status 确认无多余文件)。
 - 文件级提交:按范围 `git add`,不混入无关改动;本规则文件(AGENTS.md)与各 doc/ 状态文档随对应批次同步更新并提交。
 - 改进.txt(已纳入版本库跟踪)与 AGENTS.md 保持一致,改动同步更新;release-notes-v3.0.1.md 不入库,其要求以上方章节为准。
+
+### 文档存放纪律(强制)
+
+- **分类存放,不再平铺**:`doc/` 根只保留索引 `doc/README.md`,文档一律进 `architecture/`(架构与设计)、`status/`(现状基线与审计)、`features/`(单功能机制与排查)、`release/`(更新说明与对外文稿)、`guides/`(规范与回归清单)之一。新增分类先在 `doc/README.md` 登记。
+- **不按时间/版本建目录**:单版本说明不新建文件,统一写进 `doc/release/release-notes.md` 的 `## v<版本号>` 一节。
+- **路径引用写仓库根相对路径**(如 `doc/status/项目状态速查.md`)。移动/改名文档必须同步 `README.md` 文档导航、`AGENTS.md`、`改进.txt`、`scripts/`(release-notes 解析)与 `.github/workflows/build-apk.yml`,否则发版脚本与 CI 会断。
+- **历史快照标注不删档**:已落地或作废的设计/审计文档,在开头标注「历史快照 + 截止日期 + 当前口径以 `doc/status/项目状态速查.md` 为准」,只做标注与路径修正,不重写结论。
 
 ### 代码托管与镜像同步(强制)
 
@@ -380,18 +387,24 @@ app / feature
    - **不必为跨版本升级补历史**:App 取 releases 列表,把"比当前新、且不高于可下载最新版"的各版本说明
      按新→旧拼成一个弹窗(最多 5 个版本),每条 Release 只写自己的改动即可;
      正文顶部的版本标题(`## v3.5.5`)与「相比 vX 的更新:」引言会被去重,不重复出现。
-   - **版本标题与跨版本提示不得重复/误报**(2026-10-03):有用户可读内容的
-     `doc/release-notes-<tag>.md` 顶部至多写一个本版标题;CI 生成 Release 正文时只原样贴该文件,
-     **不得再自动补 `## <tag>`**。正文缺失或全在 `<!-- dev -->` 围栏内时,不得留下用户可见的孤立版本标题。
+   - **更新说明汇总到一个文件**(2026-11-20):用户可读说明统一写在 `doc/release/release-notes.md`,
+     每个版本一节,标题固定为 `## v<版本号>`(独占一行,新版本加在最前面,节与节之间不插 `---`)。
+     **不再新建逐版本的 `doc/release/release-notes-v<版本号>.md`**;仓库里只保留 `doc/release/release-notes-v3.6.11.md`
+     作为老流程的兼容兜底(仅当汇总文件缺该版本时才读,内容不再维护)。CI 与本地脚本统一经
+     `node scripts/release-notes.js get <tag>` 取正文,不要再按文件名各写一套逻辑。
+   - **版本标题与跨版本提示不得重复/误报**(2026-10-03):某一版顶部至多写一个本版标题(`## v<版本号>` 即该标题);
+     CI 生成 Release 正文时只原样贴该版本那一节,**不得再自动补 `## <tag>`**。
+     正文缺失或全在 `<!-- dev -->` 围栏内时,不得留下用户可见的孤立版本标题。
      App 汇总时先清理连续重复的本版标题与旧版对比引言,再判断该版是否有实际用户可读内容;
      只有标题/只有开发者内容的版本不占说明条目。只展示一个版本时不得称「跨 2 个版本」;
      如写「从 vX 到 vY」,起点必须是实际已安装版本,不能用最早一条展示说明的版本冒充。
      发布前检查**最终生成的** Release 正文与 App 清洗结果;已发布版本要修正展示时需编辑线上 Release 正文,
      修改仓库文档或重跑旧 tag 不会让旧工作流改用新逻辑。
    - **发版流水线不得自动搬运 commit**(强制):`.github/workflows/build-apk.yml` 打 tag 时的 Release 正文,
-     只取仓库里维护者手写的 `doc/release-notes-<tag>.md`(UTF-8);该文件缺失时正文只留 `<!-- dev -->` 围栏
-     里的提交记录并在 Actions 输出警告,**绝不把 commit 标题当作给用户的更新说明**。发版前用
-     `node scripts/check-release-notes.js doc/release-notes-<tag>.md` 自检。
+     只取 `doc/release/release-notes.md` 里该 tag 对应的一节(UTF-8,经 `scripts/release-notes.js` 解析);
+     取不到时正文只留 `<!-- dev -->` 围栏里的提交记录并在 Actions 输出警告,
+     **绝不把 commit 标题当作给用户的更新说明**。发版前用
+     `node scripts/check-release-notes.js --tag <tag>` 自检(直接喂汇总文件会被拒绝)。
    - **更新阻断字段 `update-block`(强制,2026-10-26)**:当某版本存在问题、需要**阻止用户升级到它**时,
      在该版 Release 正文里写一行注释字段(HTML 注释形式,网页端自动隐藏,用户看不到):
      `<!-- update-block: 这里写阻断原因 -->`(有原因时,原因即用户点「立即更新」时看到的提示文案),
@@ -410,7 +423,7 @@ app / feature
      5) **体验与性能**:更快、更省电、更少打扰、界面更顺手;
      6) **兼容性与注意事项**:系统要求变化、数据迁移、需要用户手动做一步的事(如"需重新授权存储权限")。
    - **不属于用户的内容**(绝不写进用户可见部分;确要留档就包进 `<!-- dev -->` 围栏):
-     - 规则/流程/文档类改动:`AGENTS.md`、`改进.txt`、`doc/**`、README、`doc/Git提交规范.md` 等纯文档提交;
+     - 规则/流程/文档类改动:`AGENTS.md`、`改进.txt`、`doc/**`、README、`doc/guides/Git提交规范.md` 等纯文档提交;
      - 构建与发布体系:Gradle/AGP/依赖版本升级、依赖重构、CI/工作流、签名与打包脚本、版本号提升(`chore(版本)`);
      - 代码结构类:模块拆分与分层、接口抽取、命名与目录调整、死代码清理、EventBus→直调这类内部机制替换
        (除非用户能感知到差异,如"更省内存/启动更快",那按第 5 类写"效果"而不是写"机制");

@@ -1,6 +1,6 @@
 # MBox 项目架构
 
-本文档描述 MBox 的分层架构、模块依赖、核心数据流与关键设计决策。项目规则（红线）的权威落地见仓库根 `AGENTS.md`，本文只做架构视角的导读。
+本文档描述 MBox 的分层架构、模块依赖、核心数据流与关键设计决策。项目规则（红线）的权威落地见仓库根 `AGENTS.md`，本文只做架构视角的导读。文档总索引见 `doc/README.md`。
 
 ## 一、分层架构
 
@@ -189,7 +189,8 @@ flowchart LR
 | 决策 | 说明 |
 | --- | --- |
 | 契约与实现同模块 | 合模块后靠源码门禁守边界，不再靠 Gradle 拆模块 |
-| Media3 收口 | 旧 ExoPlayer 迁至 Media3 1.4.1；兼容类名保留，禁止重新引入旧 exoplayer 依赖 |
+| Media3 收口 | 旧 ExoPlayer 已迁至 Media3 1.11.1（各组件同版本，match compileSdk 36）；兼容类名保留，禁止重新引入旧 exoplayer 依赖；IJK 内核已移除，软解由 Media3 FFmpeg decoder 提供 |
+| 播放数据显式注入 | 起播数据经 `PlayFragment#setPlayVodInfo` 显式传入并在起播前释放内核回 idle，不再用"上次播放"共享字段推断换片（3.6.11） |
 | 数据库「换文件」策略 | schema 变更升 `DB_FILE_VERSION` 换文件名（`tvbox.v<N>.db`），不写 Room Migration；旧代库启动时清理 |
 | EventBus 全仓移除 | 跨页 / 模块事件用直调、Facade 订阅接口或明确监听器 |
 | 日志单通道 | 业务日志统一 `LogStore`（结构化落 Room），错误流由 `LogcatCapture` 落文件；禁止新增文件级日志通道 |

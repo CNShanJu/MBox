@@ -7,7 +7,7 @@ MBox（原名 TVBoxOS-Mobile / 工程名 TVBoxMobile）是一款 Android 点播 
 | 项 | 说明 |
 | --- | --- |
 | 应用名 / 包名 | MBox / `com.github.tvbox.osc.mbox` |
-| 当前版本 | 3.6.9（versionCode 78） |
+| 当前版本 | 3.6.11（versionCode 80） |
 | 上游 | [q215613905/TVBoxOS](https://github.com/q215613905/TVBoxOS) |
 | 语言 / 内核 | Kotlin + Java；Media3（含 FFmpeg 软解）、系统播放器 |
 | 最低系统 | Android 7.0（minSdk 24） |
@@ -20,7 +20,7 @@ MBox（原名 TVBoxOS-Mobile / 工程名 TVBoxMobile）是一款 Android 点播 
 - 多源订阅：远程 JSON 配置，兼容 BOM / 注释 / 图片 + base64 / AES 等非标准套路；支持本地 `.txt` / `.json` 文件导入（SAF `content://` 流）
 - 订阅批次分组：一次多仓 / 清单 / 本地包导入产生的多个源自动收进可折叠「手风琴」分组，支持整批更新、重命名、整批删除，组头显示源个数与导入时间
 - 点播 / 直播 / 快捷搜索：内置 Media3 与系统播放器，多线路选集、倍速、字幕；历史记录优先用剧集快照起播
-- 播放缓存 / 下一集预载：可配边播边缓存与「下一集」预载（仅 Exo 内核 + 直链源）
+- 播放缓存 / 下一集预载：可配边播边缓存与「下一集」预载（仅 Media3 内核 + 直链源）
 - 直播源基于 [vbskycn/iptv](https://github.com/vbskycn/iptv)
 
 **下载**
@@ -28,17 +28,19 @@ MBox（原名 TVBoxOS-Mobile / 工程名 TVBoxMobile）是一款 Android 点播 
 
 **体验**
 - 自适应卡片（宽 : 高 = 3 : 4，列数随屏宽自适应）
+- 详情页海报支持全屏大图查看（双指缩放、轻点/返回关闭），剧名可长按查看完整名称并一键复制
 - 主题系统：内置浅色 / 深色与自定义主题，运行时调色板统一供色
 
 **系统能力**
 - 局域网服务：默认仅本机回环（订阅 / 本地播放 / 爬虫代理 / m3u8 代理），可开启远程管理与设备配对
-- 检查更新：GitHub Releases 检测，Gitee 镜像 / GitHub 加速 / 直连多级回退
+- 本机服务端口（9978）被占用时自动尝试迁回；迁不回来会提示占用方应用并可一键跳转其系统设置页，关闭后回来自动重试
+- 检查更新：GitHub Releases 检测，Gitee 镜像 / GitHub 加速 / 直连多级回退；更新说明高亮关键变化
 - 分享与导入导出：在线、局域网与本地文件传输由 `:share` 模块统一提供
 - 崩溃兜底 + 运行日志：业务日志与 logcat 错误流分开查看、筛选、搜索、导出
 
 ## 架构总览
 
-目标架构自上而下单向依赖，禁止反向（详见 [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md)）：
+目标架构自上而下单向依赖，禁止反向（详见 [doc/architecture/ARCHITECTURE.md](doc/architecture/ARCHITECTURE.md)）：
 
 ```mermaid
 flowchart TD
@@ -156,14 +158,15 @@ export JAVA_HOME=/path/to/jdk17
 
 ## 文档导航
 
-- [ARCHITECTURE.md](doc/ARCHITECTURE.md) — 架构总览：分层图、模块依赖图、核心数据流、设计决策
-- [项目全景脑图.md](doc/项目全景脑图.md) — 项目全景脑图与模块包结构
-- [项目目录结构.md](doc/项目目录结构.md) — 模块 / 包 / 关键类总览
-- [项目状态速查.md](doc/项目状态速查.md) — 版本、主题、组件、功能、已知注意速查
-- [接口解析.md](doc/接口解析.md) — 订阅解析机制与排查经验
-- [直播说明.md](doc/直播说明.md) — 直播源说明
-- [Git提交规范.md](doc/Git提交规范.md) — 提交信息格式要求
-- 架构演进与改造设计见 `doc/module-refactor-design.md`、`doc/后续改造评估.md` 等
+全部文档的索引与存放规则见 [doc/README.md](doc/README.md)，按性质分五个子目录：
+
+| 目录 | 内容 | 主要文档 |
+| --- | --- | --- |
+| [architecture](doc/architecture/) | 架构、模块边界、设计方案 | [ARCHITECTURE.md](doc/architecture/ARCHITECTURE.md)、[项目目录结构.md](doc/architecture/项目目录结构.md)、[项目全景脑图.md](doc/architecture/项目全景脑图.md)、[自定义主题设计.md](doc/architecture/自定义主题设计.md) |
+| [status](doc/status/) | 现状基线、差距审计、改造评估 | [项目状态速查.md](doc/status/项目状态速查.md)、[全量功能链路清单.md](doc/status/全量功能链路清单.md)、[后续改造评估.md](doc/status/后续改造评估.md) |
+| [features](doc/features/) | 单功能机制与排查 | [接口解析.md](doc/features/接口解析.md)、[直播说明.md](doc/features/直播说明.md) |
+| [release](doc/release/) | 更新说明（发版唯一来源） | [release-notes.md](doc/release/release-notes.md) |
+| [guides](doc/guides/) | 规范与回归清单 | [Git提交规范.md](doc/guides/Git提交规范.md)、[device-regression-checklist.md](doc/guides/device-regression-checklist.md) |
 
 ## 致谢
 

@@ -1,5 +1,7 @@
 # 强类型 SpiderService 设计（改进.txt §1/§4.3 落地方案）
 
+> **状态(2026-11)**:本文已落地并稳定运行;保留作设计留档。当前口径以 `doc/status/项目状态速查.md` 为准。
+
 > **实施进度（2026-09-25）**：强类型契约已落地——`:spider`（原 `:spider-api`，契约与实现现同模块）提供 SpiderDetailApi/SpiderSearchApi/SpiderHomeApi/SpiderManualCheckApi/PlayUrlResolverApi 契约，`:spider` 侧实现对应 Impl。
 > SourceViewModel 已收敛为 **typed-first + 失败回退旧 HttpClient 直连**（detail/search/quickSearch/category/list/play 六入口），字符串通道 SpiderContentApi 仍为底层数据源（非可下线遗留层）。
 > 构造注入 SpiderService（替代静态 Provider）、删除回退通道为后续长线项，需逐源真机回归。

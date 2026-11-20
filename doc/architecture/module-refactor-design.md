@@ -1,7 +1,7 @@
 # 视频下载重构与项目六模块设计方案
 
 > **实施进度（2026-09-25）**：下载模块重构已落地——DownloadFacade 门面 + internal 包（Manager/Scheduler/Executor/Store/Policy/Archive/Config/Core）+ 任务对象化（BaseDownloadTask/NormalFile/M3u8）+ 前台服务 + 通知。
-> 本文件保留作为原始设计参考（当时设计的"六模块"划分），实际实现以代码为准。六模块中的 spider/log/state/ui-common/player 已按 改进.txt 分层落地，下载模块见 `doc/项目目录结构.md` 第九节。
+> 本文件保留作为原始设计参考（当时设计的"六模块"划分），实际实现以代码为准。六模块中的 spider/log/state/ui-common/player 已按 改进.txt 分层落地，下载模块见 `doc/architecture/项目目录结构.md` 第九节。
 >
 > **当前模块（2026-10-03）**：全仓 10 个模块，`:app`、`:common`、`:core-network`、`:core-storage`、`:log`、`:player`、`:spider`、`:download`、`:share`、`:thirdparty`。下文的六模块方案是原始设计；当前依赖边界以 `settings.gradle` 和 `checkModuleDependencies` 为准。
 

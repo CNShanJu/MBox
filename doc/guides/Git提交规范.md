@@ -74,7 +74,8 @@ commit 信息是给开发者看的,可带 `type(scope)` 前缀与内部细节;**
 完整要求见 `AGENTS.md` 第九章「发布与版本纪律」第 1~2 条;发布前用离线自检脚本过一遍:
 
 ```bash
-node scripts/check-release-notes.js <正文文件.md>     # 或: node scripts/check-release-notes.js --stdin
+node scripts/check-release-notes.js --tag v3.6.11      # 从 doc/release/release-notes.md 取该版自检(推荐)
+node scripts/check-release-notes.js <正文文件.md>       # 或直接检查一份正文:… --stdin
 ```
 
 命中开发者字样会非零退出并指出行号,提示挪进围栏或删除。
