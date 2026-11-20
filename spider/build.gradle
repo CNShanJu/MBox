@@ -1,5 +1,11 @@
 plugins {
     id 'com.android.library'
+    // py 源的加载器/桥接类按项目规范用 Kotlin 编写(AGENTS §六.10),本模块因此需要 Kotlin
+    id 'org.jetbrains.kotlin.android'
+    // py 源执行器:APK 内嵌 CPython(Chaquopy)。只能有一个模块承载 Python 运行时,
+    // 放在 :spider 是为了让 py 源(PyLoader/SpiderPY + base.spider 基类)与爬虫实现同模块,
+    // 遵守 AGENTS「契约与实现同模块」的边界,app/ui 不需要感知 Python。
+    id 'com.chaquo.python'
 }
 
 android {
@@ -11,6 +17,11 @@ android {
         targetSdk 34
         versionCode 1
         versionName "1.0"
+        // Python 解释器是 native 组件,必须显式声明 ABI;本应用只发 arm64-v8a
+        // (与 app/build.gradle 的 abiFilters 一致,Python 3.12+ 也只支持 64 位)
+        ndk {
+            abiFilters "arm64-v8a"
+        }
     }
 
     buildTypes {
@@ -22,6 +33,25 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
+    }
+    kotlinOptions {
+        jvmTarget = '1.8'
+    }
+}
+
+// ------------------------------------------------------------------
+// Python 运行时配置(py 源)
+// 版本固定 3.13:与 app 的 minSdk 24 / arm64-v8a 匹配,且仓库自带的请求兼容层
+// (src/main/python/requests)只用标准库,不需要 pip 联网装包 —— 构建可离线复现。
+// ------------------------------------------------------------------
+chaquopy {
+    defaultConfig {
+        version = "3.13"
+        // 源码在 src/main/python:base.spider(drpy 兼容基类)+ box.bridge(宿主调用桥)+ requests 兼容层
+        pyc {
+            // 保留 .py 源码:异常回溯里能看到源文件行号,便于用户反馈坏源
+            src = false
+        }
     }
 }
 

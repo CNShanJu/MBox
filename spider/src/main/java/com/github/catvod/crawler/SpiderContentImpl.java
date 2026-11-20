@@ -62,7 +62,11 @@ public final class SpiderContentImpl implements SpiderContentApi {
     public String detailContent(String sourceKey, List<String> ids) {
         try {
             Spider sp = spiderOf(ApiConfig.get().getSource(sourceKey));
-            return sp == null ? null : sp.detailContent(ids);
+            if (sp == null) {
+                android.util.Log.w("SpiderBridge", "detail: 源实例为空 key=" + sourceKey);
+                return null;
+            }
+            return sp.detailContent(ids);
         } catch (Throwable th) {
             android.util.Log.w("SpiderBridge", "SpiderContent 调用异常", th);
             return null;
