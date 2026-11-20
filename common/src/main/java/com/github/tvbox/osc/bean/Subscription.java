@@ -9,6 +9,8 @@ public class Subscription {
     public static final String ORIGIN_JSON = "json";
     /** 本地包导入(TVBox 生态 ZIP 包,或已解压后选包内清单):列表上显示「本地包」徽标 */
     public static final String ORIGIN_PACKAGE = "package";
+    /** py 源导入(选了 .py 文件):列表上显示「py源」徽标 */
+    public static final String ORIGIN_PY = "py";
 
     public Subscription() {
     }

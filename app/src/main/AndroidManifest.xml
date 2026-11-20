@@ -175,6 +175,16 @@
                 <data android:host="*" />
                 <data android:pathPattern=".*\\.txt" />
                 <data android:pathPattern=".*\\.json" />
+                <data android:pathPattern=".*\\.py" />
+            </intent-filter>
+            <!-- py 源:部分文件管理器把 .py 标成 text/x-python,按 MIME 也要能进来 -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="text/x-python" />
+                <data android:mimeType="application/x-python" />
             </intent-filter>
             <!-- 压缩包:订阅清单 ZIP / 本地包 / 备份包 / 主题包 -->
             <intent-filter>

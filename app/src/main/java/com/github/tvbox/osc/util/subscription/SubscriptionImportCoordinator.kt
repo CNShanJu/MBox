@@ -165,16 +165,21 @@ class SubscriptionImportCoordinator(
                 ?: runCatching { SubscriptionLibrary.queryDisplayName(context, uri)?.trim() }.getOrNull()
             main.post {
                 if (!isCurrent(epoch)) return@post
-                if (name.isNullOrEmpty() ||
-                    !name.lowercase().endsWith(".txt") && !name.lowercase().endsWith(".json")
-                    && !name.lowercase().endsWith(".zip")
-                ) {
-                    dismissImportLoading()
-                    host.showToast("请选择 txt/json 订阅文件、订阅清单 ZIP 或本地包")
-                } else if (name.lowercase().endsWith(".zip")) {
-                    importArchive(uri, name, checked, updateBatchId)
-                } else {
-                    probeExtractedPackage(uri, name, checked, updateBatchId)
+                val lower = name?.lowercase().orEmpty()
+                when {
+                    lower.isEmpty() -> {
+                        dismissImportLoading()
+                        host.showToast("请选择 txt/json 订阅文件、py 源、订阅清单 ZIP 或本地包")
+                    }
+                    // py 源:单个 .py 文件按"一个站点"接入(生成 type=3 的站点配置)
+                    lower.endsWith(".py") -> importPySource(uri, name!!, checked, updateBatchId)
+                    lower.endsWith(".zip") -> importArchive(uri, name!!, checked, updateBatchId)
+                    lower.endsWith(".txt") || lower.endsWith(".json") ->
+                        probeExtractedPackage(uri, name!!, checked, updateBatchId)
+                    else -> {
+                        dismissImportLoading()
+                        host.showToast("请选择 txt/json 订阅文件、py 源、订阅清单 ZIP 或本地包")
+                    }
                 }
             }
         }
@@ -273,6 +278,72 @@ class SubscriptionImportCoordinator(
             }
         }
     }
+
+    // ------------------------------------------------------------------
+    // py 源导入(一个 .py 文件 = 一个站点)
+    // ------------------------------------------------------------------
+
+    /**
+     * py 源导入:把选中的 .py **原样**复制进订阅库目录(保留原文件名),然后**直接以该 .py 作为订阅地址**。
+     *
+     * <p>不再生成 json 外壳:py 订阅的配置由 `ApiConfig.loadConfig` 现场合成(见 `pyConfigOf`),
+     * 列表里那条地址就是 `xxx.py`,与 json 订阅在列表里长得一样、删订阅即删文件,不会多出一份配置。
+     *
+     * @param updateBatchId 单条导入不参与"更新此批",保留参数只为与 [importLocalDoc] 签名一致
+     */
+    private fun importPySource(uri: Uri, name: String, checked: Boolean,
+                               @Suppress("UNUSED_PARAMETER") updateBatchId: String? = null) {
+        val epoch = importEpoch
+        addOrigin = Subscription.ORIGIN_PY
+        if (!batchImportInProgress) showCancelableLoading("正在读取 py 源…") { cancelImport(epoch) }
+        HeavyTaskUtil.getBigTaskExecutorService().execute {
+            if (!session.isCurrent(epoch)) return@execute
+            var error: String? = null
+            var copied: File? = null
+            try {
+                // 保留原文件名(只清洗非法字符),导入后还是 "xxx.py"
+                val copy = SubscriptionLibrary.writePyFile(context, uri, name) { !session.isCurrent(epoch) }
+                if (!session.isCurrent(epoch)) return@execute
+                when {
+                    copy == null || !copy.isFile -> error = "文件无法读取，请选本机文件"
+                    !looksLikePySource(copy) -> error = "这个 .py 里没有 Spider 类，不是可用的源"
+                    else -> copied = copy
+                }
+            } catch (failure: Throwable) {
+                LogStore.fail(Category.SUBSCRIPTION, "订阅: py 源导入失败 (${exceptionType(failure)})")
+                error = "py 源导入失败"
+            }
+            val failure = error
+            val file = copied
+            main.post {
+                if (!isCurrent(epoch)) return@post
+                dismissImportLoading()
+                if (failure != null || file == null) {
+                    showImportToast(failure ?: "py 源导入失败")
+                    return@post
+                }
+                addLocalFileSubscription(file, pyDisplayName(name), checked)
+            }
+        }
+    }
+
+    /** 粗筛:像 drpy / catvod 的 py 源(有 Spider 类定义与至少一个方法),避免把任意 .py 收成死条目 */
+    private fun looksLikePySource(file: File): Boolean {
+        return try {
+            val size = minOf(file.length(), 256L * 1024).toInt()
+            if (size <= 0) return false
+            val buffer = ByteArray(size)
+            java.io.FileInputStream(file).use { it.read(buffer) }
+            val text = String(buffer, Charsets.UTF_8)
+            text.contains("Spider") && text.contains("def ")
+        } catch (t: Throwable) {
+            false
+        }
+    }
+
+    /** py 文件的展示名:去掉 .py */
+    private fun pyDisplayName(name: String): String =
+        name.substringBeforeLast('.', name).trim().ifEmpty { "py源" }
 
     /**
      * JSON 粘贴导入:先按已知订阅格式识别;单条地址复用自定义导入的在线校验,
@@ -449,11 +520,15 @@ class SubscriptionImportCoordinator(
             val raw = item.stringValue("content")
             if (raw.isBlank()) continue
             val name = item.stringValue("name").trim().ifEmpty { item.stringValue("sourceName").trim() }
-            val content = SubscriptionImportRules.normalizedContent(raw)
+            val suggested = item.stringValue("file")
+            // 导出/局域网/备份里的 py 条目:内容是脚本原文,不能按 JSON 配置去校验(会被判无效丢掉),
+            // 原样落成同名 .py 即可 —— 与"本地导入 .py"落到同一条订阅形式上。
+            val pyEntry = suggested.lowercase().endsWith(".py")
+            val content = if (pyEntry) raw.trim() else SubscriptionImportRules.normalizedContent(raw)
             val file = content?.let {
                 SubscriptionImportFiles.runLocked {
                     if (!session.isCurrent(epoch)) throw java.io.IOException("导入已取消")
-                    SubscriptionLibrary.writeLibraryFile(context, item.stringValue("file"), name, it)
+                    SubscriptionLibrary.writeLibraryFile(context, suggested, name, it)
                 }
             }
             if (!session.isCurrent(epoch)) throw java.io.IOException("导入已取消")

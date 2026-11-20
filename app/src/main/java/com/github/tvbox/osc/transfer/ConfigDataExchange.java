@@ -286,7 +286,10 @@ public final class ConfigDataExchange {
         byte[] digest = MessageDigest.getInstance("SHA-256").digest(bytes);
         StringBuilder key = new StringBuilder();
         for (int i = 0; i < 8; i++) key.append(String.format(java.util.Locale.ROOT, "%02x", digest[i] & 0xff));
-        String ext = suggested.toLowerCase(java.util.Locale.ROOT).endsWith(".txt") ? ".txt" : ".json";
+        String lowerSuggested = suggested.toLowerCase(java.util.Locale.ROOT);
+        // py 源条目:内容就是脚本原文,扩展名必须保留 .py(否则还原后变成 .json/.txt,订阅直接失效)
+        String ext = lowerSuggested.endsWith(".py") ? ".py"
+                : (lowerSuggested.endsWith(".txt") ? ".txt" : ".json");
         File file = new File(dir, "config_" + key + ext);
         File root = Environment.getExternalStorageDirectory().getCanonicalFile();
         File canonical = file.getCanonicalFile();
