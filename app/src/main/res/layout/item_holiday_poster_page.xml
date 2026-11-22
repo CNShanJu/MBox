@@ -11,12 +11,6 @@
         android:contentDescription="@null"
         android:scaleType="matrix" />
 
-    <View
-        android:id="@+id/page_scrim"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:background="#1A000000" />
-
     <ProgressBar
         android:id="@+id/page_loading"
         android:layout_width="36dp"

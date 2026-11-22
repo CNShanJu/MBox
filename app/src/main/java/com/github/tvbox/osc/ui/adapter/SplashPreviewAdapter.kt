@@ -1,5 +1,6 @@
 package com.github.tvbox.osc.ui.adapter
 
+import android.graphics.Bitmap
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -69,7 +70,11 @@ internal class SplashPreviewAdapter(
             binding.itemThumb.setImageDrawable(null)
             val request = item.cachedPath?.let { Picasso.get().load(File(it)) }
                 ?: Picasso.get().load(item.url)
-            request.resize(THUMB_SIZE_PX, THUMB_SIZE_PX).centerCrop().into(binding.itemThumb)
+            // 全局默认是 RGB_565，缩略图也会偏色，这里与大图统一用 ARGB_8888。
+            request.resize(THUMB_SIZE_PX, THUMB_SIZE_PX)
+                .centerCrop()
+                .config(Bitmap.Config.ARGB_8888)
+                .into(binding.itemThumb)
         }
 
         private fun selectAt(position: Int) {

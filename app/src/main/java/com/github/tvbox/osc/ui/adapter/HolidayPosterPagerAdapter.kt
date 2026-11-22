@@ -1,5 +1,6 @@
 package com.github.tvbox.osc.ui.adapter
 
+import android.graphics.Bitmap
 import android.graphics.drawable.BitmapDrawable
 import android.view.LayoutInflater
 import android.view.View
@@ -56,9 +57,12 @@ internal class HolidayPosterPagerAdapter :
             binding.pagePhoto.setImageDrawable(null)
 
             // 已缓存读本地文件，未缓存直接走网络（预览用，不写开屏缓存目录）。
+            // 用 ARGB_8888 解码：Picasso 全局是 RGB_565（省内存），但水墨海报的浅色渐变
+            // 在 16 位色深下会出色带、整体偏色，看图页必须还原原图颜色。
             val request = page.cachedPath?.let { Picasso.get().load(File(it)) }
                 ?: Picasso.get().load(page.url)
-            request.into(binding.pagePhoto, object : Callback {
+            request.config(Bitmap.Config.ARGB_8888)
+                .into(binding.pagePhoto, object : Callback {
                 override fun onSuccess() {
                     if (boundId != page.id || bindingAdapterPosition == RecyclerView.NO_POSITION) return
                     binding.pageLoading.visibility = View.GONE

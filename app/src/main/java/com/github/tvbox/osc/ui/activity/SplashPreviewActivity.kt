@@ -24,7 +24,7 @@ import java.util.Calendar
 /**
  * Debug 专用的节日开屏预览：逐个查看 `splash/holiday_media.json` 里的海报在开屏上的实际效果。
  *
- * 渲染层级与真实开屏一致（模糊压暗底图 → 完整居中海报），便于确认图内标题有没有被裁掉。
+ * 渲染与真实开屏一致（海报铺满 + 按该图锚点裁切），便于确认图内标题有没有被裁掉。
  * 未缓存的素材直接走网络，**不写入 `filesDir/splash_media`**，避免预览行为污染正式开屏缓存。
  */
 class SplashPreviewActivity : BaseVbActivity<ActivitySplashPreviewBinding>() {
@@ -124,7 +124,8 @@ class SplashPreviewActivity : BaseVbActivity<ActivitySplashPreviewBinding>() {
         previewTarget = target
         val request = item.cachedPath?.let { Picasso.get().load(File(it)) }
             ?: Picasso.get().load(item.url)
-        request.into(target)
+        // 与开屏一致：ARGB_8888 还原水墨渐变，避免 RGB_565 色带。
+        request.config(Bitmap.Config.ARGB_8888).into(target)
     }
 
     override fun onDestroy() {

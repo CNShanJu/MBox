@@ -30,11 +30,7 @@
             android:contentDescription="@null"
             android:scaleType="matrix" />
 
-        <View
-            android:id="@+id/preview_scrim"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:background="#1A000000" />
+        <!-- 预览是"看图"页面，不加任何遮罩：叠黑会让颜色与原图不一致 -->
 
         <TextView
             android:id="@+id/preview_caption"

@@ -1023,6 +1023,8 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
         try {
             val metrics = resources.displayMetrics
             Picasso.get().load(File(content.imagePath))
+                // 海报是水墨画，全局 RGB_565 会让浅色渐变出色带、整体偏色，开屏用 ARGB_8888。
+                .config(Bitmap.Config.ARGB_8888)
                 .resize(
                     metrics.widthPixels.coerceAtLeast(1) * 2,
                     metrics.heightPixels.coerceAtLeast(1) * 2
