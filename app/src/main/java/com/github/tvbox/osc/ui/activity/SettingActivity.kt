@@ -91,6 +91,9 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
     private companion object {
         /** 主题编辑页请求码 */
         const val REQ_THEME_EDITOR = 0x0E10
+
+        /** debug 变体的 applicationId 后缀（见 app/build.gradle 的 applicationIdSuffix） */
+        const val DEBUG_PACKAGE_SUFFIX = ".debug"
     }
 
     override fun init() {
@@ -102,6 +105,8 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
         initDownloadSettings()
         // 加载动画:默认 / Glowing Fish(全局 LoadSir 加载动画,播放器与下载不受影响)
         initLoadingAnimSetting()
+        // debug 专用:节日开屏海报预览(正式包整体隐藏)
+        bindSplashPreviewEntry()
 
         // 用 dohLabel 而不是直接下标:老备份/历史版本里 doh_url 可能是 4~6,而当前列表只有 4 项
         // (直接 dnsHttpsList[getDohUrl()] 会在设置页 IndexOutOfBounds 崩)
@@ -598,6 +603,20 @@ class SettingActivity : BaseVbActivity<ActivitySettingBinding>() {
                 }
             }
             dialog.show()
+        }
+    }
+
+    /**
+     * debug 包专用入口：逐个预览节日/节气开屏海报。
+     * 用包名后缀判断而不是 BuildConfig，避免为了一个调试入口打开全局 buildConfig 生成。
+     */
+    private fun bindSplashPreviewEntry() {
+        val debugBuild = applicationContext.packageName.endsWith(DEBUG_PACKAGE_SUFFIX)
+        mBinding.llSplashPreview.visibility = if (debugBuild) View.VISIBLE else View.GONE
+        if (!debugBuild) return
+        mBinding.llSplashPreview.setOnClickListener { view ->
+            FastClickCheckUtil.check(view)
+            startActivity(Intent(this, SplashPreviewActivity::class.java))
         }
     }
 

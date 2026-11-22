@@ -231,6 +231,43 @@
                         android:src="@drawable/ic_seek_right"
                         app:tint="@color/text_foreground"/>
                 </LinearLayout>
+
+                <!-- debug 包专用：逐个预览节日/节气开屏海报（release 包由代码隐藏） -->
+                <LinearLayout
+                    android:id="@+id/llSplashPreview"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/dp_60"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="40dp"
+                    android:visibility="gone"
+                    android:foreground="?android:selectableItemBackground">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="节日开屏预览"
+                        android:textColor="@color/text_foreground"
+                        android:textSize="16sp" />
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:gravity="end"
+                        android:text="Debug"
+                        android:textColor="@color/text_sub_foreground"
+                        android:textSize="13sp" />
+
+                    <ImageView
+                        android:layout_width="13dp"
+                        android:layout_height="13dp"
+                        android:layout_gravity="center"
+                        android:alpha="0.75"
+                        android:src="@drawable/ic_seek_right"
+                        app:tint="@color/text_foreground"/>
+                </LinearLayout>
             </LinearLayout>
 
             <LinearLayout

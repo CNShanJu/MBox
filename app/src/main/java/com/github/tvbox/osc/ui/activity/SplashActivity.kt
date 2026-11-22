@@ -8,7 +8,10 @@ import com.github.tvbox.osc.base.BaseVbActivity
 import com.github.tvbox.osc.config.SystemConfig
 import com.github.tvbox.osc.constant.IntentKey
 import com.github.tvbox.osc.databinding.ActivitySplashBinding
+import com.github.tvbox.osc.log.Category
+import com.github.tvbox.osc.log.LogStore
 import com.github.tvbox.osc.ui.startup.AppLaunchSource
+import com.github.tvbox.osc.ui.startup.ShortcutTarget
 
 class SplashActivity : BaseVbActivity<ActivitySplashBinding>() {
     private var restoredBySystem = false
@@ -36,14 +39,22 @@ class SplashActivity : BaseVbActivity<ActivitySplashBinding>() {
         val launcherEntry = intent.action == Intent.ACTION_MAIN &&
             (intent.hasCategory(Intent.CATEGORY_LAUNCHER) ||
                 intent.hasCategory(Intent.CATEGORY_LEANBACK_LAUNCHER))
-        val nonUserEntry = restoredBySystem || crashRestart || !launcherEntry ||
+        // 桌面长按菜单进来的也是用户主动启动:不能被当成通知/系统拉起,否则启动动作与
+        // 快捷方式落地页都会被抑制。目标页本身由主页在首页首帧后打开。
+        val shortcutTarget = ShortcutTarget.fromAction(intent.action)
+        val nonUserEntry = restoredBySystem || crashRestart ||
+            (!launcherEntry && shortcutTarget == null) ||
             intent.getBooleanExtra(AppLaunchSource.EXTRA_NON_USER_ENTRY, false)
+        if (shortcutTarget != null) {
+            LogStore.log(Category.SYSTEM, "桌面快捷方式启动: ${shortcutTarget.name}")
+        }
         startActivity(
             Intent(this, MainActivity::class.java)
                 .putExtra(MainActivity.EXTRA_STARTUP_SPLASH, true)
                 .putExtra(AppLaunchSource.EXTRA_NON_USER_ENTRY, nonUserEntry)
                 .putExtra(AppLaunchSource.EXTRA_INTERNAL_RELOAD,
                     intent.getBooleanExtra(AppLaunchSource.EXTRA_INTERNAL_RELOAD, false))
+                .putExtra(ShortcutTarget.EXTRA_TARGET, shortcutTarget?.action)
                 .putExtra(NotificationEntryActivity.EXTRA_DETAIL_ID,
                     intent.getStringExtra(NotificationEntryActivity.EXTRA_DETAIL_ID))
                 .putExtra(NotificationEntryActivity.EXTRA_DETAIL_SOURCE_KEY,

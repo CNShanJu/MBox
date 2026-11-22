@@ -79,6 +79,17 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
+            <!-- 桌面图标长按菜单(见 res/xml/shortcuts.xml 与 ShortcutTarget):快捷方式不直接指向
+                 搜索页/观看历史,而是先回到启动页,由主页在开屏退场、首页首帧就绪后再拉起目标页,
+                 避免冷启动早期订阅配置尚未装配时读到空源。action 只是过滤器名字,与 applicationId 无关。 -->
+            <intent-filter>
+                <action android:name="com.github.tvbox.osc.action.SHORTCUT_SEARCH" />
+                <action android:name="com.github.tvbox.osc.action.SHORTCUT_HISTORY" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
         </activity>
         <activity
             android:name=".ui.activity.NotificationEntryActivity"
@@ -244,6 +255,16 @@
             android:exported="false"/>
         <activity
             android:name=".ui.activity.PlaybackCacheActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="false"/>
+        <!-- debug 包「设置」页的节日开屏预览入口；release 包无入口，组件也不导出 -->
+        <activity
+            android:name=".ui.activity.SplashPreviewActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="false"/>
+        <!-- 「我的」页节日名点击后的海报大图页（可保存到相册） -->
+        <activity
+            android:name=".ui.activity.HolidayPosterActivity"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:exported="false"/>
         <activity

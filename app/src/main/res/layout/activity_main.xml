@@ -28,6 +28,23 @@
             android:scaleType="matrix"
             android:visibility="gone" />
 
+        <!-- 海报铺满整屏，锚点决定裁哪条边，保证顶部标题留在画面里 -->
+        <ImageView
+            android:id="@+id/startup_splash_holiday_image"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:contentDescription="@null"
+            android:scaleType="matrix"
+            android:visibility="gone" />
+
+        <!-- 暗色主题只压一层很淡的黑（叠在海报之上），浅色主题不显示 -->
+        <View
+            android:id="@+id/startup_splash_holiday_scrim"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="#1A000000"
+            android:visibility="gone" />
+
         <com.airbnb.lottie.LottieAnimationView
             android:id="@+id/startup_splash_animation"
             android:layout_width="320dp"

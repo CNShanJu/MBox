@@ -115,6 +115,11 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     private static final long HISTORY_REFRESH_TIMEOUT_MS = 15_000L;
     private static final String EXTERNAL_DOWNLOADER_PACKAGE = "idm.internet.download.manager.plus";
     private static final String EXTERNAL_DOWNLOADER_ACTIVITY = "idm.internet.download.manager.Downloader";
+    /**
+     * 桌面「继续观看」入口：带历史快照并且必须立即起播，不受"详情页预览播放"开关限制
+     * （见 HistoryEntryNavigator#playDirectly）。
+     */
+    public static final String EXTRA_HISTORY_AUTOPLAY = "historyAutoPlay";
     private PlayFragment playFragment = null;
     private SourceViewModel sourceViewModel;
     private HistoryViewModel historyViewModel;
@@ -209,6 +214,10 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     @Override
     protected void init() {
         if (getIntent() != null && !TextUtils.isEmpty(getIntent().getStringExtra("browserCastSessionId")))
+            showPreview = true;
+        // 桌面「继续观看」要求点一下就播：即使"详情页预览播放"是关的，也要这次先把预览播放器建出来，
+        // 后面的 loadDetail(snapshot) 才会走起播分支（起播位置仍按播放进度恢复）。
+        if (getIntent() != null && getIntent().getBooleanExtra(EXTRA_HISTORY_AUTOPLAY, false))
             showPreview = true;
         initReceiver();
         initView();
@@ -407,6 +416,23 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
         mBinding.ivPrivateBrowsing.postDelayed(
                 () -> PlayService.cancelPlaybackNotification(DetailActivity.this), 800);
         if (collectionStateReady && !collectionBusy) refreshCollectionState();
+    }
+
+    /**
+     * 桌面「继续观看」要求点一下就播：创建时预览开关若是关的（或 singleTask 复用了旧实例），
+     * 页面里根本没有预览播放器。这里按 {@link #initView()} 的同一套步骤补建，
+     * 之后 loadDetail(snapshot) 才会走起播分支；幂等，已有播放器时只恢复两块的可见性。
+     */
+    private void ensurePreviewPlayerForAutoPlay() {
+        showPreview = true;
+        mBinding.previewPlayerPlace.setVisibility(View.VISIBLE);
+        mBinding.previewPlayer.setVisibility(View.VISIBLE);
+        if (playFragment != null) return;
+        playFragment = new PlayFragment();
+        playFragment.setPlaySyncHost(this);
+        getSupportFragmentManager().beginTransaction().add(R.id.previewPlayer, playFragment).commit();
+        getSupportFragmentManager().beginTransaction().show(playFragment).commitAllowingStateLoss();
+        mBinding.getRoot().post(this::applyPreviewLayout);
     }
 
     private void initView() {
@@ -1139,6 +1165,8 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
 
     private void initData() {
         Intent intent = getIntent();
+        if (intent != null && intent.getBooleanExtra(EXTRA_HISTORY_AUTOPLAY, false))
+            ensurePreviewPlayerForAutoPlay();
         if (intent != null && intent.getExtras() != null) {
             Bundle bundle = intent.getExtras();
             // 入口(搜索/列表等)传过来的剧名,用于下载命名兜底

@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+
+    <com.github.tvbox.osc.ui.kit.AppTitleBar
+        android:id="@+id/title_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        app:title="节日开屏预览"
+        app:titleBold="true" />
+
+    <!-- 预览区：层级与真实开屏完全一致（底图模糊压暗 → 前景完整居中海报） -->
+    <FrameLayout
+        android:id="@+id/preview_stage"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_marginHorizontal="20dp"
+        android:layout_marginTop="8dp"
+        android:layout_weight="1"
+        android:background="@color/bg_body">
+
+        <ImageView
+            android:id="@+id/preview_photo"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:contentDescription="@null"
+            android:scaleType="matrix" />
+
+        <View
+            android:id="@+id/preview_scrim"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="#1A000000" />
+
+        <TextView
+            android:id="@+id/preview_caption"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_margin="12dp"
+            android:background="#66000000"
+            android:ellipsize="end"
+            android:lineSpacingExtra="3dp"
+            android:maxLines="2"
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="7dp"
+            android:textColor="#FFFFFFFF"
+            android:textSize="12sp"
+            tools:text="立秋 · 二十四节气 · 未缓存（预览走网络）" />
+    </FrameLayout>
+
+    <TextView
+        android:id="@+id/preview_hint"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginHorizontal="24dp"
+        android:layout_marginTop="10dp"
+        android:text="调试用：预览不写入正式缓存，未缓存素材直接走网络"
+        android:textColor="@color/text_sub_foreground"
+        android:textSize="12sp" />
+
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/preview_list"
+        android:layout_width="match_parent"
+        android:layout_height="128dp"
+        android:layout_marginTop="8dp"
+        android:clipToPadding="false"
+        android:paddingHorizontal="16dp"
+        android:paddingBottom="8dp"
+        android:scrollbars="none" />
+
+</LinearLayout>

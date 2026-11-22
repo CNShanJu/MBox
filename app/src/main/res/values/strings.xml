@@ -124,4 +124,11 @@
     <!-- 「打开方式」弹窗里 MBox 候选的主文字(图标下方那行):用具体动作代替应用名,用户一眼看懂能干嘛 -->
     <string name="local_open_label_play">播放视频</string>
     <string name="local_open_label_import">导入文件</string>
+
+    <!-- 桌面图标长按菜单(res/xml/shortcuts.xml):短标签是菜单里的那一行,长标签是部分桌面
+         展开后显示的说明;shortcutLongLabel 必须是资源引用,不能写裸文字 -->
+    <string name="shortcut_search_short">搜索</string>
+    <string name="shortcut_search_long">搜索全部数据源</string>
+    <string name="shortcut_continue_short">继续观看</string>
+    <string name="shortcut_continue_long">从观看历史继续播放</string>
 </resources>

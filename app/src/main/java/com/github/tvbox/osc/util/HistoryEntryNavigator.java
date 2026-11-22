@@ -43,6 +43,24 @@ public final class HistoryEntryNavigator {
                 && !episodes.get(info.playIndex).url.isEmpty();
     }
 
+    /**
+     * 桌面「继续观看」：同一份历史快照直接进详情页并立即起播，不等详情页的预览开关。
+     * <p>
+     * 续播位置仍由播放器按进度键恢复（见 PlayHistoryRepository），这里只负责"点一下就播"。
+     * 快照不可播或原来源已停用时返回 false，调用方退回观看历史列表让用户自己选。
+     */
+    public static boolean playDirectly(Context context, VodInfo info) {
+        if (context == null || !HistorySourceBinding.isAvailable(info) || !hasPlayableSnapshot(info))
+            return false;
+        context.startActivity(new Intent(context, DetailActivity.class)
+                .putExtra("id", info.id)
+                .putExtra("sourceKey", info.sourceKey)
+                .putExtra("vodName", info.name)
+                .putExtra(DetailActivity.EXTRA_HISTORY_AUTOPLAY, true)
+                .putExtra("historySnapshot", info));
+        return true;
+    }
+
     /** Locate the saved episode in a refreshed playlist without selecting an ambiguous namesake. */
     public static boolean matchCurrentEpisode(VodInfo fresh, VodInfo playing) {
         if (!hasPlayableSnapshot(playing) || fresh == null || fresh.seriesMap == null) return false;
