@@ -40,7 +40,7 @@ app / feature
 | `:common` | 全局共用:纯模型(`com.github.tvbox.osc.bean.*`,不依赖 Android/Hawk/Room/ApiConfig)+ 算法工具(AES/MD5/AdBlocker)+ 系统状态(`.state.*`);由原 `:core-model`/`:core-utils`/`:state` 三模块合并,包名不变 |
 | `:core-network` | 收敛网络客户端(OkGoHelper/HttpClient/各 OkHttp 创建),业务不得自行 `new OkHttpClient.Builder()` |
 | `:core-storage` | Room/缓存/配置收口,对外只暴露 Repository/类型安全 Config,不暴露 DAO;storage 不得依赖 spider/download/player |
-| `:spider` | 爬虫**契约 + 实现同模块**(原 `:spider-api` 已并入):契约(SourcePage/Category/Detail/Search/Play 与 SourceConfigProviders/ParseConfigProviders/LiveChannelConfigApi/SourceLoaderApi/PlayUrlResolverProviders/SpiderFaultProviders)、QuickJS/JarLoader/ApiConfig/具体 Spider;**app/UI 一律经契约,禁止直连 `ApiConfig`/`JsLoader`/`PlayUrlResolver`**(`checkModuleDependencies` 已加该红线,白名单只剩组合根/启动注入点) |
+| `:spider` | 爬虫**契约 + 实现同模块**(原 `:spider-api` 已并入):契约(SourcePage/Category/Detail/Search/Play 与 SourceConfigProviders/ParseConfigProviders/LiveChannelConfigApi/SourceLoaderApi/PlayUrlResolverProviders/SpiderFaultProviders)、QuickJS/JarLoader/ApiConfig/具体 Spider;**app/UI 一律经契约,禁止直连 `ApiConfig`/`JsLoader`/`PlayUrlResolver`**(`checkModuleDependencies` 已加该红线,白名单只剩组合根/启动注入点)。**py 源**:内嵌 CPython(Chaquopy 17.2,Python 3.13,仅 arm64-v8a,`spider/src/main/python`)执行 `.py` 源,入口 `PyLoader`(装载/缓存/冷却)+ `SpiderPY`(契约转发)+ `base.spider`(drpy 兼容基类)+ `requests`(标准库兼容层,不联网装 pip 包);`api` 以 `.py` 结尾的站点由 `ApiConfig.getCSP` 分流,`/proxy?do=py` 转 `SpiderPY.localProxy`;`SpiderPY` 负责把详情返回的 `vod_id` 归一成请求 id(页面按 id 相等判"是否当前详情",源改写成绝对地址会被整条丢弃)、超时按源自重试放宽(详情/列表 45s、播放 60s)且超时实例作废重建。Chaquopy 只能挂在一个模块上,**禁止再加第二个 Python 运行时模块**;py 源导入见订阅导入(`ORIGIN_PY`,列表徽标「py源」) |
 | `:player` | 播放**契约 + 实现同模块**(原 `:player-api` 已并入):契约(PlayerSession/PlayerState/PlayerOptions/PlayerEvent/PlayerFactory)与 MyVideoView/Media3 同模块;UI 不得直接依赖具体内核 |
 | `:thirdparty` | 纯第三方归堆,不依赖任何本仓模块:TabLayout(`com.angcyo.tablayout`)、CustomActivityOnCrash(`cat.ereza.customactivityoncrash`,原 `:crash`)、QuickJS(`com.whl.quickjs.*` + `src/main/jniLibs`,原 `:quickjs`) |
 | `:download` | 只公开 DownloadFacade(enqueue/pause/resume/delete/observe 与 pauseAll/startAll/moveToFront/setPriority 等门面转发方法);Manager/Scheduler/Executor/Archive 等为模块内部实现 |
@@ -122,11 +122,11 @@ app / feature
 - 开屏数据先就绪时可提前撤下动画;动画先播完时停留最后帧 **300ms** 后直接进入首页,不继续等数据,也不设 20 秒内容兜底(素材解析或播放异常的兜底仍保留)。`MainActivity#maybeDismissStartupSplash` 保持该时序;开屏动画只播一次。数据请求尚未结束就入场时,首页须接收同一轮结果,不得重复发起首屏请求。
 - 开屏预取默认首页热播、订阅分类及“关闭主页推荐”时首个分类的数据;大块 XML/JSON 解析不得占用动画所在的主线程。气泡、提示及自动检查等可见窗口在首页首帧之后再派发;节日素材选择继续集中在 `SplashContentSelector`,按需扩展图片/视频类型。
 - **启动来源统一判定(强制;2026-10-04 用户口径)**:只有用户主动从桌面/启动器重新打开 App 的真正启动,才触发开屏烟花、自动检查更新与首页“上次看到”;这些动作仍须遵守各自的首帧及展示时序。更换主题、订阅源、开启本地服务等配置生效流程发起的进程/任务重启属于**内部重启**:发起方须显式传递一次性启动来源标记,新主页创建时消费,不得仅以启动页进入 `MainActivity`、进程冷启动或 Activity 重建推断用户主动启动。后台返回、Activity 重建/系统恢复与内部重启均不得触发上述用户启动动作,也不得消耗烟花次数;内部重启仍须正常完成开屏、配置装配与首页初始化。
-- **“我的”页节日与启动烟花(强制;2026-10-04 用户口径)**:“我的”页顶部左侧沿用当前应用名,大字**单行**显示(含 Debug 后缀也不得换行);右侧仅在节日当天显示节日名(12sp),与应用名底部对齐,平日留空,不显示公历日期与农历日期;不要放到首页。节日烟花仅在符合上述用户主动启动判定且开屏关闭、底栏完成首帧后播放;从后台切回 App、应用内页面返回、Activity 重建/系统恢复及内部重启均**不触发、不占次数**。每组烟花都重复原有手指长按的 **3 朵错峰发射动作**,组与组也须错开,禁止同时齐射:普通宽度的底栏在两个图标中心及其中点各放一组,共 **3 组 9 朵**;底栏宽度达到 **600dp** 的大屏再加入左边缘与左图标中心的中点、右图标中心与右边缘的中点,共 **5 组 15 朵**。元旦、除夕、农历正月初二至初十:每个本地自然日最多 3 轮,第 2/3 轮各须距上一轮实际发射**至少 2 小时**(满 2 小时可触发);农历正月初一:每次真正启动都发射,**不限次数、不受冷却约束**。记录按本地日期持久化,次日启动时若存在旧日记录则删除,无记录时直接跳过;动画未启动不得消耗次数。清理、准入/拒绝、发射及撤销都走 `LogStore` 业务日志。**Debug 与 Release 均使用设备真实本地日期和时间**,节日显示、烟花准入与跨日清理共用真实时钟,禁止固定节日预览日期。
+- **“我的”页节日与启动烟花(强制;2026-10-04 用户口径)**:“我的”页顶部左侧沿用当前应用名,大字**单行**显示(含 Debug 后缀也不得换行);右侧仅在节日当天显示节日名(12sp),与应用名底部对齐,平日留空,不显示公历日期与农历日期;不要放到首页。节日名当天有节日时可点击,进入节日海报大图页:与开屏同一套铺满 + 按图锚点裁切(标题不能被裁),同日命中多个节日时一页一张、上下滑动切换,支持保存到相册(`Pictures/MBox`);平日不可点、也不显示提示。节日烟花仅在符合上述用户主动启动判定且开屏关闭、底栏完成首帧后播放;从后台切回 App、应用内页面返回、Activity 重建/系统恢复及内部重启均**不触发、不占次数**。每组烟花都重复原有手指长按的 **3 朵错峰发射动作**,组与组也须错开,禁止同时齐射:普通宽度的底栏在两个图标中心及其中点各放一组,共 **3 组 9 朵**;底栏宽度达到 **600dp** 的大屏再加入左边缘与左图标中心的中点、右图标中心与右边缘的中点,共 **5 组 15 朵**。元旦、除夕、农历正月初二至初十:每个本地自然日最多 3 轮,第 2/3 轮各须距上一轮实际发射**至少 2 小时**(满 2 小时可触发);农历正月初一:每次真正启动都发射,**不限次数、不受冷却约束**。记录按本地日期持久化,次日启动时若存在旧日记录则删除,无记录时直接跳过;动画未启动不得消耗次数。清理、准入/拒绝、发射及撤销都走 `LogStore` 业务日志。**Debug 与 Release 均使用设备真实本地日期和时间**,节日显示、烟花准入与跨日清理共用真实时钟,禁止固定节日预览日期。
 - 节日启动烟花每次先**随机打乱 3/5 个发射点的播放顺序**,不能固定从左到右,每个点仍恰好播放一组。各组不必等前组结束:第一组立即启动,后续每组相对前一组**随机延后 100～500ms**(逐组累加),允许动画交叠;每组内部继续沿用原长按三朵的错峰节奏。此时“3/5 组”指一次 App 启动中的动画组数,与“每日最多 3 轮启动动作”是两种计数,不得混淆。
-- **节日规则以单独 JSON 为准(强制;2026-10-04)**:现有节日和**二十四节气**的名称、简介、显示与否、是否播放启动烟花、每日轮数、下一轮冷却小时数统一在一份节日 JSON 中维护,二十四节气须能在“我的”页顶部节日位置显示,但**节气不得触发烟花,即使 JSON 将其烟花开关设为 true 也忽略**;公历 10 月 1 日国庆节应播放烟花。公历/农历条目使用相同日期字段与配置字段,只由 `type` 决定日期换算;农历闰月不得重复命中普通节日,同一天多个节日撞日时分别匹配显示与烟花,不能因显示优先级漏播。受限节日沿用每天最多 3 轮、相邻实际发射至少 2 小时;春节初一用配置表达不限次数和冷却。冷却小时数须为整数且仅接受 1～23,缺失、非整数或越界统一按 1 小时处理。JSON 同时预留按节日选择开屏素材的配置入口,素材未配置时保持现有开屏动画;节日规则不得在代码中复制维护第二份。
-- 节日文件固定在 `app/src/main/assets/calendar/holidays.json`:最上面的根级 `desc` 对象说明各字段意义,每条节日另保留字符串 `desc` 简介。各条都有 `id/name/desc/type/month/day/endDay/dateRule/term/includeLeapMonth/display/displayPriority/fireworks/splash`,公历/农历同构。`fixed` 按日期或日期段、`last_day` 按月末、`solar_term` 按节气计算(二十四节气均在 JSON 中显式列出);农历正月初二至初十只参与烟花,不显示节日名。同一天跨历法的多个可显示名称须全部显示,用 `·` 分隔,按 `displayPriority` 从高到低排列;**同一历法的可显示条目若重复配置同日/重叠固定区间、重复月末或同名节气,构建直接报错**,跨历法真实撞日允许。烟花独立取 JSON 顺序第一条启用的非节气规则,每次启动仍只发一轮。`fireworks.maxLaunchesPerDay=0` 才是不限制,其他负数/非整数视为无效配置;`splash` 预留 `none/lottie/image/video` 类型的节日素材元数据,当前未配置的节日继续现有开屏效果。
-- 未来真正启用节日专属开屏时,须让冷启动的素材选择及时拿到节日目录,同时保持开屏动画立即启动、不等待目录 I/O;当前所有 `splash.enabled=false`,图片/视频渲染器尚未接入,不能只改 JSON 开关就宣称图片/视频开屏可用。
+- **节日规则以单独 JSON 为准(强制;2026-10-04)**:现有节日和**二十四节气**的名称、简介、显示与否、是否播放启动烟花、每日轮数、下一轮冷却小时数统一在一份节日 JSON 中维护,二十四节气须能在“我的”页顶部节日位置显示,但**节气不得触发烟花,即使 JSON 将其烟花开关设为 true 也忽略**;公历 10 月 1 日国庆节应播放烟花。公历/农历条目使用相同日期字段与配置字段,只由 `type` 决定日期换算;农历闰月不得重复命中普通节日,同一天多个节日撞日时分别匹配显示与烟花,不能因显示优先级漏播。受限节日沿用每天最多 3 轮、相邻实际发射至少 2 小时;春节初一用配置表达不限次数和冷却。冷却小时数须为整数且仅接受 1～23,缺失、非整数或越界统一按 1 小时处理。节日开屏的**网络海报**按 `id` 关联单独素材表 `app/src/main/assets/splash/holiday_media.json`(只有 `id/name/图片直链`,不含任何日期规则);素材缺失、非法或未缓存时保持现有开屏动画,节日日期规则仍只在节日 JSON 维护,不得在代码里复制第二份。
+- 节日文件固定在 `app/src/main/assets/calendar/holidays.json`:最上面的根级 `desc` 对象说明各字段意义,每条节日另保留字符串 `desc` 简介。各条都有 `id/name/desc/type/month/day/endDay/dateRule/term/includeLeapMonth/display/displayPriority/fireworks/splash`,公历/农历同构。`fixed` 按日期或日期段、`last_day` 按月末、`solar_term` 按节气计算(二十四节气均在 JSON 中显式列出);农历正月初二至初十只参与烟花,不显示节日名。同一天跨历法的多个可显示名称须全部显示,用 `·` 分隔,按 `displayPriority` 从高到低排列;**同一历法的可显示条目若重复配置同日/重叠固定区间、重复月末或同名节气,构建直接报错**,跨历法真实撞日允许。烟花独立取 JSON 顺序第一条启用的非节气规则,每次启动仍只发一轮。`fireworks.maxLaunchesPerDay=0` 才是不限制,其他负数/非整数视为无效配置;`splash` 保留 `none/lottie/image/video` 类型的 assets 素材元数据,网络海报走 `splash/holiday_media.json`,两处都未配置的节日继续现有开屏效果。
+- **节日图片开屏(2026-11-22 接入,强制)**:冷启动先立即播默认开屏动画,节日目录与海报缓存都只读本地,**不得为图片发起任何阻塞开屏的等待**。首页从缓存秒开时开屏往往不到 1 秒、来不及等目录,因此预取成功当天会把「今日海报的本地路径 + 锚点」记进 `holiday_splash_media` 偏好,下次冷启动第一帧直接命中(快速路径),不得为了"等目录"把开屏时长拉长。海报**铺满整屏**(cover 语义),按素材表里每张图自己的 `anchorX`(0 标题在左 / 1 标题在右,默认 0.5)与 `anchorY`(默认 0,贴顶)决定裁哪条边:竖屏只裁左右、横屏只裁上下,而海报标题固定在顶部某一侧且每张不同,**禁止为了"完整显示"改用 fitCenter 留边**,也不得在界面上另叠节日名称(名称由海报自身承载)。**暗色主题只压一层很淡的黑(`#1A000000`),浅色主题不压**,不要再用整屏重遮罩或重影底图。海报由后台预取(未来 30 天窗口,单个进程一次)写入 `filesDir/splash_media`,文件名 = `id + 素材版本 + 链接哈希`,下载落盘前按文件头校验 jpg/png/webp;**换图床链接会自动重下**(哈希变),若图床是同一链接覆盖内容则把素材表的 `version` 加 1 强制刷新;旧文件在下次预取结束时清理。该目录必须出现在「缓存管理」页(可清理,清理后由下次预取补回当天需要的图),不允许做成用户看不见也清不掉的隐形缓存。下载失败、解码失败、文件损坏或加载超时一律回落默认 Lottie。当天未缓存时首次启动显示默认动画,缓存完成后下次启动生效(下次启动必然命中快速路径)。`calendar/holidays.json` 的 `splash.enabled` 仍全为 false(网络海报只认素材表),视频渲染器仍未接入,不能只改 JSON 开关就宣称视频开屏可用。
 - 列表更新用 DiffUtil 时保证差量正确(LocalVideoAdapter/下载列表等禁止 O(n²)/整表 notify);页面/Adapter 不得把视图/Activity 持有到生命周期外(视图泄漏)。
 
 **Android 暴露面**
@@ -244,9 +244,16 @@ app / feature
 ## 九、开发与提交纪律
 
 - 全量门禁:改动后必须跑 `:app:assembleDebug :app:assembleRelease :app:testDebugUnitTest checkModuleDependencies` 全绿再提交。
-- 提交信息遵循 `doc/Git提交规范.md`(type[scope]: 描述 ≤50 字;一次提交一件事;提交前 git status 确认无多余文件)。
+- 提交信息遵循 `doc/guides/Git提交规范.md`(type[scope]: 描述 ≤50 字;一次提交一件事;提交前 git status 确认无多余文件)。
 - 文件级提交:按范围 `git add`,不混入无关改动;本规则文件(AGENTS.md)与各 doc/ 状态文档随对应批次同步更新并提交。
 - 改进.txt(已纳入版本库跟踪)与 AGENTS.md 保持一致,改动同步更新;release-notes-v3.0.1.md 不入库,其要求以上方章节为准。
+
+### 文档存放纪律(强制)
+
+- **分类存放,不再平铺**:`doc/` 根只保留索引 `doc/README.md`,文档一律进 `architecture/`(架构与设计)、`status/`(现状基线与审计)、`features/`(单功能机制与排查)、`release/`(更新说明与对外文稿)、`guides/`(规范与回归清单)之一。新增分类先在 `doc/README.md` 登记。
+- **不按时间/版本建目录**:单版本说明不新建文件,统一写进 `doc/release/release-notes.md` 的 `## v<版本号>` 一节。
+- **路径引用写仓库根相对路径**(如 `doc/status/项目状态速查.md`)。移动/改名文档必须同步 `README.md` 文档导航、`AGENTS.md`、`改进.txt`、`scripts/`(release-notes 解析)与 `.github/workflows/build-apk.yml`,否则发版脚本与 CI 会断。
+- **历史快照标注不删档**:已落地或作废的设计/审计文档,在开头标注「历史快照 + 截止日期 + 当前口径以 `doc/status/项目状态速查.md` 为准」,只做标注与路径修正,不重写结论。
 
 ### 代码托管与镜像同步(强制)
 
@@ -380,18 +387,24 @@ app / feature
    - **不必为跨版本升级补历史**:App 取 releases 列表,把"比当前新、且不高于可下载最新版"的各版本说明
      按新→旧拼成一个弹窗(最多 5 个版本),每条 Release 只写自己的改动即可;
      正文顶部的版本标题(`## v3.5.5`)与「相比 vX 的更新:」引言会被去重,不重复出现。
-   - **版本标题与跨版本提示不得重复/误报**(2026-10-03):有用户可读内容的
-     `doc/release-notes-<tag>.md` 顶部至多写一个本版标题;CI 生成 Release 正文时只原样贴该文件,
-     **不得再自动补 `## <tag>`**。正文缺失或全在 `<!-- dev -->` 围栏内时,不得留下用户可见的孤立版本标题。
+   - **更新说明汇总到一个文件**(2026-11-20):用户可读说明统一写在 `doc/release/release-notes.md`,
+     每个版本一节,标题固定为 `## v<版本号>`(独占一行,新版本加在最前面,节与节之间不插 `---`)。
+     **不再新建逐版本的 `doc/release/release-notes-v<版本号>.md`**;仓库里只保留 `doc/release/release-notes-v3.6.11.md`
+     作为老流程的兼容兜底(仅当汇总文件缺该版本时才读,内容不再维护)。CI 与本地脚本统一经
+     `node scripts/release-notes.js get <tag>` 取正文,不要再按文件名各写一套逻辑。
+   - **版本标题与跨版本提示不得重复/误报**(2026-10-03):某一版顶部至多写一个本版标题(`## v<版本号>` 即该标题);
+     CI 生成 Release 正文时只原样贴该版本那一节,**不得再自动补 `## <tag>`**。
+     正文缺失或全在 `<!-- dev -->` 围栏内时,不得留下用户可见的孤立版本标题。
      App 汇总时先清理连续重复的本版标题与旧版对比引言,再判断该版是否有实际用户可读内容;
      只有标题/只有开发者内容的版本不占说明条目。只展示一个版本时不得称「跨 2 个版本」;
      如写「从 vX 到 vY」,起点必须是实际已安装版本,不能用最早一条展示说明的版本冒充。
      发布前检查**最终生成的** Release 正文与 App 清洗结果;已发布版本要修正展示时需编辑线上 Release 正文,
      修改仓库文档或重跑旧 tag 不会让旧工作流改用新逻辑。
    - **发版流水线不得自动搬运 commit**(强制):`.github/workflows/build-apk.yml` 打 tag 时的 Release 正文,
-     只取仓库里维护者手写的 `doc/release-notes-<tag>.md`(UTF-8);该文件缺失时正文只留 `<!-- dev -->` 围栏
-     里的提交记录并在 Actions 输出警告,**绝不把 commit 标题当作给用户的更新说明**。发版前用
-     `node scripts/check-release-notes.js doc/release-notes-<tag>.md` 自检。
+     只取 `doc/release/release-notes.md` 里该 tag 对应的一节(UTF-8,经 `scripts/release-notes.js` 解析);
+     取不到时正文只留 `<!-- dev -->` 围栏里的提交记录并在 Actions 输出警告,
+     **绝不把 commit 标题当作给用户的更新说明**。发版前用
+     `node scripts/check-release-notes.js --tag <tag>` 自检(直接喂汇总文件会被拒绝)。
    - **更新阻断字段 `update-block`(强制,2026-10-26)**:当某版本存在问题、需要**阻止用户升级到它**时,
      在该版 Release 正文里写一行注释字段(HTML 注释形式,网页端自动隐藏,用户看不到):
      `<!-- update-block: 这里写阻断原因 -->`(有原因时,原因即用户点「立即更新」时看到的提示文案),
@@ -410,7 +423,7 @@ app / feature
      5) **体验与性能**:更快、更省电、更少打扰、界面更顺手;
      6) **兼容性与注意事项**:系统要求变化、数据迁移、需要用户手动做一步的事(如"需重新授权存储权限")。
    - **不属于用户的内容**(绝不写进用户可见部分;确要留档就包进 `<!-- dev -->` 围栏):
-     - 规则/流程/文档类改动:`AGENTS.md`、`改进.txt`、`doc/**`、README、`doc/Git提交规范.md` 等纯文档提交;
+     - 规则/流程/文档类改动:`AGENTS.md`、`改进.txt`、`doc/**`、README、`doc/guides/Git提交规范.md` 等纯文档提交;
      - 构建与发布体系:Gradle/AGP/依赖版本升级、依赖重构、CI/工作流、签名与打包脚本、版本号提升(`chore(版本)`);
      - 代码结构类:模块拆分与分层、接口抽取、命名与目录调整、死代码清理、EventBus→直调这类内部机制替换
        (除非用户能感知到差异,如"更省内存/启动更快",那按第 5 类写"效果"而不是写"机制");

@@ -21,6 +21,7 @@ import androidx.core.content.ContextCompat
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentPagerAdapter
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.lifecycleScope
 import androidx.viewpager.widget.ViewPager.SimpleOnPageChangeListener
 import com.blankj.utilcode.util.ActivityUtils
 import com.github.tvbox.osc.R
@@ -47,23 +48,34 @@ import com.github.tvbox.osc.ui.fragment.MyFragment
 import com.github.tvbox.osc.ui.kit.FireworksView
 import com.github.tvbox.osc.ui.startup.AppLaunchSource
 import com.github.tvbox.osc.ui.startup.AppStartupCoordinator
+import com.github.tvbox.osc.ui.startup.ShortcutTarget
 import com.github.tvbox.osc.ui.startup.UserStartupGate
 import com.github.tvbox.osc.spiderapi.SourceConfigProviders
 import com.github.tvbox.osc.spiderapi.SourceLoaderApi
 import com.github.tvbox.osc.spiderapi.SourceLoaderProviders
 import com.github.tvbox.osc.storage.theme.ThemeStore
 import com.github.tvbox.osc.theme.ThemeRuntime
+import com.github.tvbox.osc.ui.splash.HolidaySplashMediaStore
 import com.github.tvbox.osc.ui.splash.SplashContent
 import com.github.tvbox.osc.ui.splash.SplashContentSelector
+import com.github.tvbox.osc.ui.splash.SplashPosterFit
 import com.github.tvbox.osc.util.HomeHotPreloader
 import com.github.tvbox.osc.util.DefaultConfig
 import com.github.tvbox.osc.util.HeavyTaskUtil
 import com.github.tvbox.osc.util.BgImageTransform
+import com.github.tvbox.osc.util.HistoryEntryNavigator
+import com.github.tvbox.osc.util.HistoryHelper
+import com.github.tvbox.osc.util.HistorySourceBinding
+import com.github.tvbox.osc.util.Utils
 import com.github.tvbox.osc.util.SubscriptionConfig
 import com.github.tvbox.osc.util.holiday.HolidayCalendarClock
 import com.github.tvbox.osc.util.holiday.HolidayCatalogRepository
 import com.github.tvbox.osc.util.holiday.HolidayFireworksLaunchCoordinator
+import com.github.tvbox.osc.viewmodel.HistoryViewModel
 import com.github.tvbox.osc.viewmodel.SourceViewModel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.squareup.picasso.Picasso
 import com.squareup.picasso.Target
 import java.io.File
@@ -79,6 +91,10 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
         private const val ANIMATION_PLAYBACK_GRACE_MS = 3_000L
         private const val IMAGE_LOAD_TIMEOUT_MS = 3_000L
         private const val IMAGE_ONLY_DISPLAY_MS = 1_000L
+        /** 节日海报是本地缓存文件，给低端机解码留更宽裕的余量；超时即回落默认开屏。 */
+        private const val HOLIDAY_IMAGE_TIMEOUT_MS = 4_000L
+        /** 海报淡入时长，避免目录就绪后切换时出现硬切。 */
+        private const val HOLIDAY_IMAGE_FADE_MS = 280L
 
         /** 底栏「首页」项在"列表已离开顶部"时的标题(常态标题仍由 res/menu/main_bottom_navigation.xml 给出) */
         private const val BACK_TO_TOP_TITLE = "回到顶部"
@@ -94,6 +110,14 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
     private var exitTime = 0L
     private lateinit var startup: AppStartupCoordinator
     private val holidayCatalogRepository by lazy { HolidayCatalogRepository(applicationContext) }
+    /** 节日/节气开屏海报的本地缓存（只读本地文件，绝不阻塞开屏） */
+    private val holidaySplashMedia by lazy { HolidaySplashMediaStore(applicationContext) }
+    /** 本次开屏是否已经换成节日海报；未换成时允许"预取完成"再补一次 */
+    private var holidaySplashUpgradeApplied = false
+    /** 「继续观看」快捷方式读最近一条历史(AGENTS §五:UI 只经 ViewModel 取仓储,不直调静态单例) */
+    private val historyViewModel: HistoryViewModel by lazy {
+        ViewModelProvider(this, HistoryViewModel.Factory()).get(HistoryViewModel::class.java)
+    }
     private var startupImageOnly = false
     private var splashImageTarget: Target? = null
     private var splashBackgroundZoom = 0f
@@ -122,6 +146,10 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
     private var pendingNotificationDetailId: String? = null
     private var pendingNotificationSourceKey: String? = null
     private var pendingNotificationDetailName: String? = null
+    /** 桌面长按快捷方式(搜索 / 继续观看)待落地的目标;首页就绪后才打开 */
+    private var pendingShortcut: ShortcutTarget? = null
+    /** 本次创建是否来自系统重建:重建不重复执行一次性的快捷方式跳转 */
+    private var activityRecreated = false
     private val pendingNotificationTimeout = Runnable {
         if (pendingNotificationDetailId != null && SystemConfig.isDisclaimerAccepted() &&
             startup.canEnterStartupUi(mainShellBinding != null)) {
@@ -191,6 +219,7 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
                     mainShellBinding?.bottomNav?.post { maybeLaunchHolidayFireworks() }
                 }
                 maybeOpenPendingNotificationDetail()
+                maybeOpenPendingShortcut()
             }
         }
     }
@@ -213,6 +242,65 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
             .putExtra("id", id)
             .putExtra("sourceKey", sourceKey)
             .putExtra("vodName", name))
+    }
+
+    /**
+     * 桌面图标长按菜单(搜索 / 继续观看)的落地页，等开屏退场、首页首帧画完再跳：
+     * 搜索页要读已装配的订阅源，历史页要读本地观看记录，冷启动早期都还没就绪。
+     * 搜索额外等首页数据源装配结束（装配失败也算结束），避免跳进一个没有源的搜索页。
+     */
+    private fun maybeOpenPendingShortcut() {
+        val target = pendingShortcut ?: return
+        if (!SystemConfig.isDisclaimerAccepted() || isFinishing || isDestroyed) return
+        if (!startup.canEnterStartupUi(mainShellBinding != null)) return
+        if (target == ShortcutTarget.SEARCH && !startup.homeDataReady) return
+        pendingShortcut = null
+        when (target) {
+            ShortcutTarget.SEARCH -> openShortcutSearch()
+            ShortcutTarget.CONTINUE_WATCHING -> openShortcutContinueWatching()
+        }
+    }
+
+    private fun openShortcutSearch() {
+        try {
+            startActivity(Intent(this, FastSearchActivity::class.java))
+            LogStore.log(Category.SYSTEM, "桌面快捷方式落地: SEARCH")
+        } catch (error: RuntimeException) {
+            LogStore.fail(Category.SYSTEM,
+                "桌面快捷方式打开失败: 目标=SEARCH, 原因=${error.javaClass.simpleName}")
+            AppBubble.toast("打开失败，请重试")
+        }
+    }
+
+    /**
+     * 「继续观看」直接续播最近一条还能播的历史记录（快照 + 原来源仍启用），
+     * 播放位置由播放器按进度键恢复。没有可续播记录（旧记录缺剧集快照、来源已停用）
+     * 时退回观看历史列表，让用户自己选，而不是给出一个"点了没反应"的入口。
+     */
+    private fun openShortcutContinueWatching() {
+        lifecycleScope.launch {
+            val latest = withContext(Dispatchers.IO) {
+                try {
+                    historyViewModel.history().query(
+                        100, null, HistoryHelper.getHisNum(SystemConfig.getHistoryNum())
+                    ).firstOrNull {
+                        HistoryEntryNavigator.hasPlayableSnapshot(it) &&
+                            HistorySourceBinding.isAvailable(it)
+                    }
+                } catch (error: Exception) {
+                    LogStore.fail(Category.SYSTEM,
+                        "继续观看: 读取观看历史失败, 原因=${error.javaClass.simpleName}")
+                    null
+                }
+            }
+            if (isFinishing || isDestroyed) return@launch
+            if (latest != null && HistoryEntryNavigator.playDirectly(this@MainActivity, latest)) {
+                LogStore.log(Category.SYSTEM, "桌面快捷方式落地: 继续观看《${latest.name}》")
+                return@launch
+            }
+            startActivity(Intent(this@MainActivity, HistoryActivity::class.java))
+            AppBubble.toast("暂无可续播的观看记录")
+        }
     }
 
     /** 首页展示联网内容；“我的”页可能正在查看本地内容，不主动弹无网页。 */
@@ -278,6 +366,7 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // FragmentPagerAdapter 会恢复旧 Fragment；重建时不能把回调挂到新建的 fragments[0]。
+        activityRecreated = savedInstanceState != null
         val fromStartupPage = intent.getBooleanExtra(EXTRA_STARTUP_SPLASH, false)
         val nonUserEntry = intent.getBooleanExtra(AppLaunchSource.EXTRA_NON_USER_ENTRY, false)
         val internalReload = intent.getBooleanExtra(AppLaunchSource.EXTRA_INTERNAL_RELOAD, false)
@@ -312,6 +401,11 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
             intent.getStringExtra(NotificationEntryActivity.EXTRA_DETAIL_SOURCE_KEY)
                 ?.takeIf { it.isNotBlank() }
         pendingNotificationDetailName = intent.getStringExtra(NotificationEntryActivity.EXTRA_DETAIL_NAME)
+
+        // 桌面长按菜单只在这次新建时消费一次:重建/恢复不能把用户又弹回搜索页或历史页。
+        pendingShortcut = if (activityRecreated) null else
+            ShortcutTarget.fromAction(intent.getStringExtra(ShortcutTarget.EXTRA_TARGET))
+        intent.removeExtra(ShortcutTarget.EXTRA_TARGET)
 
         intent.removeExtra(EXTRA_STARTUP_SPLASH)
         if (startup.showSplashOnCreate) {
@@ -514,6 +608,7 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
             mBinding.root.post(dispatchAfterStartupSplash)
         } else {
             maybeOpenPendingNotificationDetail()
+            maybeOpenPendingShortcut()
         }
     }
 
@@ -547,7 +642,7 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
     private fun startStartupHomePrefetch() {
         if (isFinishing || isDestroyed || !startup.claimPrefetch()) return
         // 目录解析与 Lottie 首次装配错开，至少先让开屏画出一帧。
-        holidayCatalogRepository.loadAsync(null)
+        holidayCatalogRepository.loadAsync { maybeApplyHolidaySplashAfterCatalog() }
         val sourceViewModel = ViewModelProvider(this)[SourceViewModel::class.java]
         sourceViewModel.listResult.observe(this) {
             if (startupFirstGridPrefetchActive && !startupFirstGridReady) {
@@ -719,6 +814,7 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
         activeHomeFragment()?.takeIf { it.isAdded }?.onStartupHomePrefetchSettled()
         maybeMarkStartupContentReady()
         maybeOpenPendingNotificationDetail()
+        maybeOpenPendingShortcut()
     }
 
     private fun maybeMarkStartupContentReady() {
@@ -731,18 +827,27 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
     }
 
     private fun showStartupSplash() {
-        val themeBackground = ThemeRuntime.runtimePalette()?.get("bg_body")
-            ?: ContextCompat.getColor(this, R.color.bg_body)
         val overlay = mBinding.startupSplashOverlay
         startup.onSplashShown()
         startupHomeErrorMessage = null
         startupImageOnly = false
         imageOnlyFallback = null
+        holidaySplashUpgradeApplied = false
         window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
         overlay.visibility = View.VISIBLE
         // 仅对素材解析加兜底；正常播放不被超时截断。
         overlay.postDelayed(animationLoadTimeout, ANIMATION_LOAD_TIMEOUT_MS)
-        // 开屏素材立即开始；节日目录在首帧后由预取任务后台加载。
+        // 开屏素材立即开始，节日目录仍在后台加载；目录就绪且命中海报时再无缝换上，
+        // 既不阻塞首帧，也不会因为目录没加载完就丢掉当天的节气海报。
+        startStartupSplashContent(selectStartupSplashContent())
+        // 当前节气图未缓存时，本次启动只负责在后台补齐，下次启动即可整屏显示；
+        // 全程不阻塞开屏，网络异常也只影响"有没有海报"，不影响 App 启动。
+        startHolidaySplashPrefetch()
+    }
+
+    private fun selectStartupSplashContent(): SplashContent {
+        val themeBackground = ThemeRuntime.runtimePalette()?.get("bg_body")
+            ?: ContextCompat.getColor(this, R.color.bg_body)
         // 开屏背景由当前主题定义；纯色默认跟随同一主题的主背景色。
         val splash = ThemeStore.activeSplashBackground()
         splashBackgroundZoom = splash.zoom
@@ -752,14 +857,58 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
             ThemeStore.resolveSplashBackgroundPath(splash.ref).takeIf { it.isNotEmpty() } else null
         val solidColor = if (splash.mode == ThemeDef.SplashBackground.MODE_SOLID)
             ThemeColorPalette.parseColor(splash.color, themeBackground) else null
-        val content = SplashContentSelector.select(
+        return SplashContentSelector.select(
             themeBackground,
             solidColor,
             imagePath,
             splash.isLottieOnImage,
-            holidayCatalogRepository.getCached(), HolidayCalendarClock.now()
+            holidayCatalogRepository.getCached(), HolidayCalendarClock.now(),
+            holidaySplashMedia::posterFor,
+            // 目录通常还没加载完，先用上次预取记下的今日海报，保证开屏第一帧就有图。
+            holidaySplashMedia.todayCachedPoster()
         )
+    }
+
+    /**
+     * 节日目录后台加载完成后调用：当天命中海报且开屏仍在展示时换上海报。
+     * 只在默认动画还没进入退场流程时切换，避免开屏闪一下或拖长停留。
+     */
+    private fun maybeApplyHolidaySplashAfterCatalog() {
+        if (holidaySplashUpgradeApplied || !startup.splashVisible || startupImageOnly) return
+        if (startup.animationTailIsReady) return
+        val content = try {
+            selectStartupSplashContent()
+        } catch (error: Throwable) {
+            LogStore.fail(Category.SYSTEM, "节日开屏: 目录就绪后重选失败，原因=" +
+                error.javaClass.simpleName)
+            return
+        }
+        if (content !is SplashContent.Holiday) return
+        holidaySplashUpgradeApplied = true
+        LogStore.log(Category.SYSTEM, "节日开屏: 目录就绪，切换为 ${content.imagePath}")
+        val overlay = mBinding.startupSplashOverlay
+        overlay.removeCallbacks(finishStartupSplash)
+        overlay.removeCallbacks(animationPlaybackTimeout)
+        overlay.removeCallbacks(animationLoadTimeout)
+        mBinding.startupSplashAnimation.cancelAnimation()
         startStartupSplashContent(content)
+    }
+
+    private fun startHolidaySplashPrefetch() {
+        val now = HolidayCalendarClock.now()
+        val catalog = holidayCatalogRepository.getCached()
+        // 当天海报落盘后回调：开屏若还在（首启无缓存的场景），立刻换成海报而不是等到下次启动。
+        val onTodayCached = { maybeApplyHolidaySplashAfterCatalog() }
+        if (catalog != null) {
+            holidaySplashMedia.prefetchUpcoming(catalog, now, onTodayReady = onTodayCached)
+            return
+        }
+        holidayCatalogRepository.loadAsync {
+            holidayCatalogRepository.getCached()?.let { loaded ->
+                holidaySplashMedia.prefetchUpcoming(loaded, now, onTodayReady = onTodayCached)
+            }
+            maybeApplyHolidaySplashAfterCatalog()
+        }
     }
 
     private fun startStartupSplashContent(content: SplashContent) {
@@ -767,7 +916,9 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
         overlay.setBackgroundColor(when (content) {
             is SplashContent.Lottie -> content.backgroundColor
             is SplashContent.Image -> content.backgroundColor
+            is SplashContent.Holiday -> content.backgroundColor
         })
+        if (content !is SplashContent.Holiday) clearHolidaySplashLayers()
         when (content) {
             is SplashContent.Lottie -> {
                 startupImageOnly = false
@@ -813,7 +964,87 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
                     overlay.postDelayed(imageOnlyDisplayFinished, IMAGE_ONLY_DISPLAY_MS)
                 }
             }
+            is SplashContent.Holiday -> {
+                startupImageOnly = true
+                imageOnlyFallback = SplashContent.Lottie(
+                    content.fallbackLottieAssetPath, content.backgroundColor
+                )
+                mBinding.startupSplashAnimation.visibility = View.GONE
+                // 主题背景图与海报不叠加：海报铺满整屏。
+                mBinding.startupSplashBackgroundImage.removeOnLayoutChangeListener(splashImageLayoutListener)
+                mBinding.startupSplashBackgroundImage.setImageDrawable(null)
+                mBinding.startupSplashBackgroundImage.visibility = View.GONE
+                overlay.postDelayed(imageLoadTimeout, HOLIDAY_IMAGE_TIMEOUT_MS)
+                loadHolidaySplashImage(content) {
+                    overlay.removeCallbacks(imageLoadTimeout)
+                    overlay.postDelayed(imageOnlyDisplayFinished, IMAGE_ONLY_DISPLAY_MS)
+                }
+            }
         }
+    }
+
+    /**
+     * 节日海报：铺满整屏，按该图自己的锚点裁切（标题在左就给 0、在右就给 1），
+     * 暗色主题只压一层很淡的黑。加载的是已缓存本地文件，任何失败都退回默认 Lottie。
+     */
+    private fun loadHolidaySplashImage(content: SplashContent.Holiday, onReady: () -> Unit) {
+        val image = mBinding.startupSplashHolidayImage
+        cancelSplashImageLoad()
+        clearHolidaySplashLayers()
+        val target = object : Target {
+            override fun onBitmapLoaded(bitmap: Bitmap, from: Picasso.LoadedFrom) {
+                if (!startup.splashVisible) return
+                splashImageTarget = null
+                // 海报按像素定位，避免不同设备密度二次缩放。
+                bitmap.density = Bitmap.DENSITY_NONE
+                image.setImageBitmap(bitmap)
+                image.alpha = 0f
+                image.visibility = View.VISIBLE
+                SplashPosterFit.applyCover(image, bitmap, content.anchorX, content.anchorY)
+                image.animate().alpha(1f).setDuration(HOLIDAY_IMAGE_FADE_MS).start()
+                // 暗色主题压一层很淡的黑，浅色主题直接看原图。
+                mBinding.startupSplashHolidayScrim.visibility =
+                    if (Utils.isDarkTheme()) View.VISIBLE else View.GONE
+                onReady()
+            }
+
+            override fun onBitmapFailed(error: Exception, errorDrawable: Drawable?) {
+                splashImageTarget = null
+                if (!startup.splashVisible) return
+                LogStore.fail(Category.SYSTEM, "节日开屏: 海报解码失败，改用默认开屏，原因=" +
+                    error.javaClass.simpleName)
+                clearHolidaySplashLayers()
+                if (startupImageOnly) fallbackFromSplashImage()
+            }
+
+            override fun onPrepareLoad(placeHolderDrawable: Drawable?) = Unit
+        }
+        splashImageTarget = target
+        try {
+            val metrics = resources.displayMetrics
+            Picasso.get().load(File(content.imagePath))
+                // 海报是水墨画，全局 RGB_565 会让浅色渐变出色带、整体偏色，开屏用 ARGB_8888。
+                .config(Bitmap.Config.ARGB_8888)
+                .resize(
+                    metrics.widthPixels.coerceAtLeast(1) * 2,
+                    metrics.heightPixels.coerceAtLeast(1) * 2
+                )
+                .centerInside()
+                .into(target)
+        } catch (error: Exception) {
+            splashImageTarget = null
+            LogStore.fail(Category.SYSTEM, "节日开屏: 海报加载异常，改用默认开屏，原因=" +
+                error.javaClass.simpleName)
+            clearHolidaySplashLayers()
+            if (startupImageOnly) fallbackFromSplashImage()
+        }
+    }
+
+    private fun clearHolidaySplashLayers() {
+        mBinding.startupSplashHolidayImage.animate().cancel()
+        mBinding.startupSplashHolidayImage.setImageDrawable(null)
+        mBinding.startupSplashHolidayImage.visibility = View.GONE
+        mBinding.startupSplashHolidayScrim.visibility = View.GONE
     }
 
     private fun loadSplashBackgroundImage(path: String?, onReady: () -> Unit) {
@@ -888,6 +1119,7 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
         mBinding.startupSplashBackgroundImage.removeOnLayoutChangeListener(splashImageLayoutListener)
         mBinding.startupSplashBackgroundImage.setImageDrawable(null)
         mBinding.startupSplashBackgroundImage.visibility = View.GONE
+        clearHolidaySplashLayers()
         startupImageOnly = false
         val fallback = imageOnlyFallback ?: return
         imageOnlyFallback = null
@@ -921,6 +1153,7 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
         cancelSplashImageLoad()
         mBinding.startupSplashBackgroundImage.removeOnLayoutChangeListener(splashImageLayoutListener)
         mBinding.startupSplashBackgroundImage.setImageDrawable(null)
+        clearHolidaySplashLayers()
         startupImageOnly = false
         imageOnlyFallback = null
         mBinding.startupSplashOverlay.visibility = View.GONE
@@ -956,6 +1189,7 @@ class MainActivity : BaseVbActivity<ActivityMainBinding>(), UserStartupGate {
                     }
                     dispatchAfterStartupSplash.run()
                     maybeOpenPendingNotificationDetail()
+                    maybeOpenPendingShortcut()
                     if (!startup.prefetchStarted) startStartupHomePrefetch.run()
                 }
                 return true

@@ -78,6 +78,7 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
         appContext = context == null ? null : context.getApplicationContext();
         com.github.catvod.crawler.JarLoader.setContext(context);
         com.github.catvod.crawler.JsLoader.setContext(context);
+        com.github.catvod.crawler.PyLoader.setContext(context);
         com.github.tvbox.osc.util.FileUtils.setContext(context);
         com.github.tvbox.osc.util.UA.setContext(context);
         com.github.tvbox.osc.util.js.local.setContext(context);
@@ -318,6 +319,8 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
             // 被新订阅的搜索继续命中复用(此前靠搜索页 onDestroy 的 resetSources 暴力兜底,
             // 现 onDestroy 已改为 stopAllSourceTasks 不再销毁实例,这里必须显式清理)。
             com.github.catvod.crawler.JsLoader.load();
+            // py 源同理:旧订阅的 .py 文件/模块已失效,实例必须整体重建
+            com.github.catvod.crawler.PyLoader.load();
             ConfigBuilder cleared = new ConfigBuilder();
             String userLiveUrl = SystemConfig.getLiveUrl();
             if (!StringUtils.isBlank(userLiveUrl)) {
@@ -331,6 +334,13 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
             callback.error("-1");
             return;
         }
+        // py 源订阅:订阅地址本身就是一个 .py 文件,没有"配置文本"可拉取/解析。
+        // 这里按"单站点配置"现场合成(站点 type=3、api 指向该 .py),不落 json、不进配置缓存,
+        // 订阅列表里那条地址也还是 .py(导入时不再包一层外壳)。
+        if (isPySubscription(apiUrl)) {
+            loadPyConfig(apiUrl, epoch, callback);
+            return;
+        }
         File cache = new File(getAppContext().getFilesDir().getAbsolutePath() + "/" + MD5.encode(apiUrl));
         if (useCache && cache.exists()) {
             loadCachedConfig(apiUrl, cache, epoch, callback,
@@ -339,6 +349,74 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
             return;
         }
         fetchConfig(apiUrl, cache, epoch, callback);
+    }
+
+    /** 订阅地址是否直接指向 py 源文件(容忍 {@code ;pk;}/{@code ;md5;} 这类后缀) */
+    private static boolean isPySubscription(String apiUrl) {
+        String plain = apiUrl;
+        int pk = plain.indexOf(";pk;");
+        if (pk >= 0) plain = plain.substring(0, pk);
+        return isPySource(plain);
+    }
+
+    /**
+     * py 源订阅的配置就绪:不拉取、不解析,直接按单站点配置发布。
+     *
+     * <p>为什么不在导入时写一份 json:用户导入的是自己的脚本,订阅列表里也该是那个脚本;
+     * 生成外壳只会多一份文件、多一处"为什么变成 json"的困惑,而且删订阅时还要连带清理。
+     */
+    private void loadPyConfig(final String apiUrl, final int epoch, final LoadConfigCallback callback) {
+        CONFIG_EXECUTOR.execute(() -> {
+            if (configLoadEpoch.get() != epoch) return;
+            try {
+                PreparedConfig prepared = prepareConfig(apiUrl, pyConfigOf(apiUrl));
+                MAIN.post(() -> {
+                    if (configLoadEpoch.get() != epoch) return;
+                    try {
+                        publishConfig(prepared, epoch);
+                        LogStore.success(Category.SUBSCRIPTION, "订阅: py 源配置就绪 (" + logSource(apiUrl) + ")");
+                        callback.success();
+                    } catch (Throwable th) {
+                        configLoadError(apiUrl, callback, th);
+                    }
+                });
+            } catch (Throwable th) {
+                MAIN.post(() -> {
+                    if (configLoadEpoch.get() == epoch) configLoadError(apiUrl, callback, th);
+                });
+            }
+        });
+    }
+
+    /** 一个 py 文件 = 一个站点:配置外壳在这里现场合成,不落盘 */
+    private static JsonObject pyConfigOf(String apiUrl) {
+        String fileName = apiUrl;
+        int slash = fileName.lastIndexOf('/');
+        if (slash >= 0) fileName = fileName.substring(slash + 1);
+        int query = fileName.indexOf('?');
+        if (query >= 0) fileName = fileName.substring(0, query);
+        fileName = Uri.decode(fileName);
+        String name = fileName.toLowerCase(java.util.Locale.ROOT).endsWith(".py")
+                ? fileName.substring(0, fileName.length() - 3) : fileName;
+        if (name.trim().isEmpty()) name = "py源";
+
+        JsonObject site = new JsonObject();
+        site.addProperty("key", "py_" + MD5.encode(apiUrl).substring(0, 10));
+        site.addProperty("name", name);
+        site.addProperty("type", 3);
+        site.addProperty("api", apiUrl);
+        site.addProperty("searchable", 1);
+        site.addProperty("quickSearch", 1);
+        site.addProperty("filterable", 1);
+        site.addProperty("ext", "");
+
+        JsonArray sites = new JsonArray();
+        sites.add(site);
+        JsonObject config = new JsonObject();
+        config.add("sites", sites);
+        config.add("parses", new JsonArray());
+        config.add("flags", new JsonArray());
+        return config;
     }
 
     private void fetchConfig(String apiUrl, File cache, int epoch, LoadConfigCallback callback) {
@@ -1302,9 +1380,34 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
     }
 
     public Spider getCSP(SourceBean sourceBean) {
-        boolean js = sourceBean.getApi().endsWith(".js") || sourceBean.getApi().contains(".js?");
-        if (js) return jsLoader.getSpider(sourceBean.getKey(), sourceBean.getApi(), sourceBean.getExt(), sourceBean.getJar());
-        return jarLoader.getSpider(sourceBean.getKey(), sourceBean.getApi(), sourceBean.getExt(), sourceBean.getJar());
+        String api = sourceBean.getApi() == null ? "" : sourceBean.getApi().trim();
+        // py 源:api 指向一个 .py 文件(本机导入的副本或订阅里的网络地址),走内嵌 CPython 执行
+        if (isPySource(api)) {
+            return com.github.catvod.crawler.PyLoader.getSpider(
+                    sourceBean.getKey(), api, sourceBean.getExt(), sourceBean.getJar());
+        }
+        boolean js = api.endsWith(".js") || api.contains(".js?");
+        if (js) return jsLoader.getSpider(sourceBean.getKey(), api, sourceBean.getExt(), sourceBean.getJar());
+        return jarLoader.getSpider(sourceBean.getKey(), api, sourceBean.getExt(), sourceBean.getJar());
+    }
+
+    /** api 是否指向 py 源(容忍 {@code ;md5;} 校验串与 {@code ?} 查询串,大小写不敏感) */
+    private static boolean isPySource(String api) {
+        if (api == null) return false;
+        String plain = api;
+        int semi = plain.indexOf(';');
+        if (semi >= 0) plain = plain.substring(0, semi);
+        int query = plain.indexOf('?');
+        if (query >= 0) plain = plain.substring(0, query);
+        return plain.toLowerCase(java.util.Locale.ROOT).endsWith(".py");
+    }
+
+    /**
+     * 本机 HTTP 服务基址(含动态端口):py 源的 {@code getProxyUrl} 在 Python 侧拼这个地址,
+     * 用来把需要鉴权/解密的播放地址交回本机代理({@code /proxy?do=py})。
+     */
+    public static String localBase() {
+        return loopbackBase();
     }
 
     @SuppressWarnings("unchecked")
@@ -1316,6 +1419,10 @@ public class ApiConfig implements com.github.tvbox.osc.spiderapi.SourceConfigApi
         Object doParam = param == null ? null : param.get("do");
         if ("js".equals(String.valueOf(doParam).trim())) {
             return jsLoader.proxyInvoke((Map<String, String>) param);
+        }
+        // py 源的本机代理(getProxyUrl 生成 do=py):转给 SpiderPY.localProxy
+        if ("py".equals(String.valueOf(doParam).trim())) {
+            return com.github.catvod.crawler.PyLoader.proxyInvoke((Map<String, String>) param);
         }
         return jarLoader.proxyInvoke(param);
     }

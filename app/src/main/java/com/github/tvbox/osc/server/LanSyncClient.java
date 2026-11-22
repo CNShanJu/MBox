@@ -2,6 +2,7 @@ package com.github.tvbox.osc.server;
 
 import android.content.Context;
 
+import com.github.tvbox.osc.config.SystemConfig;
 import com.github.tvbox.osc.util.OkGoHelper;
 import com.github.tvbox.osc.transfer.ConfigBundle;
 import com.github.tvbox.osc.transfer.ConfigImportSource;
@@ -56,7 +57,8 @@ public final class LanSyncClient implements ConfigImportSource {
     }
 
     public static LanSyncClient connect(Context context, String address, String code) throws Exception {
-        if (context == null || code == null || !code.matches("[0-9]{6}")) throw new IOException("请输入 6 位配对码");
+        if (context == null || !SystemConfig.isValidLanPairingCode(code))
+            throw new IOException("请输入手机上的配对码");
         HttpUrl parsed = HttpUrl.parse(address == null ? "" : address.trim());
         if (parsed == null || !(parsed.scheme().equals("http") || parsed.scheme().equals("https"))
                 || !parsed.encodedPath().equals("/") || parsed.query() != null || parsed.username().length() > 0) {

@@ -98,6 +98,9 @@ public class PlayFragment extends BaseLazyFragment {
                                          boolean finish, boolean autoSwitchPlayer) {
             return false;
         }
+
+        /** 视频真实尺寸到达（可能为 0）:详情页预览据此重排播放器，减少上下黑边。 */
+        default void onPreviewVideoSizeChanged() { }
     }
 
     private PlaySyncHost mSyncHost;
@@ -114,7 +117,14 @@ public class PlayFragment extends BaseLazyFragment {
     private TextView mPlayLoadTip;
     /** 端口占用提示(独立一行,不随主提示换文案而消失;见 {@link #updatePortTip()}) */
     private TextView mPortTip;
-    /** 本次起播是否受"本机端口被占"影响(起播时抢不回默认端口):加载态与失败提示据此补那一行 */
+    /**
+     * 环境事实:本机默认端口被占、起播时抢不回来。<b>只记录,不据此提示</b> ——
+     * 走注入端口的源在回退端口下照样能播,提前提示对它们就是误报(用户口径 2026-11-20)。
+     */
+    private boolean mPortConflictPending;
+    /** 本次起播取到的地址里,出现过"写死本机默认端口"的地址(如 {@code 127.0.0.1:9978/proxy}) */
+    private boolean mPortDependencySeen;
+    /** 失败时确认本次真的被端口占用拖累:失败页据此补那一行、阻止空转重试、关掉占用方后自动重试 */
     private boolean mPortHintArmed;
     private boolean browserCastStatusVisible;
     private boolean dlnaCastStatusVisible;
@@ -285,6 +295,10 @@ public class PlayFragment extends BaseLazyFragment {
 
     private void initView() {
         mVideoView = findViewById(R.id.mVideoView);
+        // 尺寸一到就交给宿主重排预览高度/左栏宽度(详情页按视频比例减黑边)
+        mVideoView.setOnVideoSizeChangedListener((videoWidth, videoHeight) -> {
+            if (mSyncHost != null) mSyncHost.onPreviewVideoSizeChanged();
+        });
         mPlayLoadTip = findViewById(R.id.play_load_tip);
         mPortTip = findViewById(R.id.play_load_port_tip);
         mPlayLoading = findViewById(R.id.play_loading);
@@ -507,8 +521,8 @@ public class PlayFragment extends BaseLazyFragment {
                     .navigationBarColor(R.color.black)// 即使隐藏部分时候还是会显示
                     .fitsSystemWindows(false)
                     .init();
-        } else {// 非全屏统一设置竖屏,activity处理为小的预览尺寸
-            mActivity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
+        } else {// 非全屏:解除方向锁定,详情页跟随系统(竖屏上下布局、横屏左右布局,见 DetailActivity#applyPreviewLayout)
+            mActivity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
 
             ImmersionBar.with(mActivity)
                     .hideBar(BarHide.FLAG_SHOW_BAR)
@@ -595,14 +609,19 @@ public class PlayFragment extends BaseLazyFragment {
     }
 
     /**
-     * 刷新"本机端口被占"那一行(独立视图,只有本次起播真的受影响时才显示)。
+     * 刷新"本机端口被占"那一行:只在<b>本次起播已经失败</b>、且地址确实写死了默认端口时才显示
+     * (见 {@link #armPortHintIfResponsible(String)})。
+     * <p>
+     * 为什么不在转圈时就提示:端口回退后服务仍在回退端口上正常工作,注入端口的源能照常播放;
+     * 抢不到 9978 只影响"把 127.0.0.1:9978 写死"的第三方源。对能播的源提前喊"端口被占",
+     * 用户看到的就是"明明能播你却报错"(用户口径 2026-11-20)。
      * <p>
      * 只说"端口被占用"没用 —— 用户关不掉一个不知道名字的东西。所以带上应用名,并把
      * 「点此去关闭」做成高亮可点(与播放器其它错误提示里的「切换播放器」「去开启」同一个高亮色),
      * 点一下直接跳到那个应用的系统设置页去强行停止(见 {@link #openPortOccupant()})。
      * <p>
      * 放在独立一行而不是拼进主提示:主提示会随状态在"正在获取播放信息/网盘未返回地址/嗅探错误"之间
-     * 来回换,拼进去那行就跟着没了;而端口占用是本次起播一直存在的前提。
+     * 来回换,拼进去那行就跟着没了;而端口占用是失败页一直存在的前提。
      */
     private void updatePortTip() {
         if (mPortTip == null) return;
@@ -625,6 +644,38 @@ public class PlayFragment extends BaseLazyFragment {
     /** 收起端口占用那一行 */
     private void hidePortTip() {
         if (mPortTip != null) mPortTip.setVisibility(View.GONE);
+    }
+
+    /**
+     * 记下"本次起播用到的地址写死了本机默认端口"(仅在端口确实被占时才有意义)。
+     * <p>
+     * 每个即将播放的地址都会过这一趟(见 {@link #checkAddressConnection}),所以嗅探出来的、
+     * 代理直连回退的地址也覆盖得到。判定本身是纯 URI 解析,见
+     * {@link com.github.tvbox.osc.util.player.LocalServicePortDependency}。
+     */
+    private void notePortDependency(String url) {
+        if (mPortDependencySeen || !mPortConflictPending || url == null) return;
+        com.github.tvbox.osc.server.ControlManager cm =
+                com.github.tvbox.osc.server.ControlManager.get();
+        if (!com.github.tvbox.osc.util.player.LocalServicePortDependency.dependsOn(
+                url, cm.portFallbackFrom())) return;
+        mPortDependencySeen = true;
+        logPlaybackProgress("播放地址写死本机默认端口(现被占用): 地址="
+                + PlaybackErrorReporter.source(url));
+    }
+
+    /**
+     * 失败时才点亮端口提示:本次请求失败 + 端口仍被占,并且
+     * ① 取到过写死默认端口的本机地址(确认这次真的被端口拖累),或
+     * ② 压根没拿到播放地址(无从判定,只能把环境前提摆出来)。
+     * <p>
+     * 拿到地址、且地址明确走注入端口/外部直连时<b>不</b>提示:那种失败与端口无关,
+     * 提示只会把排查带偏。
+     */
+    private void armPortHintIfResponsible(String failedUrl) {
+        if (!mPortConflictPending) return;
+        if (!mPortDependencySeen && !TextUtils.isEmpty(failedUrl)) return;
+        mPortHintArmed = true;
     }
 
     /** 打开占用端口那个应用的系统设置页(认不出包名时退到应用列表),让用户自己强行停止 */
@@ -661,9 +712,9 @@ public class PlayFragment extends BaseLazyFragment {
             mPlayLoading.setVisibility(View.VISIBLE);
             mPlayLoadErr.setVisibility(View.GONE);
             armLoadingWatchdog();
-            // 起播就已经知道本机端口抢不回来:别等两轮嗅探超时(20s×2)才提示,
-            // 转圈时就把"端口被谁占着、点哪去关"摆出来(用户口径 2026-11-09)。
-            if (mPortHintArmed) updatePortTip(); else hidePortTip();
+            // 加载态一律不挂端口提示:端口回退后服务照常工作,注入端口的源能正常播;
+            // 真要播不了,失败页会按"地址是否写死默认端口"补上那一行(用户口径 2026-11-20)。
+            hidePortTip();
         });
     }
 
@@ -1158,6 +1209,9 @@ public class PlayFragment extends BaseLazyFragment {
         // 本机代理失败时，原地址可能仍可直接播放。每集只尝试一次，
         // 并保留代理 URL 中的源请求头；直连确认为连接失败时不再重试/换内核。
         if (retryProxyTargetDirectly(failedPlayback)) return;
+        // 失败才判定:地址写死默认端口、或压根没拿到地址,才把账算到端口占用上;
+        // 走注入端口/外部直连的源失败与端口无关 —— 不提示,也不拦重试(用户口径 2026-11-20)。
+        armPortHintIfResponsible(failedUrl);
         boolean willRetry;
         if (connectionFailure) {
             willRetry = false;
@@ -1221,6 +1275,8 @@ public class PlayFragment extends BaseLazyFragment {
     private void failBeforePlayback(long generation, String url, String sourceUrl,
                                     String tip, String reason) {
         if (!isCurrentPlayback(generation) || !isAdded()) return;
+        // 建连预检就失败:地址若写死了被占的默认端口,这基本就是原因
+        armPortHintIfResponsible(url);
         String detail = PlaybackErrorReporter.safeDiagnosticText(reason)
                 + "，后续=不启动内核、不自动换内核";
         if (sourceUrl != null && !TextUtils.equals(url, sourceUrl)) {
@@ -1588,6 +1644,8 @@ public class PlayFragment extends BaseLazyFragment {
                                         long generation, String sourceUrl, boolean beforeManifest,
                                         Runnable onReady) {
         if (!isCurrentPlayback(generation)) return;
+        // 所有要交给内核的地址都从这里过,顺手记下"本次起播是否用了写死默认端口的地址"
+        notePortDependency(url);
         boolean httpUrl = url != null && (url.regionMatches(true, 0, "http://", 0, 7)
                 || url.regionMatches(true, 0, "https://", 0, 8));
         int playerType = mVodPlayerCfg == null ? PlayConfig.getPlayType()
@@ -2289,15 +2347,20 @@ public class PlayFragment extends BaseLazyFragment {
             logPlaybackProgress("放弃起播: mVodInfo 为空(详情数据未就绪)");
             return;
         }
-        // 本机服务若因 9978 被占退到了别的端口,先抢回来(第三方源里写死的 127.0.0.1:9978 只认它);
-        // 抢不回来就记住"这次起播会受影响",识别占用者,并让加载态立刻把这事说出来 ——
-        // 别等两轮嗅探超时(20s×2)之后才提示(用户口径 2026-11-09)。
+        // 本机服务若因 9978 被占退到了别的端口,先抢回来(第三方源里写死的 127.0.0.1:9978 只认它)。
+        // 抢不回来只记下本次起播的前提,这里不提示:走注入端口的源在回退端口下照样能播,
+        // 提前喊"端口被占"就是误报。等这次真的失败,再由 armPortHintIfResponsible 按地址判定
+        // 该不该把账算到端口头上(用户口径 2026-11-20)。
         com.github.tvbox.osc.server.ControlManager controlManager =
                 com.github.tvbox.osc.server.ControlManager.get();
         boolean wasArmed = mPortHintArmed;
-        mPortHintArmed = controlManager.isOnFallbackPort() && !controlManager.tryReclaimPreferredPort();
-        if (mPortHintArmed) {
-            logPlaybackProgress("本机服务仍在回退端口,本次起播可能受端口占用影响");
+        mPortHintArmed = false;
+        mPortDependencySeen = false;
+        mPortConflictPending = controlManager.isOnFallbackPort()
+                && !controlManager.tryReclaimPreferredPort();
+        if (mPortConflictPending) {
+            logPlaybackProgress("本机服务仍在回退端口,起播失败时再判断是否与此有关");
+            // 提前把占用者认出来(结果有缓存):真失败时提示能立刻点名,不用再等一次探测
             controlManager.warmPortOccupantAsync();
         } else if (wasArmed) {
             hidePortTip(); // 这次已经抢回默认端口:把上一次留下的那行撤掉
@@ -2519,6 +2582,8 @@ public class PlayFragment extends BaseLazyFragment {
                             view -> retryMissingAddressNow())
                     .create();
             mPlayLoadTip.setVisibility(View.VISIBLE);
+            // 压根没拿到播放地址:无从判断是否与端口有关,失败页把环境前提摆出来(用户口径 2026-11-20)。
+            armPortHintIfResponsible(null);
             // 这一屏可能是"端口被占"造成的:端口提示独立一行,不随主提示换文案而消失
             updatePortTip();
         });
@@ -2614,6 +2679,19 @@ public class PlayFragment extends BaseLazyFragment {
 
     public VodController getController() {
         return mController;
+    }
+
+    /**
+     * 当前视频宽高比(宽/高);尺寸未知(未起播/解码器还没报)时返回 0。
+     * <p>
+     * 详情页预览用它把播放器容器调成贴近视频比例的形状,减少上下黑边
+     * (尺寸策略见 {@link com.github.tvbox.osc.ui.kit.PreviewPlayerSizing})。
+     */
+    public float previewVideoAspect() {
+        int[] size = mPlaySession != null ? mPlaySession.videoSize()
+                : mVideoView == null ? null : mVideoView.getVideoSize();
+        if (size == null || size.length < 2 || size[0] <= 0 || size[1] <= 0) return 0f;
+        return (float) size[0] / (float) size[1];
     }
 
 }

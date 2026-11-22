@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 桌面图标长按菜单(Android 7.1+ 的 App Shortcuts)。
+     目标不直接写具体页面：action 由 SplashActivity 的 intent-filter 接收，主页在开屏退场、
+     首页首帧就绪后才拉起搜索页 / 观看历史(见 ShortcutTarget、MainActivity#maybeOpenPendingShortcut)。
+     这里刻意不写 android:targetPackage/android:targetClass —— debug 变体带 .debug 后缀，
+     写死包名会与正式包不一致；action 由 Manifest 的 intent-filter 唯一匹配即可。 -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_search"
+        android:shortcutId="search"
+        android:shortcutLongLabel="@string/shortcut_search_long"
+        android:shortcutShortLabel="@string/shortcut_search_short">
+        <intent android:action="com.github.tvbox.osc.action.SHORTCUT_SEARCH" />
+    </shortcut>
+    <shortcut
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_continue"
+        android:shortcutId="continue_watching"
+        android:shortcutLongLabel="@string/shortcut_continue_long"
+        android:shortcutShortLabel="@string/shortcut_continue_short">
+        <intent android:action="com.github.tvbox.osc.action.SHORTCUT_HISTORY" />
+    </shortcut>
+</shortcuts>

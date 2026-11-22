@@ -117,11 +117,41 @@ object SubscriptionLibrary {
         try {
             SubscriptionImportFiles.runLocked {
                 val file = libraryFileOf(context, sub.url)
-                if (file != null && file.isFile) file.delete()
+                if (file != null && file.isFile) {
+                    // py 源订阅的配置里 sites[].api 指向同目录的 .py 副本:删配置时一并回收
+                    deletePySourcesOf(context, file)
+                    file.delete()
+                }
                 null
             }
         } catch (t: Throwable) {
             LogStore.fail(Category.SUBSCRIPTION, "订阅: 删除订阅内部文件失败 (" + exceptionType(t) + ")")
+        }
+    }
+
+    /**
+     * 删掉配置里 `sites[].api` 指向的 py 源副本(只认内部导入目录内的 .py)。
+     * 用户自己放在别处的源文件绝不动 —— 与本地包清理"只删应用自己的目录"是同一条口径。
+     *
+     * <p>py 源订阅(地址本身就是 .py)不经过这里:它没有 json 外壳,由 [deleteLibraryFileOf] 直接删掉。
+     */
+    private fun deletePySourcesOf(context: Context?, configFile: File) {
+        try {
+            if (!configFile.name.endsWith(".json", ignoreCase = true)) return
+            val text = configFile.readText(Charsets.UTF_8)
+            if (!text.contains(".py")) return
+            val root = importDir(context).canonicalFile
+            val config = com.google.gson.JsonParser.parseString(text).asJsonObject
+            val sites = config.getAsJsonArray("sites") ?: return
+            for (element in sites) {
+                if (!element.isJsonObject) continue
+                val api = element.asJsonObject.get("api")?.takeIf { it.isJsonPrimitive }?.asString ?: continue
+                if (!api.endsWith(".py", ignoreCase = true)) continue
+                val py = libraryFileOf(context, api) ?: continue
+                if (py.isFile && py.canonicalPath.startsWith(root.path + File.separator)) py.delete()
+            }
+        } catch (t: Throwable) {
+            LogStore.fail(Category.SUBSCRIPTION, "订阅: 清理 py 源文件失败 (" + exceptionType(t) + ")")
         }
     }
 
@@ -205,6 +235,60 @@ object SubscriptionLibrary {
     }
 
     /**
+     * py 源文件复制进内部导入目录,**保留原文件名**(只清洗非法字符,强制 .py 结尾)。
+     *
+     * <p>与 [importCopyOf] 的差别:那份副本名带内容摘要(用户看不见也认不出),而 py 源是
+     * 用户自己维护的独立脚本文件 —— 导入后还叫 `七五影视.py` 才符合直觉,同名再导入即覆盖更新。
+     * 写入仍走 [SubscriptionImportFiles] 锁 + AtomicFile,失败不留半截文件。
+     */
+    @JvmStatic
+    @JvmOverloads
+    fun writePyFile(context: Context?, uri: Uri?, displayName: String?, cancelled: () -> Boolean = { false }): File? {
+        if (context == null || uri == null) return null
+        return try {
+            if (cancelled()) return null
+            val name = pyFileName(displayName)
+            // SAF 的读可能卡在远端,先在锁外读成临时文件
+            val staged = File.createTempFile("py_import_", ".tmp", context.cacheDir)
+            try {
+                val input = context.contentResolver.openInputStream(uri) ?: return null
+                input.use { source ->
+                    FileOutputStream(staged).use { output -> copyStream(source, output, cancelled) }
+                }
+                if (cancelled() || staged.length() <= 0L) return null
+                SubscriptionImportFiles.runLocked {
+                    if (cancelled()) return@runLocked null
+                    val target = File(ensureImportDir(context), name)
+                    val atomic = AtomicFile(target)
+                    val output = atomic.startWrite()
+                    try {
+                        FileInputStream(staged).use { stageIn -> copyStream(stageIn, output, cancelled) }
+                        if (cancelled()) throw IOException("导入已取消")
+                        atomic.finishWrite(output)
+                    } catch (failure: Throwable) {
+                        atomic.failWrite(output)
+                        throw failure
+                    }
+                    target
+                }
+            } finally {
+                staged.delete()
+            }
+        } catch (t: Throwable) {
+            LogStore.fail(Category.SUBSCRIPTION, "订阅: py 源写入失败 (" + exceptionType(t) + ")")
+            null
+        }
+    }
+
+    /** py 源文件名:清洗非法字符并保证以 .py 结尾(名字里其它部分原样保留) */
+    private fun pyFileName(displayName: String?): String {
+        val base = sanitizeImportName(displayName)
+        if (base.lowercase(Locale.ROOT).endsWith(".py")) return base
+        val stem = base.substringBeforeLast('.')
+        return (if (stem.isBlank()) "py源" else stem) + ".py"
+    }
+
+    /**
      * 读本地导入文件文本用于内容判定;文件过大(订阅配置不可能这么大)或读不出返回 null,
      * 调用方按旧逻辑"原样当 clan:// 订阅加入",不因判定失败阻断导入。
      */
@@ -270,11 +354,12 @@ object SubscriptionLibrary {
 
     private fun uriDigest(uri: Uri?): String = contentDigest(uri!!.toString())
 
-    /** 清理文件名中不能出现在真实路径的字符,并确保带 txt/json 扩展名 */
+    /** 清理文件名中不能出现在真实路径的字符,并确保带 txt/json/py 扩展名 */
     @JvmStatic
     fun sanitizeImportName(displayName: String?): String {
         var name = displayName!!.replace(Regex("[/\\\\:*?\"<>|\\u0000\\s]"), "_").trim { it <= ' ' }
-        if (!name.lowercase(Locale.ROOT).endsWith(".txt") && !name.lowercase(Locale.ROOT).endsWith(".json")) {
+        val lower = name.lowercase(Locale.ROOT)
+        if (!lower.endsWith(".txt") && !lower.endsWith(".json") && !lower.endsWith(".py")) {
             name += ".txt"
         }
         if (name.length > 80) name = name.substring(0, 80)

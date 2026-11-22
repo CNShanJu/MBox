@@ -23,7 +23,7 @@ import java.io.IOException
 import java.util.Locale
 
 /**
- * 本地文件「打开方式」的统一入口(txt / json / zip)。
+ * 本地文件「打开方式」的统一入口(txt / json / py / zip)。
  *
  * <p><b>为什么需要这一层</b>:系统把「用 MBox 打开」的 Intent 直接给到某个页面,而内容 URI 的读权限
  * 只挂在**收到 Intent 的这个页面**上 —— 本页一 finish,下游页(订阅管理 / 主题编辑)再去读就
@@ -34,6 +34,7 @@ import java.util.Locale
  * <ul>
  *   <li>{@code .txt} → 订阅源导入(订阅管理页直接吃到导入结果);</li>
  *   <li>{@code .json} → 主题包(带 {@code kind=mbox-theme})进主题导入,其余进订阅源导入;</li>
+ *   <li>{@code .py} → py 源(单个文件 = 一个站点),走订阅源导入,列表里带「py源」徽标;</li>
  *   <li>{@code .zip} → 弹动作列表:订阅源导入 / 还原备份 / 导入主题(压缩包内容看不出来,交给用户选)。</li>
  * </ul>
  */
@@ -86,6 +87,7 @@ class LocalFileOpenActivity : BaseActivity() {
         when (extensionOf(name)) {
             "txt" -> stageThenImport(source, name) { file -> openSubscriptionImport(file, name) }
             "json" -> stageThenImport(source, name) { file -> routeJson(file, name) }
+            "py" -> stageThenImport(source, name) { file -> openSubscriptionImport(file, name) }
             "zip" -> chooseZipAction(source, name)
             else -> {
                 AppBubble.toast("暂不支持这种文件")

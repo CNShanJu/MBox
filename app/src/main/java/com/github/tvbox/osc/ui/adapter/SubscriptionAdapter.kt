@@ -123,8 +123,14 @@ class SubscriptionAdapter : BaseQuickAdapter<SubscriptionRow, BaseViewHolder>(R.
             .setText(R.id.tv_url, item.url)
 
         val fromPackage = Subscription.ORIGIN_PACKAGE == item.origin
-        helper.setGone(R.id.tv_from, fromPackage)
-        if (fromPackage) helper.setText(R.id.tv_from, "本地")
+        val fromPy = Subscription.ORIGIN_PY == item.origin
+        // 两个徽标同一枚 View:本地包 = 「本地」,py 源 = 「py源」(其余来源不显示)
+        helper.setGone(R.id.tv_from, fromPackage || fromPy)
+        if (fromPy) {
+            helper.setText(R.id.tv_from, "py源")
+        } else if (fromPackage) {
+            helper.setText(R.id.tv_from, "本地")
+        }
 
         if (currentMode != Mode.NORMAL) {
             // 多选态(导出/删除):复选框表示"选中",置顶标记先收起来

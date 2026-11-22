@@ -1222,7 +1222,7 @@ public class RemoteServer extends NanoHTTPD {
 
     private static String initialPairingCode() {
         return SystemConfig.isLanServerEnabled() ? SystemConfig.getOrCreateLanPairingCode()
-                : String.format(Locale.ROOT, "%06d", new SecureRandom().nextInt(1000000));
+                : SystemConfig.randomLanPairingCode();
     }
 
     private void restoreSessions() {

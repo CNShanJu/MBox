@@ -21,6 +21,7 @@ import com.github.tvbox.osc.ui.activity.CollectActivity;
 import com.github.tvbox.osc.ui.activity.DetailActivity;
 import com.github.tvbox.osc.ui.activity.DownloadActivity;
 import com.github.tvbox.osc.ui.activity.HistoryActivity;
+import com.github.tvbox.osc.ui.activity.HolidayPosterActivity;
 import com.github.tvbox.osc.ui.activity.LiveActivity;
 import com.github.tvbox.osc.ui.activity.MovieFoldersActivity;
 import com.github.tvbox.osc.ui.activity.SettingActivity;
@@ -162,6 +163,10 @@ public class MyFragment extends BaseVbFragment<FragmentMyBinding> {
         boolean visible = !TextUtils.isEmpty(holiday);
         mBinding.tvCalendarFestival.setText(visible ? holiday : "");
         mBinding.tvCalendarFestival.setVisibility(visible ? View.VISIBLE : View.GONE);
+        // 有节日才可点：点进海报大图页，可直接保存当天海报到相册。
+        mBinding.tvCalendarFestival.setClickable(visible);
+        mBinding.tvCalendarFestival.setOnClickListener(
+                visible ? v -> HolidayPosterActivity.start(requireContext(), null) : null);
     }
 
     private void startCalendarUpdates() {

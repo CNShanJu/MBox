@@ -106,13 +106,11 @@ public abstract class BaseController extends BaseVideoController implements Gest
     private View mLoading;
     /**
      * 加载中网速文字(tag=play_load_net_speed,仅点播/本地布局有)。
-     * 注意:播放器 loading 分三类——资源解析/起播准备(PREPARING)、首次起播缓冲(未出画面的 BUFFERING)、
-     * 播中缓存(BUFFERING)。网速只跟"出过画面后的播中缓存"一致:起播阶段(解析/准备/首缓冲)不显示,
-     * 避免与"正在获取播放信息/起播转圈"同屏;卡顿重缓冲时才显示速度。
+     * 加载阶段(起播准备/首缓冲/播中缓存)与 loading 同屏显示:起播本来就在下载数据,
+     * 网速此时同样可读,不再等"出过画面"才出现,避免 loading 下方留一段空白。
+     * 直播布局无此 tag → null,只控 loading;本地文件播放由 {@link #showsNetSpeed()} 关掉。
      */
     private View mNetSpeed;
-    /** 是否已出过画面(PLAYING/PREPARED 过);新会话(IDLE)复位,用于区分"首缓冲"与"播中卡顿" */
-    private boolean mEverPrepared = false;
     /** 快进/快退进度浮层是否显示中;显示期间 loading/网速让位(二者不同时出现),浮层消失后按播放状态还原 */
     private boolean mSeekPanelVisible = false;
     /** 点播/本地共用的中心播放状态；直播控制布局没有这两个视图。 */
@@ -290,9 +288,17 @@ public abstract class BaseController extends BaseVideoController implements Gest
         if (mLoading != null) mLoading.setVisibility(visible ? VISIBLE : GONE);
     }
 
-    /** 网速显隐:仅"出过画面后的播中缓存"显示(首缓冲/起播不显示,避免与加载提示同屏) */
+    /** 网速显隐:场景有网络下载时跟随 loading 同显同隐(本地文件由 showsNetSpeed 关掉) */
     private void setNetSpeedVisible(boolean visible) {
-        if (mNetSpeed != null) mNetSpeed.setVisibility(visible ? VISIBLE : GONE);
+        if (mNetSpeed != null) mNetSpeed.setVisibility(visible && showsNetSpeed() ? VISIBLE : GONE);
+    }
+
+    /**
+     * 所在场景是否存在有意义的网络速度:点播/直播为 true;本地文件播放为 false,
+     * 不显示"0Kb/s"这类误导性占位。
+     */
+    protected boolean showsNetSpeed() {
+        return true;
     }
 
     /** Keep the animation and buffering speed together inside the central part of the picture. */
@@ -333,12 +339,10 @@ public abstract class BaseController extends BaseVideoController implements Gest
         boolean showLoading = false;
         boolean showNetSpeed = false;
         switch (playState) {
-            case VideoView.STATE_PREPARING: // 起播准备:loading 转,但网速不显示(尚未出画面)
+            case VideoView.STATE_PREPARING: // 起播准备:loading 转圈的同时就在下载,网速一并显示
+            case VideoView.STATE_BUFFERING: // 首缓冲与播中缓存同待遇,不再区分"是否出过画面"
                 showLoading = true;
-                break;
-            case VideoView.STATE_BUFFERING: // 缓存:出过画面(播中卡顿)才显示网速;首缓冲不显示
-                showLoading = true;
-                showNetSpeed = mEverPrepared;
+                showNetSpeed = true;
                 break;
             default:
                 break;
@@ -489,17 +493,8 @@ public abstract class BaseController extends BaseVideoController implements Gest
             default:
                 break;
         }
-        switch (playState) {
-            case VideoView.STATE_IDLE: // 新会话起点(切集/重播前 release)
-                mEverPrepared = false;
-                mReservedProgressTimeLength = -1;
-                break;
-            case VideoView.STATE_PLAYING:
-            case VideoView.STATE_PREPARED: // 已出画面
-                mEverPrepared = true;
-                break;
-            default:
-                break;
+        if (playState == VideoView.STATE_IDLE) { // 新会话起点(切集/重播前 release)
+            mReservedProgressTimeLength = -1;
         }
         refreshLoadingUi(playState);
     }

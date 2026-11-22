@@ -3,6 +3,8 @@ plugins {
     id 'com.android.application' version '8.11.1' apply false
     id 'com.android.library' version '8.11.1' apply false
     id 'org.jetbrains.kotlin.android' version '2.2.21' apply false
+    // 内嵌 CPython 运行时(:spider 的 py 源执行器);17.2 支持 AGP 7.3~9.5、minSdk 24
+    id 'com.chaquo.python' version '17.2.0' apply false
 }
 
 ext {

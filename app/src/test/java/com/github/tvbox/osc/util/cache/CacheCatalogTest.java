@@ -269,6 +269,29 @@ public class CacheCatalogTest {
         assertFalse(CacheCatalog.isCloudCredential(cloudDrive, null));
     }
 
+    /** 节日开屏海报落在 filesDir/splash_media，必须能被单独统计并单独清理。 */
+    @Test public void splashPostersAreMeasuredAndClearedOnTheirOwn() throws Exception {
+        File internal = temporaryFolder.newFolder("internal");
+        File external = temporaryFolder.newFolder("external");
+        File files = temporaryFolder.newFolder("files");
+        File posterA = write(files, "splash_media/solar_term_xiaoxue-v1-abc.img", "poster a", false);
+        File posterB = write(files, "splash_media/solar_term_daxue-v1-def.img", "poster b", false);
+        File unrelated = write(files, "csp.jar", "source jar", false);
+
+        CacheCatalog catalog = new CacheCatalog(internal, external, files, () -> {});
+        CacheCatalog.Snapshot before = catalog.scan();
+        assertEquals(posterA.length() + posterB.length(), size(before, CacheCatalog.SPLASH_MEDIA));
+
+        CacheCatalog.ClearResult result = catalog.clear(
+                new HashSet<>(Arrays.asList(CacheCatalog.SPLASH_MEDIA)));
+        assertTrue(result.failures.toString(), result.failures.isEmpty());
+        assertTrue(result.clearedIds.contains(CacheCatalog.SPLASH_MEDIA));
+        assertFalse(posterA.exists());
+        assertFalse(posterB.exists());
+        // 只清海报，不能顺手删掉 filesDir 下的其他运行文件
+        assertTrue(unrelated.exists());
+    }
+
     private static File write(File root, String relative, String contents, boolean stale)
             throws IOException {
         File target = new File(root, relative);

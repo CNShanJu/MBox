@@ -28,6 +28,11 @@ import java.util.Set;
  */
 public final class CacheCatalog {
     public static final String IMAGE_HTTP = "image_http";
+    /**
+     * 节日开屏海报：{@code filesDir/splash_media} 下的本地海报（每个节日/节气一张）。
+     * 不在 cacheDir 树里，靠 {@link #splashMediaBytes()} 单独统计；清掉后下次启动会重新预取当天需要的图。
+     */
+    public static final String SPLASH_MEDIA = "splash_media";
     public static final String LOGS = "logs";
     public static final String TEMP_FILES = "temp_files";
     public static final String PLAYBACK_CACHE = "playback_cache";
@@ -44,6 +49,8 @@ public final class CacheCatalog {
 
     private static final Definition[] DEFINITIONS = {
             new Definition(IMAGE_HTTP, "图片缓存", "已浏览的海报和封面，清理后会重新加载", true),
+            new Definition(SPLASH_MEDIA, "节日开屏海报",
+                    "已下载的节气/节日开屏图，清理后下次启动会重新下载当天需要的图", true),
             new Definition(LOGS, "运行日志", "业务日志记录、错误日志文件及旧版日志残留（内容约大小）", true),
             new Definition(TEMP_FILES, "遗留的副本", "保存图片、分享或导入导出后遗留的旧副本", true),
             new Definition(PLAYBACK_CACHE, "播放缓存", "边播边缓存与下一集预载的视频片段，清理后重新缓存", true),
@@ -160,6 +167,8 @@ public final class CacheCatalog {
         // 网盘凭据在外部存储，不在缓存目录树里，所以单独扫一次；扫不到按 0 计，不影响其余分类。
         CredentialScan credentials = scanCloudCredentials();
         sizes.put(CLOUD_CREDENTIALS, credentials.bytes);
+        // 节日开屏海报在 filesDir/splash_media，同理单独统计。
+        sizes.put(SPLASH_MEDIA, splashMediaBytes());
 
         List<Entry> entries = new ArrayList<>(DEFINITIONS.length);
         long total = 0L;
@@ -178,9 +187,20 @@ public final class CacheCatalog {
                 Math.max(0L, total - clearable), logSizeUnavailable);
     }
 
-    /** Source JARs and downloaded subscription snapshots live in filesDir for offline fallback. */
-    private long sourceCacheBytes() {
+    /** 节日开屏海报：filesDir/splash_media 下的本地海报文件，清掉后由预取重新下载。 */
+    private long splashMediaBytes() {
         if (filesRoot == null) return 0L;
+        File[] files = new File(filesRoot, "splash_media").listFiles();
+        if (files == null) return 0L;
+        long size = 0L;
+        for (File file : files) {
+            if (file.isFile()) size = saturatedAdd(size, Math.max(0L, file.length()));
+        }
+        return size;
+    }
+
+    /** Source JARs and downloaded subscription snapshots live in filesDir for offline fallback. */
+    private long sourceCacheBytes() {        if (filesRoot == null) return 0L;
         try {
             if (!filesRoot.isDirectory()) return 0L;
             File root = filesRoot.getCanonicalFile();
@@ -258,6 +278,14 @@ public final class CacheCatalog {
                 } catch (RuntimeException error) {
                     // SecurityException 也走这里：外部存储不可读时按"清理失败"处理
                     failures.put(id, "网盘凭据清理失败：" + safeMessage(error));
+                }
+            } else if (SPLASH_MEDIA.equals(id)) {
+                try {
+                    int failed = deleteSplashMedia();
+                    if (failed == 0) cleared.add(id);
+                    else failures.put(id, "有 " + failed + " 张海报未能清理，请重试");
+                } catch (RuntimeException error) {
+                    failures.put(id, "节日海报清理失败：" + safeMessage(error));
                 }
             } else {
                 failures.put(id == null ? "" : id, "此类数据不可清理");
@@ -948,9 +976,20 @@ public final class CacheCatalog {
         return false;
     }
 
-    private int deleteCloudCredentials() {
+    /** 删除已下载的节日开屏海报；返回删除失败的文件数（下一次预取会补回当天需要的）。 */
+    private int deleteSplashMedia() {
+        if (filesRoot == null) return 0;
+        File[] files = new File(filesRoot, "splash_media").listFiles();
+        if (files == null) return 0;
         int failed = 0;
-        for (File file : credentialFiles()) {
+        for (File file : files) {
+            if (file.isFile() && !file.delete()) failed++;
+        }
+        return failed;
+    }
+
+    private int deleteCloudCredentials() {
+        int failed = 0;        for (File file : credentialFiles()) {
             try {
                 if (!isCredentialFile(file)) continue;
                 if (!file.delete() && file.exists()) failed++;

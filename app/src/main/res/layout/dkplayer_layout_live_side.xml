@@ -70,7 +70,7 @@
         </LinearLayout>
     </LinearLayout>
 
-    <!-- 底部:暂停/刷新(左), 线路信息+全屏(右) -->
+    <!-- 底部:刷新(左), 线路信息+全屏(右) -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -82,18 +82,9 @@
         android:paddingBottom="@dimen/player_control_edge_v">
 
         <androidx.appcompat.widget.AppCompatImageView
-            android:id="@+id/iv_play_pause"
-            android:layout_width="34dp"
-            android:layout_height="34dp"
-            android:padding="6dp"
-            android:src="@drawable/ic_pause"
-            app:tint="@color/white" />
-
-        <androidx.appcompat.widget.AppCompatImageView
             android:id="@+id/iv_refresh"
             android:layout_width="34dp"
             android:layout_height="34dp"
-            android:layout_marginStart="12dp"
             android:padding="6dp"
             android:src="@drawable/dkplayer_ic_action_replay"
             app:tint="@color/white"

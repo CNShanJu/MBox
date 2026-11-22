@@ -187,7 +187,8 @@ public class VodController extends BaseController implements PlaybackSettingsCon
             Date date = new Date();
             SimpleDateFormat timeFormat = new SimpleDateFormat("HH:mm");
             mPlayPauseTime.setText(timeFormat.format(date));
-            String speed = PlayerHelper.getDisplaySpeed(mControlWrapper.getTcpSpeed());
+            // 应用级采样(内核无关):系统内核 getTcpSpeed 恒为 0,起播阶段也得给得出真实下载速度。
+            String speed = PlayerHelper.getDisplaySpeed(PlayerHelper.sampleNetworkSpeed());
             mPlayLoadNetSpeedRightTop.setText(speed);
             mPlayLoadNetSpeed.setText(speed);
 

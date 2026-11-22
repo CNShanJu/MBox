@@ -1,0 +1,262 @@
+{
+  "desc": {
+    "version": "配置格式版本，当前为 1；解析器只接受这个值。",
+    "items": "开屏海报条目数组。条目按顺序覆盖 calendar/holidays.json 中对应 id 的节日，未列出的节日继续用默认开屏。",
+    "items.id": "必须与 calendar/holidays.json 的 holiday.id 完全一致；同日命中多条时只取第一个本地已缓存的海报。",
+    "items.name": "节气/节日名称，仅用于人工核对，不参与日期匹配。",
+    "items.url": "图片直链，必须以 https:// 开头；下载后按 id + 链接哈希缓存在应用私有目录，链接变更会自动重新缓存。",
+    "items.version": "素材版本，默认 1；缓存文件名会带上它。换图时改 url 会自动重下，若图床用同一链接覆盖内容，则把 version 加 1 强制刷新。",
+    "items.anchorX": "标题所在侧的水平锚点：0 保留左侧标题、1 保留右侧标题、0.5 居中；竖屏铺满只裁左右，按主标题位置填。",
+    "items.anchorY": "（可选，默认 0）纵向锚点：0 贴顶保留顶部标题，横屏铺满只裁上下时用它决定保留哪一段。",
+    "rules": "单个条目 URL 非法只跳过该条，不影响其余条目；整份结构损坏时开屏直接回落默认 Lottie，绝不阻塞启动。"
+  },
+  "version": 1,
+  "items": [
+    {
+      "id": "solar_term_xiaohan",
+      "name": "小寒",
+      "url": "https://a1.boltp.com/2026/11/22/6b025c5097ba0.jpg",
+      "anchorX": 0
+    },
+    {
+      "id": "solar_term_dahan",
+      "name": "大寒",
+      "url": "https://a1.boltp.com/2026/11/22/6b025b84a24c5.jpg",
+      "anchorX": 1
+    },
+    {
+      "id": "solar_term_lichun",
+      "name": "立春",
+      "url": "https://a1.boltp.com/2026/11/22/6b025b952179e.jpg",
+      "anchorX": 0
+    },
+    {
+      "id": "solar_term_yushui",
+      "name": "雨水",
+      "url": "https://a1.boltp.com/2026/11/22/6b025c56b1268.jpg",
+      "anchorX": 1
+    },
+    {
+      "id": "solar_term_jingzhe",
+      "name": "惊蛰",
+      "url": "https://a1.boltp.com/2026/11/22/6b025b930165b.jpg",
+      "anchorX": 0
+    },
+    {
+      "id": "solar_term_chunfen",
+      "name": "春分",
+      "url": "https://a1.boltp.com/2026/11/22/6b025b82b7e52.jpg",
+      "anchorX": 1
+    },
+    {
+      "id": "qingming",
+      "name": "清明",
+      "url": "https://a1.boltp.com/2026/11/22/6b025ba10f353.jpg",
+      "anchorX": 0
+    },
+    {
+      "id": "solar_term_guyu",
+      "name": "谷雨",
+      "url": "https://a1.boltp.com/2026/11/22/6b025b8e93817.jpg",
+      "anchorX": 1
+    },
+    {
+      "id": "solar_term_lixia",
+      "name": "立夏",
+      "url": "https://a1.boltp.com/2026/11/22/6b025b9d2bc3d.jpg",
+      "anchorX": 0
+    },
+    {
+      "id": "solar_term_xiaoman",
+      "name": "小满",
+      "url": "https://a1.boltp.com/2026/11/22/6b025c5148531.jpg",
+      "anchorX": 1
+    },
+    {
+      "id": "solar_term_mangzhong",
+      "name": "芒种",
+      "url": "https://a1.boltp.com/2026/11/22/6b025b9f3cb8a.jpg",
+      "anchorX": 0
+    },
+    {
+      "id": "solar_term_xiazhi",
+      "name": "夏至",
+      "url": "https://a1.boltp.com/2026/11/22/6b025c4fe7d4b.jpg",
+      "anchorX": 1
+    },
+    {
+      "id": "solar_term_xiaoshu",
+      "name": "小暑",
+      "url": "https://a1.boltp.com/2026/11/22/6b025c52873f0.jpg",
+      "anchorX": 0
+    },
+    {
+      "id": "solar_term_dashu",
+      "name": "大暑",
+      "url": "https://a1.boltp.com/2026/11/22/6b025b86828c3.jpg",
+      "anchorX": 1
+    },
+    {
+      "id": "solar_term_liqiu",
+      "name": "立秋",
+      "url": "https://a1.boltp.com/2026/11/22/6b025b9ae00bb.jpg",
+      "anchorX": 0
+    },
+    {
+      "id": "solar_term_chushu",
+      "name": "处暑",
+      "url": "https://a1.boltp.com/2026/11/22/6b025b80eea9b.jpg",
+      "anchorX": 1
+    },
+    {
+      "id": "solar_term_bailu",
+      "name": "白露",
+      "url": "https://a1.boltp.com/2026/11/22/6b025b7e6cbf0.jpg",
+      "anchorX": 0
+    },
+    {
+      "id": "solar_term_qiufen",
+      "name": "秋分",
+      "url": "https://a1.boltp.com/2026/11/22/6b025ba42ba20.jpg",
+      "anchorX": 1
+    },
+    {
+      "id": "solar_term_hanlu",
+      "name": "寒露",
+      "url": "https://a1.boltp.com/2026/11/22/6b025b9072870.jpg",
+      "anchorX": 0
+    },
+    {
+      "id": "solar_term_shuangjiang",
+      "name": "霜降",
+      "url": "https://a1.boltp.com/2026/11/22/6b025c4e8c25d.jpg",
+      "anchorX": 1
+    },
+    {
+      "id": "solar_term_lidong",
+      "name": "立冬",
+      "url": "https://a1.boltp.com/2026/11/22/6b025b9856020.jpg",
+      "anchorX": 0
+    },
+    {
+      "id": "solar_term_xiaoxue",
+      "name": "小雪",
+      "url": "https://a1.boltp.com/2026/11/22/6b025c540788c.jpg",
+      "anchorX": 1
+    },
+    {
+      "id": "solar_term_daxue",
+      "name": "大雪",
+      "url": "https://a1.boltp.com/2026/11/22/6b025b8a1de0d.jpg",
+      "anchorX": 0
+    },
+    {
+      "id": "solar_term_dongzhi",
+      "name": "冬至",
+      "url": "https://a1.boltp.com/2026/11/22/6b025b8c127d3.jpg",
+      "anchorX": 1
+    },
+    {
+      "id": "new_year",
+      "name": "元旦",
+      "url": "https://a1.boltp.com/2026/11/22/6b0267861ce8d.jpg",
+      "anchorX": 0
+    },
+    {
+      "id": "womens_day",
+      "name": "妇女节",
+      "url": "https://a1.boltp.com/2026/11/22/6b0267836b2ce.jpg",
+      "anchorX": 1
+    },
+    {
+      "id": "labor_day",
+      "name": "劳动节",
+      "url": "https://a1.boltp.com/2026/11/22/6b026784c9cdc.jpg",
+      "anchorX": 0
+    },
+    {
+      "id": "youth_day",
+      "name": "青年节",
+      "url": "https://a1.boltp.com/2026/11/22/6b0267863b344.jpg",
+      "anchorX": 1
+    },
+    {
+      "id": "victory_day",
+      "name": "抗战胜利纪念日",
+      "url": "https://a1.boltp.com/2026/11/22/6b026784e54d6.jpg",
+      "anchorX": 1
+    },
+    {
+      "id": "teachers_day",
+      "name": "教师节",
+      "url": "https://a1.boltp.com/2026/11/22/6b026784a506f.jpg",
+      "anchorX": 0
+    },
+    {
+      "id": "national_day",
+      "name": "国庆节",
+      "url": "https://a1.boltp.com/2026/11/22/6b026784dc72f.jpg",
+      "anchorX": 1
+    },
+    {
+      "id": "memorial_day",
+      "name": "国家公祭日",
+      "url": "https://a1.boltp.com/2026/11/22/6b0267837e2bc.jpg",
+      "anchorX": 1
+    },
+    {
+      "id": "spring_festival",
+      "name": "春节",
+      "url": "https://a1.boltp.com/2026/11/22/6b02678350653.jpg",
+      "anchorX": 0
+    },
+    {
+      "id": "lantern_festival",
+      "name": "元宵节",
+      "url": "https://a1.boltp.com/2026/11/22/6b0267864916a.jpg",
+      "anchorX": 1
+    },
+    {
+      "id": "dragon_boat",
+      "name": "端午节",
+      "url": "https://a1.boltp.com/2026/11/22/6b02678354c21.jpg",
+      "anchorX": 0
+    },
+    {
+      "id": "qixi",
+      "name": "七夕节",
+      "url": "https://a1.boltp.com/2026/11/22/6b026b44ecd5d.jpg",
+      "anchorX": 1
+    },
+    {
+      "id": "mid_autumn",
+      "name": "中秋节",
+      "url": "https://a1.boltp.com/2026/11/22/6b026786371bd.jpg",
+      "anchorX": 1
+    },
+    {
+      "id": "double_ninth",
+      "name": "重阳节",
+      "url": "https://a1.boltp.com/2026/11/22/6b0267869c7d2.jpg",
+      "anchorX": 0
+    },
+    {
+      "id": "new_years_eve",
+      "name": "除夕",
+      "url": "https://a1.boltp.com/2026/11/22/6b026783eff24.jpg",
+      "anchorX": 0
+    },
+    {
+      "id": "childrens_day",
+      "name": "儿童节",
+      "url": "https://a1.boltp.com/2026/11/22/6b026b45266f0.jpg",
+      "anchorX": 0
+    },
+    {
+      "id": "laba",
+      "name": "腊八节",
+      "url": "https://a1.boltp.com/2026/11/22/6b026b44ca07c.jpg",
+      "anchorX": 1
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 保存按钮：用前景色做底、页面底色做字，深色/浅色主题下都保持足够对比 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/text_foreground" />
+    <corners android:radius="22dp" />
+</shape>

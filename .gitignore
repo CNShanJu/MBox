@@ -118,3 +118,9 @@ app/src/main/assets/config/default_subscriptions.json
 
 # WorkBuddy 本地工作目录(项目记忆/预览图等),不入库
 .workbuddy/
+
+# 本地验证临时目录(构建产物/分析中间文件,不入库)
+/.tmp/
+
+# 开屏海报原始素材(体积大,只入库 assets 中的素材表与直链,不入库)
+/vibe_images/

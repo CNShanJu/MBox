@@ -225,20 +225,42 @@ public final class SystemConfig {
         return PrefsDataStore.getBoolean(KEY_LAN_SERVER_ENABLE, false);
     }
 
+    /** 新生成配对码的位数：只决定生成结果，输入侧不再按位数卡。 */
+    public static final int LAN_PAIRING_CODE_LENGTH = 6;
+    /** 输入长度兜底上限：防止超长串进比对，不参与"必须几位"的判断。 */
+    public static final int LAN_PAIRING_CODE_MAX_INPUT = 32;
+    /** 生成取值上界，随位数推导，不再各处硬写 1000000。 */
+    private static final int LAN_PAIRING_CODE_BOUND = (int) Math.pow(10, LAN_PAIRING_CODE_LENGTH);
+
+    /** 存量码能否继续复用：只有本机生成格式（固定位数纯数字）才算，不合规就换新码。 */
+    public static boolean isGeneratedLanPairingCode(String code) {
+        return code != null && code.matches("[0-9]{" + LAN_PAIRING_CODE_LENGTH + "}");
+    }
+
+    /** 输入端是否可用：非空、纯数字、不过长；位数不限，对不对由服务端比对说了算。 */
+    public static boolean isValidLanPairingCode(String code) {
+        return code != null && code.matches("[0-9]{1," + LAN_PAIRING_CODE_MAX_INPUT + "}");
+    }
+
+    /** 生成一枚配对码但不落盘：未开启局域网服务时的临时码，以及重新生成时复用。 */
+    public static String randomLanPairingCode() {
+        return String.format(Locale.ROOT, "%0" + LAN_PAIRING_CODE_LENGTH + "d",
+                new SecureRandom().nextInt(LAN_PAIRING_CODE_BOUND));
+    }
+
     /** 配对码在一次开启周期内保持不变，服务或进程重建时复用。 */
     public static synchronized String getOrCreateLanPairingCode() {
         String code = PrefsDataStore.getString(KEY_LAN_PAIRING_CODE, "");
-        if (code.matches("[0-9]{6}")) return code;
+        if (isGeneratedLanPairingCode(code)) return code;
         return regenerateLanPairingCode();
     }
 
     /** 仅由用户主动刷新配对码，或关闭后重新开启局域网服务时调用。 */
     public static synchronized String regenerateLanPairingCode() {
         String previous = PrefsDataStore.getString(KEY_LAN_PAIRING_CODE, "");
-        SecureRandom random = new SecureRandom();
         String code;
         do {
-            code = String.format(Locale.ROOT, "%06d", random.nextInt(1000000));
+            code = randomLanPairingCode();
         } while (code.equals(previous));
         LanSessionConfig.clear();
         PrefsDataStore.put(KEY_LAN_PAIRING_CODE, code);

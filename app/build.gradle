@@ -149,6 +149,9 @@ android {
             // 调试包应用名带 " debug" 后缀:桌面图标与首页/我的页标题一眼可辨
             // (resValue 优先级高于 res 文件,此处覆盖 defaultConfig 的 app_name)
             resValue "string", "app_name", cfgAppName + " debug"
+            // 调试包图标:黑底 + 猫身白色描边(资源 app/src/main/res/drawable/app_icon_debug.xml),
+            // 主体与正式包完全一致,只换配色,桌面上一眼区分两个包。
+            manifestPlaceholders = [appIcon: '@drawable/app_icon_debug']
         }
 
         release {

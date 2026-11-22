@@ -9,7 +9,7 @@
 
     1. 验令牌      GET /user 是否 200,并打印令牌作用域(确认勾了 projects/仓库读写)
     2. 看发行版    releases 列表里该 tag 在不在
-    3. 建发行版    不在就按 tag 建(正文取 doc/release-notes-<tag>.md)
+    3. 建发行版    不在就按 tag 建(正文取 doc/release/release-notes.md 里 `## v<tag>` 那一节)
     4. 传附件      把 APK 传到该发行版(v3.6.2 这类历史遗漏可据此当场补齐)
 
   令牌安全(重要):
@@ -73,6 +73,7 @@ function Write-Bad([string]$Text) { Write-Host "    失败 $Text" -ForegroundCol
 function Write-Warn2([string]$Text) { Write-Host "    注意 $Text" -ForegroundColor Yellow }
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot 'lib-release-notes.ps1')
 
 # ------------------------------------------------------------------ 取令牌
 Write-Step '读取 Gitee 令牌'
@@ -203,13 +204,12 @@ try {
 
 if ($rel.Count -eq 0) {
   Write-Host "    发行版不存在,创建中:tag=$Tag" -ForegroundColor DarkGray
-  $notes = Join-Path $repoRoot "doc/release-notes-$Tag.md"
-  if (-not (Test-Path $notes)) {
-    $tmpN = Join-Path ([System.IO.Path]::GetTempPath()) "gitee-notes-$Tag.md"
+  $notes = Get-ReleaseNotesFile -RepoRoot $repoRoot -Tag $Tag
+  if (-not $notes) {
+    Write-Warn2 " doc/release/release-notes.md 里没有 $Tag 这一节,正文先用指向 GitHub 的说明"
+    $notes = Join-Path ([System.IO.Path]::GetTempPath()) "gitee-notes-$Tag.md"
     "本发行版与 GitHub Release 同步,更新说明见 https://github.com/CNShanJu/$GiteeRepo/releases/tag/$Tag" |
-      Set-Content -Path $tmpN -Encoding UTF8
-    $notes = $tmpN
-    Write-Warn2 " 缺 doc/release-notes-$Tag.md,正文先用指向 GitHub 的说明"
+      Set-Content -Path $notes -Encoding UTF8
   }
   $body = (Get-Content $notes -Raw -Encoding UTF8)
   try {

@@ -16,12 +16,14 @@ import android.os.Looper;
 
 import androidx.annotation.Nullable;
 import android.text.TextUtils;
+import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.view.animation.DecelerateInterpolator;
 import android.widget.FrameLayout;
+import android.widget.LinearLayout;
 import android.widget.Toast;
 
 import androidx.core.graphics.Insets;
@@ -63,6 +65,7 @@ import com.github.tvbox.osc.server.RemoteServer;
 import com.github.tvbox.osc.ui.dialog.ConfirmDialog;
 import com.github.tvbox.osc.ui.dialog.DialogCoordinator;
 import com.github.tvbox.osc.ui.dialog.DownloadDialogCoordinator;
+import com.github.tvbox.osc.ui.dialog.PopupCallbacks;
 import com.github.tvbox.osc.ui.dialog.QuickSearchDialog;
 import com.github.tvbox.osc.ui.dialog.SelectDialog;
 import com.github.tvbox.osc.ui.dialog.TextCopyDialog;
@@ -112,6 +115,11 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     private static final long HISTORY_REFRESH_TIMEOUT_MS = 15_000L;
     private static final String EXTERNAL_DOWNLOADER_PACKAGE = "idm.internet.download.manager.plus";
     private static final String EXTERNAL_DOWNLOADER_ACTIVITY = "idm.internet.download.manager.Downloader";
+    /**
+     * 桌面「继续观看」入口：带历史快照并且必须立即起播，不受"详情页预览播放"开关限制
+     * （见 HistoryEntryNavigator#playDirectly）。
+     */
+    public static final String EXTRA_HISTORY_AUTOPLAY = "historyAutoPlay";
     private PlayFragment playFragment = null;
     private SourceViewModel sourceViewModel;
     private HistoryViewModel historyViewModel;
@@ -206,6 +214,10 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     @Override
     protected void init() {
         if (getIntent() != null && !TextUtils.isEmpty(getIntent().getStringExtra("browserCastSessionId")))
+            showPreview = true;
+        // 桌面「继续观看」要求点一下就播：即使"详情页预览播放"是关的，也要这次先把预览播放器建出来，
+        // 后面的 loadDetail(snapshot) 才会走起播分支（起播位置仍按播放进度恢复）。
+        if (getIntent() != null && getIntent().getBooleanExtra(EXTRA_HISTORY_AUTOPLAY, false))
             showPreview = true;
         initReceiver();
         initView();
@@ -406,6 +418,23 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
         if (collectionStateReady && !collectionBusy) refreshCollectionState();
     }
 
+    /**
+     * 桌面「继续观看」要求点一下就播：创建时预览开关若是关的（或 singleTask 复用了旧实例），
+     * 页面里根本没有预览播放器。这里按 {@link #initView()} 的同一套步骤补建，
+     * 之后 loadDetail(snapshot) 才会走起播分支；幂等，已有播放器时只恢复两块的可见性。
+     */
+    private void ensurePreviewPlayerForAutoPlay() {
+        showPreview = true;
+        mBinding.previewPlayerPlace.setVisibility(View.VISIBLE);
+        mBinding.previewPlayer.setVisibility(View.VISIBLE);
+        if (playFragment != null) return;
+        playFragment = new PlayFragment();
+        playFragment.setPlaySyncHost(this);
+        getSupportFragmentManager().beginTransaction().add(R.id.previewPlayer, playFragment).commit();
+        getSupportFragmentManager().beginTransaction().show(playFragment).commitAllowingStateLoss();
+        mBinding.getRoot().post(this::applyPreviewLayout);
+    }
+
     private void initView() {
         mBinding.ivPrivateBrowsing.setVisibility(SystemConfig.isPrivateBrowsing() ? View.VISIBLE : View.GONE);
         mBinding.ivPrivateBrowsing.setOnClickListener(view -> AppBubble.toast("当前为无痕浏览"));
@@ -425,6 +454,8 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
             playFragment.setPlaySyncHost(this);
             getSupportFragmentManager().beginTransaction().add(R.id.previewPlayer, playFragment).commit();
             getSupportFragmentManager().beginTransaction().show(playFragment).commitAllowingStateLoss();
+            // 预览区不再是写死的 250dp:首次布局完成后按屏高 30%(横屏则左右布局)重排
+            mBinding.getRoot().post(this::applyPreviewLayout);
         }
 
         // 剧名在标题行是 maxLines=2 + ellipsize=end(长剧名被截断):长按看全文并可复制。
@@ -811,11 +842,18 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
                             this::sortSeries, this::isSeriesReversed), 360, false);
             mAllSeriesRightDialog.show();
         } else {
-            mAllSeriesBottomDialog = DialogCoordinator.bottomMaxHeight(this,
-                    new AllVodSeriesBottomDialog(this, seriesAdapter.getData(), (position, text) -> {
-                        chooseSeries(position, false);
-                    }, this::sortSeries, this::isSeriesReversed),
-                    ScreenUtils.getScreenHeight() - (ScreenUtils.getScreenHeight() / 4));
+            // 先弹空壳再填内容(与下载抽屉同款时序):集数多时旧实现把整表交给 RecyclerView 后才 show,
+            // 首帧要 inflate 全部 RoundChip(定高测量还会把列表整体布局一遍),点击像没反应。
+            // 现在 show 只建空网格 + loading,集数在入场动画之后填(用户口径 2026-11-20)。
+            final AllVodSeriesBottomDialog seriesDialog = new AllVodSeriesBottomDialog(this,
+                    (position, text) -> chooseSeries(position, false),
+                    this::sortSeries, this::isSeriesReversed);
+            mAllSeriesBottomDialog = DialogCoordinator.bottomMaxHeight(this, seriesDialog,
+                    ScreenUtils.getScreenHeight() - (ScreenUtils.getScreenHeight() / 4),
+                    PopupCallbacks.onShow(() -> seriesDialog.postDelayed(() -> {
+                        // 入场动画跑起来再填:填充本身要做一次列表布局,压在动画帧上会掉帧
+                        if (seriesDialog.isShow()) seriesDialog.setData(seriesAdapter.getData());
+                    }, 120)));
             mAllSeriesBottomDialog.show();
         }
     }
@@ -1127,6 +1165,8 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
 
     private void initData() {
         Intent intent = getIntent();
+        if (intent != null && intent.getBooleanExtra(EXTRA_HISTORY_AUTOPLAY, false))
+            ensurePreviewPlayerForAutoPlay();
         if (intent != null && intent.getExtras() != null) {
             Bundle bundle = intent.getExtras();
             // 入口(搜索/列表等)传过来的剧名,用于下载命名兜底
@@ -1435,6 +1475,12 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
         insertVod(sourceKey, vodInfo);
     }
 
+    /** PlaySyncHost:视频真实尺寸到达 → 重排预览区(减少上下黑边) */
+    @Override
+    public void onPreviewVideoSizeChanged() {
+        applyPreviewLayout();
+    }
+
     /** PlaySyncHost:播放配置变更回写(详情页缓存配置并保存历史) */
     @Override
     public void onPlayerCfgChanged(JSONObject cfg) {
@@ -1619,13 +1665,11 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
     /** 画中画(小窗)通用辅助器,封装进入/退出小窗逻辑,详情页与本地播放器复用 */
     private PipHelper pipHelper;
 
-    ViewGroup.LayoutParams windowsPreview = null;
     ViewGroup.LayoutParams windowsFull = null;
+    /** applyPreviewLayout 已排过一次帧回调(布局未完成时避免重复排队) */
+    private boolean previewLayoutPending = false;
 
     public void toggleFullPreview() {
-        if (windowsPreview == null) {
-            windowsPreview = mBinding.previewPlayer.getLayoutParams();
-        }
         if (windowsFull == null) {//全屏尺寸
             windowsFull = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
         }
@@ -1638,7 +1682,13 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
         //交由fragment处理播放器全屏逻辑
         playFragment.changedLandscape(fullWindows);
         //activity处理预览尺寸(全屏/非全屏预览)
-        mBinding.previewPlayer.setLayoutParams(fullWindows ? windowsFull : windowsPreview);
+        if (fullWindows) {
+            mBinding.previewPlayer.setLayoutParams(windowsFull);
+        } else {
+            // 退出全屏不再回到布局里写死的 250dp:按当前方向与视频比例重算。
+            // 方向切换后布局要下一帧才定,用 post 兜底(onConfigurationChanged 也会再触发一次)。
+            mBinding.getRoot().post(this::applyPreviewLayout);
+        }
         mBinding.mGridView.setVisibility(fullWindows ? View.GONE : View.VISIBLE);
         mBinding.mGridViewFlag.setVisibility(fullWindows ? View.GONE : View.VISIBLE);
 
@@ -1658,6 +1708,103 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
             getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
         }
         if (!fullWindows) ViewCompat.requestApplyInsets(mBinding.getRoot());
+    }
+
+    // ------------------------------------------------------------------
+    // 预览播放器排版(用户口径 2026-11-20)
+    // 竖屏:播放器在上、详情在下,高度 = 可用高度 30% 起按视频比例微调;
+    // 横屏:左播放器右详情,左栏宽 = 可用宽度 50% 起按视频比例微调。
+    // 尺寸策略在 ui.kit.PreviewPlayerSizing(纯函数,已单测),这里只负责套到 View 上。
+    // ------------------------------------------------------------------
+
+    /** 按当前方向与视频比例重排预览区;全屏时由全屏参数接管,不处理。 */
+    private void applyPreviewLayout() {
+        if (!showPreview || playFragment == null || fullWindows || isFinishing()) return;
+        View root = mBinding.getRoot();
+        int availableWidth = root.getWidth() - root.getPaddingLeft() - root.getPaddingRight();
+        int availableHeight = root.getHeight() - root.getPaddingTop() - root.getPaddingBottom();
+        if (availableWidth <= 0 || availableHeight <= 0) {
+            // 首次排版还没完成(或刚从全屏退出):等一帧再算。
+            // pending 在回调"之后"才复位,所以这一帧里若仍算不出尺寸就直接放弃,不会自己排队成死循环。
+            if (previewLayoutPending) return;
+            previewLayoutPending = true;
+            root.post(() -> {
+                applyPreviewLayout();
+                previewLayoutPending = false;
+            });
+            return;
+        }
+        float aspect = playFragment.previewVideoAspect();
+        // 用可用宽高判方向,比 Configuration 可靠(设置抽屉切换后配置可能滞后一帧)
+        if (availableWidth > availableHeight) {
+            applyLandscapePreview(availableWidth, availableHeight, aspect);
+        } else {
+            applyPortraitPreview(availableWidth, availableHeight, aspect);
+        }
+    }
+
+    /** 竖屏:播放器在上,高度贴视频比例;详情在下正常纵向滚动。 */
+    private void applyPortraitPreview(int availableWidth, int availableHeight, float aspect) {
+        int playerHeight = com.github.tvbox.osc.ui.kit.PreviewPlayerSizing
+                .portraitHeight(availableWidth, availableHeight, aspect);
+        if (playerHeight <= 0) return;
+        int sidePadding = getResources().getDimensionPixelSize(R.dimen.dp_20);
+        int bottomPadding = getResources().getDimensionPixelSize(R.dimen.dp_10);
+
+        // 占位容器与播放器用同一份高度(占位多出的只有底部 10dp),否则下方内容会与播放器错位
+        LinearLayout.LayoutParams place = (LinearLayout.LayoutParams) mBinding.previewPlayerPlace.getLayoutParams();
+        place.width = ViewGroup.LayoutParams.MATCH_PARENT;
+        place.height = playerHeight + bottomPadding;
+        place.weight = 0;
+        mBinding.previewPlayerPlace.setPadding(sidePadding, 0, sidePadding, bottomPadding);
+        mBinding.previewPlayerPlace.setLayoutParams(place);
+
+        FrameLayout.LayoutParams page = (FrameLayout.LayoutParams) mBinding.llLayout.getLayoutParams();
+        page.width = ViewGroup.LayoutParams.MATCH_PARENT;
+        // 必须是 match_parent:llLayout 同时是 LoadSir 的注册宿主,LoadSir 会把这份 LayoutParams
+        // 套给状态容器。写成 WRAP_CONTENT 时"加载中/暂无数据"只占内容高度,空态图标落在屏幕顶部。
+        page.height = ViewGroup.LayoutParams.MATCH_PARENT;
+        mBinding.llLayout.setLayoutParams(page);
+        mBinding.llLayout.setOrientation(LinearLayout.VERTICAL);
+
+        LinearLayout.LayoutParams detail = (LinearLayout.LayoutParams) mBinding.svDetail.getLayoutParams();
+        detail.width = ViewGroup.LayoutParams.MATCH_PARENT;
+        detail.height = ViewGroup.LayoutParams.WRAP_CONTENT;
+        detail.weight = 0;
+        mBinding.svDetail.setLayoutParams(detail);
+
+        mBinding.previewPlayer.setLayoutParams(new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, playerHeight, Gravity.TOP | Gravity.START));
+    }
+
+    /** 横屏:左播放器(宽度贴视频比例)、右详情;左栏铺满可用高度。 */
+    private void applyLandscapePreview(int availableWidth, int availableHeight, float aspect) {
+        int playerWidth = com.github.tvbox.osc.ui.kit.PreviewPlayerSizing
+                .landscapeWidth(availableWidth, availableHeight, aspect);
+        if (playerWidth <= 0) return;
+
+        LinearLayout.LayoutParams place = (LinearLayout.LayoutParams) mBinding.previewPlayerPlace.getLayoutParams();
+        place.width = playerWidth;
+        place.height = ViewGroup.LayoutParams.MATCH_PARENT;
+        place.weight = 0;
+        // 左右布局不留预览态的左右内缩,播放器直接贴屏边,画面更大
+        mBinding.previewPlayerPlace.setPadding(0, 0, 0, 0);
+        mBinding.previewPlayerPlace.setLayoutParams(place);
+
+        FrameLayout.LayoutParams page = (FrameLayout.LayoutParams) mBinding.llLayout.getLayoutParams();
+        page.width = ViewGroup.LayoutParams.MATCH_PARENT;
+        page.height = ViewGroup.LayoutParams.MATCH_PARENT;
+        mBinding.llLayout.setLayoutParams(page);
+        mBinding.llLayout.setOrientation(LinearLayout.HORIZONTAL);
+
+        LinearLayout.LayoutParams detail = (LinearLayout.LayoutParams) mBinding.svDetail.getLayoutParams();
+        detail.width = 0;
+        detail.height = ViewGroup.LayoutParams.MATCH_PARENT;
+        detail.weight = 1;
+        mBinding.svDetail.setLayoutParams(detail);
+
+        mBinding.previewPlayer.setLayoutParams(new FrameLayout.LayoutParams(
+                playerWidth, ViewGroup.LayoutParams.MATCH_PARENT, Gravity.TOP | Gravity.START));
     }
 
     void toggleSubtitleTextSize() {
@@ -1959,6 +2106,8 @@ public class DetailActivity extends BaseVbActivity<ActivityDetailBinding>
         // 由 PipHelper 统一延迟判断"放大/点X关闭"
         pipHelper.onConfigurationChanged();
         // 设置抽屉切换横竖屏会触发配置变化；系统可能重置沉浸式标志，等新布局完成后补回。
+        // 预览区也按新方向重排:竖屏按屏高比例、横屏改左右布局(用户口径 2026-11-20)
+        mBinding.getRoot().post(this::applyPreviewLayout);
         if (fullWindows) mBinding.getRoot().post(this::restoreFullscreenBars);
     }
 
