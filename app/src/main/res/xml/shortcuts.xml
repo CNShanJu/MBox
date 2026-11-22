@@ -7,7 +7,7 @@
 <shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
     <shortcut
         android:enabled="true"
-        android:icon="@drawable/ic_search"
+        android:icon="@drawable/ic_shortcut_search"
         android:shortcutId="search"
         android:shortcutLongLabel="@string/shortcut_search_long"
         android:shortcutShortLabel="@string/shortcut_search_short">
@@ -15,7 +15,7 @@
     </shortcut>
     <shortcut
         android:enabled="true"
-        android:icon="@drawable/ic_history_48"
+        android:icon="@drawable/ic_shortcut_continue"
         android:shortcutId="continue_watching"
         android:shortcutLongLabel="@string/shortcut_continue_long"
         android:shortcutShortLabel="@string/shortcut_continue_short">

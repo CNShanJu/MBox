@@ -1,0 +1,19 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="1024"
+    android:viewportHeight="1024"
+    android:tint="@color/text_foreground">
+    <!-- 桌面长按菜单专用「搜索」图标:与 ic_search 同一套放大镜路径,但图形只画在画布的 60% 并居中。
+         launcher 会把快捷方式图标铺到 48dp 的整格里,直接复用铺满画布的 ic_search 会比其他应用的
+         快捷方式图标明显偏大;这里留白,视觉尺寸才和系统里其它 entry 一致。 -->
+    <group
+        android:pivotX="512"
+        android:pivotY="512"
+        android:scaleX="0.6"
+        android:scaleY="0.6">
+        <path
+            android:fillColor="@android:color/white"
+            android:pathData="M685.649 623.604l263.828 267.132c17.076 17.29 16.903 45.149-0.387 62.225-17.29 17.075-45.148 16.902-62.224-0.388L623.4 685.81C558.442 737.27 476.31 768 387 768 176.58 768 6 597.42 6 387S176.58 6 387 6s381 170.58 381 381c0 89.403-30.793 171.613-82.351 236.604zM387 680c161.82 0 293-131.18 293-293S548.82 94 387 94 94 225.18 94 387s131.18 293 293 293z" />
+    </group>
+</vector>
