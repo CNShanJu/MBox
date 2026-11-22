@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | [`architecture/`](architecture/) | 架构、模块边界、目录与设计方案（"系统长什么样"） | [ARCHITECTURE.md](architecture/ARCHITECTURE.md)、[项目目录结构.md](architecture/项目目录结构.md)、[项目全景脑图.md](architecture/项目全景脑图.md)、[架构图可视化.html](architecture/架构图可视化.html)、[module-refactor-design.md](architecture/module-refactor-design.md)、[phase2-core-modules-plan.md](architecture/phase2-core-modules-plan.md)、[spider-strong-type-design.md](architecture/spider-strong-type-design.md)、[分享导入导出设计.md](architecture/分享导入导出设计.md)、[自定义主题设计.md](architecture/自定义主题设计.md) |
 | [`status/`](status/) | 现状基线、差距审计、改造评估（"现在做到哪一步"） | [项目状态速查.md](status/项目状态速查.md)（**口径基线**）、[全量功能链路清单.md](status/全量功能链路清单.md)、[gap-vs-improvements.md](status/gap-vs-improvements.md)、[audit-fixes-and-refactor-status.md](status/audit-fixes-and-refactor-status.md)、[后续改造评估.md](status/后续改造评估.md) |
-| [`features/`](features/) | 单个功能的机制、协议与排查经验 | [接口解析.md](features/接口解析.md)、[直播说明.md](features/直播说明.md)、[config-transfer.md](features/config-transfer.md)、[download-auth-renewal.md](features/download-auth-renewal.md)、[hls-js.md](features/hls-js.md) |
+| [`features/`](features/) | 单个功能的机制、协议与排查经验 | [接口解析.md](features/接口解析.md)、[直播说明.md](features/直播说明.md)、[开屏海报.md](features/开屏海报.md)、[config-transfer.md](features/config-transfer.md)、[download-auth-renewal.md](features/download-auth-renewal.md)、[hls-js.md](features/hls-js.md) |
 | [`release/`](release/) | 更新说明与对外文稿 | [release-notes.md](release/release-notes.md)（**唯一维护来源**）、[release-notes-v3.6.11.md](release/release-notes-v3.6.11.md)（历史兜底）、[wechat-post-v3.6.11.md](release/wechat-post-v3.6.11.md) |
 | [`guides/`](guides/) | 规范、纪律与回归验收 | [Git提交规范.md](guides/Git提交规范.md)、[device-regression-checklist.md](guides/device-regression-checklist.md) |
 
@@ -20,6 +20,7 @@
 | 准备动手改代码 | 根 [AGENTS.md](../AGENTS.md)（规则与红线）→ [status/项目状态速查.md](status/项目状态速查.md)（当前口径）→ [guides/device-regression-checklist.md](guides/device-regression-checklist.md)（要真机验什么） |
 | 查某条链路现在怎么走 | [status/全量功能链路清单.md](status/全量功能链路清单.md) → 对应 [features/](features/) 文档 |
 | 改主题 / 加页面组件 | [architecture/自定义主题设计.md](architecture/自定义主题设计.md) + [status/项目状态速查.md](status/项目状态速查.md) 的主题段 |
+| 加 / 换节日海报素材 | [features/开屏海报.md](features/开屏海报.md)（素材表字段、锚点怎么定、换图与缓存） |
 | 发版 | [guides/Git提交规范.md](guides/Git提交规范.md) → 在 [release/release-notes.md](release/release-notes.md) 顶部加一节 → AGENTS §九 发布流程 |
 
 ## 三、存放规则（强制）

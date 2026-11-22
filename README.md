@@ -29,6 +29,7 @@ MBox（原名 TVBoxOS-Mobile / 工程名 TVBoxMobile）是一款 Android 点播 
 **体验**
 - 自适应卡片（宽 : 高 = 3 : 4，列数随屏宽自适应）
 - 详情页海报支持全屏大图查看（双指缩放、轻点/返回关闭），剧名可长按查看完整名称并一键复制
+- 开屏节气 / 节日海报：二十四节气与十七个传统节日当天，开屏按图铺满展示对应水墨海报；「我的」页节日名可点开大图、同日多节日上下翻页，并支持保存到相册
 - 主题系统：内置浅色 / 深色与自定义主题，运行时调色板统一供色
 
 **系统能力**
@@ -164,7 +165,7 @@ export JAVA_HOME=/path/to/jdk17
 | --- | --- | --- |
 | [architecture](doc/architecture/) | 架构、模块边界、设计方案 | [ARCHITECTURE.md](doc/architecture/ARCHITECTURE.md)、[项目目录结构.md](doc/architecture/项目目录结构.md)、[项目全景脑图.md](doc/architecture/项目全景脑图.md)、[自定义主题设计.md](doc/architecture/自定义主题设计.md) |
 | [status](doc/status/) | 现状基线、差距审计、改造评估 | [项目状态速查.md](doc/status/项目状态速查.md)、[全量功能链路清单.md](doc/status/全量功能链路清单.md)、[后续改造评估.md](doc/status/后续改造评估.md) |
-| [features](doc/features/) | 单功能机制与排查 | [接口解析.md](doc/features/接口解析.md)、[直播说明.md](doc/features/直播说明.md) |
+| [features](doc/features/) | 单功能机制与排查 | [接口解析.md](doc/features/接口解析.md)、[直播说明.md](doc/features/直播说明.md)、[开屏海报.md](doc/features/开屏海报.md) |
 | [release](doc/release/) | 更新说明（发版唯一来源） | [release-notes.md](doc/release/release-notes.md) |
 | [guides](doc/guides/) | 规范与回归清单 | [Git提交规范.md](doc/guides/Git提交规范.md)、[device-regression-checklist.md](doc/guides/device-regression-checklist.md) |
 
